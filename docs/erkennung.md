@@ -22,7 +22,8 @@ Die Übergangsregeln beschreibt die [Gangerkennung](gangmodell.md).
 Für Türöffnung, Türschluss und Aufguss vergleicht die Erkennung eine lokale
 Kurvenänderung mit glatten Trends. Dabei berücksichtigt sie das gemessene
 Rauschen und den Einfluss einzelner Ausreißer. Ein unterstützter Kurvenbeginn
-ist zunächst ein Kandidat; der Modellscore ist keine Ereigniswahrscheinlichkeit.
+ist zunächst ein Kandidat; der Modellscore ist keine kalibrierte
+Ereigniswahrscheinlichkeit und wird nicht als Prozentwert gelesen.
 Vergleichszeiten und technische Modellvorgaben stehen im
 [`Parameterkatalog`](../custom_components/ha_sauna/defaults.json).
 Die technischen Modellvorgaben sind keine Einstellungen der Oberfläche.
@@ -31,6 +32,31 @@ Die Auswertung verwendet Originalmesspunkte innerhalb zusammenhängender
 Quellenabschnitte mit einheitlicher Zeitbasis. Vorhandene gültige Messzeiten
 bleiben erhalten; ersatzweise verwendete Empfangszeiten bilden eine eigene
 Zeitbasis. Raster-Haltewerte liefern keine zusätzliche Evidenz.
+
+Für vollständige Aufgussspitzen und den anschließenden Übergang zum Hintergrund
+werden dieselben Formfamilien gemeinsam verglichen: ein konstantes Niveau
+(`L`), Gerade, Quadratik und Kubik (`P1` bis `P3`) sowie eine Quadratik mit
+Steigungsknick (`M1`) oder mit stetiger Steigung und Krümmungsänderung (`M2`).
+Die Anpassungen verwenden dieselben begrenzt ausgewählten Originalmessungen
+und dieselbe robuste Rauschschätzung aus den kubischen Anpassungsresten.
+Der Score berücksichtigt die Anpassungsfehler, die Anzahl der Modellparameter
+und die Suche nach Knickzeiten.
+
+Die konkrete zeitliche Form entscheidet über passende Form und Gegenform,
+nicht der Modellname: Auch eine gekrümmte oder geknickte Spitze kann passen.
+Eine eindeutige gesuchte Spitze oder Talsohle darf mit einer entgegengesetzten
+Hintergrundbewegung zusammen auftreten. Mehrere gesuchte Umkehrpunkte bleiben
+uneindeutig. Die passende Form muss die Gegenform unterscheidbar übertreffen;
+zusätzlich müssen die tatsächlichen Originalflanken die erforderlichen
+Richtungen belegen. Für eine Spitze sind das Anstieg und Abfall, für den
+Hintergrundwechsel Abfall und danach ein Niveau oder Anstieg. Die Aussage
+muss auch nach Weglassen eines besonders einflussreichen Originalpunkts bestehen.
+
+Der erste unterstützte Formbefund bindet eine feste Referenz mit Modellzweig,
+Umkehrpunkt und gegebenenfalls Knickzeit. Später hinzugekommene Originale müssen
+diese Referenz erneut stützen. Ein deutlich besserer anderer Umkehrpunkt kann
+die gebundene Referenz entwerten, obwohl weiterhin eine passende Form vorliegt.
+Formvergleich und Identität der Referenz sind deshalb getrennte Nachweise.
 
 Die Richtung nach einem Knick wird getrennt an den dort vorhandenen
 Originalmessungen geprüft. Eine Gerade wird mit einem konstanten Niveau
@@ -71,6 +97,12 @@ ist unter [Zeitangaben](speicherung.md#daten-und-zeitangaben) und
 beschrieben.
 
 ## Öffnen und Schließen der Tür
+
+| Prüfweg | Erwarteter zeitlicher Verlauf | Fehlender oder widersprechender Nachweis |
+| --- | --- | --- |
+| Öffnung | Unterstützte Änderung zu fallender Temperatur und Feuchte; beim Heizweg fallende Temperatur aus demselben bestätigten Heizabschnitt | Glatter Verlauf ohne belegte Änderung, fehlende Fallrichtung oder unterbrochener Heizbezug |
+| Schließung am Knick | Vorheriger Temperaturabfall bremst ab; anschließend aktuelle Temperaturerholung oder passende Feuchteerholung | Gleichmäßig fortgesetzter Abfall oder fehlender aktueller Erholungsnachweis |
+| Glatte Schließung | Vollständiger Temperaturabfall, Tal und Anstieg | Fehlende Originalflanke, unbestätigte Form oder nicht mehr aktuelle Erholung |
 
 Eine Öffnung benötigt eine unterstützte Änderung zu fallender Temperatur und
 relativer Feuchte. Beide Änderungen dürfen zeitlich versetzt auftreten.
@@ -134,15 +166,26 @@ der Türvergleichszeit und die Originalfeuchtewerte in der Feuchtevergleichszeit
 liegen. Die historische Bindung des Temperaturknicks allein genügt für diesen
 Weg nicht.
 
+Bei einer aus Temperatur und Feuchte belegten Öffnung kann die Schließprüfung
+auch eine stetige Abbremsung (`M2`) statt eines Steigungsknicks verwenden.
+Hier bleiben die Steigungen am Beginn gleich; eine positive Änderung der
+Krümmung stützt die Abbremsung des zuvor fallenden Verlaufs. Die nachfolgenden
+Originalmessungen müssen eine auswertbare Richtung liefern, dürfen zu diesem
+Zeitpunkt aber noch fallen. Dieser Formbefund allein schließt die Tür nicht;
+die beschriebenen Erholungs- und Originalbestätigungen bleiben erforderlich.
+
 ## Anwesenheit und Aufgüsse erkennen
 
 Der Feuchtenachweis benötigt steigende relative Feuchte und zunehmenden absoluten
 Wassergehalt. Ein Aufguss bleibt dadurch auch bei sinkender Temperatur erkennbar.
 
 Das deutliche Personensignal benötigt ein vollständiges Messfenster und die
-Bestätigungsdauer. Die empfindlichere Prüfung gilt nach erkannter Türöffnung
-mit anschließender Schließung für die eingestellte Bestätigungsfrist. Sie benötigt
-einen gültigen Temperaturbezug und einen neuen Feuchteanstieg nach der Öffnung;
+Bestätigungsdauer. Beide Personenprüfungen verwenden weiterhin die
+positionsbezogenen Feuchtetrendschwellen aus dem Parameterkatalog und verlangen
+einen zunehmenden absoluten Wassergehalt. Die empfindlichere Prüfung gilt nach
+erkannter Türöffnung mit anschließender Schließung für die eingestellte
+Bestätigungsfrist. Sie benötigt einen gültigen Temperaturbezug und einen neuen
+Feuchteanstieg nach der Öffnung;
 bestätigtes Durchlüften ist nicht erforderlich. Eine weitere Öffnung beginnt
 einen neuen Türbezug.
 
@@ -154,20 +197,36 @@ die Steuerung reagiert bei der Bestätigung. Ein fortgesetzter Anstieg allein
 bestätigt keinen Aufguss. Weitere Spitzen gehören bis zum belegten Abschluss
 zu diesem einen Aufguss.
 
+Die Spitze kann einen Steigungsknick oder einen glatten Übergang von Anstieg
+zu Abfall haben. Für die glatte Form gelten der gemeinsame Formvergleich, die
+getrennt belegten Originalflanken und die erneute Stützung ihrer festen Referenz
+durch spätere Originalmessungen. Ein berechnetes Maximum ohne belegten Abfall
+oder ein unentschiedener Vergleich mit der Gegenform bestätigt keinen Aufguss.
+
 Weitere Spitzen werden je Messposition verfolgt. Eine zusätzliche Spitze an
 einer Position entwertet nur dort den bisherigen Abklingnachweis; die gültigen
 Nachweise der anderen Position bleiben erhalten.
 
-Bei ununterbrochenem Verlauf müssen zum Abschluss nach der Feuchtespitze ein
-Abfall und anschließend an allen beteiligten Positionen ein neues Niveau belegt
-sein. Der Niveauvergleich verwendet den jüngsten zusammenhängenden
-Originalverlauf über die
-Aufgussvergleichszeit und muss durch weitere neue Originalmessungen bestätigt
-werden. Das Niveau wird gegenüber glatten Trends frei bestimmt; eine Rückkehr
-zum Wert vor dem Aufguss ist nicht erforderlich. Ein später erkannter Anstieg,
-der schon vor diesem Abschluss begann, setzt denselben Aufguss fort. Erst ein
-nach dem belegten Abschluss begonnener Anstieg kann einen weiteren Aufguss
-ergeben.
+Zum Abschluss können nach der Feuchtespitze ein Abfall und anschließend an
+allen beteiligten Positionen ein neues Niveau belegt werden.
+Der Niveauvergleich verwendet den jüngsten zusammenhängenden Originalverlauf
+über die Aufgussvergleichszeit und muss durch weitere neue Originalmessungen
+bestätigt werden. Das Niveau wird gegenüber glatten Trends frei bestimmt; eine Rückkehr
+zum Wert vor dem Aufguss ist nicht erforderlich.
+
+Alternativ kann nach dem bereits gezählten Aufguss ein Übergang aus dem Abfall
+in einen neuen Hintergrund den Abschluss belegen (`infusion_background`).
+An allen beteiligten Positionen müssen die Originale zunächst fallen und danach
+ein Niveau oder einen Anstieg stützen. Eine bloße Abbremsung bei weiterhin
+fallendem Verlauf genügt nicht. Die vollständige Form muss gegen ihre Gegenformen
+bestehen; anschließend müssen spätere Originale dieselbe feste Referenz erneut
+stützen. Quellen, Kontext und tragende Originale müssen weiterhin zusammenpassen.
+Dieser Abschluss zählt selbst keinen Aufguss.
+
+Ein später erkannter Anstieg, der schon vor diesem Abschluss begann, setzt
+denselben Aufguss fort. Erst ein nach dem belegten Abschluss begonnener Anstieg
+kann einen weiteren Aufguss
+ergeben; auch er benötigt wieder die Bestätigung durch seine Feuchtespitze.
 
 Personen- und Aufgusssignale eröffnen bei Erkennung aus Temperatur und Feuchte
 nur nach erkannter Türöffnung und anschließender Schließung einen Gang;
@@ -183,6 +242,8 @@ berechnet und als Diagnosewert je Messposition bereitgestellt.
 Beim ersten Öffnungshinweis wird eine vollständige Messung aus der Zeit davor
 als Referenz gespeichert. Durchlüften erfordert die eingestellten Verluste an
 Temperatur und absolutem Wassergehalt; der Wasserverlust ist ein relativer Anteil.
+Diese Verlustschwellen und die Mindestöffnungsdauer bei einer Position bleiben
+Katalogbedingungen. Ein fallender Kurvenverlauf allein ersetzt sie nicht.
 
 | Zu Beginn gültige Positionen | Bestätigung |
 | --- | --- |
@@ -214,7 +275,7 @@ Aufguss zugeordnet.
 Bei einem bereits gezählten Aufguss pausieren Messlücken, Quellenwechsel und
 vorübergehend fehlende Auswertbarkeit den Abschluss. Die Zuordnung bleibt
 bestehen; ein unbekannter Verlauf belegt weder Abklingen noch ein neues Niveau.
-Nach Wiedererwerb muss ein neues Niveau auf den wieder zusammenhängenden
+Nach Wiedererwerb muss der Abschluss auf den wieder zusammenhängenden
 Messreihen aller ursprünglich beteiligten Positionen erneut belegt werden.
 Die Zuordnung endet bei einer bestätigten Türöffnung oder Betriebsunterbrechung.
 Ein Aus- und Einschalten bleibt auch zwischen Rasterpunkten wirksam.
@@ -227,6 +288,23 @@ auslösenden Erkennungsnachweis. Der Wechsel zur Ereignisliste erfolgt über
 **Ereignis im Verlauf**. Der ausgewählte Prüfzeitpunkt enthält auch unerfüllte
 Bedingungen und Prüfpunkte mit dem Zählerstand 0; fehlende Angaben werden davon
 unterschieden. Weitere gespeicherte Prüfzeitpunkte sind einzeln auswählbar.
+
+Die gespeicherten Entscheidungsbedingungen (`gates`) unterscheiden erfüllt,
+verfehlt und nicht ausgewertet oder nicht auswertbar. Sie halten, soweit
+vorhanden, Messwert, Vergleichsoperator, Grenze, Einheit und den Grund eines
+fehlenden Nachweises fest. Bei Zahlenvergleichen liegt ein positiver Abstand
+zur Grenze auf der erfüllenden Seite. Jeder Abstand gehört zu genau dieser
+Bedingung; die Abstände werden nicht zu einer Gesamtwahrscheinlichkeit addiert.
+
+Beim gemeinsamen Formvergleich werden passende Form und tatsächliche
+Gegenform getrennt ausgewiesen. Numerische Scorevergleiche enthalten den
+Scoregewinn und seine Vergleichsgrenze. Die zusammengefasste Formbewertung
+berücksichtigt zusätzlich die Originalflanken und die feste Referenz. Weitere
+Bedingungen betreffen die Gegenprüfung ohne einen einflussreichen Punkt und
+eine mögliche Verdrängung der Referenz durch eine andere passende Geometrie.
+Ein positiver Scoreabstand allein erfüllt daher nicht alle Formbedingungen.
+Der Aufgussabschluss trennt Niveaunachweis und Hintergrundwechsel; eine noch
+nicht frisch bestätigte Referenz kennzeichnet einen ausstehenden Originalnachweis.
 
 Schwellen beziehen sich auf die gespeicherte Sitzungskonfiguration. Fehlt diese
 in älteren Aufzeichnungen, ist der damalige Schwellenwert nicht belegt.

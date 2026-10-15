@@ -345,6 +345,63 @@ class CurveFormTests(unittest.TestCase):
                 self.assertEqual(item.search_cost, previous.search_cost)
                 self.assert_score_close(item.score, previous.score)
 
+    def test_m1_one_sided_stationary_turn_keeps_the_fixed_knot_basis(self):
+        # f(x) = -2x + x² + max(0, x - 1/2) has its unique minimum at
+        # the knot: the left derivative is -1, the right derivative is zero,
+        # and the right branch subsequently rises. This is a fixed knot,
+        # not a constraint that both one-sided derivatives vanish.
+        source = level_trace_points(noisy=False)
+        start, end = source[0][0], source[-1][0]
+        span = (end - start).total_seconds()
+        times = [(at - start).total_seconds() / span for at, _ in source]
+        knot = 1 / 2
+        knot_at = start + (end - start) * knot
+        noise = trace(151)[1] - trace(150)[1]
+        for form, sign in (("recovery", 1), ("peak", -1)):
+            with self.subTest(form=form):
+                coefficients = [0, -2 * sign, sign, sign]
+                geometry = curves._form_turn(
+                    coefficients, knot, 1, form, 0, len(source),
+                )
+                self.assertEqual(geometry[:3], (True, knot, "knot"))
+                self.assertEqual(geometry[4:], (1, 0))
+                points = [
+                    (at, sign * (-2 * x + x * x + max(0, x - knot)))
+                    for (at, _), x in zip(source, times, strict=True)
+                ]
+                reference = curves.CurveFormReference(
+                    form=form, model="hinge1", start_at=start, turn_at=knot_at,
+                    turn_kind=geometry[2], knot_at=knot_at, hinge_order=1,
+                    parameter_count=len(coefficients) + 1, search_count=1,
+                    initial_newest_at=end, current_not_before=None,
+                )
+
+                def exact_known_fit(rows, values, supplied_noise, policy):
+                    # Isolate reference-basis construction from numerical fits.
+                    # The supplied originals are exactly this four-term form;
+                    # centering changes only its intercept at normalized x=0.
+                    self.assertEqual(supplied_noise, noise)
+                    self.assertEqual(tuple(tuple(row) for row in rows), tuple(
+                        (1.0, x, x * x, max(0, x - knot)) for x in times
+                    ))
+                    return [values[0], *coefficients[1:]], 0.0
+
+                with patch.object(curves, "_fit", side_effect=exact_known_fit) as fit:
+                    rechecked = curves._fixed_form_model(
+                        points, noise, curve_policy(), reference, records=(),
+                    )
+                fit.assert_called_once()
+                self.assertIsNotNone(rechecked)
+                model, fitted, _ = rechecked
+                self.assertTrue(model.compatible)
+                self.assertEqual(model.turn_kind, "knot")
+                self.assertEqual(model.turn_at, reference.turn_at)
+                self.assertEqual(model.knot_at, reference.knot_at)
+                self.assertEqual(model.coefficient_count, len(coefficients))
+                left_derivative = fitted[1] + 2 * fitted[2] * knot
+                self.assertEqual(left_derivative, -sign)
+                self.assertEqual(left_derivative + fitted[3], 0)
+
     def test_monotone_braking_and_isolated_excursion_do_not_supply_a_turn(self):
         source = level_trace_points()
         start, end = source[0][0], source[-1][0]

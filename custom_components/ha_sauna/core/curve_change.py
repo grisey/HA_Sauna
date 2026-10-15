@@ -1316,12 +1316,11 @@ def _form_turn(coefficients, knot, order, form, value_resolution, count):
     turn = minima[0]
     if min(turn, 1 - turn) <= count * _FLOAT_EPSILON:
         return None, None, None, "target_at_support_resolution", 1, len(maxima)
-    kind = "stationary"
-    if order == 1 and turn == knot:
-        left = first + 2 * quadratic * knot
-        right = right_first + 2 * right_quadratic * knot
-        if left < -resolution and right > resolution:
-            kind = "knot"
+    # At an M1 knot, one one-sided derivative may be zero while the adjacent
+    # observed branches still reverse direction. Bind the searched knot time;
+    # a stationary constraint would incorrectly force the *other* derivative
+    # to zero. The original flank and deletion checks remain mandatory.
+    kind = "knot" if order == 1 and turn == knot else "stationary"
     reason = "unique_target_with_opposite_background_turn" if maxima else "unique_interior_target_turn"
     return True, turn, kind, reason, 1, len(maxima)
 
