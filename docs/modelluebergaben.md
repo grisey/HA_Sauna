@@ -111,8 +111,9 @@ Die Formen in `core/input_handoff.py` beschreiben diesen Eingang. Sie treffen
 keine Auswahlentscheidung und führen keine Erkennung aus. Insbesondere gibt
 es keinen Konverter, der eine vorläufige Proxybehauptung ungeprüft zur
 bestätigten Anwesenheit erklärt. Der zuständige Eigentümer liefert das bereits
-ausgewertete fachliche Ergebnis. Bestehende Zulassungsregeln müssen vor der
-Steuerungsgrenze erhalten bleiben, ohne sie dort ein zweites Mal auszuführen.
+ausgewertete fachliche Ergebnis. Bestehende Quellen- und Belegprüfungen bleiben
+vor der Steuerungsgrenze erhalten; die Gangzulassung verbleibt beim bisherigen
+Owner. Keine dieser Regeln wird durch die Form ein zweites Mal ausgeführt.
 
 `InputTiming` trennt fachlichen Beginn (`effective_at`), tatsächlichen Eingang
 (`received_at`), erstmalige fachliche Nutzbarkeit (`first_usable_at`) und kausale
