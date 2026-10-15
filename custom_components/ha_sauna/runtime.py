@@ -736,7 +736,7 @@ class SaunaRuntime:
         if self.configuration.presence_source == "proxy" and report.source == "proxy":
             # Projection of an original event is not durable occupancy evidence.
             # In particular unknown/retraction never asserts absence.
-            self._consume_presence_report(report, qualified=False)
+            self._consume_presence_report(report, qualified=False, defer_evaluation=True)
         if session_id is None and self.session is not None:
             session_id = self.session.session_id
         event = ConsumerEvent(

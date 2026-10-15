@@ -21,6 +21,8 @@ class PresenceRuntimeIntegrationTests(unittest.IsolatedAsyncioTestCase):
             "original-person", "projection-only", Kind.PERSON_STRONG, now, now,
         ))
         history = tuple(runtime.controller._direct_presence_history)
+        controller_at = runtime.controller._last_at
+        decisions = tuple(runtime.controller.decisions)
         runtime._record_presence(report)
         occupancy = runtime.controller.direct_presence
         self.assertEqual((occupancy.occupancy, occupancy.available, occupancy.qualified_presence),
@@ -29,6 +31,8 @@ class PresenceRuntimeIntegrationTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(occupancy.timing.effective_at, report.effective_at)
         self.assertEqual(occupancy.timing.received_at, report.received_at)
         self.assertEqual(tuple(runtime.controller._direct_presence_history), history)
+        self.assertEqual(runtime.controller._last_at, controller_at)
+        self.assertEqual(tuple(runtime.controller.decisions), decisions)
         self.assertIsNone(runtime.session)
         runtime._record_presence(report)
         self.assertIs(runtime.controller.direct_presence, occupancy)
