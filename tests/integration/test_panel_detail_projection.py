@@ -216,7 +216,8 @@ class PanelDetailProjectionTests(unittest.IsolatedAsyncioTestCase):
                     self.assertEqual(
                         model["regulation_causes"],
                         ["gang_heat", "provisional_door_heat", "cooling"]
-                        if mode == "automatic" else [],
+                        if mode == "automatic"
+                        else [],
                     )
             async with client.get(
                 self.base + "/archive",

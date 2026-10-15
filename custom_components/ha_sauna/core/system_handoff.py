@@ -117,7 +117,7 @@ class MeasurementWindow(WireValue):
 
 @dataclass(frozen=True)
 class ArchiveRecord(WireValue):
-    """A read-side record, including any decoded JSON payload shape."""
+    """An API record retaining payload and optional header key presence."""
 
     id: int
     entry_id: str
@@ -125,13 +125,28 @@ class ArchiveRecord(WireValue):
     kind: str
     received_at: str
     payload: object
+    optional_headers: FrozenMap
 
     def __post_init__(self):
         object.__setattr__(self, "payload", freeze_data(self.payload))
+        headers = frozen_map(self.optional_headers)
+        if any(key not in ("display", "projection") for key in headers):
+            raise TypeError("Unknown archive record header")
+        object.__setattr__(self, "optional_headers", headers)
 
     @classmethod
     def from_result(cls, result: Mapping):
-        return cls(**result)
+        values = dict(result)
+        headers = {
+            key: values.pop(key) for key in ("display", "projection") if key in values
+        }
+        return cls(**values, optional_headers=frozen_map(headers))
+
+    def _wire_value(self):
+        values = super()._wire_value()
+        values.pop("optional_headers")
+        values.update(self.optional_headers)
+        return values
 
 
 @dataclass(frozen=True)

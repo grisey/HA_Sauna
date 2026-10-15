@@ -119,25 +119,26 @@ class PanelSnapshotTests(unittest.TestCase):
         preview, result = panel_result()
         snapshot = PanelSnapshot.from_result(result)
         projection = preview.c.phase_projection(preview.now)
-        model_snapshot = replace(
-            snapshot,
+        raw = dict(
             now=preview.now,
             session=preview.c.session,
             rule_inputs=preview.c.regulation_inputs,
             phase_projection=projection,
             decision=preview.c.last_decision,
         )
-        self.assertIs(model_snapshot.session, preview.c.session)
-        self.assertIs(model_snapshot.phase_projection, projection)
-        self.assertIs(model_snapshot.rule_inputs, preview.c.regulation_inputs)
-        self.assertIs(model_snapshot.decision, preview.c.last_decision)
+        model_snapshot = replace(snapshot, **raw)
+        self.assertIs(model_snapshot.session, raw["session"])
+        self.assertIs(model_snapshot.phase_projection, raw["phase_projection"])
+        self.assertIs(model_snapshot.rule_inputs, raw["rule_inputs"])
+        self.assertIs(model_snapshot.decision, raw["decision"])
         expected = snapshot.to_wire()
         # The supplied domain Session uses plain's scalar contract; Preview's
         # session map additionally carries projected door cycles and energy deltas.
-        expected["session"] = plain(preview.c.session)
+        expected["session"] = plain(raw["session"])
         actual = model_snapshot.to_wire()
         self.assertEqual(
-            actual["session"]["energy"], expected["session"]["energy"],
+            actual["session"]["energy"],
+            expected["session"]["energy"],
             "session.energy",
         )
         for field in fields(projection):

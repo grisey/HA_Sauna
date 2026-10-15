@@ -72,6 +72,39 @@ class EnvironmentSnapshotTests(unittest.TestCase):
 
 
 class ArchiveOutputTests(unittest.IsolatedAsyncioTestCase):
+    def test_record_optional_headers_preserve_presence_and_api_values(self):
+        base = {
+            "id": 1,
+            "entry_id": "entry",
+            "session_id": "s",
+            "kind": "source_state",
+            "received_at": T0.isoformat(),
+            "payload": {
+                "role": "heater_power",
+                "display": {"absolute_humidity": 12.3},
+            },
+        }
+        for headers in (
+            {},
+            {"display": {"power_w": 2400}},
+            {"display": {"power_w": None}},
+            {"display": None},
+            {"projection": "session_state"},
+            {"projection": None},
+            {"display": None, "projection": "session_state"},
+        ):
+            with self.subTest(headers=headers):
+                result = {**base, **headers}
+                record = ArchiveRecord.from_result(result)
+                self.assertEqual(record.to_wire(), result)
+                self.assertEqual(set(record.optional_headers), set(headers))
+        result = {**base, "display": {"power_w": 2400}}
+        record = ArchiveRecord.from_result(result)
+        result["display"]["power_w"] = 0
+        self.assertEqual(record.to_wire()["display"], {"power_w": 2400})
+        with self.assertRaises(TypeError):
+            ArchiveRecord.from_result({**base, "unknown_header": None})
+
     async def asyncSetUp(self):
         self.temp = tempfile.TemporaryDirectory()
         self.archive = Archive(Path(self.temp.name) / "handoff.sqlite", "entry")
