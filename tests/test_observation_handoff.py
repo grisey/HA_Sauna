@@ -21,6 +21,7 @@ from custom_components.ha_sauna.core.observation_handoff import (
     DeviceDiagnostics,
     DeviceObservation,
     HeaterServiceResult,
+    HeatingObservation,
     LightOutputSnapshot,
     LightQuantization,
     LightServiceResult,
@@ -37,6 +38,54 @@ class ObservationHandoffTests(unittest.TestCase):
         self.assertIs(result.after, value)
         self.assertEqual(result.context.session_id, "session")
         return result
+
+    def test_heating_observation_preserves_complete_supplied_feedback(self):
+        source = {
+            "source": "power", "heating": False, "power_w": 0,
+            "contactor": True, "estimated": False,
+        }
+        observed = HeatingObservation.from_result(source)
+        self.handoff(observed)
+        source["heating"] = True
+        self.assertIs(observed.heating, False)
+        self.assertIs(observed.estimated, False)
+        self.assertEqual(observed.power_w, 0)
+        unknown = HeatingObservation.from_result({
+            "source": "unknown", "heating": None, "power_w": None,
+            "contactor": None, "estimated": False,
+        })
+        self.handoff(unknown, observed)
+        self.assertIsNone(unknown.heating)
+        self.assertIsNone(unknown.contactor)
+        fallback = HeatingObservation.from_result({
+            "source": "contactor", "heating": False, "power_w": None,
+            "contactor": False, "estimated": True,
+        })
+        self.handoff(fallback, unknown)
+        self.assertIs(fallback.contactor, False)
+        self.assertTrue(fallback.estimated)
+
+    def test_heating_observation_rejects_placeholder_and_wrong_field_types(self):
+        complete = {
+            "source": "power", "heating": False, "power_w": 0,
+            "contactor": False, "estimated": False,
+        }
+        with self.assertRaises(ValueError):
+            HeatingObservation.from_result({
+                "source": "unknown", "heating": None, "power_w": None,
+            })
+        for name in complete:
+            incomplete = {key: value for key, value in complete.items() if key != name}
+            with self.subTest(missing=name), self.assertRaises(ValueError):
+                HeatingObservation.from_result(incomplete)
+        for change in (
+            {"source": None}, {"heating": 0}, {"power_w": False},
+            {"contactor": "off"}, {"estimated": None},
+        ):
+            with self.subTest(change=change), self.assertRaises((TypeError, ValueError)):
+                HeatingObservation.from_result({**complete, **change})
+        with self.assertRaises(ValueError):
+            HeatingObservation.from_result({**complete, "extra": True})
 
     def test_detector_output_keeps_full_diagnostic_and_actual_detections(self):
         detector = Detector(parameters(), T0)

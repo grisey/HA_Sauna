@@ -47,6 +47,32 @@ def state(value, brightness=None, *, unit=None):
 
 @unittest.skipUnless(HA_AVAILABLE, "Home Assistant ist lokal nicht installiert")
 class DeviceFeedbackTests(unittest.TestCase):
+    def test_heating_handoff_preserves_actual_adapter_source_evidence(self):
+        from custom_components.ha_sauna.core.model_handoff import (
+            HandoffContext,
+            ModelHandoff,
+        )
+        from custom_components.ha_sauna.core.observation_handoff import HeatingObservation
+
+        _runtime, adapter, _light = self.device()
+        adapter.ingest("heater", state("on"), T0, initial=True)
+        adapter.ingest("heater_feedback", state("off"), T0, initial=True)
+        actual = adapter.observe_heating(T0)
+        before = HeatingObservation.from_result(actual)
+        adapter.ingest("heater_feedback", state("unavailable"), T0, initial=True)
+        after = HeatingObservation.from_result(adapter.observe_heating(T0))
+        handoff = ModelHandoff(HandoffContext("entry", "feedback", T0), before, after)
+        actual.clear()
+        # The existing adapter selects the source; the form preserves its result.
+        self.assertEqual(handoff.before.source, "independent_feedback")
+        self.assertFalse(handoff.before.heating)
+        self.assertTrue(handoff.before.contactor)
+        self.assertFalse(handoff.before.estimated)
+        self.assertEqual(handoff.after.source, "contactor")
+        self.assertTrue(handoff.after.heating)
+        self.assertTrue(handoff.after.estimated)
+        self.assertIsNone(handoff.after.power_w)
+
     def test_readonly_light_observation_distinguishes_unknown_from_off(self):
         from custom_components.ha_sauna.api import manual_controls
 

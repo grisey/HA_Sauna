@@ -6,7 +6,7 @@ mappings retain their complete supplied content without an event catalogue.
 """
 
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, fields
 from datetime import datetime
 from math import isfinite
 
@@ -60,6 +60,33 @@ def _tuple_of(value, expected):
         _instance(item, expected)
         freeze_data(item)
     return result
+
+
+@dataclass(frozen=True)
+class HeatingObservation:
+    """Complete existing observe_heating() result, separate from service output.
+
+    No source is selected and no feedback is read here. The incomplete device
+    initialization placeholder is not an evaluated observation.
+    """
+
+    source: str
+    heating: bool | None
+    power_w: float | None
+    contactor: bool | None
+    estimated: bool
+
+    def __post_init__(self):
+        _text(self.source)
+        _number(self.power_w, optional=True)
+        require_immutable(self)
+
+    @classmethod
+    def from_result(cls, result: Mapping):
+        _instance(result, Mapping)
+        if set(result) != {definition.name for definition in fields(cls)}:
+            raise ValueError("A complete heating-observation result is required")
+        return cls(**result)
 
 
 @dataclass(frozen=True)
