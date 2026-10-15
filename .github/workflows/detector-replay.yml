@@ -7,6 +7,10 @@ on:
         description: 'Optional comma-separated recording IDs; only complete time groups'
         type: string
         default: ''
+      mode:
+        description: 'detector or original_windows'
+        type: string
+        default: detector
 
 permissions:
   contents: read
@@ -55,11 +59,12 @@ jobs:
           cat "$evidence/stdout.log"
           cat "$evidence/stderr.log" >&2
           exit "$result"
-      - name: Replay original measurements through the current detector
+      - name: Evaluate original measurements with the selected owner
         timeout-minutes: ${{ fromJSON(needs.configuration.outputs.settings).step_timeouts_minutes.detector_replay }}
         env:
           SAUNA_DETECTOR_EVIDENCE: ${{ runner.temp }}/ha-sauna-detector-replay
           SAUNA_DETECTOR_RECORDINGS: ${{ inputs.recordings }}
+          SAUNA_DETECTOR_MODE: ${{ inputs.mode }}
           PYTHONDONTWRITEBYTECODE: '1'
         run: |
           evidence="$SAUNA_DETECTOR_EVIDENCE/replay"
@@ -68,8 +73,39 @@ jobs:
           git rev-parse 'HEAD^{tree}' > "$evidence/tree.txt"
           git rev-parse HEAD:custom_components/ha_sauna > "$evidence/product-tree.txt"
           set +e
-          python -u tests/analysis/detector_replay.py --manifest tests/replay_measurement_manifest.json --recordings "$SAUNA_DETECTOR_RECORDINGS" --output "$evidence/output" > "$evidence/stdout.log" 2> "$evidence/stderr.log"
-          result=$?
+          case "$SAUNA_DETECTOR_MODE" in
+            detector)
+              python -u tests/analysis/detector_replay.py --manifest tests/replay_measurement_manifest.json --recordings "$SAUNA_DETECTOR_RECORDINGS" --output "$evidence/output" > "$evidence/stdout.log" 2> "$evidence/stderr.log"
+              result=$?
+              ;;
+            original_windows)
+              if [ -n "$SAUNA_DETECTOR_RECORDINGS" ]; then
+                echo 'The original-window audit evaluates both complete manifests; leave recordings empty' > "$evidence/stderr.log"
+                result=2
+              else
+                result=0
+                for manifest in tests/replay_manifest.json tests/replay_measurement_manifest.json; do
+                  case_name=$(basename "$manifest" .json)
+                  case_evidence="$evidence/output/$case_name"
+                  mkdir -p "$case_evidence"
+                  python -u tests/analysis/original_window_audit.py --manifest "$manifest" --output "$case_evidence" > "$case_evidence/stdout.log" 2> "$case_evidence/stderr.log"
+                  case_result=$?
+                  echo "$case_result" > "$case_evidence/exit-code.txt"
+                  echo completed > "$case_evidence/process-completed.txt"
+                  cat "$case_evidence/stdout.log" >> "$evidence/stdout.log"
+                  cat "$case_evidence/stderr.log" >> "$evidence/stderr.log"
+                  if [ "$case_result" -ne 0 ]; then
+                    result=$case_result
+                    break
+                  fi
+                done
+              fi
+              ;;
+            *)
+              echo 'Unknown detector analysis mode' > "$evidence/stderr.log"
+              result=2
+              ;;
+          esac
           echo "$result" > "$evidence/exit-code.txt"
           echo completed > "$evidence/process-completed.txt"
           cat "$evidence/stdout.log"

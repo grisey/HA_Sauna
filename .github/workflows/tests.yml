@@ -13,6 +13,11 @@ on:
         description: 'Optional comma-separated measurement recording IDs; only complete time groups'
         type: string
         default: ''
+      detector_mode:
+        description: 'Full detector replay or faster math audit of both complete replay manifests (leave recordings empty)'
+        type: choice
+        options: [detector, original_windows]
+        default: detector
       checks:
         description: 'Comma-separated checks: core,ha,browser,sessions; empty runs all'
         type: string
@@ -93,6 +98,7 @@ jobs:
     uses: ./.github/workflows/detector-replay.yml
     with:
       recordings: ${{ inputs.detector_recordings }}
+      mode: ${{ inputs.detector_mode || 'detector' }}
   configuration:
     if: ${{ !inputs.detector_replay }}
     # Bootstrap on the GitHub-hosted Linux provider; all run settings come from the catalogue.
