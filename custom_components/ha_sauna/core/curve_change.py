@@ -192,6 +192,9 @@ class CurveFormModel:
     parameter_count: int
     search_count: int
     search_cost: float
+    geometry_reason: str = ""
+    target_turn_count: int = 0
+    opposite_turn_count: int = 0
 
 
 @dataclass(frozen=True)
@@ -241,6 +244,9 @@ class CurveFormFeatures:
     influence_score_resolution: float | None = None
     observed_form: str | None = None
     reference_model: CurveFormModel | None = None
+    replacement_parameter_count: int = 0
+    hinge_fits_attempted: int = 0
+    hinge_fits_failed: int = 0
 
 
 def _policy_valid(policy):
@@ -1227,72 +1233,104 @@ def curve_change(
 def _form_turn(coefficients, knot, order, form, value_resolution, count):
     """Classify fitted geometry, independently of its parameterization.
 
-    Reflected peak geometry uses the same minimum test as a recovery. A hinge
-    consists of two quadratics: their derivative roots and their shared knot
-    partition the domain into intervals of known direction. Exactly one
-    minimum and no maximum is the compatible class after reflection.
+    A reflected peak is a minimum. Derivative roots and the hinge knot divide
+    the *whole fitted support* into directed intervals. A unique target turn
+    can coexist with an opposite background turn; global endpoint directions
+    do not define the target. Multiple target turns are ambiguous. The chosen
+    geometry still needs independent, ordered original flanks and deletion
+    support; a mathematical maximum alone is not positive form evidence.
     """
     orientation = -1 if form == "peak" else 1
     coefficients = [orientation * value for value in coefficients]
-    if order == 0:
-        if len(coefficients) < 2:
-            return False, None, None
-        turn = _smooth_valley(coefficients, value_resolution, count)
-        if turn is None or turn is False:
-            return turn, None, None
-        return True, turn, "stationary"
+    if len(coefficients) < 3:
+        return False, None, None, "no_interior_target_turn", 0, 0
     scale = max(abs(value) for value in coefficients[1:])
     if scale == 0:
-        return False, None, None
-    _, first, quadratic, change = [value / scale for value in coefficients]
+        return False, None, None, "no_interior_target_turn", 0, 0
+    normalized = [value / scale for value in coefficients]
     resolution = max(value_resolution / scale,
-                     count * _FLOAT_EPSILON * fsum(map(abs, (
-                         first, 2 * quadratic, 2 * change,
-                     ))))
-    right_first = first + change if order == 1 else first - 2 * change * knot
-    right_quadratic = quadratic if order == 1 else quadratic + change
-    last = fsum((right_first, 2 * right_quadratic))
-    if min(abs(first), abs(last)) <= resolution:
-        return None, None, None
-    if first >= 0 or last <= 0:
-        return False, None, None
-    nodes = {0.0, knot, 1.0}
-    for intercept, curvature, lo, hi in (
-        (first, quadratic, 0.0, knot),
-        (right_first, right_quadratic, knot, 1.0),
-    ):
-        if curvature:
-            root = -intercept / (2 * curvature)
-            if isfinite(root) and lo < root < hi:
-                nodes.add(root)
+                     count * _FLOAT_EPSILON * fsum(
+                         power * abs(value) for power, value in enumerate(normalized)
+                     ))
+    nodes = {0.0, 1.0}
+    if order:
+        _, first, quadratic, change = normalized
+        right_first = first + change if order == 1 else first - 2 * change * knot
+        right_quadratic = quadratic if order == 1 else quadratic + change
+        nodes.add(knot)
+        for intercept, curvature, lo, hi in (
+            (first, quadratic, 0.0, knot),
+            (right_first, right_quadratic, knot, 1.0),
+        ):
+            if curvature:
+                root = -intercept / (2 * curvature)
+                if isfinite(root) and lo < root < hi:
+                    nodes.add(root)
+
+        def derivative(at):
+            return (first + 2 * quadratic * at if at < knot
+                    else right_first + 2 * right_quadratic * at)
+    else:
+        first = normalized[1]
+        linear = 2 * normalized[2]
+        quadratic = 3 * normalized[3] if len(normalized) == 4 else 0.0
+        roots = []
+        if quadratic == 0:
+            if linear:
+                roots = [-first / linear]
+        else:
+            discriminant = linear * linear - 4 * quadratic * first
+            discriminant_resolution = count * ulp(max(
+                linear * linear, abs(4 * quadratic * first),
+            ))
+            if abs(discriminant) <= discriminant_resolution:
+                return None, None, None, "stationary_discriminant_unresolved", 0, 0
+            if discriminant > discriminant_resolution:
+                root = sqrt(discriminant)
+                numerator = -.5 * (linear + (root if linear >= 0 else -root))
+                if numerator == 0:
+                    return None, None, None, "stationary_root_unresolved", 0, 0
+                roots = [numerator / quadratic, first / numerator]
+        nodes.update(root for root in roots if isfinite(root) and 0 < root < 1)
+
+        def derivative(at):
+            return fsum((first, linear * at, quadratic * at * at))
     nodes = sorted(nodes)
     directions = []
     for left, right in zip(nodes, nodes[1:]):
-        at = (left + right) / 2
-        slope = (first + 2 * quadratic * at if at < knot
-                 else right_first + 2 * right_quadratic * at)
-        if abs(slope) <= resolution:
-            return None, None, None
-        directions.append(1 if slope > 0 else -1)
+        slope = derivative((left + right) / 2)
+        directions.append(0 if abs(slope) <= resolution else 1 if slope > 0 else -1)
     minima, maxima = [], []
     for index, (before, after) in enumerate(zip(directions, directions[1:]), 1):
         if before < 0 < after:
             minima.append(nodes[index])
         elif before > 0 > after:
             maxima.append(nodes[index])
-    if len(minima) != 1 or maxima:
-        return False, None, None
+    if len(minima) > 1:
+        return None, None, None, "multiple_target_turns", len(minima), len(maxima)
+    if not minima:
+        nonzero = [direction for direction in directions if direction]
+        if 0 in directions and any(a < 0 < b for a, b in zip(nonzero, nonzero[1:])):
+            return None, None, None, "flat_target_interval_unresolved", 0, len(maxima)
+        return False, None, None, "no_interior_target_turn", 0, len(maxima)
     turn = minima[0]
     if min(turn, 1 - turn) <= count * _FLOAT_EPSILON:
-        return None, None, None
-    return True, turn, "knot" if order == 1 and turn == knot else "stationary"
+        return None, None, None, "target_at_support_resolution", 1, len(maxima)
+    kind = "stationary"
+    if order == 1 and turn == knot:
+        left = first + 2 * quadratic * knot
+        right = right_first + 2 * right_quadratic * knot
+        if left < -resolution and right > resolution:
+            kind = "knot"
+    reason = "unique_target_with_opposite_background_turn" if maxima else "unique_interior_target_turn"
+    return True, turn, kind, reason, 1, len(maxima)
 
 
 def _form_record(name, fitted, times, values, noise, start, span, form,
                  value_resolution, *, knot=None, order=0, parameter_count=None,
                  coefficient_count=None, search_count=1):
     coefficients, loss = fitted
-    compatible, turn, turn_kind = _form_turn(
+    compatible, turn, turn_kind, geometry_reason, target_count, opposite_count = _form_turn(
         coefficients, knot, order, form, value_resolution, len(values),
     )
     rows = [[1.0, at, at * at, at**3][:len(coefficients)] for at in times]
@@ -1309,6 +1347,8 @@ def _form_record(name, fitted, times, values, noise, start, span, form,
         knot_at=start + timedelta(seconds=knot * span) if knot is not None else None,
         hinge_order=order, coefficient_count=count, parameter_count=parameters,
         search_count=search_count, search_cost=search_cost,
+        geometry_reason=geometry_reason, target_turn_count=target_count,
+        opposite_turn_count=opposite_count,
     )
     return model, coefficients, _residuals(rows, values, coefficients)
 
@@ -1367,7 +1407,9 @@ def _form_models(selected, noise, policy, form, *, knot_times=None,
         if result is not None:
             changes.extend((order, index, coefficients, score)
                            for score, index, coefficients in result[3])
-    search_count = len(changes) if retained_search_count is None else retained_search_count
+    # Every attempted knot/order was searched, including a failed/rank-deficient
+    # fit. Such failures must not discount the surviving hypotheses' search.
+    search_count = 2 * len(knots) if retained_search_count is None else retained_search_count
     for order, index, coefficients, score in changes:
         knot = next(value for candidate, value in knots if candidate == index)
         loss = score - 5 * log(len(values))
@@ -1505,8 +1547,9 @@ def curve_form(
     L/P1/P2/P3/M1/M2 share actual bounded originals and one cubic-residual MAD.
     Each concrete fit belongs to the compatible or counterform class by its
     geometry; a curved or hinged peak is never automatically a counterform.
-    Both hinge orders share one declared search over their successful knot
-    fits. score_gain is counterform score minus compatible-form score.
+    Both hinge orders share one declared search over all attempted knot fits,
+    including unresolved fits. score_gain is counterform score minus
+    compatible-form score.
 
     A reference freezes the initial context, model branch, turn, hinge knot,
     current-flank floor and geometry-search history. A smooth stationary turn
@@ -1588,6 +1631,7 @@ def curve_form(
         reference_gain = reference_resolution = None
         reference_evidence = "unresolved"
         replacement_gain = replacement_cost = None
+        replacement_parameters = 0
         displaced = False
         if fixed is not None and fixed[0].compatible is False:
             reference_evidence = "rejects"
@@ -1600,10 +1644,18 @@ def curve_form(
                 reference_evidence = "supports" if reference_gain > 0 else "rejects"
         if supplied_reference and fixed is not None and positive is not None:
             best = positive[0]
-            moved = int(best.turn_at != reference.turn_at) + int(best.knot_at != reference.knot_at)
-            if moved:
+            # A first-order kink maximum has one searched time: turn and knot
+            # are two names for it. Count distinct new geometry coordinates,
+            # rather than charging this same estimated time twice.
+            moved_times = set()
+            if best.turn_at != reference.turn_at:
+                moved_times.add(best.turn_at)
+            if best.knot_at is not None and best.knot_at != reference.knot_at:
+                moved_times.add(best.knot_at)
+            replacement_parameters = len(moved_times)
+            if replacement_parameters:
                 replacement_gain = fixed[0].score - best.score
-                replacement_cost = moved * log(len(selected)) + best.search_cost
+                replacement_cost = replacement_parameters * log(len(selected)) + best.search_cost
                 displaced = replacement_gain > replacement_cost + (resolution or 0.0)
                 if displaced:
                     reference_evidence = "rejects"
@@ -1695,6 +1747,9 @@ def curve_form(
             score_resolution=resolution, reference_score_resolution=reference_resolution,
             influence_score_resolution=influence_resolution, observed_form=observed_form,
             reference_model=fixed[0] if fixed is not None else None,
+            replacement_parameter_count=replacement_parameters,
+            hinge_fits_attempted=search_count,
+            hinge_fits_failed=search_count - sum(record[0].hinge_order != 0 for record in records),
         )
     except (
         AttributeError, IndexError, KeyError, OverflowError, TypeError, ValueError,

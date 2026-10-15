@@ -1,5 +1,6 @@
 """Independent geometry and audit contracts for the common curve-form family."""
 
+from dataclasses import replace
 from datetime import timedelta
 import gzip
 import json
@@ -237,6 +238,112 @@ class CurveFormTests(unittest.TestCase):
             points, policy=curve_policy(), form="recovery", reference=reference,
             current_not_before=reference.turn_at,
         ))
+
+    def test_structural_m1_replacement_cost_counts_its_shared_time_once(self):
+        # Structural cost regression, not a tuned score-boundary example:
+        # the peak of this V is the hinge knot itself. Moving that one time
+        # changes both diagnostic fields but only one independent parameter.
+        source = level_trace_points()
+        center = trace(0)[0]
+        old_peak = [(at, 2 * center - value)
+                    for at, value in turning_shapes()["hinge1"]]
+        policy = replace(curve_policy(), max_candidates=len(source))
+        first = curve_form(old_peak, policy=policy, form="peak")
+        self.assert_supported(first, 1, -1)
+        reference = first.reference
+        self.assertEqual(reference.model, "hinge1")
+        self.assertEqual(reference.turn_kind, "knot")
+        self.assertEqual(reference.turn_at, reference.knot_at)
+
+        shifted_turn = source[len(source) // 2 + 1][0]
+        slope = trace(70)[0] - trace(71)[0]
+        shifted_peak = [
+            (at, center - slope * abs((at - shifted_turn).total_seconds())
+             - (value - trace(100)[1]))
+            for at, value in source
+        ]
+        result = curve_form(
+            shifted_peak, policy=policy, form="peak", reference=reference,
+        )
+        self.assertIsNotNone(result)
+        self.assertEqual(result.form_evidence, "supports", result)
+        self.assertEqual(result.positive_model, "hinge1", result)
+        best = next(item for item in result.candidate_models if (
+            item.model == result.positive_model and item.score == result.positive_score
+        ))
+        self.assertEqual(best.turn_kind, "knot", best)
+        self.assertEqual(best.turn_at, best.knot_at)
+        self.assertNotEqual(best.turn_at, reference.turn_at)
+        self.assertEqual(result.reference, reference)
+        self.assertEqual(result.replacement_parameter_count, 1)
+        self.assert_score_close(
+            result.replacement_cost, log(result.count) + best.search_cost,
+        )
+        self.assertGreater(result.replacement_gain, 0, result)
+        self.assert_score_close(
+            result.replacement_gain, result.reference_score - best.score,
+        )
+
+    def test_one_failed_hinge_fit_does_not_discount_the_attempted_search(self):
+        points = recovery_trace_points()
+        fit = curves._fit
+        baseline_attempts, failed_attempts = [], []
+        injected = []
+
+        def hinge_design(rows, values):
+            # Both hinge orders have a zero prefix in their fourth column.
+            # The cubic's fourth column is already nonzero at its second time.
+            return (len(values) == len(points) and len(rows[0]) == 4
+                    and rows[1][3] == 0)
+
+        def observed_fit(rows, values, noise, policy):
+            if hinge_design(rows, values):
+                baseline_attempts.append(tuple(row[3] for row in rows))
+            return fit(rows, values, noise, policy)
+
+        with patch.object(curves, "_fit", side_effect=observed_fit):
+            baseline = curve_form(points, policy=curve_policy(), form="recovery")
+        self.assert_supported(baseline, -1, 1)
+        self.assertTrue(baseline_attempts)
+
+        def fail_one_fit(rows, values, noise, policy):
+            if hinge_design(rows, values):
+                design = tuple(row[3] for row in rows)
+                failed_attempts.append(design)
+                if design == baseline_attempts[0] and not injected:
+                    injected.append(design)
+                    return None
+            return fit(rows, values, noise, policy)
+
+        with patch.object(curves, "_fit", side_effect=fail_one_fit):
+            result = curve_form(points, policy=curve_policy(), form="recovery")
+        self.assertIsNotNone(result)
+        self.assertEqual(len(injected), 1)
+        self.assertEqual(failed_attempts, baseline_attempts)
+        baseline_hinges = {(item.model, item.knot_at): item
+                           for item in baseline.candidate_models if item.hinge_order}
+        remaining = [item for item in result.candidate_models if item.hinge_order]
+        # This full-rank fixture loses exactly the injected candidate, while
+        # every attempted M1/M2 design still belongs to the declared search.
+        self.assertEqual(len(baseline_hinges), len(baseline_attempts))
+        self.assertEqual(
+            len(baseline_attempts), 2 * len({knot for _, knot in baseline_hinges}),
+        )
+        self.assertEqual(len(remaining), len(baseline_hinges) - 1)
+        self.assertEqual(baseline.hinge_fits_attempted, len(baseline_attempts))
+        self.assertEqual(baseline.hinge_fits_failed, 0)
+        self.assertEqual(result.hinge_fits_attempted, len(failed_attempts))
+        self.assertEqual(result.hinge_fits_failed, 1)
+        for item in remaining:
+            with self.subTest(model=item.model, knot=item.knot_at):
+                previous = baseline_hinges[item.model, item.knot_at]
+                self.assertEqual(item.search_count, len(failed_attempts))
+                self.assertEqual(item.search_count, previous.search_count)
+                self.assert_score_close(
+                    item.search_cost, 2 * log(len(failed_attempts)),
+                )
+                self.assertEqual(item.search_cost, previous.search_cost)
+                self.assert_score_close(item.score, previous.score)
 
     def test_monotone_braking_and_isolated_excursion_do_not_supply_a_turn(self):
         source = level_trace_points()
