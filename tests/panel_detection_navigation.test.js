@@ -5,7 +5,6 @@ const assert = require("node:assert/strict");
 const {
   catalog: fixtureCatalog,
   parameterValues: fixtureValues,
-  parameterDefinition: fixtureDefinition,
 } = require("./catalog_fixture.cjs");
 const fs = require("node:fs");
 const vm = require("node:vm");
@@ -220,6 +219,9 @@ const parameters = fixtureValues();
 // them as percentages and retain the archived configured threshold instead of
 // a changed live value. Earlier traces without these metrics render no false zero line.
 {
+  // Synthetic historical settings, intentionally outside the editable catalogue.
+  const archivedHumidityLossPercent = 30,
+    changedHumidityLossPercent = 80;
   const plots = {};
   const traces = [
     {
@@ -260,8 +262,7 @@ const parameters = fixtureValues();
     configuration: {
       parameters: {
         ...parameters,
-        vent_absolute_humidity_loss_percent:
-          parameters.vent_absolute_humidity_loss_percent,
+        vent_absolute_humidity_loss_percent: archivedHumidityLossPercent,
       },
     },
   };
@@ -275,9 +276,7 @@ const parameters = fixtureValues();
       configuration: {
         parameters: {
           ...parameters,
-          vent_absolute_humidity_loss_percent: fixtureDefinition(
-            "vent_absolute_humidity_loss_percent",
-          ).maximum,
+          vent_absolute_humidity_loss_percent: changedHumidityLossPercent,
         },
       },
     },
@@ -313,7 +312,7 @@ const parameters = fixtureValues();
       value("diagnostic_plot_height_px") - value("diagnostic_axis_bottom_padding_px"),
     low = -value("diagnostic_scale_padding"),
     high =
-      Math.max(35, parameters.vent_absolute_humidity_loss_percent) +
+      Math.max(35, archivedHumidityLossPercent) +
       value("diagnostic_scale_padding"),
     expectedPoint = (second, percentage) => [
       Number(
@@ -343,12 +342,12 @@ const parameters = fixtureValues();
   ]);
   assert.ok(
     plots.innerHTML.includes(
-      `Schwelle oben: ${parameters.vent_absolute_humidity_loss_percent}`,
+      `Schwelle oben: ${archivedHumidityLossPercent}`,
     ),
   );
   assert.ok(
     !plots.innerHTML.includes(
-      `Schwelle oben: ${fixtureDefinition("vent_absolute_humidity_loss_percent").maximum}`,
+      `Schwelle oben: ${changedHumidityLossPercent}`,
     ),
   );
   const missingGridPoint = 20 + parameters.grid_seconds * 2;
@@ -365,6 +364,20 @@ const parameters = fixtureValues();
     ],
     "a missing detector grid point starts a separate segment",
   );
+
+  // An archive without the legacy setting cannot borrow a live threshold.
+  p.shown.session = {
+    ...archived,
+    configuration: { parameters: { ...parameters } },
+  };
+  p.drawDiagnostics();
+  const humidityChart = plots.innerHTML
+    .match(/<svg\b[\s\S]*?<\/svg>/g)
+    .find((chart) =>
+      chart.includes("detector_ventilation_absolute_humidity_loss_upper"),
+    );
+  assert.ok(humidityChart);
+  assert.doesNotMatch(humidityChart, /Schwelle|NaN/);
 }
 
 // Ventilation uses its serialized event kind as signal and the effective
