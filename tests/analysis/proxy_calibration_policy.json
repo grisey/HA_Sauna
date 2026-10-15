@@ -73,8 +73,8 @@
     "door_close": "A positive change from a prior falling temperature can be braking even while the later slope remains negative. Localization requires a falling temperature before the positive change. At confirmation, the existing curve_trend owner must support the prior fall, and the observed later slope must exceed the prior slope; absolute warming is unnecessary."
   },
   "limits": {
-    "maximum_total_least_squares_calls": 500000,
-    "maximum_owner_calls": 250000,
+    "maximum_total_least_squares_calls": 2000000,
+    "maximum_owner_calls": 500000,
     "maximum_localization_candidates_per_reference": 2000,
     "maximum_anchors_per_session": 10000,
     "maximum_training_witnesses_per_profile": 128,

@@ -251,7 +251,11 @@ class Work:
         self.last_progress = self.started
         self.counts = Counter()
         self.cache = OrderedDict()
+        self.baseline_cache = OrderedDict()
+        self.trend_cache = OrderedDict()
         original = module._least_squares
+        original_baseline = module._calibration_baseline
+        original_trend = module.curve_trend
 
         def cached(rows, values, weights):
             self.check()
@@ -271,6 +275,44 @@ class Work:
             return None if result is None else list(result)
 
         module._least_squares = cached
+
+        def cached_baseline(samples, origin, floor, policy):
+            self.check()
+            self.counts["calibration_baseline_calls"] += 1
+            # Full immutable original values/times, origin, numerical floor and
+            # every CurvePolicy field define this pure calculation. No source
+            # identity, candidate state or result from another window is used.
+            key = (tuple(tuple(sample) for sample in samples), origin, floor, policy)
+            if key in self.baseline_cache:
+                self.counts["calibration_baseline_cache_hits"] += 1
+                self.baseline_cache.move_to_end(key)
+                return self.baseline_cache[key]
+            self.counts["calibration_baseline_evaluations"] += 1
+            result = original_baseline(samples, origin, floor, policy)
+            self.baseline_cache[key] = result
+            if len(self.baseline_cache) > self.policy["limits"]["maximum_cache_entries"]:
+                self.baseline_cache.popitem(last=False)
+            # Both the successful tuple and None are immutable exact results.
+            return result
+
+        def cached_trend(samples, *, policy):
+            self.check()
+            self.counts["curve_trend_calls"] += 1
+            key = (tuple(tuple(sample) for sample in samples), policy)
+            if key in self.trend_cache:
+                self.counts["curve_trend_cache_hits"] += 1
+                self.trend_cache.move_to_end(key)
+                return self.trend_cache[key]
+            self.counts["curve_trend_evaluations"] += 1
+            result = original_trend(samples, policy=policy)
+            self.trend_cache[key] = result
+            if len(self.trend_cache) > self.policy["limits"]["maximum_cache_entries"]:
+                self.trend_cache.popitem(last=False)
+            # CurveTrendFeatures is frozen; None remains unresolved on reuse.
+            return result
+
+        module._calibration_baseline = cached_baseline
+        module.curve_trend = cached_trend
 
     def check(self):
         if time.monotonic() - self.started > self.policy["limits"]["maximum_runtime_s"]:
