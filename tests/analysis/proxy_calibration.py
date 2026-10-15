@@ -608,10 +608,14 @@ def infusion_shape_geometry(profile, work):
             "meaning": "learned relative-shape geometry; an observed peak is still required"}
 
 
-def continuation_assessment(profile, indices, onset, work, policy, *, earliest):
+def continuation_assessment(profile, indices, onset, work, policy, *, earliest,
+                            decision_at_s=None):
     """Bind once; only genuinely later original observations can confirm."""
     duration = profile.duration_seconds
     binding_until = onset + duration * policy["method_search"]["binding_fraction"]
+    if decision_at_s is not None and (
+            not finite(decision_at_s) or not binding_until < decision_at_s <= onset + duration):
+        raise ValueError("Explicit decision must follow binding within the unchanged profile horizon")
     before, before_q = channel_windows(indices, onset - policy["sampling"]["before_window_s"],
                                         onset, policy, before=True)
     prefix, prefix_q = channel_windows(indices, onset, binding_until, policy)
@@ -634,7 +638,9 @@ def continuation_assessment(profile, indices, onset, work, policy, *, earliest):
     end = onset + duration
     first = min(end, binding_until + policy["sampling"]["minimum_confirmation_delay_s"])
     ends = [end]
-    if earliest:
+    if decision_at_s is not None:
+        ends = [decision_at_s]
+    elif earliest:
         step = policy["sampling"]["confirmation_step_s"]
         ends = [first + index * step for index in range(int((end - first) / step) + 1)]
         if not ends or ends[-1] < end:

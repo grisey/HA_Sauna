@@ -268,3 +268,13 @@ Das Artefakt `proxy-calibration` enthält `output/profile.json`,
 Prozessabschluss liegen daneben. Die Auswertung prüft mathematische Kernelprofile
 und Hypothesen; sie ist noch kein produktiver Controller-Replay mit Regelung,
 Aktorausgaben und Archivierung.
+
+Mit zusätzlichem `proxy_calibration_baseline_run` verwendet derselbe Auftrag das
+Artefakt eines abgeschlossenen Kalibrationslaufs für begrenzte Ursachenvergleiche.
+[`analysis/proxy_calibration_diagnosis.py`](analysis/proxy_calibration_diagnosis.py)
+prüft zunächst die Reproduktion der Ausgangsergebnisse. Danach werden einzeln
+festgelegte Einflussgrößen verändert. Das Entfernen einer Prüfschranke ist dabei
+ein Diagnoseeingriff und keine Freigabe eines neuen Erkennungsverfahrens.
+Produktiver Detector, Regelung und Aktorausgaben sind nicht Bestandteil dieses
+Vergleichs. Eingangsprüfsummen, Varianten und Prozessabschluss werden im
+Artefakt `proxy-calibration` mitgeführt.
