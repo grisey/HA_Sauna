@@ -824,9 +824,15 @@ class Detector:
             component = self._original_infusion_candidate
             if component is not None and component["context"] != context:
                 self._original_infusion_candidate = component = None
-            if component is not None and (
-                prefix.received_at - min(component["onsets"].values())
-            ).total_seconds() > self.p["curve_window_seconds"]:
+            # Der Kandidatenablauf begrenzt unbestätigte Belege. Ein bereits
+            # wasserqualifizierter Folgeanstieg der bestätigten Episode bleibt
+            # bis zu seinem Fall geführt; ein optional früherer Onset darf
+            # diesen laufenden Ownerbestand nicht vorzeitig verwerfen.
+            if (component is not None
+                    and (not component["qualified"] or episode is None
+                         or episode["phase"] == "pending") and (
+                        prefix.received_at - min(component["onsets"].values())
+                    ).total_seconds() > self.p["curve_window_seconds"]):
                 if (episode is not None and episode["phase"] == "pending"
                         and episode.get("original_component") is component):
                     self._finish_infusion_context("pending_original_expired")
