@@ -90,17 +90,23 @@ bleiben ein vorhandener ursprünglicher Empfang und seine Frist auch bei einem
 inzwischen unbekannten Messwert erhalten.
 
 `first_usable_at` wird nur bei einem bereits vorhandenen eigenständigen
-vorgelagerten Ownerdatum gesetzt. Die angeschlossenen Producer liefern dafür
-`None`; der Controllerannahmezeitpunkt wird nicht als frühere Nutzbarkeit
-vorgegeben. Bei UI-Befehlen bleibt der tatsächliche Eintritt vor dem Warten auf
-den Runtime-Lock erhalten. Timerabgeleitete Handlungen ohne Empfangsbeleg
+vorgelagerten Ownerdatum gesetzt. Bei erneuter Auswahl einer dauerhaften
+Präsenzmeldung liefert die Runtime deren tatsächliche erste Nutzbarkeit im
+neuen Annahmeintervall; ursprüngliche Fach- und Empfangszeit bleiben erhalten.
+Andere angeschlossene Producer liefern ohne solchen Beleg `None`. Der
+Controllerannahmezeitpunkt wird nicht als frühere Nutzbarkeit vorgegeben. Bei
+UI-Befehlen bleibt der tatsächliche Eintritt vor dem Warten auf den Runtime-Lock
+erhalten. Timerabgeleitete Handlungen ohne Empfangsbeleg
 behalten unbekannte Herkunftszeiten.
 
 Auswertung, Heiz- und Aktorwirkung folgen der bestehenden kausalen
 Buchungsgrenze. Ein später bestätigter früherer Beginn stellt die Controlleruhr
 nicht zurück. Originalereignisse bewahren zusätzlich ihre Fach-, Erkennungs-
-und Buchungszeiten. Kandidatenzeiten und mathematische Belegzeiten bleiben in
-der Diagnose; eine Beobachtungszeit ersetzt keinen dieser Bezüge.
+und Buchungszeiten. `Event.trace_at` bewahrt das originale Diagnose- und
+Bestätigungsraster; die reale Erkennungszeit bleibt `detected_at`.
+`confirmation_at` bleibt daraus mit Rückfall auf `effective_at` abgeleitet und
+erzeugt keine `first_usable_at`-Angabe. Kandidatenzeiten und mathematische
+Belegzeiten bleiben in der Diagnose; eine Beobachtungszeit ersetzt keinen dieser Bezüge.
 
 ### Anwesenheit und ursprüngliche Ereignisse
 
@@ -121,6 +127,11 @@ und Archiv; der Controller hält den normalisierten Eingang. Proxyreports bleibe
 unqualifiziert und bewahren Originalidentität, Zeiten und echte Verfügbarkeit.
 Sie erzeugen weder dauerhafte Belegungs- oder Abwesenheitshistorie noch eine
 erneute Ereigniswirkung. Unbekannt bedeutet keine beobachtete Abwesenheit.
+
+Die Runtime führt die bestehende `PresenceSourceSelection` vor der Annahme.
+Ein Auswahlwechsel allein erzeugt weder Gangende noch Kühlwirkung oder
+Türwärmeinvalidierung. Neu angenommene Zustandsbelege müssen zeitlich nutzbar
+sein; bereits abgeschlossene Eintrittsfolgen werden nicht rückwirkend bestätigt.
 
 Nach der Annahme entscheiden Qualität, Verfügbarkeit, fachliche Zeiten und
 der vorhandene Tür-, Gang-, Temperatur- und Kühlbestand. Türfolge,

@@ -1,8 +1,9 @@
 # Beginn, Bestätigung und Ende eines Saunagangs
 
-Die wirksame Präsenzquelle bestimmt, wie ein Saunagang erkannt wird: mit einem
-direkten Präsenzsensor oder aus [Temperatur und Feuchte](erkennung.md)
-(Proxyverfahren).
+Präsenzbelege stammen von einem direkten Präsenzsensor oder aus
+[Temperatur und Feuchte](erkennung.md) (Proxyverfahren). Nach ihrer Annahme
+entscheiden Belegqualität, Verfügbarkeit, fachliche Zeiten sowie die vorhandene
+Türfolge und der Gangbestand über Beginn, Bestätigung und Ende.
 
 Die Erkennungsregeln gelten auch während der manuellen Aufzeichnung.
 Heizanforderungen, Ofenkühlung und Temperaturstufen wirken nur in Automatik.
@@ -20,12 +21,10 @@ zwischen `on` und `off` unterbricht die Verfügbarkeit nicht. Ist das Proxyverfa
 gewählt, bleibt es wirksam.
 
 Ein laufender Gang behält beim Quellenwechsel seine Kennung, seinen Beginn,
-seinen Bestätigungsstand und seine Aufgüsse. Eine laufende Ofenkühlung bleibt
-erhalten. Liegen bereits eine passende Austrittsöffnung und bestätigtes
-Durchlüften vor, kann die Proxyübernahme den Gang zum tatsächlichen
-Quellenwechsel beenden. Die Rückkehr zum Sensor erzeugt allein keinen neuen Gang
-und verwendet keinen zuvor abgeschlossenen Eintritt erneut.
-Im Verlauf gilt für jeden Zeitabschnitt die damals wirksame Präsenzquelle.
+seinen Bestätigungsstand und seine Aufgüsse. Eine laufende Ofenkühlung und eine
+bestehende Türwärmeanforderung bleiben erhalten. Der Auswahlwechsel selbst beendet oder bestätigt keinen Gang und
+verwendet keinen zuvor abgeschlossenen Eintritt erneut. Maßgeblich bleiben die
+tatsächlich angenommenen Belege und ihre erste fachliche Nutzbarkeit.
 
 ## Eintritt, Aufenthalt und Verlassen
 
@@ -36,7 +35,7 @@ Der initiale Türzustand ist geschlossen; er ersetzt keine beobachtete Öffnung.
 | --- | --- |
 | Noch kein Gang | Eintritt und Anwesenheitsnachweis; Beginn frühestens bei gültiger Regeltemperatur ab der Mindesttemperatur |
 | Gang läuft | Aufgüsse und Gangende bleiben auch unterhalb der Mindesttemperatur erkennbar |
-| Ofenkühlung läuft | Gangerkennung und Aufzeichnung bleiben aktiv; die Wirkung auf die Kühlung richtet sich nach der [Präsenzquelle](ofenkuehlung.md#kühlung-abwarten-oder-vorzeitig-beenden) |
+| Ofenkühlung läuft | Gangerkennung und Aufzeichnung bleiben aktiv; die Wirkung auf die Kühlung richtet sich nach der [Belegqualität](ofenkuehlung.md#kühlung-abwarten-oder-vorzeitig-beenden) |
 | Betrieb-AUS | Keine neuen Gänge |
 
 Beim Eintritt folgt auf die Öffnung der Türschluss. Beim Verlassen wird die Tür
@@ -44,12 +43,18 @@ zum Durchlüften geöffnet und offengelassen. Die spätere Rückkehr durch diese
 offene Tür kann mit dem anschließenden Türschluss einen neuen Eintritt belegen.
 Das Ende des alten Gangs verbraucht diesen späteren Türschluss nicht.
 
-## Gang mit direktem Präsenzsensor erkennen
+## Gang durch qualifizierte Belegungszustände bestätigen
 
-Beim Schließen einer vollständigen Türfolge muss Anwesenheit anliegen.
+Ein qualifizierter Belegungszustand beschreibt fortbestehende Anwesenheit oder
+Abwesenheit. Beim Schließen einer vollständigen Türfolge muss verfügbare,
+qualifizierte Anwesenheit anliegen.
 Sie kann bereits vor der Öffnung bestanden haben. Entscheidend ist die gemeldete
-Zustandszeit, unabhängig von der Verarbeitungsreihenfolge. Erst nach dem
-Türschluss beginnende Anwesenheit verwendet diese Türfolge nicht erneut.
+Zustandszeit zusammen mit ihrer tatsächlichen fachlichen Nutzbarkeit. Erst nach dem
+Türschluss beginnende Anwesenheit verwendet diese Türfolge nicht erneut. Ein
+erst nach dem Türschluss fachlich nutzbarer Beleg kann den Eintritt ebenfalls
+nicht rückwirkend bestätigen. Bei gleichem Zeitstempel zählt die tatsächliche
+Verarbeitungsreihenfolge; ein bereits abgeschlossener Eintritt wird durch
+spätere Auswertung nicht wieder gültig.
 Liegt die Temperatur beim Eintritt noch unter der Mindesttemperatur, bleibt der
 belegte Eintritt bei anhaltender Präsenz erhalten. Der Gang beginnt beim Erreichen
 der Grenze, ohne erneute Türfolge und ohne Rückdatierung auf den kälteren Eintritt.
@@ -77,12 +82,16 @@ Gang beenden.
 Aufgüsse werden dem Gang zugeordnet, bestätigen ihn aber nicht erneut.
 Gemeldete Zustandszeiten gelten ohne Abzug eines vermuteten Sensorverzugs.
 
-`unknown` und `unavailable` belegen keine Abwesenheit. Solange der Präsenzsensor
-führt, bleibt der Gang offen und seine zusätzliche Heizanforderung entfällt.
-Thermostat und Schutz bleiben wirksam; eine Tür-Mindestheizhilfe gibt es in
-diesem Verfahren nicht.
+`unknown` und `unavailable` belegen keine Abwesenheit. Ein dadurch allein
+unvollständiger Austrittsnachweis beendet den Gang nicht. Die Wirkung aktueller
+Belegungszustände auf Gangwärme und die gemeinsame Türhilfe beschreibt die
+[Heizpriorität](betrieb.md#heizpriorität).
 
-## Gang aus Temperatur und Feuchte erkennen
+## Gang durch einmalige Personenbelege erkennen
+
+Einmalige Personenbelege aus Temperatur und Feuchte behaupten weder dauerhafte
+Anwesenheit noch spätere Abwesenheit. Ein Aufguss bestätigt einen Gang, erzeugt
+aber keinen fortbestehenden Belegungszustand.
 
 | Ereignis | Wirkung |
 | --- | --- |
@@ -96,7 +105,10 @@ diesem Verfahren nicht.
 Als Beginn gilt die passende Türschließung, frühestens jedoch der Beginn des
 anschließenden gültigen Temperaturbereichs ab Mindesttemperatur. Die
 Personen- und Aufgussnachweise müssen zu diesem Eintritt gehören. Ohne gültigen,
-ungenutzten Türbezug beginnt kein Gang.
+ungenutzten Türbezug beginnt kein Gang. Eine vor ihrer tatsächlichen Zulassung
+begonnene Aufgussepisode eröffnet keinen neuen Gang und verkürzt keine Kühlung;
+sie kann einem bereits offenen Gang weiterhin zugeordnet werden. Ihr
+ursprünglicher Beginn bleibt dabei erhalten.
 
 Die Aufgussbestätigungsfrist läuft ab Gangbeginn einschließlich ihres
 Endzeitpunkts. Auch ein Gangbeginn allein durch Aufguss muss innerhalb dieser

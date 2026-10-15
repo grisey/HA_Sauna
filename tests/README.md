@@ -178,6 +178,12 @@ Commit-/Tree-Nachweis mit getrenntem PR-Head. Bei Dispatch oder Push steht
 `pr_head` auf `null`, der Treevergleich auf `no_pr_head`. Profilierte Sitzungen
 nennen den tatsächlich gestarteten Profilierungsbefehl. Die selektiven
 HA-Adapter- und Integrationsprozesse werden jeweils höchstens einmal gestartet.
+Der gemeinsame CI-Helfer [`ci_process.py`](ci_process.py) zeichnet jeden
+aufgerufenen Testprozess einmal auf. Die Panel-Node-Probe liegt unter
+`core-tests/panel`; die vier Browser-Node-Prozesse und der Python-Browserlauf
+haben getrennte Verzeichnisse unter `browser-views/processes`. Deren Logs,
+Exitcodes und JSON-Abschlüsse verwenden denselben Metadatenvertrag. Die
+bestehenden Artefaktsicherungen laufen auch nach einem fehlgeschlagenen Schritt.
 Die Sitzungsartefakte belegen synthetische Fixtures mit ersetztem HA-Transport,
 keine Hardware- oder Companionausführung. `runtime_consumer_connected` ist nur
 bei tatsächlich beobachteten Eingangsaufrufen wahr. Der getrennte

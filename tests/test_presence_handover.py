@@ -1,6 +1,7 @@
 """Source qualification and handover boundaries, without replaying sessions."""
 
 import asyncio
+import json
 from dataclasses import replace
 from datetime import timedelta
 from types import SimpleNamespace
@@ -11,6 +12,7 @@ from test_cooling import at, controller
 from test_foundation import bindings, event, parameters
 
 from custom_components.ha_sauna.bindings import Bindings
+from custom_components.ha_sauna.archive import plain
 from custom_components.ha_sauna.core.parameters import Parameters
 from custom_components.ha_sauna.core.detector import Detection
 from custom_components.ha_sauna.core.presence import binary_presence
@@ -374,6 +376,7 @@ class PresenceHandoverTests(unittest.TestCase):
 
 class PresenceHandoverRuntimeTests(unittest.IsolatedAsyncioTestCase):
     async def test_pre_admission_infusion_keeps_onset_and_only_annotates_existing_gang(self):
+        observations = []
         for existing_gang in (False, True):
             with self.subTest(existing_gang=existing_gang):
                 clock = [at(0)]
@@ -406,6 +409,7 @@ class PresenceHandoverRuntimeTests(unittest.IsolatedAsyncioTestCase):
                 clock[0] = at(switched)
                 await runtime.tick()
                 self.assertEqual(runtime.presence_source, "proxy")
+                gang_before_detection = runtime.session.timeline.active
                 clock[0] = at(switched + 1)
                 detection = Detection(
                     Kind.INFUSION, at(switched - 1), clock[0], ("upper",), trace_at=clock[0],
@@ -431,6 +435,24 @@ class PresenceHandoverRuntimeTests(unittest.IsolatedAsyncioTestCase):
                 else:
                     self.assertIsNone(active)
                     self.assertEqual(runtime.session.timeline.gang_count, 0)
+                observations.append(plain({
+                    "source": runtime.presence_source,
+                    "fallback_delay_seconds": runtime.configuration.parameters.values[FALLBACK],
+                    "available_since": runtime._presence_source_selection.availability_since,
+                    "switched_at": runtime._presence_source_selection.last_changed_at,
+                    "producer_report": runtime.presence.external[ENTITY],
+                    "occupancy_input": runtime.controller.direct_presence,
+                    "detection": detection,
+                    "event": delivered,
+                    "gang_before": gang_before_detection,
+                    "gang_after": active,
+                    "last_decision": runtime.controller.last_decision,
+                    "regulation_inputs": runtime.controller.regulation_inputs,
+                    "cooling": runtime.session.after_run,
+                }))
+        print("INFUSION_ADMISSION_EVIDENCE=" + json.dumps(
+            observations, sort_keys=True, separators=(",", ":"),
+        ))
 
     async def test_tick_qualifies_once_after_queued_inputs_and_detector_catchup(self):
         clock = [at(0)]

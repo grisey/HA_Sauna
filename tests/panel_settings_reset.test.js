@@ -32,7 +32,7 @@ const catalog = structuredClone(require("./catalog_fixture.cjs").catalog);
 const defaults = Object.fromEntries(
   catalog.parameters.map(({ key, default: value }) => [
     key,
-    typeof value === "object"
+    value !== null && typeof value === "object"
       ? catalog.parameters.find((source) => source.key === value.parameter).default
       : value,
   ]),

@@ -118,73 +118,13 @@ jobs:
           python-version: ${{ fromJSON(needs.configuration.outputs.settings).python_core }}
       - name: Fachkern prüfen
         run: |
-          mkdir -p "$SAUNA_CORE_EVIDENCE"
-          git rev-parse HEAD > "$SAUNA_CORE_EVIDENCE/commit.txt"
-          git rev-parse 'HEAD^{tree}' > "$SAUNA_CORE_EVIDENCE/tree.txt"
-          python - <<'PY'
-          import json, os, subprocess
-          from pathlib import Path
-
-          def git(*args):
-              return subprocess.check_output(["git", *args], text=True).strip()
-
-          pr_head = os.environ.get("SAUNA_PR_HEAD_SHA") or None
-          checkout = git("rev-parse", "HEAD")
-          checkout_tree = git("rev-parse", "HEAD^{tree}")
-          pr_tree = git("rev-parse", f"{pr_head}^{{tree}}") if pr_head else None
-          metadata = {
-              "schema_version": 1,
-              "pr_head": {"commit": pr_head, "tree": pr_tree} if pr_head else None,
-              "checkout": {
-                  "commit": checkout, "tree": checkout_tree,
-                  "symbolic_branch": git("branch", "--show-current") or None,
-                  "github_ref": os.environ["GITHUB_REF"],
-                  "head_ref": os.environ.get("GITHUB_HEAD_REF") or None,
-              },
-              "tree_comparison": ("equal" if pr_tree == checkout_tree else "different")
-                                 if pr_tree else "no_pr_head",
-              "workflow": os.environ["GITHUB_WORKFLOW"],
-              "run_id": os.environ["GITHUB_RUN_ID"],
-              "run_attempt": os.environ["GITHUB_RUN_ATTEMPT"],
-              "job": os.environ["GITHUB_JOB"],
-              "case": None,
-              "runner_os": os.environ["RUNNER_OS"],
-              "process": {
-                  "command": "python tests/ci_settings.py core",
-                  "log": "process.log", "exit_code": "exit-code.txt",
-                  "completion": "process-completion.json",
-              },
-          }
-          path = Path(os.environ["SAUNA_CORE_EVIDENCE"]) / "run-metadata.json"
-          path.write_text(json.dumps(metadata, indent=2, sort_keys=True,
-                                     allow_nan=False) + "\n", encoding="utf-8")
-          PY
-          set +e
-          python tests/ci_settings.py core > "$SAUNA_CORE_EVIDENCE/process.log" 2>&1
-          result=$?
-          set -e
-          echo "$result" > "$SAUNA_CORE_EVIDENCE/exit-code.txt"
-          SAUNA_PROCESS_EXIT_CODE="$result" python - <<'PY'
-          import json, os
-          from pathlib import Path
-
-          completion = {
-              "process_returned": True,
-              "exit_code": int(os.environ["SAUNA_PROCESS_EXIT_CODE"]),
-              "job_conclusion": "Recorded separately by GitHub Actions after artifact upload",
-          }
-          path = Path(os.environ["SAUNA_CORE_EVIDENCE"]) / "process-completion.json"
-          path.write_text(json.dumps(completion, indent=2, sort_keys=True,
-                                     allow_nan=False) + "\n", encoding="utf-8")
-          PY
-          cat "$SAUNA_CORE_EVIDENCE/process.log"
-          exit "$result"
+          python tests/ci_process.py "$SAUNA_CORE_EVIDENCE" python tests/ci_settings.py core
         timeout-minutes: ${{ fromJSON(needs.configuration.outputs.settings).step_timeouts_minutes.core }}
         env:
           SAUNA_CORE_TESTS: ${{ inputs.core_tests }}
           SAUNA_CORE_EVIDENCE: ${{ runner.temp }}/ha-sauna-core
           SAUNA_PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
-      - run: node --test tests/panel_*.test.js
+      - run: python tests/ci_process.py "${{ runner.temp }}/ha-sauna-core/panel" node --test tests/panel_*.test.js
         if: ${{ !cancelled() && needs.configuration.outputs.core_tests == '[]' }}
         timeout-minutes: ${{ fromJSON(needs.configuration.outputs.settings).step_timeouts_minutes.panel }}
       - name: Fachkernprozess sichern
@@ -562,67 +502,7 @@ jobs:
         id: ha_adapter
         if: ${{ needs.configuration.outputs.ha_tests != '[]' || needs.configuration.outputs.integration_tests == '[]' }}
         run: |
-          mkdir -p "$SAUNA_HA_EVIDENCE"
-          git rev-parse HEAD > "$SAUNA_HA_EVIDENCE/commit.txt"
-          git rev-parse 'HEAD^{tree}' > "$SAUNA_HA_EVIDENCE/tree.txt"
-          python - <<'PY'
-          import json, os, subprocess
-          from pathlib import Path
-
-          def git(*args):
-              return subprocess.check_output(["git", *args], text=True).strip()
-
-          pr_head = os.environ.get("SAUNA_PR_HEAD_SHA") or None
-          checkout = git("rev-parse", "HEAD")
-          checkout_tree = git("rev-parse", "HEAD^{tree}")
-          pr_tree = git("rev-parse", f"{pr_head}^{{tree}}") if pr_head else None
-          metadata = {
-              "schema_version": 1,
-              "pr_head": {"commit": pr_head, "tree": pr_tree} if pr_head else None,
-              "checkout": {
-                  "commit": checkout, "tree": checkout_tree,
-                  "symbolic_branch": git("branch", "--show-current") or None,
-                  "github_ref": os.environ["GITHUB_REF"],
-                  "head_ref": os.environ.get("GITHUB_HEAD_REF") or None,
-              },
-              "tree_comparison": ("equal" if pr_tree == checkout_tree else "different")
-                                 if pr_tree else "no_pr_head",
-              "workflow": os.environ["GITHUB_WORKFLOW"],
-              "run_id": os.environ["GITHUB_RUN_ID"],
-              "run_attempt": os.environ["GITHUB_RUN_ATTEMPT"],
-              "job": os.environ["GITHUB_JOB"],
-              "case": None,
-              "runner_os": os.environ["RUNNER_OS"],
-              "process": {
-                  "command": "python tests/ci_settings.py ha",
-                  "log": "process.log", "exit_code": "exit-code.txt",
-                  "completion": "process-completion.json",
-              },
-          }
-          path = Path(os.environ["SAUNA_HA_EVIDENCE"]) / "run-metadata.json"
-          path.write_text(json.dumps(metadata, indent=2, sort_keys=True,
-                                     allow_nan=False) + "\n", encoding="utf-8")
-          PY
-          set +e
-          python tests/ci_settings.py ha > "$SAUNA_HA_EVIDENCE/process.log" 2>&1
-          result=$?
-          set -e
-          echo "$result" > "$SAUNA_HA_EVIDENCE/exit-code.txt"
-          SAUNA_PROCESS_EXIT_CODE="$result" python - <<'PY'
-          import json, os
-          from pathlib import Path
-
-          completion = {
-              "process_returned": True,
-              "exit_code": int(os.environ["SAUNA_PROCESS_EXIT_CODE"]),
-              "job_conclusion": "Recorded separately by GitHub Actions after artifact upload",
-          }
-          path = Path(os.environ["SAUNA_HA_EVIDENCE"]) / "process-completion.json"
-          path.write_text(json.dumps(completion, indent=2, sort_keys=True,
-                                     allow_nan=False) + "\n", encoding="utf-8")
-          PY
-          cat "$SAUNA_HA_EVIDENCE/process.log"
-          exit "$result"
+          python tests/ci_process.py "$SAUNA_HA_EVIDENCE" python tests/ci_settings.py ha
         timeout-minutes: ${{ fromJSON(needs.configuration.outputs.settings).step_timeouts_minutes.ha_adapter }}
         env:
           HA_TEST_REQUIRED: '1'
@@ -632,67 +512,7 @@ jobs:
       - name: HA-Integration prüfen
         if: ${{ !cancelled() && (needs.configuration.outputs.integration_tests != '[]' || needs.configuration.outputs.ha_tests == '[]') }}
         run: |
-          mkdir -p "$SAUNA_INTEGRATION_EVIDENCE"
-          git rev-parse HEAD > "$SAUNA_INTEGRATION_EVIDENCE/commit.txt"
-          git rev-parse 'HEAD^{tree}' > "$SAUNA_INTEGRATION_EVIDENCE/tree.txt"
-          python - <<'PY'
-          import json, os, subprocess
-          from pathlib import Path
-
-          def git(*args):
-              return subprocess.check_output(["git", *args], text=True).strip()
-
-          pr_head = os.environ.get("SAUNA_PR_HEAD_SHA") or None
-          checkout = git("rev-parse", "HEAD")
-          checkout_tree = git("rev-parse", "HEAD^{tree}")
-          pr_tree = git("rev-parse", f"{pr_head}^{{tree}}") if pr_head else None
-          metadata = {
-              "schema_version": 1,
-              "pr_head": {"commit": pr_head, "tree": pr_tree} if pr_head else None,
-              "checkout": {
-                  "commit": checkout, "tree": checkout_tree,
-                  "symbolic_branch": git("branch", "--show-current") or None,
-                  "github_ref": os.environ["GITHUB_REF"],
-                  "head_ref": os.environ.get("GITHUB_HEAD_REF") or None,
-              },
-              "tree_comparison": ("equal" if pr_tree == checkout_tree else "different")
-                                 if pr_tree else "no_pr_head",
-              "workflow": os.environ["GITHUB_WORKFLOW"],
-              "run_id": os.environ["GITHUB_RUN_ID"],
-              "run_attempt": os.environ["GITHUB_RUN_ATTEMPT"],
-              "job": os.environ["GITHUB_JOB"],
-              "case": None,
-              "runner_os": os.environ["RUNNER_OS"],
-              "process": {
-                  "command": "python tests/ci_settings.py integration",
-                  "log": "process.log", "exit_code": "exit-code.txt",
-                  "completion": "process-completion.json",
-              },
-          }
-          path = Path(os.environ["SAUNA_INTEGRATION_EVIDENCE"]) / "run-metadata.json"
-          path.write_text(json.dumps(metadata, indent=2, sort_keys=True,
-                                     allow_nan=False) + "\n", encoding="utf-8")
-          PY
-          set +e
-          python tests/ci_settings.py integration > "$SAUNA_INTEGRATION_EVIDENCE/process.log" 2>&1
-          result=$?
-          set -e
-          echo "$result" > "$SAUNA_INTEGRATION_EVIDENCE/exit-code.txt"
-          SAUNA_PROCESS_EXIT_CODE="$result" python - <<'PY'
-          import json, os
-          from pathlib import Path
-
-          completion = {
-              "process_returned": True,
-              "exit_code": int(os.environ["SAUNA_PROCESS_EXIT_CODE"]),
-              "job_conclusion": "Recorded separately by GitHub Actions after artifact upload",
-          }
-          path = Path(os.environ["SAUNA_INTEGRATION_EVIDENCE"]) / "process-completion.json"
-          path.write_text(json.dumps(completion, indent=2, sort_keys=True,
-                                     allow_nan=False) + "\n", encoding="utf-8")
-          PY
-          cat "$SAUNA_INTEGRATION_EVIDENCE/process.log"
-          exit "$result"
+          python tests/ci_process.py "$SAUNA_INTEGRATION_EVIDENCE" python tests/ci_settings.py integration
         timeout-minutes: ${{ fromJSON(needs.configuration.outputs.settings).step_timeouts_minutes.integration }}
         env:
           HA_TEST_REQUIRED: '1'
@@ -743,73 +563,11 @@ jobs:
       - run: python tests/ci_settings.py install-ha
       - name: Vollständige Sitzungen und gebundene Realdaten-Replays
         run: |
-          mkdir -p "$SAUNA_SESSION_EVIDENCE"
-          git rev-parse HEAD > "$SAUNA_SESSION_EVIDENCE/commit.txt"
-          git rev-parse 'HEAD^{tree}' > "$SAUNA_SESSION_EVIDENCE/tree.txt"
-          python - <<'PY'
-          import json, os, subprocess
-          from pathlib import Path
-
-          def git(*args):
-              return subprocess.check_output(["git", *args], text=True).strip()
-
-          pr_head = os.environ.get("SAUNA_PR_HEAD_SHA") or None
-          checkout = git("rev-parse", "HEAD")
-          checkout_tree = git("rev-parse", "HEAD^{tree}")
-          pr_tree = git("rev-parse", f"{pr_head}^{{tree}}") if pr_head else None
-          metadata = {
-              "schema_version": 1,
-              "pr_head": {"commit": pr_head, "tree": pr_tree} if pr_head else None,
-              "checkout": {
-                  "commit": checkout, "tree": checkout_tree,
-                  "symbolic_branch": git("branch", "--show-current") or None,
-                  "github_ref": os.environ["GITHUB_REF"],
-                  "head_ref": os.environ.get("GITHUB_HEAD_REF") or None,
-              },
-              "tree_comparison": ("equal" if pr_tree == checkout_tree else "different")
-                                 if pr_tree else "no_pr_head",
-              "workflow": os.environ["GITHUB_WORKFLOW"],
-              "run_id": os.environ["GITHUB_RUN_ID"],
-              "run_attempt": os.environ["GITHUB_RUN_ATTEMPT"],
-              "job": os.environ["GITHUB_JOB"],
-              "case": os.environ["SAUNA_SESSION_CASE"],
-              "runner_os": os.environ["RUNNER_OS"],
-              "process": {
-                  "command": ("python tests/sessions/profile_replay.py"
-                              if os.environ.get("SAUNA_REPLAY_PROFILE") == "true"
-                              else "python -m unittest discover -s tests/sessions -v"),
-                  "log": "process.log", "exit_code": "exit-code.txt",
-                  "completion": "process-completion.json",
-              },
-          }
-          path = Path(os.environ["SAUNA_SESSION_EVIDENCE"]) / "run-metadata.json"
-          path.write_text(json.dumps(metadata, indent=2, sort_keys=True,
-                                     allow_nan=False) + "\n", encoding="utf-8")
-          PY
-          set +e
           if [ "$SAUNA_REPLAY_PROFILE" = 'true' ]; then
-            python tests/sessions/profile_replay.py > "$SAUNA_SESSION_EVIDENCE/process.log" 2>&1
+            python tests/ci_process.py "$SAUNA_SESSION_EVIDENCE" python tests/sessions/profile_replay.py
           else
-            python -m unittest discover -s tests/sessions -v > "$SAUNA_SESSION_EVIDENCE/process.log" 2>&1
+            python tests/ci_process.py "$SAUNA_SESSION_EVIDENCE" python -m unittest discover -s tests/sessions -v
           fi
-          result=$?
-          set -e
-          echo "$result" > "$SAUNA_SESSION_EVIDENCE/exit-code.txt"
-          SAUNA_PROCESS_EXIT_CODE="$result" python - <<'PY'
-          import json, os
-          from pathlib import Path
-
-          completion = {
-              "process_returned": True,
-              "exit_code": int(os.environ["SAUNA_PROCESS_EXIT_CODE"]),
-              "job_conclusion": "Recorded separately by GitHub Actions after artifact upload",
-          }
-          path = Path(os.environ["SAUNA_SESSION_EVIDENCE"]) / "process-completion.json"
-          path.write_text(json.dumps(completion, indent=2, sort_keys=True,
-                                     allow_nan=False) + "\n", encoding="utf-8")
-          PY
-          cat "$SAUNA_SESSION_EVIDENCE/process.log"
-          exit "$result"
         timeout-minutes: ${{ fromJSON(needs.configuration.outputs.settings).step_timeouts_minutes.sessions }}
         env:
           HA_TEST_REQUIRED: '1'
@@ -833,6 +591,8 @@ jobs:
     timeout-minutes: ${{ fromJSON(needs.configuration.outputs.settings).job_timeouts_minutes.browser }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 2
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: ${{ fromJSON(needs.configuration.outputs.settings).python_ha }}
@@ -868,30 +628,30 @@ jobs:
               output.write(f"NODE_PATH={runtime / 'node_modules'}\n")
           PY
       - name: Sitzungsverlauf – Browserinteraktionen
-        run: node tests/browser/live_history/accept.cjs
+        run: python tests/ci_process.py "${{ runner.temp }}/ha-sauna-browser/processes/accept" node tests/browser/live_history/accept.cjs
         timeout-minutes: ${{ fromJSON(needs.configuration.outputs.settings).step_timeouts_minutes.live_history }}
         env:
           ENGINE: ${{ fromJSON(needs.configuration.outputs.browser).engine }}
           HISTORY_EVIDENCE: ${{ runner.temp }}/ha-sauna-browser/live-history
       - name: Sitzungsverlauf – Lade- und Aktualisierungsmessung
-        run: node tests/browser/live_history/profile.cjs
+        run: python tests/ci_process.py "${{ runner.temp }}/ha-sauna-browser/processes/profile" node tests/browser/live_history/profile.cjs
         timeout-minutes: ${{ fromJSON(needs.configuration.outputs.settings).step_timeouts_minutes.live_history }}
         env:
           ENGINE: ${{ fromJSON(needs.configuration.outputs.browser).engine }}
           HISTORY_EVIDENCE: ${{ runner.temp }}/ha-sauna-browser/live-history
       - name: Detailansicht – Zustandserhalt und Marker
-        run: node tests/browser/live_history/details.cjs
+        run: python tests/ci_process.py "${{ runner.temp }}/ha-sauna-browser/processes/details" node tests/browser/live_history/details.cjs
         timeout-minutes: ${{ fromJSON(needs.configuration.outputs.settings).step_timeouts_minutes.live_history }}
         env:
           ENGINE: ${{ fromJSON(needs.configuration.outputs.browser).engine }}
           DETAILS_EVIDENCE: ${{ runner.temp }}/ha-sauna-browser/details
       - name: Sitzungsverlauf – Zoom und Nachträge
-        run: node tests/browser/live_history/interaction.cjs
+        run: python tests/ci_process.py "${{ runner.temp }}/ha-sauna-browser/processes/interaction" node tests/browser/live_history/interaction.cjs
         timeout-minutes: ${{ fromJSON(needs.configuration.outputs.settings).step_timeouts_minutes.live_history }}
         env:
           ENGINE: ${{ fromJSON(needs.configuration.outputs.browser).engine }}
           INTERACTION_EVIDENCE: ${{ runner.temp }}/ha-sauna-browser/live-history/interaction.json
-      - run: python -u tests/browser/run.py
+      - run: python tests/ci_process.py "${{ runner.temp }}/ha-sauna-browser/processes/python-browser" python -u tests/browser/run.py
         timeout-minutes: ${{ fromJSON(needs.configuration.outputs.settings).step_timeouts_minutes.ha_browser }}
         env:
           HA_TEST_REQUIRED: '1'

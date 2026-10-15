@@ -8,6 +8,7 @@ from unittest.mock import patch
 from harness import create_sauna, start_hass
 from test_settings import async_timeout
 
+from custom_components.ha_sauna.archive import plain
 from custom_components.ha_sauna.core.timeline import Confirmation, Event, Kind
 from custom_components.ha_sauna.core.presence import ProxyPresenceSource, binary_presence
 from custom_components.ha_sauna.runtime import Configuration, SaunaRuntime
@@ -18,12 +19,20 @@ class PresenceRuntimeIntegrationTests(unittest.IsolatedAsyncioTestCase):
         configured = (await self.configure()).configuration
         now = datetime(2030, 1, 1, tzinfo=UTC)
         runtime = SaunaRuntime(configured, clock=lambda: now)
+        gang_before = runtime.session.timeline.active if runtime.session else None
         entity = configured.bindings.values["presence"]
         await runtime.accept_presence(binary_presence(entity, "unknown", now, now))
         now += timedelta(seconds=configured.parameters.values["presence_fallback_delay_seconds"])
         await runtime.tick()
         self.assertEqual(runtime.configuration_model.presence_source, "proxy")
         self.assertFalse(runtime.controller.direct_presence.qualified_presence)
+        fallback_observed = {
+            "source": runtime.presence_source,
+            "switched_at": runtime._presence_source_selection.last_changed_at,
+            "available_since": runtime._presence_source_selection.availability_since,
+            "producer_report": runtime.presence.current,
+            "input": runtime.controller.direct_presence,
+        }
         now += timedelta(seconds=1)
         report = binary_presence(entity, "on", now, now)
         await runtime.accept_presence(report)
@@ -39,6 +48,28 @@ class PresenceRuntimeIntegrationTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(selected.timing.received_at, report.received_at)
         self.assertEqual(selected.timing.first_usable_at, now)
         self.assertIsNone(runtime.session)
+        evidence = {
+            "delays_seconds": {
+                "fallback": configured.parameters.values["presence_fallback_delay_seconds"],
+                "recovery": configured.parameters.values["presence_recovery_delay_seconds"],
+            },
+            "fallback": fallback_observed,
+            "recovery": {
+                "source": runtime.presence_source,
+                "switched_at": runtime._presence_source_selection.last_changed_at,
+                "available_since": runtime._presence_source_selection.availability_since,
+                "producer_report": runtime.presence.external[entity],
+                "input": selected,
+            },
+            "gang_before": gang_before,
+            "gang_after": runtime.session.timeline.active if runtime.session else None,
+            "last_decision": runtime.controller.last_decision,
+            "regulation_inputs": runtime.controller.regulation_inputs,
+            "cooling": runtime.session.after_run if runtime.session else None,
+        }
+        print("SOURCE_HANDOVER_EVIDENCE=" + json.dumps(
+            plain(evidence), sort_keys=True, separators=(",", ":"),
+        ))
         await runtime.close()
 
     async def test_selected_proxy_reports_preserve_identity_without_durable_history(self):

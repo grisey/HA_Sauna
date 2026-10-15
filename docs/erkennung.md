@@ -243,7 +243,7 @@ nach seiner Spitze.
 
 Personen- und Aufgusssignale eröffnen bei Erkennung aus Temperatur und Feuchte
 nur nach erkannter Türöffnung und anschließender Schließung einen Gang;
-es gelten die [Startbedingungen](gangmodell.md#gang-aus-temperatur-und-feuchte-erkennen).
+es gelten die [Startbedingungen](gangmodell.md#gang-durch-einmalige-personenbelege-erkennen).
 Während eines Gangs werden weitere Aufgüsse erkannt; solange der Präsenzsensor
 führt, ersetzen Personensignale ihn nicht.
 
