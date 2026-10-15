@@ -25,7 +25,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from itertools import starmap
-from math import fsum, isfinite, log, sqrt, ulp
+from math import ceil, fsum, isfinite, log, sqrt, ulp
 from operator import mul
 from statistics import NormalDist, median
 
@@ -814,6 +814,639 @@ def curve_level(
         AttributeError, IndexError, OverflowError, TypeError, ValueError,
         ZeroDivisionError,
     ):
+        return None
+
+
+def _calibration_originals(channels, origin):
+    """Validate four immutable original streams without merging their clocks."""
+    if (not isinstance(channels, tuple) or len(channels) != 4
+            or not isinstance(origin, datetime)):
+        return False
+    names = []
+    for item in channels:
+        if not isinstance(item, tuple) or len(item) != 2:
+            return False
+        name, samples = item
+        if (not isinstance(name, str) or not name or name in names
+                or not isinstance(samples, tuple) or not samples):
+            return False
+        names.append(name)
+        previous = None
+        for sample in samples:
+            if (not isinstance(sample, tuple) or len(sample) != 2
+                    or not isinstance(sample[0], datetime)
+                    or not _profile_number(sample[1])):
+                return False
+            try:
+                elapsed = (sample[0] - origin).total_seconds()
+                if (not isfinite(elapsed)
+                        or previous is not None and sample[0] <= previous):
+                    return False
+            except (TypeError, OverflowError):
+                return False
+            previous = sample[0]
+    return True
+
+
+@dataclass(frozen=True)
+class CurveCalibrationPolicy:
+    """Declared numerical limits; no event thresholds or probabilities.
+
+    The four noise floors use their respective channel units. Residual limits
+    are nearest-rank empirical quantiles of training continuation mean Huber
+    losses, bounded below by residual_loss_floor and multiplied by the declared
+    residual_limit_multiplier. They are training bands, not coverage claims.
+    max_phase_x is the finite evaluation horizon in the fixed coordinate t/D.
+    """
+
+    curve: CurvePolicy
+    channels: tuple[str, ...]
+    noise_floors: tuple[float, ...]
+    min_examples: int
+    min_continuation_samples: int
+    residual_quantile: float
+    residual_limit_multiplier: float
+    residual_loss_floor: float
+    minimum_gain: float
+    max_phase_x: float
+
+    def __post_init__(self):
+        try:
+            valid_curve = isinstance(self.curve, CurvePolicy) and _policy_valid(self.curve)
+        except (AttributeError, TypeError, ValueError, OverflowError):
+            valid_curve = False
+        counts = (self.min_examples, self.min_continuation_samples)
+        numbers = (self.residual_quantile, self.residual_limit_multiplier,
+                   self.residual_loss_floor, self.minimum_gain, self.max_phase_x)
+        if (not valid_curve or not isinstance(self.channels, tuple)
+                or len(self.channels) != 4
+                or not all(isinstance(name, str) and name for name in self.channels)
+                or len(set(self.channels)) != len(self.channels)
+                or not isinstance(self.noise_floors, tuple)
+                or len(self.noise_floors) != len(self.channels)
+                or not all(_profile_number(value) and value > 0
+                           for value in self.noise_floors)
+                or not all(isinstance(value, int) and not isinstance(value, bool)
+                           and value > 0 for value in counts)
+                or self.min_continuation_samples > self.curve.max_points
+                or not all(_profile_number(value) for value in numbers)
+                or not 0 < self.residual_quantile <= 1
+                or self.residual_limit_multiplier < 1
+                or self.residual_loss_floor <= 0 or self.minimum_gain < 0
+                or self.max_phase_x < 1):
+            raise ValueError("Calibration needs four channels and finite declared limits")
+
+
+@dataclass(frozen=True)
+class CurveCalibrationExample:
+    """Caller-selected originals, before and after one mathematical origin.
+
+    There is no event label in this type. binding_until separates the amplitude
+    prefix from later observations used to learn residual bands. The caller
+    selects the training end by supplying only that original phase window.
+    """
+
+    onset_at: datetime
+    binding_until: datetime
+    channels: tuple[tuple[str, tuple[tuple[datetime, float], ...]], ...]
+
+    def __post_init__(self):
+        try:
+            valid_span = (isinstance(self.onset_at, datetime)
+                          and isinstance(self.binding_until, datetime)
+                          and self.binding_until > self.onset_at)
+        except TypeError:
+            valid_span = False
+        if not valid_span or not _calibration_originals(self.channels, self.onset_at):
+            raise ValueError("A calibration example needs coherent original streams")
+
+
+@dataclass(frozen=True)
+class CurveTemplateChannel:
+    """A relative channel shape; all channels share one bound amplitude."""
+
+    name: str
+    profile: CurveProfile
+    residual_limit: float
+
+    def __post_init__(self):
+        if (not isinstance(self.name, str) or not self.name
+                or not isinstance(self.profile, CurveProfile)
+                or self.profile.model not in ("quadratic", "cubic", "hinge1", "hinge2")
+                or self.profile.coefficients[0] != 0
+                or self.profile.knot_x is not None and self.profile.knot_x <= 0
+                or not _profile_number(self.residual_limit) or self.residual_limit <= 0):
+            raise ValueError("A channel needs a zero-origin shape and finite residual band")
+
+
+@dataclass(frozen=True)
+class CurveCalibrationProfile:
+    """Learned four-channel geometry in an explicitly fixed time coordinate.
+
+    g_ref(1)=reference_sign fixes the scale, while every relative channel gain
+    and delay remains in its coefficients. Learning never changes D to the
+    latest observed duration. These are mathematical shapes without labels.
+    """
+
+    policy: CurveCalibrationPolicy
+    duration_seconds: float
+    reference_channel: str
+    reference_sign: int
+    channels: tuple[CurveTemplateChannel, ...]
+    residual_limit: float
+    calibration_count: int
+
+    def __post_init__(self):
+        if (not isinstance(self.policy, CurveCalibrationPolicy)
+                or not _profile_number(self.duration_seconds) or self.duration_seconds <= 0
+                or not isfinite(self.duration_seconds * self.policy.max_phase_x)
+                or not isinstance(self.reference_channel, str)
+                or self.reference_channel not in self.policy.channels
+                or not isinstance(self.reference_sign, int)
+                or isinstance(self.reference_sign, bool) or self.reference_sign not in (-1, 1)
+                or not isinstance(self.channels, tuple)
+                or not all(isinstance(channel, CurveTemplateChannel)
+                           for channel in self.channels)
+                or tuple(channel.name for channel in self.channels) != self.policy.channels
+                or not _profile_number(self.residual_limit) or self.residual_limit <= 0
+                or not isinstance(self.calibration_count, int)
+                or isinstance(self.calibration_count, bool)
+                or self.calibration_count < self.policy.min_examples):
+            raise ValueError("A calibrated profile needs finite four-channel geometry")
+        reference = self.channels[self.policy.channels.index(self.reference_channel)].profile
+        expected = _calibration_shape(reference, 1.0)
+        resolution = _FLOAT_EPSILON * len(reference.coefficients) * fsum(
+            abs(value) for value in reference.coefficients
+        )
+        if (expected is None or abs(expected - self.reference_sign) > resolution
+                or any(channel.profile.knot_x is not None
+                       and channel.profile.knot_x >= self.policy.max_phase_x
+                       for channel in self.channels)):
+            raise ValueError("The reference shape must retain g_ref(1)=reference_sign")
+
+
+@dataclass(frozen=True)
+class CurveChannelBaseline:
+    """Immutable pre-origin level, slope/second and pre-origin noise scale."""
+
+    name: str
+    level: float
+    slope: float
+    noise_scale: float
+    before_count: int
+    binding_count: int
+
+    def __post_init__(self):
+        if (not isinstance(self.name, str) or not self.name
+                or not all(_profile_number(value)
+                           for value in (self.level, self.slope, self.noise_scale))
+                or self.noise_scale <= 0
+                or not all(isinstance(value, int) and not isinstance(value, bool)
+                           and value > 0
+                           for value in (self.before_count, self.binding_count))):
+            raise ValueError("A baseline needs finite values and original sample counts")
+
+
+@dataclass(frozen=True)
+class CurveTemplateBinding:
+    """yhat_c=B_c+V_c*(t-tau)+A*g_c((t-tau)/D), fixed once.
+
+    The corresponding null uses exactly the same B,V and A=0. Source identity,
+    continuity and event lifecycle remain with the caller. A later correction
+    or additional prefix is a new hypothesis, never a mutation of this binding.
+    """
+
+    profile: CurveCalibrationProfile
+    onset_at: datetime
+    binding_until: datetime
+    amplitude: float
+    channels: tuple[CurveChannelBaseline, ...]
+
+    def __post_init__(self):
+        if (not isinstance(self.profile, CurveCalibrationProfile)
+                or not isinstance(self.onset_at, datetime)
+                or not isinstance(self.binding_until, datetime)
+                or not _profile_number(self.amplitude) or self.amplitude <= 0
+                or not isinstance(self.channels, tuple)
+                or not all(isinstance(channel, CurveChannelBaseline)
+                           for channel in self.channels)
+                or tuple(channel.name for channel in self.channels)
+                != self.profile.policy.channels
+                or any(not self.profile.policy.curve.min_side_samples <= count
+                       <= self.profile.policy.curve.max_points
+                       for channel in self.channels
+                       for count in (channel.before_count, channel.binding_count))
+                or any(channel.noise_scale < floor for channel, floor in zip(
+                    self.channels, self.profile.policy.noise_floors, strict=True,
+                ))):
+            raise ValueError("A binding needs one finite shared amplitude and four baselines")
+        try:
+            elapsed = (self.binding_until - self.onset_at).total_seconds()
+            valid_span = 0 < elapsed <= (
+                self.profile.duration_seconds * self.profile.policy.max_phase_x
+            )
+        except (TypeError, OverflowError):
+            valid_span = False
+        if not valid_span:
+            raise ValueError("A binding prefix must lie within the declared phase horizon")
+
+
+@dataclass(frozen=True)
+class CurveChannelScore:
+    """Mean twice-Huber losses on later originals of one channel."""
+
+    name: str
+    count: int
+    original_count: int
+    template_loss: float
+    null_loss: float
+    score_gain: float
+    residual_limit: float
+    within_residual_limit: bool
+
+    def __post_init__(self):
+        if (not isinstance(self.name, str) or not self.name
+                or not _calibration_score_fields(self)):
+            raise ValueError("A channel score needs finite losses and original counts")
+
+
+@dataclass(frozen=True)
+class CurveContinuationScore:
+    """Frozen continuation evidence, never a probability or event decision.
+
+    Overall losses give each of the four channel means equal weight. Support
+    needs gain over the identical baseline null AND the learned overall band
+    AND every learned channel band. Old/prefix originals are never scored.
+    """
+
+    status: str
+    count: int
+    original_count: int
+    template_loss: float
+    null_loss: float
+    score_gain: float
+    residual_limit: float
+    channels: tuple[CurveChannelScore, ...]
+    within_residual_limit: bool
+
+    def __post_init__(self):
+        if (self.status not in ("supports", "rejects")
+                or not _calibration_score_fields(self)
+                or not isinstance(self.channels, tuple) or len(self.channels) != 4
+                or not all(isinstance(channel, CurveChannelScore)
+                           for channel in self.channels)
+                or len({channel.name for channel in self.channels}) != len(self.channels)
+                or self.count != sum(channel.count for channel in self.channels)
+                or self.original_count != sum(channel.original_count
+                                              for channel in self.channels)):
+            raise ValueError("A continuation score needs four finite channel comparisons")
+
+
+def _calibration_score_fields(score):
+    return (
+        all(isinstance(value, int) and not isinstance(value, bool) and value > 0
+            for value in (score.count, score.original_count))
+        and score.count <= score.original_count
+        and all(_profile_number(value) for value in (
+            score.template_loss, score.null_loss, score.score_gain, score.residual_limit,
+        ))
+        and score.template_loss >= 0 and score.null_loss >= 0 and score.residual_limit > 0
+        and isinstance(score.within_residual_limit, bool)
+    )
+
+
+def _calibration_row(model, x, knot):
+    if model.startswith("hinge"):
+        return (x, x * x, max(0.0, x - knot)**(1 if model == "hinge1" else 2))
+    return tuple(x**power for power in range(1, 4 if model == "cubic" else 3))
+
+
+def _calibration_shape(profile, x):
+    try:
+        value = fsum(starmap(mul, zip(
+            _calibration_row(profile.model, x, profile.knot_x),
+            profile.coefficients[1:], strict=True,
+        )))
+        return value if isfinite(value) else None
+    except (OverflowError, TypeError, ValueError):
+        return None
+
+
+def _calibration_series(channels, policy, origin):
+    if (not _calibration_originals(channels, origin)
+            or {item[0] for item in channels} != set(policy.channels)):
+        return None
+    by_name = dict(channels)
+    return tuple(by_name[name] for name in policy.channels)
+
+
+def _calibration_baseline(samples, origin, floor, policy):
+    if len(samples) < policy.min_side_samples or samples[-1][0] >= origin:
+        return None
+    selected = _bounded_samples(samples, policy.max_points, None)
+    if len(selected) < policy.min_side_samples:
+        return None
+    span = (selected[-1][0] - selected[0][0]).total_seconds()
+    if span <= 0:
+        return None
+    rows = [[1.0, (at - origin).total_seconds() / span] for at, _ in selected]
+    center = median(value for _, value in selected)
+    values = [value - center for _, value in selected]
+    initial = _least_squares(rows, values, [1.0] * len(values))
+    if initial is None:
+        return None
+    residuals = _residuals(rows, values, initial)
+    residual_center = median(residuals)
+    noise = max(floor, _MAD_NORMALIZATION * median(
+        abs(value - residual_center) for value in residuals
+    ))
+    fitted = _fit(rows, values, noise, policy)
+    if fitted is None:
+        return None
+    level, slope = center + fitted[0][0], fitted[0][1] / span
+    if not all(isfinite(value) for value in (level, slope, noise)):
+        return None
+    return level, slope, noise, len(selected)
+
+
+def curve_template_value(
+    binding: CurveTemplateBinding, channel: str, at: datetime, *, null: bool = False,
+) -> float | None:
+    """Evaluate the unchanged bound template/null within its declared horizon."""
+    try:
+        if (not isinstance(binding, CurveTemplateBinding)
+                or not isinstance(null, bool) or not isinstance(at, datetime)):
+            return None
+        index = binding.profile.policy.channels.index(channel)
+        elapsed = (at - binding.onset_at).total_seconds()
+        x = elapsed / binding.profile.duration_seconds
+        if not isfinite(x) or not 0 <= x <= binding.profile.policy.max_phase_x:
+            return None
+        baseline = binding.channels[index]
+        value = baseline.level + baseline.slope * elapsed
+        if not null:
+            shape = _calibration_shape(binding.profile.channels[index].profile, x)
+            if shape is None:
+                return None
+            value += binding.amplitude * shape
+        return value if isfinite(value) else None
+    except (AttributeError, OverflowError, TypeError, ValueError, ZeroDivisionError):
+        return None
+
+
+def bind_curve_template(
+    profile: CurveCalibrationProfile, before, prefix, *, onset_at: datetime,
+    binding_until: datetime,
+) -> CurveTemplateBinding | None:
+    """Fit B,V on strictly pre-origin originals, then one A on the prefix.
+
+    Channels are immutable (name, originals) tuples. Prefix originals must lie
+    in [onset_at,binding_until]; no later point can enter baseline, noise or A.
+    Time/value centering and original-point bounding reuse the curve owner.
+    """
+    try:
+        if not isinstance(profile, CurveCalibrationProfile):
+            return None
+        policy = profile.policy
+        elapsed = (binding_until - onset_at).total_seconds()
+        if not 0 < elapsed <= profile.duration_seconds * policy.max_phase_x:
+            return None
+        pre = _calibration_series(before, policy, onset_at)
+        initial = _calibration_series(prefix, policy, onset_at)
+        if pre is None or initial is None:
+            return None
+        baselines, rows, values = [], [], []
+        for index, name in enumerate(policy.channels):
+            originals = initial[index]
+            if (len(originals) < policy.curve.min_side_samples
+                    or originals[0][0] < onset_at or originals[-1][0] > binding_until):
+                return None
+            baseline = _calibration_baseline(
+                pre[index], onset_at, policy.noise_floors[index], policy.curve,
+            )
+            if baseline is None:
+                return None
+            level, slope, noise, before_count = baseline
+            selected = _bounded_samples(originals, policy.curve.max_points, None)
+            if len(selected) < policy.curve.min_side_samples:
+                return None
+            baselines.append(CurveChannelBaseline(
+                name, level, slope, noise, before_count, len(selected),
+            ))
+            for at, value in selected:
+                seconds = (at - onset_at).total_seconds()
+                shape = _calibration_shape(
+                    profile.channels[index].profile, seconds / profile.duration_seconds,
+                )
+                if shape is None:
+                    return None
+                rows.append([shape / noise])
+                values.append((value - level - slope * seconds) / noise)
+        fitted = _fit(rows, values, 1.0, policy.curve)
+        if fitted is None or fitted[0][0] <= 0:
+            return None
+        return CurveTemplateBinding(
+            profile, onset_at, binding_until, fitted[0][0], tuple(baselines),
+        )
+    except (AttributeError, IndexError, OverflowError, TypeError, ValueError,
+            ZeroDivisionError):
+        return None
+
+
+def _calibration_loss(residuals, delta):
+    return fsum(
+        value * value if abs(value) <= delta else delta * (2 * abs(value) - delta)
+        for value in residuals
+    ) / len(residuals)
+
+
+def score_curve_continuation(
+    binding: CurveTemplateBinding, later,
+) -> CurveContinuationScore | None:
+    """Compare only later own originals; this function never performs a fit."""
+    try:
+        if not isinstance(binding, CurveTemplateBinding):
+            return None
+        policy = binding.profile.policy
+        originals = _calibration_series(later, policy, binding.onset_at)
+        if originals is None:
+            return None
+        channels = []
+        for index, name in enumerate(policy.channels):
+            samples = originals[index]
+            if (len(samples) < policy.min_continuation_samples
+                    or samples[0][0] <= binding.binding_until):
+                return None
+            selected = _bounded_samples(samples, policy.curve.max_points, None)
+            if len(selected) < policy.min_continuation_samples:
+                return None
+            residuals, null_residuals = [], []
+            noise = binding.channels[index].noise_scale
+            for at, observed in selected:
+                expected = curve_template_value(binding, name, at)
+                null_value = curve_template_value(binding, name, at, null=True)
+                if expected is None or null_value is None:
+                    return None
+                residuals.append((observed - expected) / noise)
+                null_residuals.append((observed - null_value) / noise)
+            loss = _calibration_loss(residuals, policy.curve.huber_delta)
+            null_loss = _calibration_loss(null_residuals, policy.curve.huber_delta)
+            limit = binding.profile.channels[index].residual_limit
+            channels.append(CurveChannelScore(
+                name, len(selected), len(samples), loss, null_loss,
+                null_loss - loss, limit, loss <= limit,
+            ))
+        loss = fsum(channel.template_loss for channel in channels) / len(channels)
+        null_loss = fsum(channel.null_loss for channel in channels) / len(channels)
+        within = (loss <= binding.profile.residual_limit
+                  and all(channel.within_residual_limit for channel in channels))
+        gain = null_loss - loss
+        return CurveContinuationScore(
+            "supports" if within and gain > policy.minimum_gain else "rejects",
+            sum(channel.count for channel in channels),
+            sum(channel.original_count for channel in channels),
+            loss, null_loss, gain, binding.profile.residual_limit, tuple(channels), within,
+        )
+    except (AttributeError, IndexError, OverflowError, TypeError, ValueError,
+            ZeroDivisionError):
+        return None
+
+
+def fit_curve_calibration(
+    examples: Sequence[CurveCalibrationExample], *, policy: CurveCalibrationPolicy,
+    duration_seconds: float, reference_channel: str, reference_sign: int,
+    basis: str, knot_x: float | None = None,
+) -> CurveCalibrationProfile | None:
+    """Learn one declared P2/P3/M1/M2 candidate and its residual bands.
+
+    P2/P3 use x,x²[,x³]; M1/M2 use x,x²,(x-k)+[²], with zero intercept.
+    Basis and knot are supplied, never searched here. Full training phases
+    determine shape coefficients and reference-channel normalization units.
+    These training units are not a detection amplitude: final bands always
+    use a fresh binding whose sole shared A sees only its declared prefix.
+    The resulting bands are in-sample training residuals; held-out recordings
+    and event interpretations belong to the caller's quality assessment.
+    """
+    try:
+        models = {"P2": "quadratic", "P3": "cubic", "M1": "hinge1", "M2": "hinge2"}
+        if (not isinstance(policy, CurveCalibrationPolicy)
+                or not _profile_number(duration_seconds) or duration_seconds <= 0
+                or reference_channel not in policy.channels
+                or not isinstance(reference_sign, int)
+                or isinstance(reference_sign, bool) or reference_sign not in (-1, 1)
+                or not isinstance(basis, str) or basis not in models
+                or len(examples) < policy.min_examples
+                or not all(isinstance(example, CurveCalibrationExample)
+                           for example in examples)):
+            return None
+        model = models[basis]
+        if model.startswith("hinge"):
+            if not _profile_number(knot_x) or not 0 < knot_x < policy.max_phase_x:
+                return None
+        elif knot_x is not None:
+            return None
+        reference_index = policy.channels.index(reference_channel)
+        training = []
+        for example in examples:
+            originals = _calibration_series(example.channels, policy, example.onset_at)
+            if originals is None:
+                return None
+            before = tuple(tuple(sample for sample in samples
+                                 if sample[0] < example.onset_at)
+                           for samples in originals)
+            phase = tuple(tuple(sample for sample in samples
+                                if sample[0] >= example.onset_at)
+                          for samples in originals)
+            baselines = []
+            for index, samples in enumerate(phase):
+                if (len(samples) < policy.curve.min_side_samples
+                        or (samples[-1][0] - example.onset_at).total_seconds()
+                        > duration_seconds * policy.max_phase_x):
+                    return None
+                baseline = _calibration_baseline(
+                    before[index], example.onset_at, policy.noise_floors[index], policy.curve,
+                )
+                if baseline is None:
+                    return None
+                baselines.append(baseline)
+            selected = _bounded_samples(
+                phase[reference_index], policy.curve.max_points, None,
+            )
+            level, slope, noise, _ = baselines[reference_index]
+            rows, values = [], []
+            for at, value in selected:
+                seconds = (at - example.onset_at).total_seconds()
+                rows.append(_calibration_row(model, seconds / duration_seconds, knot_x))
+                values.append(value - level - slope * seconds)
+            fitted = _fit(rows, values, noise, policy.curve)
+            if fitted is None:
+                return None
+            unit = reference_sign * fsum(starmap(mul, zip(
+                _calibration_row(model, 1.0, knot_x), fitted[0], strict=True,
+            )))
+            if not isfinite(unit) or unit <= 0:
+                return None
+            training.append((example, before, phase, baselines, unit))
+        shapes = []
+        for index in range(len(policy.channels)):
+            rows, values = [], []
+            for example, _, phase, baselines, unit in training:
+                level, slope, noise, _ = baselines[index]
+                for at, value in _bounded_samples(phase[index], policy.curve.max_points, None):
+                    seconds = (at - example.onset_at).total_seconds()
+                    rows.append(tuple(coefficient * unit / noise for coefficient in
+                                      _calibration_row(model, seconds / duration_seconds, knot_x)))
+                    values.append((value - level - slope * seconds) / noise)
+            fitted = _fit(rows, values, 1.0, policy.curve)
+            if fitted is None:
+                return None
+            shapes.append(CurveProfile(model, (0.0, *fitted[0]), knot_x))
+        reference_value = _calibration_shape(shapes[reference_index], 1.0)
+        if reference_value is None or reference_value * reference_sign <= 0:
+            return None
+        factor = reference_sign / reference_value
+        initial_limit = policy.residual_loss_floor * policy.residual_limit_multiplier
+        channels = tuple(CurveTemplateChannel(
+            name, CurveProfile(model, tuple(value * factor for value in shape.coefficients),
+                               knot_x), initial_limit,
+        ) for name, shape in zip(policy.channels, shapes, strict=True))
+        profile = CurveCalibrationProfile(
+            policy, duration_seconds, reference_channel, reference_sign,
+            channels, initial_limit, len(training),
+        )
+        scores = []
+        for example, before, phase, _, _ in training:
+            pre = tuple(zip(policy.channels, before, strict=True))
+            prefix = tuple((name, tuple(sample for sample in samples
+                                       if sample[0] <= example.binding_until))
+                           for name, samples in zip(policy.channels, phase, strict=True))
+            later = tuple((name, tuple(sample for sample in samples
+                                      if sample[0] > example.binding_until))
+                          for name, samples in zip(policy.channels, phase, strict=True))
+            binding = bind_curve_template(
+                profile, pre, prefix, onset_at=example.onset_at,
+                binding_until=example.binding_until,
+            )
+            score = score_curve_continuation(binding, later)
+            if score is None:
+                return None
+            scores.append(score)
+
+        def learned_limit(losses):
+            ordered = sorted(losses)
+            quantile = ordered[ceil(policy.residual_quantile * len(ordered)) - 1]
+            return max(policy.residual_loss_floor, quantile) * policy.residual_limit_multiplier
+
+        return CurveCalibrationProfile(
+            policy, duration_seconds, reference_channel, reference_sign,
+            tuple(CurveTemplateChannel(
+                channel.name, channel.profile,
+                learned_limit(score.channels[index].template_loss for score in scores),
+            ) for index, channel in enumerate(channels)),
+            learned_limit(score.template_loss for score in scores), len(training),
+        )
+    except (AttributeError, IndexError, KeyError, OverflowError, TypeError, ValueError,
+            ZeroDivisionError):
         return None
 
 
