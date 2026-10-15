@@ -452,7 +452,7 @@ class DetectorTests(unittest.TestCase):
             saturation_vapor_pressure(temperature) * 1000)
 
     def _segment(self, detector, duration, before, after=None, *, positions=None,
-                 missing=(), heating=False, source=None):
+                 missing=(), heating=False, source=None, stop_when=None):
         """Continuous linear measurement inputs; detector windows stay configured."""
         after = before if after is None else after
         positions = detector.positions if positions is None else positions
@@ -470,6 +470,8 @@ class DetectorTests(unittest.TestCase):
                              else initial + (final - initial) * fraction)
                     detector.accept(measurement(position, quantity, value, second, source=source))
             output += detector.advance(now, enabled=True)
+            if stop_when is not None and stop_when():
+                break
         return output
 
     @staticmethod
@@ -613,24 +615,39 @@ class DetectorTests(unittest.TestCase):
 
     def test_missing_temperatures_reset_the_close_hold(self):
         detector = self._entry_detector()
-        self._opened_entry_episode(detector)
-        events = []
-        # The first recovering samples precede a missing-temperature interval.
-        for recovery_step in range(ceil(detector.p["door_window_seconds"] + detector.p["median_seconds"] + detector.p["door_close_hold_seconds"]) + 1):
-            step = detector.index + 1
-            temperature = 78 + (recovery_step + 1) * .1
-            events += sample(detector, step, temperature, 38)
-            self.assertTrue(detector.open)
-            if detector.diagnostic["conditions"].get("door_close"):
+        events = self._segment(detector, self._settling_time(detector), (80, 40))
+
+        def close_bound():
+            return bool(detector.open and detector.door_episode is not None
+                        and detector.door_episode.get("original_close"))
+
+        # Braking can bind B before the warm recovery starts. Stop the same
+        # opening input at its actual candidate, before the next original.
+        for duration, before, after in (
+            (20, (80, 40), (78, 38)),
+            (detector.p["median_seconds"], (78, 38), (78, 38)),
+            (30, (78, 38), (80, 38)),
+        ):
+            events += self._segment(detector, duration, before, after,
+                                    stop_when=close_bound)
+            if close_bound():
                 break
+        self.assertIn(Kind.DOOR_OPEN, [item.kind for item in events])
+        self.assertTrue(detector.open)
+        self.assertTrue(close_bound())
         self.assertTrue(detector.diagnostic["conditions"].get("door_close"))
+        self.assertNotIn(Kind.DOOR_CLOSE, [item.kind for item in events])
+        temperature = detector.frames[Position.UPPER][-1]["T"]
         gap_at = detector.index + 1
         for position in detector.positions:
             detector.accept(measurement(position, Quantity.TEMPERATURE, None, gap_at))
         events += detector.advance(T0 + timedelta(seconds=gap_at), enabled=True)
         self.assertEqual(detector.diagnostic["holds"].get("door", 0), 0)
+        self.assertTrue(detector.open)
+        self.assertNotIn("original_close", detector.door_episode)
         events += sample(detector, gap_at + 1, temperature + .01, 38)
         self.assertTrue(detector.open)
+        self.assertNotIn("original_close", detector.door_episode)
         self.assertNotIn(Kind.DOOR_CLOSE, [item.kind for item in events])
 
 
@@ -1063,12 +1080,17 @@ class DetectorTests(unittest.TestCase):
     def test_hot_operation_uses_the_continuous_heating_route(self):
         minimum = parameters().values["sauna_min_temperature_c"]
         for base in (parameters().values["standard_temperature_c"], minimum + 5, minimum - 1):
-            d=Detector(detection_parameters(),T0)
-            events=[]
-            for i in range(80):
-                d.report_heating(True,T0+timedelta(seconds=i))
-                events+=sample(d,i,base-.03*i,30)
-            self.assertIn(Kind.DOOR_OPEN, [e.kind for e in events])
+            with self.subTest(base=base):
+                detector = Detector(detection_parameters(), T0)
+                events = self._segment(detector, self._settling_time(detector),
+                                       (base, 30), heating=True)
+                self.assertNotIn(Kind.DOOR_OPEN, [item.kind for item in events])
+                # The retained BIC route needs a measured warm baseline before
+                # the falling hinge; a line falling since origin has no turn.
+                events += self._segment(detector, 80, (base, 30),
+                                        (base - .03 * 80, 30), heating=True)
+                self.assertEqual(detector.heating_since, T0)
+                self.assertIn(Kind.DOOR_OPEN, [item.kind for item in events])
 
     def test_diagnostic_observer_reports_actual_metrics_without_changing_signals(self):
         observed = []

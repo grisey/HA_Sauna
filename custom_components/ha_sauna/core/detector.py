@@ -465,11 +465,14 @@ class Detector:
     def _original_bound_context(context, positions):
         return tuple(item for item in context if item[0] in positions)
 
-    def _original_prefix_valid(self, prefix, positions=None):
+    def _original_prefix_valid(self, prefix, positions=None, quantities=None):
         positions = self.positions if positions is None else positions
-        if self._original_bound_context(prefix.context, positions) != self._original_bound_context(
-            self._original_context(), positions,
-        ):
+        quantities = ((Quantity.TEMPERATURE, Quantity.HUMIDITY)
+                      if quantities is None else quantities)
+        indices = tuple(0 if quantity == Quantity.TEMPERATURE else 1 for quantity in quantities)
+        previous, current = dict(prefix.context), dict(self._original_context())
+        if any(tuple(previous[position][index] for index in indices)
+               != tuple(current[position][index] for index in indices) for position in positions):
             return False
         for position, temperature, humidity in prefix.points:
             if position not in positions:
@@ -477,6 +480,8 @@ class Detector:
             for quantity, points in (
                 (Quantity.TEMPERATURE, temperature), (Quantity.HUMIDITY, humidity),
             ):
+                if quantity not in quantities:
+                    continue
                 current = dict(self._curve_series[position, quantity]["points"])
                 if any(stamp in current and current[stamp] != value
                        for stamp, value in points):
@@ -509,14 +514,25 @@ class Detector:
             episode = self.door_episode
             positions = episode["positions"] if episode is not None else channels
             context = self._original_bound_context(prefix.context, positions)
-            if not self._original_prefix_valid(prefix, positions):
+            complete_prefix = self._original_prefix_valid(prefix, positions)
+            if self.open and episode is not None:
+                closing_positions = tuple(
+                    position for position in episode["positions"]
+                    if self._value(position, Quantity.TEMPERATURE, now) is not None
+                )
+                if not self._original_prefix_valid(
+                    prefix, closing_positions, (Quantity.TEMPERATURE,),
+                ):
+                    continue
+            elif not complete_prefix:
                 continue
             if episode is not None and not self.open and episode.get("original_context") not in (None, context):
                 self.door_episode = episode = None
                 positions = channels
                 context = self._original_bound_context(prefix.context, positions)
             if episode is not None and episode.get("original_evaluation_context") != context:
-                episode.pop("original_close", None)
+                if not self.open:
+                    episode.pop("original_close", None)
                 episode.pop("original_humidity_minima", None)
                 episode["original_evaluation_context"] = context
             expected = tuple(position.value for position in positions)
@@ -533,9 +549,9 @@ class Detector:
                     if position in windows:
                         humidity = windows[position].humidity
                         minima[position] = min(minima.get(position, humidity.mean), humidity.mean)
-            contrasts = original_contrasts(
+            contrasts = (original_contrasts(
                 windows, expected_positions=expected, humidity_minima=minima,
-            )
+            ) if complete_prefix else None)
             forms = {
                 "received_at": prefix.received_at, "positions": expected,
                 "evaluable": contrasts is not None, "new_original": prefix.original,
@@ -594,10 +610,12 @@ class Detector:
                 continue
             # Der bestehende Türvertrag nutzt die noch verfügbaren T-Rollen
             # der gebundenen Öffnung; RH-Ausfall sperrt diesen Zweig nicht.
-            closing_positions = tuple(
-                position for position in episode["positions"]
-                if self._value(position, Quantity.TEMPERATURE, now) is not None
+            thermal_context = tuple(
+                (position, dict(prefix.context)[position][0]) for position in closing_positions
             )
+            if episode.get("original_thermal_context") != thermal_context:
+                episode.pop("original_close", None)
+                episode["original_thermal_context"] = thermal_context
             thermal = original_thermal_contrasts(
                 dict(prefix.temperatures),
                 expected_positions=tuple(position.value for position in closing_positions),
@@ -2554,8 +2572,20 @@ class Detector:
             witness = component.get("onset_witnesses", {}).get(position)
             if (quantity == Quantity.HUMIDITY and witness is not None
                     and any(stamp == corrected_at for stamp, _ in witness.original_points)):
-                component["onset_witnesses"].pop(position)
-                component_invalid = True
+                points = tuple((stamp, value if stamp == corrected_at else old)
+                               for stamp, old in witness.original_points)
+                features = self._fit_candidate_form(
+                    "infusion", points, witness.context[2], quantity, candidate=witness,
+                )
+                if self._curve_supports("infusion", features, witness.context[2], quantity):
+                    # Derselbe zulässige Beginn bleibt nach Wertkorrektur
+                    # erhalten; seine Original-/Frischezeiten wachsen nicht.
+                    component["onset_witnesses"][position] = replace(
+                        witness, features=features, original_points=points,
+                    )
+                else:
+                    component["onset_witnesses"].pop(position)
+                    component_invalid = True
             if state is None:
                 if component_invalid:
                     if self._original_infusion_candidate is component:
