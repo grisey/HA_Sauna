@@ -12,9 +12,9 @@ gehören zu demselben konkreten Modelltyp. `None` bezeichnet fehlenden Bestand;
 mindestens ein Modellwert ist vorhanden. Gleiche Werte sind zulässig: Eine
 ausgewertete Eingabe kann einen unveränderten Zustand ergeben.
 
-Der Kontext enthält Übergabeidentität, Beobachtungszeit sowie eine optionale
-gemeinsame Anlagenreferenz und
-optional den bereits bekannten Bedienenden und eine vorhandene Sitzungsreferenz.
+Der Kontext enthält Übergabeidentität, Beobachtungszeit sowie optional eine
+gemeinsame Anlagenreferenz, den bereits bekannten Bedienenden und eine
+vorhandene Sitzungsreferenz.
 Die ursprünglichen Ereignis-, Erkennungs- und Buchungszeiten bleiben in den
 Fachwerten erhalten. Eine Sitzungsreferenz im Kontext gilt für alle enthaltenen
 sitzungsgebundenen Werte. Eine Übergabe über mehrere Sitzungen hat dort `None`
@@ -53,6 +53,12 @@ Erkennungen übereinstimmen. `Detector.advance()` kann mehrere Raster
 auswerten: Seine gesamte Rückgabe darf nicht mit der Diagnose des letzten
 Rasters gepaart werden. Beim späteren Anschluss werden die bereits vorhandenen
 Originaldiagnosen und ihre zugehörigen Erkennungen gemeinsam übergeben.
+
+`MethodEvaluation` übernimmt für andere Verfahren den vollständigen tatsächlichen
+Diagnosebestand als `FrozenMap`, den Auswertungszeitpunkt und die zugehörige
+Erkennungsfolge. Alte Heuristikfelder wie `holds` oder `checks` sind darin keine
+Pflicht. Bereits vollständige unveränderliche Fachausgaben eines neuen
+Erkennungsowners werden unmittelbar als `ModelHandoff[T]` verwendet.
 
 Bestehende offene Diagnose- und Quellattribute werden vollständig als
 `FrozenMap` kopiert. Weitere Schlüssel bleiben erhalten; veränderliche
@@ -109,16 +115,79 @@ ausgewertete fachliche Ergebnis. Bestehende Zulassungsregeln müssen vor der
 Steuerungsgrenze erhalten bleiben, ohne sie dort ein zweites Mal auszuführen.
 
 `InputTiming` trennt fachlichen Beginn (`effective_at`), tatsächlichen Eingang
-(`received_at`) und kausale Auswertung (`evaluated_at`). Diese Zeiten werden
-explizit übergeben. Die Beobachtungszeit der Hülle ersetzt keine dieser Zeiten.
+(`received_at`), erstmalige fachliche Nutzbarkeit (`first_usable_at`) und kausale
+Auswertung (`evaluated_at`). Alle vier Werte sind explizite Zeitpunkte. Die
+Nutzbarkeit bezeichnet das tatsächliche Vorliegen des erforderlichen
+Beleggehalts; sie wird weder aus dem früheren Beginn noch aus einer
+Komfortproperty eines Ereignisses abgeleitet. Auch ein fachlich ausgewerteter
+unbekannter Zustand besitzt eine Nutzbarkeitszeit. Die Beobachtungszeit der
+Hülle ersetzt keine dieser Zeiten.
 Vorhandene Ereignisse behalten zusätzlich ihre Erkennungs- und Buchungszeiten.
 Ein später bestätigter früherer Beginn erlaubt keine rückwirkende Aktorwirkung.
 Kandidatenzeiten und mathematische Belegzeiten bleiben in der Diagnose.
+
+Die heutigen Methoden für Temperatur, Heiz- und Schützrückmeldung, Leistung,
+Betrieb und Override besitzen überwiegend nur einen Zeitparameter `at`.
+Beim Anschluss müssen ihre Verträge die vier Zeitbezüge getrennt erhalten;
+eine bloße Umbenennung von `at` in Eingangszeit genügt nicht. `evaluated_at`
+bezeichnet die kausale Auswertungsgrenze. Insbesondere ist bei Heizrückmeldungen
+der tatsächliche Intervallbeginn separat zu bewahren, ohne die Controlleruhr
+darauf zurückzustellen. Diese Anpassung wird durch die Formen vorbereitet und
+ist noch nicht in den Methoden umgesetzt.
 
 Ein `ControllerOutput` ist eine Beobachtung nach der Steuerungsverarbeitung.
 Seine enthaltenen Quellenbelege machen ihn nicht zu einem normalisierten
 Steuerungseingang. Ereignisidentität und Übergabeidentität bleiben verschieden;
 es wird kein zusätzlicher globaler Revisionsmechanismus eingeführt.
+
+### Anwesenheit, Türvorgang und Aufguss
+
+`OccupancyInput` erhält neben Belegung und Verfügbarkeit zwei getrennte
+Fachaussagen: `person_evidence` bezeichnet einen bereits zugelassenen
+Personenbeleg; `qualified_presence` bezeichnet den qualifizierten Beleg für den
+übergebenen Belegungszustand, auch für Abwesenheit. Keine dieser Aussagen ist
+bereits eine Gangentscheidung. Türfolge, Temperaturzulassung, Gangbestätigung
+und Gangende verbleiben beim bisherigen Gangowner. Ein zugelassener
+Personenbeleg kann dort die Kühlung auf ihre Mindestdauer begrenzen, ohne einen
+Gang zu bestätigen. Der Verbraucher benötigt dafür keine Quellenkennung.
+
+Die vorhandene Berichtsidentität bleibt in `report_id` erhalten; `None`
+bedeutet, dass kein Bericht zugrunde liegt. `events` enthält die tatsächlich
+vorhandenen vollständigen Ereignisse in Originalreihenfolge. Dadurch bleiben
+auch starke und schwache Personenbelege für den vorhandenen
+`Gang.recognition_kind` unterscheidbar. Bestätigungs- oder Endeereignisse werden
+nicht vorweg erzeugt. Unbekannt oder unverfügbar bedeutet keine gemessene
+Abwesenheit. Veralteter Belegverlust kann nach vorgelagerter Auswertung einen
+unveränderten Normalzustand ergeben; eine neue Rücknahme-ID ist nicht nötig.
+
+`DoorInput` führt Öffnung, Lüftungsbefund und Schluss in einer gemeinsamen
+Ereignisfolge. Ihre Reihenfolge bleibt auch bei gleichen Buchungszeiten
+erhalten. `DoorOperation` übernimmt die bereits zugeordnete Öffnung, den
+optionalen Schluss und den optionalen Lüftungsbefund. Die Öffnungs-ID
+identifiziert den Vorgang. `ventilation_known=False` bezeichnet fehlendes
+Wissen; `True` mit fehlendem Lüftungsbefund bezeichnet einen tatsächlich
+ausgewerteten, nicht bestätigten Befund. Ein leerer Ereignisbestand erzeugt
+diesen Wert nicht automatisch. Lage und Ereignisfolge bleiben auch ohne
+gespeicherte Öffnung übergebbar. Die Timeline bleibt der einzige
+Zuordnungsowner; die Form rekonstruiert keine Türvorgänge.
+
+`InfusionInput` bewahrt alle bestätigten Aufgussereignisse mit ihren bestehenden
+Identitäten. `InfusionEpisodeDiagnostics` übernimmt getrennt davon den vorhandenen
+veröffentlichten Episodendiagnosebestand: Phase, Beginn, Bestätigungszeit, Ende,
+Endbeleg, Unterbrechungsstatus sowie Wasser-, Abfall- und Niveauwerte. Ein
+fehlendes Ende ist kein belegter Abschluss. Fortsetzung oder Ende erzeugen
+keinen zusätzlichen Aufguss. Der Episodenoutput wird beim Erkennungsowner
+gelesen und nicht aus bestätigten Ereignissen zurückgerechnet. Er ist kein
+Restoreformat der privaten mathematischen Arbeitsdaten. Der bisherige Owner
+besitzt keine stabile Episoden-ID; eine Zuordnung seiner späteren Beobachtungen
+zu einem bestätigten Ereignis muss beim Anschluss ausdrücklich erhalten werden
+und darf nicht aus Kandidaten-ID oder Beginn geraten werden.
+
+Lage, Belegung und Vorgangszuordnungen sind Zustandswerte. Die enthaltenen
+`events` beziehungsweise `occurrences` sind der geordnete Eingangsbestand der
+konkreten Auswertungsgrenze, keine erneut abzuspielende Gesamthistorie.
+`ModelHandoff.before/after` beobachtet diese vollständigen Übergabewerte.
+Die Hülle übernimmt weder Wiedergabesteuerung noch Wiederholungserkennung.
 
 ## Modelle und Anpassung der Verbraucher
 
@@ -131,16 +200,16 @@ verwendet; Untermodelle erhalten keine parallelen Wrapper.
 | --- | --- | --- | --- |
 | 1 | Konfiguration: `ConfigurationOutput`, `ConfigurationModel`, `ButtonCapabilities` | `Configuration.as_options()`, bereits berechnetes `Runtime.configuration_model` | Setup, Optionslistener, Settings, API und Entitäten übernehmen denselben Konfigurationswert. Die wirksame Quelle darf nicht durch erneutes Ableiten nur aus gespeicherten Optionen verloren gehen. |
 | 2 | Messung: `Measurement`, `ObservedSource`, `DeviceObservation` | `HADevice.ingest` | Archiv und Diagnose erhalten Originalwert, Zeiten und Herkunft; die Steuerung erhält daraus bereits ausgewählte fachliche Eingänge. |
-| 3 | Regeltemperatur: `TemperatureInput` | Geräteadapter nach Messwertauswahl | `Controller.set_temperature` übernimmt Wert, Gültigkeitsende und Eingangszeit; keine Entitäts- oder Messhöhenauswahl im Controller. |
+| 3 | Regeltemperatur: `TemperatureInput` | Geräteadapter nach Messwertauswahl | `Controller.set_temperature` erhält Wert und Gültigkeitsende; sein bisheriger einzelner Zeitparameter wird gemäß der getrennten Zeitbezüge angepasst. Keine Entitäts- oder Messhöhenauswahl im Controller. |
 | 4 | Heizrückmeldung: `HeatingFeedbackInput`; Beleg: `HeatingObservation` | Geräteadapter nach Rückmeldungsauswahl | `report_heating` verbraucht den normalisierten Dreifachwert. Der alte `report_fallback_heating`-Pfad wird in die vorgelagerte Auswahl/Berechnung eingeordnet. Gemessene und geschätzte Energie bleiben fachlich verschieden. |
 | 5 | Schütz und Leistung: `ContactorFeedbackInput`, `PowerFeedbackInput`, `ContactorMark` | Geräteadapter | `report_contactor` und `report_power` übernehmen getrennte Zustände und Zeiten. Fehlende Leistung wird nicht durch null Watt ersetzt. |
-| 6 | Anwesenheit: `OccupancyInput`; Belege: `PresenceReport`, `PresenceObservation`, `PresenceOutput`, `PresenceSourceSelectionSnapshot` | Präsenznormalisierung vor der Steuerung | `process_presence`, `observe_direct_presence` und die Präsenzabstimmung konsumieren den gemeinsamen Fachzustand. Quellenprüfung, Verfügbarkeit und Wechselentscheidung liegen davor. Der Quellenwahlsnapshot übernimmt die sechs Zustandswerte der parallel vorbereiteten Auswahl; er trifft selbst keine Wechselentscheidung. |
-| 7 | Tür: `DoorInput`, `Door` | Ausgewertete Erkennung oder direkte Zustandsübernahme | `Controller.process` und `timeline.apply` benötigen eine gemeinsame Zustandsübernahme. Die Übergabefolge bewahrt Zwischenänderungen; der letzte Zustand allein darf Öffnen und Schließen nicht verschlucken. |
-| 8 | Aufguss: `InfusionInput` mit vollständigen Ereignissen | Bestätigende Erkennung | Controller und Timeline übernehmen unterscheidbare Vorkommnisse samt Identitäten und Zeiten, ohne Kurvennachweise erneut auszuwerten. |
-| 9 | Lüftung: `VentilationInput` mit vollständigen Ereignissen | Bestätigende Erkennung | Controller, Timeline und Türwärmemodell übernehmen ausgewertete Befunde. Zusammenhang und Gültigkeit verbleiben beim fachlichen Eigentümer. |
+| 6 | Anwesenheit: `OccupancyInput`; Belege: `PresenceReport`, `PresenceObservation`, `PresenceOutput`, `PresenceSourceSelectionSnapshot` | Präsenznormalisierung vor der Steuerung | `process_presence`, `observe_direct_presence` und Präsenzabstimmung konsumieren Belegung und qualifizierten Beleggehalt einschließlich Bericht-/Ereignisidentitäten. Quellenprüfung und Wechselentscheidung liegen davor; Gangzulassung bleibt beim Gangowner. Der Quellenwahlsnapshot übernimmt sechs vorhandene Zustandswerte und trifft keine Wechselentscheidung. |
+| 7 | Türvorgang: `DoorInput`, `DoorOperation`, `Door` | Ausgewertete Erkennung oder direkte Zustandsübernahme; vorhandene Timeline-Zuordnung | `Controller.process` und `timeline.apply` übernehmen die gemeinsame geordnete Folge einschließlich Lüftung. Der letzte Zustand allein darf Öffnen und Schließen nicht verschlucken; gleiche Buchungszeiten dürfen nicht umsortiert werden. |
+| 8 | Aufguss: `InfusionInput`; Diagnose: `InfusionEpisodeDiagnostics`; vollständiger Fachoutput direkt als `ModelHandoff[T]` | Bestätigende Erkennung und lesender Episodenoutput | Controller und Timeline übernehmen bestätigte Vorkommnisse samt Identitäten und Zeiten. Verlauf/Statistik konsumieren Fortsetzung und Ende separat aus dem führenden Episodenoutput; beim Anschluss wird die tatsächliche Ereignisbindung erhalten, keine Episode aus Events rekonstruiert. Die Diagnoseform ersetzt diesen Fachoutput nicht. |
+| 9 | Lüftungsstadium innerhalb des Türvorgangs: `DoorOperation.ventilation`, `ventilation_known` | Bestehender Tür-/Timelineowner | Controller, Timeline und Türwärmemodell übernehmen Befund und Gültigkeit desselben Vorgangs. Es gibt keinen unabhängigen Lüftungszustand oder zweiten Zuordnungsowner. |
 | 10 | Bedienzustand: `OperationInput`, `ControlModeInput`, `HeaterOverrideInput` | Bestehende Bedienverarbeitung | `set_operation`, `set_control_mode`, `set_heater_override` erhalten getrennte Zustände. Betrieb, Betriebsart und Rückgabe an Automatik bleiben verschieden. |
 | 11 | Taster: `ButtonGestureSnapshot`, `ButtonEvaluation` | `ButtonGestures`, `Runtime._handle_button_event` | Runtime verwendet das bereits berechnete Gestenergebnis. Beobachter erhalten fortbestehenden Gestenzustand getrennt von Eingabe und Ergebnis; keine erneute Gestenauswertung. |
-| 12 | Erkennung: `DetectionEvaluation`, `Detection` | `Detector` je ausgewertetem Raster | Runtime und Archiv paaren Originaldiagnose und genau ihre Erkennungen. Diagnose bleibt vom normalisierten Steuerungszustand getrennt. |
+| 12 | Erkennung: `DetectionEvaluation`, `MethodEvaluation`, `Detection` | Erkennungsowner je Auswertungsgrenze | Runtime und Archiv paaren Originaldiagnose und genau ihre Erkennungen. Andere Verfahren benötigen keine künstlichen Alt-Heuristikfelder. Diagnose bleibt vom normalisierten Steuerungszustand getrennt. |
 | 13 | Sitzung, Gang, Verlauf: `Session`, `Gang`, `Timeline`, `Event` | Controller und `timeline.apply` | Archiv, Ereignisverbraucher und Darstellung übernehmen vollständige Eigentümerwerte. Fachereignisse werden mit ihrer damaligen Sitzung verbunden. |
 | 14 | Steuerungsausgabe: `ControllerOutput` | `ControllerOutput.capture` | API und Beobachter konsumieren denselben Snapshot statt einzeln veränderliche Controllerfelder zu lesen. Capture löst keine Auswertung aus. |
 | 15 | Thermostat: `ControlInputs`, `ThermostatState`, `Decision` | Bedarfsbildung, `thermostat.evaluate` | Thermostat übernimmt quellenfreie Bedarfspegel. Zustand und Entscheidung bleiben getrennt; Quellenabhängigkeiten werden vor der Bedarfsübergabe aufgelöst. |

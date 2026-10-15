@@ -22,10 +22,12 @@ from custom_components.ha_sauna.core.observation_handoff import (
     DeviceObservation,
     HeaterServiceResult,
     HeatingObservation,
+    InfusionEpisodeDiagnostics,
     LightOutputSnapshot,
     LightQuantization,
     LightQuantizerSnapshot,
     LightServiceResult,
+    MethodEvaluation,
     ObservedSource,
 )
 from custom_components.ha_sauna.core.thermostat import Decision
@@ -124,6 +126,101 @@ class ObservationHandoffTests(unittest.TestCase):
             DetectionEvaluation(diagnostic, (later,))
         with self.assertRaises(ValueError):
             DetectionEvaluation(diagnostic, ())
+
+    def test_method_evaluation_keeps_its_full_diagnostic_without_legacy_placeholders(self):
+        diagnostic = {
+            "fit": {"coefficients": [1.0, 2.0], "uncertainty": None},
+            "complete_extra_output": {"retained": ["original"]},
+        }
+        detection = Detection(Kind.INFUSION, T0, T0, ("upper",), T0)
+        evaluated_at = T0 + timedelta(seconds=2)
+        result = MethodEvaluation(diagnostic, evaluated_at, (detection,))
+        self.handoff(result)
+
+        self.assertEqual(result.evaluated_at, evaluated_at)
+        self.assertIs(result.detections[0], detection)
+        self.assertEqual(set(result.diagnostic), set(diagnostic))
+        self.assertNotIn("holds", result.diagnostic)
+        self.assertNotIn("checks", result.diagnostic)
+        self.assertNotIn("infusion_episode", result.diagnostic)
+        diagnostic["fit"]["coefficients"].append(3.0)
+        diagnostic["complete_extra_output"]["retained"][0] = "changed"
+        self.assertEqual(result.diagnostic["fit"]["coefficients"], (1.0, 2.0))
+        self.assertEqual(
+            result.diagnostic["complete_extra_output"]["retained"], ("original",)
+        )
+
+        with self.assertRaises(TypeError):
+            MethodEvaluation(object(), evaluated_at, ())
+        with self.assertRaises(TypeError):
+            self.handoff(MethodEvaluation({}, [], ()))
+        no_episode = MethodEvaluation({"infusion_episode": None}, evaluated_at, ())
+        self.handoff(no_episode)
+        self.assertIsNone(no_episode.diagnostic["infusion_episode"])
+
+    def test_episode_projection_retains_unknown_end_interruption_and_late_continuation(self):
+        projection = {
+            "phase": "active",
+            "onset_at": T0,
+            "confirmed_at": T0 + timedelta(seconds=5),
+            "level_end_at": None,
+            "end_basis": None,
+            "interrupted": False,
+            "water_change": {"upper": 1.5},
+            "decays": {"upper": T0 + timedelta(seconds=4)},
+            "levels": {
+                "upper": {
+                    "first_newest_at": T0 + timedelta(seconds=6),
+                    "fresh_newest_at": None,
+                    "newest_at": T0 + timedelta(seconds=6),
+                    "start_at": T0 + timedelta(seconds=5),
+                }
+            },
+        }
+        active = InfusionEpisodeDiagnostics.from_result(projection)
+        interrupted = InfusionEpisodeDiagnostics.from_result({
+            **projection, "interrupted": True,
+        })
+        ended = InfusionEpisodeDiagnostics.from_result({
+            **projection,
+            "phase": "ended",
+            "level_end_at": T0 + timedelta(seconds=10),
+            "end_basis": "decay_and_level",
+        })
+        continued = InfusionEpisodeDiagnostics.from_result(projection)
+        self.handoff(active)
+        self.handoff(interrupted, active)
+        self.handoff(ended, interrupted)
+        correction = self.handoff(continued, ended)
+
+        self.assertIsNone(interrupted.level_end_at)
+        self.assertIsNone(interrupted.end_basis)
+        self.assertTrue(interrupted.interrupted)
+        self.assertEqual(correction.after.onset_at, correction.before.onset_at)
+        self.assertEqual(correction.after.confirmed_at, correction.before.confirmed_at)
+        self.assertEqual(correction.before.phase, "ended")
+        self.assertEqual(correction.after.phase, "active")
+        self.assertIsNone(correction.after.level_end_at)
+        projection["water_change"]["upper"] = 99.0
+        projection["levels"]["upper"]["start_at"] = T0
+        self.assertEqual(active.water_change["upper"], 1.5)
+        self.assertEqual(
+            active.levels["upper"]["start_at"], T0 + timedelta(seconds=5)
+        )
+        with self.assertRaises(ValueError):
+            InfusionEpisodeDiagnostics.from_result({"phase": "active"})
+        for change in (
+            {"phase": []},
+            {"onset_at": []},
+            {"confirmed_at": "not a timestamp"},
+            {"level_end_at": []},
+            {"end_basis": []},
+            {"interrupted": 1},
+        ):
+            with self.subTest(change=change), self.assertRaises(TypeError):
+                self.handoff(
+                    InfusionEpisodeDiagnostics.from_result({**projection, **change})
+                )
 
     def test_light_snapshot_reads_curve_override_and_plan_without_advancing(self):
         output = LightOutput(parameters())

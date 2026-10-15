@@ -40,13 +40,35 @@ Nachrichtenzuordnung. Diese Prüfungen enthalten keinen HA-Adapter und belegen
 weder Empfang noch Rückmeldungen eines tatsächlichen Companion-Clients.
 
 Die [Modellübergaben](../docs/modelluebergaben.md) werden durch
-`test_model_handoff.py`, `test_control_handoff.py` und
-`test_observation_handoff.py` sowie `test_thermal_handoff.py` mit vorhandenen
-Kernfixtures geprüft. Die Fälle verwenden tatsächliche Modellrückgaben und prüfen vollständige Belege,
+`test_model_handoff.py`, `test_control_handoff.py`,
+`test_observation_handoff.py`, `test_thermal_handoff.py`,
+`test_input_handoff.py`, `test_interaction_handoff.py`,
+`test_system_handoff.py` und `test_presentation_handoff.py` mit vorhandenen
+Kern-, Archiv- und Vorschaufixtures geprüft. Der vorhandene Integrationstest
+`test_direct_presence_ids_are_private_in_live_and_archived_public_responses`
+in `integration/test_panel_api.py` prüft zusätzlich die vollständige Übernahme
+einer echten StateView-HTTP-Antwort und die unveränderte öffentliche Projektion.
+Die Fälle verwenden tatsächliche Modellrückgaben und prüfen vollständige Belege,
 Identitätsbindung, Feldtypen und Ablösung veränderlicher Quelldaten. Die
 explizite Übergabe an einen Testverbraucher belegt den Datenvertrag; eine
 automatische Ereignissammlung oder ein Benachrichtigungsablauf ist nicht
 Bestandteil dieser Prüfungen.
+Die Taster- und Korrelationsfälle prüfen auch, dass eine Beobachtung den
+nächsten tatsächlichen Verarbeitungsschritt nicht verbraucht. Quellenfreie
+Eingangsformen bewahren unbekannte Werte, unterscheidbare Vorkommnisse und
+separate Zeiten. Die identische Übergabe zweier explizit gewählter Fachwerte
+belegt keine bereits implementierte Quellenwahl oder Controllerumstellung.
+
+Der HA-Job legt mit `HA_SAUNA_HANDOFF_EVIDENCE` zusätzlich das Artefakt
+`ha-system-forms/system-forms.json` an. Es enthält die vollständigen tatsächlichen
+Admin-/Public-StateView-, `Archive.read`- und Archiv-API-Rückgaben einschließlich
+Verlaufsprojektion sowie ihre Form-/Wirewerte. Das Manifest nennt Testfall,
+isolierte synthetische HA-Fixture und ausgecheckten GitHub-Commit. Jede
+Beobachtung benennt ihren Erzeuger und die verwendete Form; Original und
+Wirewert bleiben direkt vergleichbar. Die Aufbewahrung in Actions beträgt
+sieben Tage. Diese Werte belegen die Übernahme vorhandener Produzentenwerte,
+keinen angeschlossenen Laufzeitverbraucher und keine reale Geräte- oder
+Companion-Verbindung.
 
 Szenarien und die gebundenen realen Replay-Aufzeichnungen sind im Checkout enthalten.
 Die Manifeste binden Daten und Bewertungen durch Prüfsummen. Fehlende oder

@@ -49,6 +49,15 @@ jobs:
       - run: python -m unittest discover -s tests/integration -v
         env:
           HA_TEST_REQUIRED: '1'
+          HA_SAUNA_HANDOFF_EVIDENCE: ${{ runner.temp }}/ha-sauna-system-forms
+      - name: Vollständige Systemformen aus isolierter HA-Testfixture sichern
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: ha-system-forms
+          path: ${{ runner.temp }}/ha-sauna-system-forms
+          if-no-files-found: error
+          retention-days: 7
   session-matrix:
     runs-on: ubuntu-latest
     outputs:

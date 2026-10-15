@@ -636,15 +636,51 @@ class PanelAPITests(unittest.IsolatedAsyncioTestCase):
 
     async def test_direct_presence_ids_are_private_in_live_and_archived_public_responses(self):
         import json
+        import os
         from copy import deepcopy
         from datetime import timedelta
+        from pathlib import Path
 
         from custom_components.ha_sauna.core.presentation_handoff import (
             PanelSnapshot, PublicPanelSnapshot,
         )
         from custom_components.ha_sauna.core.presence import binary_presence
+        from custom_components.ha_sauna.core.system_handoff import ArchiveSessionOutput
         from custom_components.ha_sauna.core.timeline import Event, Kind
         from custom_components.ha_sauna.presentation import public_state
+
+        evidence_directory = os.environ.get("HA_SAUNA_HANDOFF_EVIDENCE")
+        evidence = {
+            "manifest": {
+                "github_sha": os.environ.get("GITHUB_SHA"),
+                "test_file": "tests/integration/test_panel_api.py",
+                "test_name": self.id(),
+                "fixture": "tests/integration/harness.py:start_hass/create_sauna",
+                "data_scope": "Synthetic states in an isolated temporary Home Assistant instance",
+                "conversion_scope": "Explicit producer result to immutable form to wire value",
+                "runtime_consumer_connected": False,
+                "real_device_or_companion_connection": False,
+            },
+            "observations": {},
+        }
+
+        def assert_handoff_result(name, source, original, form):
+            wire = form.to_wire()
+            if evidence_directory:
+                evidence["observations"][name] = {
+                    "source": source,
+                    "form": type(form).__name__,
+                    "original": original,
+                    "wire": wire,
+                    "roundtrip_equal": wire == original,
+                }
+                directory = Path(evidence_directory)
+                directory.mkdir(parents=True, exist_ok=True)
+                (directory / "system-forms.json").write_text(
+                    json.dumps(evidence, ensure_ascii=False, sort_keys=True, indent=2) + "\n",
+                    encoding="utf-8",
+                )
+            self.assertEqual(wire, original)
 
         entity_id = "binary_sensor.private_presence"
         self.hass.states.async_set(entity_id, "off", {"device_class": "occupancy"})
@@ -693,12 +729,18 @@ class PanelAPITests(unittest.IsolatedAsyncioTestCase):
             async with admin.get(url + "/state") as response:
                 administrative = await response.json()
             snapshot = PanelSnapshot.from_result(administrative)
-            self.assertEqual(snapshot.to_wire(), administrative)
+            assert_handoff_result(
+                "state_admin", "api.StateView.get: authenticated admin HTTP response",
+                administrative, snapshot,
+            )
             self.assertEqual(
                 PublicPanelSnapshot.from_snapshot(snapshot).to_wire(),
                 public_state(deepcopy(administrative)),
             )
-            self.assertEqual(PublicPanelSnapshot.from_result(state).to_wire(), state)
+            assert_handoff_result(
+                "state_public", "api.StateView.get: authenticated public HTTP response",
+                state, PublicPanelSnapshot.from_result(state),
+            )
             raw_id = runtime.session.timeline.active.gang_id
             self.assertIn(entity_id, raw_id)
             self.assertEqual(administrative["session"]["timeline"]["active"]["gang_id"], raw_id)
@@ -712,11 +754,23 @@ class PanelAPITests(unittest.IsolatedAsyncioTestCase):
             clock[0] = start + timedelta(milliseconds=70)
             runtime.persist()
             await runtime.archive.flush()
+            stored = runtime.archive.read(session_id, now=clock[0])
+            assert_handoff_result(
+                "archive_read", "archive.Archive.read: direct read after fixture archive flush",
+                stored, ArchiveSessionOutput.from_result(stored),
+            )
+            self.assertEqual(stored["session"]["timeline"]["completed"][0]["gang_id"], raw_id)
             for query in ({"session_id": session_id},
                           {"session_id": session_id, "projection": "history"}):
                 async with public.get(url + "/archive", params=query) as response:
                     self.assertEqual(response.status, 200)
                     archived = await response.json()
+                assert_handoff_result(
+                    "archive_public_history" if query.get("projection") else "archive_public",
+                    "api.ArchiveView.get: authenticated public HTTP response "
+                    + ("with history projection" if query.get("projection") else "with default projection"),
+                    archived, ArchiveSessionOutput.from_result(archived),
+                )
                 self.assertNotIn(entity_id, json.dumps(archived))
                 completed = archived["session"]["timeline"]["completed"][0]
                 self.assertEqual(completed["gang_id"], active["gang_id"])
@@ -725,8 +779,11 @@ class PanelAPITests(unittest.IsolatedAsyncioTestCase):
                                   if item["source_id"]}, {active["gang_id"]})
             async with admin.get(url + "/archive", params={"session_id": session_id}) as response:
                 administrative = await response.json()
+            assert_handoff_result(
+                "archive_admin", "api.ArchiveView.get: authenticated admin HTTP response",
+                administrative, ArchiveSessionOutput.from_result(administrative),
+            )
             self.assertEqual(administrative["session"]["timeline"]["completed"][0]["gang_id"], raw_id)
-            self.assertEqual(runtime.archive.read(session_id)["session"]["timeline"]["completed"][0]["gang_id"], raw_id)
 
             async with public.get(url + "/state") as response:
                 self.assertEqual(response.status, 200)

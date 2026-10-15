@@ -143,6 +143,60 @@ class DetectionEvaluation:
 
 
 @dataclass(frozen=True)
+class MethodEvaluation:
+    """Complete actual diagnostic and detections of a supplied evaluation.
+
+    A method supplies its own full mapping diagnostic shape. No legacy
+    checks/holds, episode, signal catalogue, or
+    synthetic confirmation time is required. evaluated_at is the actual
+    evaluation time, not an inferred beginning or first control usability.
+    """
+
+    diagnostic: FrozenMap
+    evaluated_at: datetime
+    detections: tuple[Detection, ...]
+
+    def __post_init__(self):
+        object.__setattr__(self, "diagnostic", _mapping(self.diagnostic))
+        object.__setattr__(self, "detections", _tuple_of(self.detections, Detection))
+
+
+@dataclass(frozen=True)
+class InfusionEpisodeDiagnostics:
+    """Complete published episode diagnostic, separate from confirmed events.
+
+    These are the existing episode projection's fields, not a detector restore
+    state. The episode owner supplies phase, interruption, and any end, including
+    an ended-to-active correction after a late earlier rise. No event or stable
+    episode ID is inferred. Confirmed occurrence identity stays with InfusionInput
+    and its existing events; binding this observation to one is a future producer
+    responsibility. None for an end preserves missing knowledge, not an end.
+    """
+
+    phase: str
+    onset_at: datetime
+    confirmed_at: datetime | None
+    level_end_at: datetime | None
+    end_basis: str | None
+    interrupted: bool
+    water_change: FrozenMap
+    decays: FrozenMap
+    levels: FrozenMap
+
+    def __post_init__(self):
+        for name in ("water_change", "decays", "levels"):
+            object.__setattr__(self, name, _mapping(getattr(self, name)))
+
+    @classmethod
+    def from_result(cls, result: Mapping):
+        """Copy an existing complete episode projection, without running its owner."""
+        _instance(result, Mapping)
+        if set(result) != {definition.name for definition in fields(cls)}:
+            raise ValueError("A complete published infusion-episode result is required")
+        return cls(**result)
+
+
+@dataclass(frozen=True)
 class LightMotionSnapshot:
     kind: str
     started_at: datetime | float
