@@ -6,6 +6,8 @@ from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from unittest.mock import Mock
 
+from model_input_evidence import emit_model_input_evidence
+
 from custom_components.ha_sauna.bindings import ROLES, Bindings
 from custom_components.ha_sauna.core.parameters import Parameters
 from custom_components.ha_sauna.core.timeline import Event, Kind
@@ -223,12 +225,20 @@ class ButtonRuntimeTests(unittest.TestCase):
         self.runtime.controller.set_temperature(
             self.runtime.configuration.parameters.values["sauna_min_temperature_c"], self.now,
         )
+        previous_session_id = (
+            self.runtime.session.session_id if self.runtime.session else None
+        )
         received_manual = self.now
         self.now += timedelta(seconds=10)
         manual_at = self.now
         asyncio.run(self.runtime._handle_button_event(
             "short", manual_at, received_at=received_manual,
         ))
+        emit_model_input_evidence(
+            self.id() + "/manual", self.runtime,
+            [consume.call_args.args[0], override.call_args.args[0]],
+            previous_session_id=previous_session_id,
+        )
         identity = self.runtime.session.session_id
         self.assertEqual(self.runtime.controller.control_mode, "manual")
         self.assertTrue(self.runtime.controller.heater_override)
@@ -240,6 +250,10 @@ class ButtonRuntimeTests(unittest.TestCase):
         asyncio.run(self.runtime._handle_button_event(
             "long", automatic_at, received_at=received_automatic,
         ))
+        emit_model_input_evidence(
+            self.id() + "/automatic", self.runtime, [consume.call_args.args[0]],
+            previous_session_id=identity,
+        )
         self.assertEqual(self.runtime.controller.control_mode, "automatic")
         self.assertIsNone(self.runtime.controller.heater_override)
         self.assertTrue(self.runtime.controller.last_decision.heat)
@@ -288,6 +302,10 @@ class ButtonRuntimeTests(unittest.TestCase):
         for heat in (True, False, None):
             with self.subTest(heat=heat):
                 received_at, decision = asyncio.run(command(heat))
+                emit_model_input_evidence(
+                    self.id(), self.runtime, [consume.call_args.args[0]],
+                    previous_session_id=identity,
+                )
                 self.assertEqual(decision.at, self.now)
                 self.assertEqual(decision.heat, heat is not False)
                 self.assertEqual(
@@ -346,6 +364,10 @@ class ButtonRuntimeTests(unittest.TestCase):
             for heat in (False, None):
                 with self.subTest(heat=heat):
                     received_at = await short()
+                    emit_model_input_evidence(
+                        self.id(), self.runtime, [consume.call_args.args[0]],
+                        previous_session_id=identity,
+                    )
                     value = consume.call_args.args[0]
                     self.assertIs(value.heat, heat)
                     self.assertEqual(value.timing.effective_at, received_at)

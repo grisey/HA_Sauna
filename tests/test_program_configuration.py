@@ -8,6 +8,8 @@ import unittest
 from types import SimpleNamespace
 from unittest.mock import Mock
 
+from model_input_evidence import emit_model_input_evidence
+
 from custom_components.ha_sauna import async_options_updated
 from custom_components.ha_sauna.archive import Archive, plain
 from custom_components.ha_sauna.bindings import ROLES, Bindings
@@ -678,7 +680,12 @@ class ProgramConfigurationTests(unittest.TestCase):
         })), clock=lambda: T0)
         consume = Mock(wraps=runtime.controller.consume_control_mode_input)
         runtime.controller.consume_control_mode_input = consume
+        previous_session_id = runtime.session.session_id if runtime.session else None
         runtime._set_control_mode("manual")
+        emit_model_input_evidence(
+            self.id() + "/initial_manual", runtime, [consume.call_args.args[0]],
+            previous_session_id=previous_session_id,
+        )
         self.assertEqual(runtime.controller.target_temperature, 87)
         self.assertEqual(runtime.configuration.parameters.values["target_temperature_c"], 87)
         self.assertFalse(runtime.controller.heater_override)
@@ -748,12 +755,19 @@ class ProgramConfigurationTests(unittest.TestCase):
             async def change_mode(mode):
                 nonlocal now
                 received_at = now
+                previous_session_id = (
+                    runtime.session.session_id if runtime.session else None
+                )
                 await runtime._lock.acquire()
                 pending = asyncio.create_task(async_set_control_mode(hass, entry, mode))
                 await asyncio.sleep(0)
                 now += timedelta(seconds=5)
                 runtime._lock.release()
                 configuration = await pending
+                emit_model_input_evidence(
+                    self.id(), runtime, [consume.call_args.args[0]],
+                    previous_session_id=previous_session_id,
+                )
                 self.assertEqual(configuration.control_mode, mode)
                 return received_at, now
 
