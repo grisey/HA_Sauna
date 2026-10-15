@@ -154,6 +154,95 @@ class CurveLevelFeatures:
     exact_constant: bool
 
 
+@dataclass(frozen=True)
+class CurveFormReference:
+    """Frozen mathematical geometry, never a physical event or event time.
+
+    parameter_count and search_count retain the original geometry-selection
+    cost during a later constrained fit. current_not_before binds the supplied
+    current-flank floor; changing it requires a new hypothesis, not a recheck.
+    """
+
+    form: str
+    model: str
+    start_at: datetime
+    turn_at: datetime
+    turn_kind: str
+    knot_at: datetime | None
+    hinge_order: int
+    parameter_count: int
+    search_count: int
+    initial_newest_at: datetime
+    current_not_before: datetime | None
+
+
+@dataclass(frozen=True)
+class CurveFormModel:
+    """One fitted member of the common-support, common-noise comparison."""
+
+    model: str
+    score: float
+    loss: float
+    compatible: bool | None
+    turn_at: datetime | None
+    turn_kind: str | None
+    knot_at: datetime | None
+    hinge_order: int
+    coefficient_count: int
+    parameter_count: int
+    search_count: int
+    search_cost: float
+
+
+@dataclass(frozen=True)
+class CurveFormFeatures:
+    """Peak/recovery form evidence with separate identity and deletion checks.
+
+    score_gain compares positive and counter-FORM fits on exactly the same
+    originals and noise scale. reference_score_gain compares the frozen branch
+    with counterforms. replacement_gain/cost concern only reference identity:
+    a better new positive geometry is not negative evidence for the form.
+    before_trend/after_trend use their own original flank scales; their scores
+    are never added to the common-family scores. No field is a probability.
+    """
+
+    evidence: str
+    form_evidence: str
+    reference_evidence: str
+    influence_evidence: str
+    reason: str
+    form: str
+    start_at: datetime
+    newest_at: datetime
+    count: int
+    original_count: int
+    noise_scale: float
+    positive_score: float | None
+    counter_score: float | None
+    score_gain: float | None
+    positive_model: str | None
+    counter_model: str | None
+    turn_at: datetime | None
+    reference: CurveFormReference | None
+    reference_score: float | None
+    reference_score_gain: float | None
+    replacement_gain: float | None
+    replacement_cost: float | None
+    fresh_original_count: int
+    before_trend: CurveTrendFeatures | None
+    after_trend: CurveTrendFeatures | None
+    before_count: int
+    after_count: int
+    removed_at: datetime | None
+    influence_score_gain: float | None
+    candidate_models: tuple[CurveFormModel, ...]
+    score_resolution: float | None = None
+    reference_score_resolution: float | None = None
+    influence_score_resolution: float | None = None
+    observed_form: str | None = None
+    reference_model: CurveFormModel | None = None
+
+
 def _policy_valid(policy):
     counts = (
         policy.min_side_samples, policy.max_points,
@@ -305,8 +394,9 @@ def _smooth_models(times, values, noise, policy):
     return quadratic, smooth
 
 
-def _models(times, values, noise, knots, policy, *, hinge_order=1):
-    result = _smooth_models(times, values, noise, policy)
+def _models(times, values, noise, knots, policy, *, hinge_order=1, smooth_result=None):
+    result = (smooth_result if smooth_result is not None
+              else _smooth_models(times, values, noise, policy))
     if result is None:
         return None
     quadratic, smooth = result
@@ -451,8 +541,8 @@ def _supported_without_point(
     )
 
 
-def _level_models(times, raw_values, policy):
-    """Compare a level and smooth trends with one tail-local noise scale."""
+def _common_noise(times, raw_values):
+    """Existing cubic-residual MAD, shared by every fit in one comparison."""
     center = median(raw_values)
     values = [value - center for value in raw_values]
     if not all(isfinite(value) for value in values):
@@ -469,6 +559,16 @@ def _level_models(times, raw_values, policy):
     resolution = len(values) * ulp(max(abs(value) for value in raw_values))
     if not isfinite(noise) or noise <= resolution:
         return None
+    return noise, center, values, residuals
+
+
+def _level_models(times, raw_values, policy):
+    """Compare a level and smooth trends with one tail-local noise scale."""
+    common = _common_noise(times, raw_values)
+    if common is None:
+        return None
+    noise, center, values, residuals = common
+    cubic = [[1.0, time, time * time, time**3] for time in times]
     fitted_models = []
     for name, degree in (
         ("constant", 0), ("linear", 1), ("quadratic", 2), ("cubic", 3),
@@ -1121,4 +1221,483 @@ def curve_change(
         ZeroDivisionError,
     ):
         # Bad/degenerate local windows must not interrupt the product loop.
+        return None
+
+
+def _form_turn(coefficients, knot, order, form, value_resolution, count):
+    """Classify fitted geometry, independently of its parameterization.
+
+    Reflected peak geometry uses the same minimum test as a recovery. A hinge
+    consists of two quadratics: their derivative roots and their shared knot
+    partition the domain into intervals of known direction. Exactly one
+    minimum and no maximum is the compatible class after reflection.
+    """
+    orientation = -1 if form == "peak" else 1
+    coefficients = [orientation * value for value in coefficients]
+    if order == 0:
+        if len(coefficients) < 2:
+            return False, None, None
+        turn = _smooth_valley(coefficients, value_resolution, count)
+        if turn is None or turn is False:
+            return turn, None, None
+        return True, turn, "stationary"
+    scale = max(abs(value) for value in coefficients[1:])
+    if scale == 0:
+        return False, None, None
+    _, first, quadratic, change = [value / scale for value in coefficients]
+    resolution = max(value_resolution / scale,
+                     count * _FLOAT_EPSILON * fsum(map(abs, (
+                         first, 2 * quadratic, 2 * change,
+                     ))))
+    right_first = first + change if order == 1 else first - 2 * change * knot
+    right_quadratic = quadratic if order == 1 else quadratic + change
+    last = fsum((right_first, 2 * right_quadratic))
+    if min(abs(first), abs(last)) <= resolution:
+        return None, None, None
+    if first >= 0 or last <= 0:
+        return False, None, None
+    nodes = {0.0, knot, 1.0}
+    for intercept, curvature, lo, hi in (
+        (first, quadratic, 0.0, knot),
+        (right_first, right_quadratic, knot, 1.0),
+    ):
+        if curvature:
+            root = -intercept / (2 * curvature)
+            if isfinite(root) and lo < root < hi:
+                nodes.add(root)
+    nodes = sorted(nodes)
+    directions = []
+    for left, right in zip(nodes, nodes[1:]):
+        at = (left + right) / 2
+        slope = (first + 2 * quadratic * at if at < knot
+                 else right_first + 2 * right_quadratic * at)
+        if abs(slope) <= resolution:
+            return None, None, None
+        directions.append(1 if slope > 0 else -1)
+    minima, maxima = [], []
+    for index, (before, after) in enumerate(zip(directions, directions[1:]), 1):
+        if before < 0 < after:
+            minima.append(nodes[index])
+        elif before > 0 > after:
+            maxima.append(nodes[index])
+    if len(minima) != 1 or maxima:
+        return False, None, None
+    turn = minima[0]
+    if min(turn, 1 - turn) <= count * _FLOAT_EPSILON:
+        return None, None, None
+    return True, turn, "knot" if order == 1 and turn == knot else "stationary"
+
+
+def _form_record(name, fitted, times, values, noise, start, span, form,
+                 value_resolution, *, knot=None, order=0, parameter_count=None,
+                 coefficient_count=None, search_count=1):
+    coefficients, loss = fitted
+    compatible, turn, turn_kind = _form_turn(
+        coefficients, knot, order, form, value_resolution, len(values),
+    )
+    rows = [[1.0, at, at * at, at**3][:len(coefficients)] for at in times]
+    if order:
+        rows = [[1.0, at, at * at, max(0.0, at - knot)**order] for at in times]
+    count = len(coefficients) if coefficient_count is None else coefficient_count
+    parameters = count if parameter_count is None else parameter_count
+    search_cost = 2 * log(search_count) if search_count > 1 else 0.0
+    score = loss + parameters * log(len(values)) + search_cost
+    model = CurveFormModel(
+        model=name, score=score, loss=loss, compatible=compatible,
+        turn_at=start + timedelta(seconds=turn * span) if turn is not None else None,
+        turn_kind=turn_kind,
+        knot_at=start + timedelta(seconds=knot * span) if knot is not None else None,
+        hinge_order=order, coefficient_count=count, parameter_count=parameters,
+        search_count=search_count, search_cost=search_cost,
+    )
+    return model, coefficients, _residuals(rows, values, coefficients)
+
+
+def _form_models(selected, noise, policy, form, *, knot_times=None,
+                 retained_search_count=None, include_knot=None):
+    """Fit each existing family once on the same originals and noise scale."""
+    start, newest = selected[0][0], selected[-1][0]
+    span = (newest - start).total_seconds()
+    times = [(stamp - start).total_seconds() / span for stamp, _ in selected]
+    raw_values = [value for _, value in selected]
+    center = median(raw_values)
+    values = [value - center for value in raw_values]
+    resolution = len(values) * ulp(max(abs(value) for value in raw_values))
+    smooth_result = _smooth_models(times, values, noise, policy)
+    if smooth_result is None:
+        return None
+    _, smooth = smooth_result
+    level = _fit([[1.0] for _ in times], values, noise, policy)
+    if level is None:
+        return None
+    records = [_form_record("constant", level, times, values, noise,
+                           start, span, form, resolution)]
+    for score, name, _, coefficients in smooth:
+        # Reuse the owner's already computed loss, without another robust fit.
+        loss = score - len(coefficients) * log(len(values))
+        records.append(_form_record(name, (coefficients, loss), times, values,
+                                    noise, start, span, form, resolution))
+    if knot_times is None:
+        eligible = list(range(policy.min_side_samples,
+                              len(times) - policy.min_side_samples))
+        indices = [eligible[index] for index in _indices(len(eligible), policy.max_candidates)]
+        if include_knot is not None:
+            pinned = next((index for index, (stamp, _) in enumerate(selected)
+                           if stamp == include_knot), None)
+            if pinned in eligible and pinned not in indices:
+                if len(indices) == policy.max_candidates:
+                    nearest = min(range(len(indices)), key=lambda i: (
+                        abs(times[indices[i]] - times[pinned]), i,
+                    ))
+                    indices[nearest] = pinned
+                else:
+                    indices.append(pinned)
+                indices.sort()
+        knots = [(index, times[index]) for index in indices]
+        knot_times = tuple(selected[index][0] for index in indices)
+    else:
+        knots = [(index, (stamp - start).total_seconds() / span)
+                 for index, stamp in enumerate(knot_times) if start < stamp < newest]
+    changes = []
+    for order in (1, 2):
+        if not knots:
+            continue
+        result = _models(times, values, noise, knots, policy, hinge_order=order,
+                         smooth_result=smooth_result)
+        if result is not None:
+            changes.extend((order, index, coefficients, score)
+                           for score, index, coefficients in result[3])
+    search_count = len(changes) if retained_search_count is None else retained_search_count
+    for order, index, coefficients, score in changes:
+        knot = next(value for candidate, value in knots if candidate == index)
+        loss = score - 5 * log(len(values))
+        records.append(_form_record(f"hinge{order}", (coefficients, loss), times,
+            values, noise, start, span, form, resolution, knot=knot, order=order,
+            parameter_count=5, search_count=search_count))
+    return records, knot_times, search_count
+
+
+def _fixed_form_model(selected, noise, policy, reference, records):
+    """Refit the bound branch; a stationary turn is a linear constraint."""
+    start, newest = selected[0][0], selected[-1][0]
+    span = (newest - start).total_seconds()
+    turn = (reference.turn_at - start).total_seconds() / span
+    if not 0 < turn < 1:
+        return None
+    if reference.turn_kind == "knot":
+        for record in records:
+            model = record[0]
+            if model.model == reference.model and model.knot_at == reference.knot_at:
+                if (model.compatible is True and (
+                    model.turn_kind != reference.turn_kind
+                    or abs(model.turn_at - reference.turn_at) > datetime.resolution
+                )):
+                    return None
+                # Search costs belong to the first proposal, even if a later
+                # prefix permits a different number of competing knots.
+                return (CurveFormModel(
+                    **{**model.__dict__, "score": model.loss
+                       + reference.parameter_count * log(len(selected))
+                       + 2 * log(reference.search_count),
+                       "parameter_count": reference.parameter_count,
+                       "search_count": reference.search_count,
+                       "search_cost": 2 * log(reference.search_count)},
+                ), record[1], record[2])
+    raw_values = [value for _, value in selected]
+    center = median(raw_values)
+    values = [value - center for value in raw_values]
+    times = [(stamp - start).total_seconds() / span for stamp, _ in selected]
+    knot = ((reference.knot_at - start).total_seconds() / span
+            if reference.knot_at is not None else None)
+    order = reference.hinge_order
+    if reference.turn_kind == "knot":
+        rows = [[1.0, at, at * at, max(0.0, at - knot)**order] for at in times]
+        fitted = _fit(rows, values, noise, policy)
+        count = 4
+    elif order:
+        derivative = (1.0 if turn > knot else 0.0) if order == 1 else 2 * max(0.0, turn - knot)
+        rows = [[1.0, at * at - 2 * turn * at,
+                 max(0.0, at - knot)**order - derivative * at] for at in times]
+        fitted = _fit(rows, values, noise, policy)
+        if fitted is not None:
+            offset, quadratic, change = fitted[0]
+            fitted = ([offset, -2 * turn * quadratic - derivative * change,
+                       quadratic, change], fitted[1])
+        count = 3
+    else:
+        degree = {"quadratic": 2, "cubic": 3}[reference.model]
+        rows = [[1.0, *((at - turn)**power for power in range(2, degree + 1))]
+                for at in times]
+        fitted = _fit(rows, values, noise, policy)
+        if fitted is not None:
+            local = fitted[0]
+            cubic = local[2] if degree == 3 else 0.0
+            coefficients = [local[0] + local[1] * turn**2 - cubic * turn**3,
+                            -2 * local[1] * turn + 3 * cubic * turn**2,
+                            local[1] - 3 * cubic * turn]
+            if degree == 3:
+                coefficients.append(cubic)
+            fitted = coefficients, fitted[1]
+        count = degree
+    if fitted is None:
+        return None
+    resolution = len(selected) * ulp(max(abs(value) for value in raw_values))
+    record = _form_record(reference.model, fitted, times, values, noise, start,
+        span, reference.form, resolution, knot=knot, order=order,
+        parameter_count=reference.parameter_count, coefficient_count=count,
+        search_count=reference.search_count)
+    model = record[0]
+    if (model.compatible is True and model.turn_at is not None
+            and abs(model.turn_at - reference.turn_at) > datetime.resolution):
+        return None
+    return record
+
+
+def _form_flanks(samples, turn_at, form, current_not_before, policy, cache):
+    before = [point for point in samples if point[0] < turn_at]
+    after = [point for point in samples if point[0] > turn_at and (
+        current_not_before is None or point[0] >= current_not_before
+    )]
+    results = []
+    for points in (before, after):
+        key = tuple(points)
+        if key not in cache:
+            cache[key] = curve_trend(points, policy=policy)
+        results.append(cache[key])
+    before_trend, after_trend = results
+    if before_trend is None or after_trend is None:
+        evidence = "unresolved"
+    else:
+        compatible = (before_trend.direction == 1 and after_trend.direction == -1
+                      if form == "peak" else
+                      before_trend.direction == -1 and after_trend.direction in (0, 1))
+        evidence = "supports" if compatible else "rejects"
+    return before_trend, after_trend, len(before), len(after), evidence
+
+
+def _form_comparison(records, count):
+    positive = [record for record in records if record[0].compatible is True]
+    counter = [record for record in records if record[0].compatible is False]
+    unclear = [record for record in records if record[0].compatible is None]
+    positive = min(positive, key=lambda item: (item[0].score, item[0].model)) if positive else None
+    counter = min(counter, key=lambda item: (item[0].score, item[0].model)) if counter else None
+    scores = [record[0].score for record in (positive, counter) if record is not None]
+    resolution = count * ulp(max(map(abs, scores))) if scores else None
+    gain = counter[0].score - positive[0].score if positive and counter else None
+    if unclear and scores and min(item[0].score for item in unclear) <= min(scores) + resolution:
+        evidence = "unresolved"
+    elif not positive:
+        evidence = "rejects" if counter else "unresolved"
+    elif counter is None or abs(gain) <= resolution:
+        evidence = "unresolved"
+    else:
+        evidence = "supports" if gain > resolution else "rejects"
+    return positive, counter, gain, resolution, evidence
+
+
+def curve_form(
+    samples: Sequence[tuple[datetime, float]], *, policy: CurvePolicy,
+    form: str = "peak", reference: CurveFormReference | None = None,
+    current_not_before: datetime | None = None,
+) -> CurveFormFeatures | None:
+    """Assess an observed peak or recovery across the existing fit families.
+
+    L/P1/P2/P3/M1/M2 share actual bounded originals and one cubic-residual MAD.
+    Each concrete fit belongs to the compatible or counterform class by its
+    geometry; a curved or hinged peak is never automatically a counterform.
+    Both hinge orders share one declared search over their successful knot
+    fits. score_gain is counterform score minus compatible-form score.
+
+    A reference freezes the initial context, model branch, turn, hinge knot,
+    current-flank floor and geometry-search history. A smooth stationary turn
+    is held by a linear derivative-zero constraint within the same polynomial
+    family; a first-order kink keeps its original knot. Reduced current free
+    coefficients do not erase the originally estimated geometry costs.
+    Better *positive* geometry can contradict this reference's identity;
+    replacement_gain/cost report that separately from form competition.
+
+    Recovery requires an observed fall followed by an observed level or rise.
+    A merely less-steep fall is not recovery here, nor does recovery decide an
+    infusion's end. Sources, coherent input selection, freshness requirements,
+    onset/event times and episode identity remain the detector's responsibility.
+    """
+    try:
+        if not _policy_valid(policy) or form not in ("peak", "recovery"):
+            return None
+        if len(samples) < 2 * policy.min_side_samples:
+            return None
+        stamps = [stamp for stamp, _ in samples]
+        if any(not isinstance(stamp, datetime) for stamp in stamps):
+            return None
+        if any(a >= b for a, b in zip(stamps, stamps[1:])):
+            return None
+        if any(isinstance(value, bool) or not isfinite(value) for _, value in samples):
+            return None
+        if current_not_before is not None and not isinstance(current_not_before, datetime):
+            return None
+        supplied_reference = reference is not None
+        if supplied_reference:
+            if not isinstance(reference, CurveFormReference) or reference.form != form:
+                return None
+            parameters = {"quadratic": 3, "cubic": 4, "hinge1": 5, "hinge2": 5}
+            if (reference.model not in parameters
+                    or reference.parameter_count != parameters[reference.model]
+                    or not isinstance(reference.search_count, int)
+                    or isinstance(reference.search_count, bool) or reference.search_count < 1
+                    or reference.start_at != stamps[0]
+                    or reference.initial_newest_at > stamps[-1]
+                    or not stamps[0] < reference.turn_at < stamps[-1]
+                    or reference.turn_kind not in ("knot", "stationary")
+                    or reference.hinge_order != {"hinge1": 1, "hinge2": 2}.get(reference.model, 0)
+                    or (reference.hinge_order != 0) != (reference.knot_at is not None)
+                    or reference.turn_kind == "knot" and (
+                        reference.hinge_order != 1 or reference.turn_at != reference.knot_at)):
+                return None
+            if current_not_before is None:
+                current_not_before = reference.current_not_before
+            elif current_not_before != reference.current_not_before:
+                return None
+        knot_at = reference.knot_at if reference is not None else None
+        selected = _bounded_samples(samples, policy.max_points, knot_at)
+        if selected is None or len(selected) < 2 * policy.min_side_samples:
+            return None
+        span = (selected[-1][0] - selected[0][0]).total_seconds()
+        if not isfinite(span) or span <= 0:
+            return None
+        times = [(stamp - selected[0][0]).total_seconds() / span for stamp, _ in selected]
+        common = _common_noise(times, [value for _, value in selected])
+        if common is None:
+            return None
+        noise, _, _, _ = common
+        fitted = _form_models(selected, noise, policy, form, include_knot=knot_at)
+        if fitted is None:
+            return None
+        records, knot_times, search_count = fitted
+        positive, counter, gain, resolution, form_evidence = _form_comparison(records, len(selected))
+        if reference is None and positive is not None:
+            model = positive[0]
+            reference = CurveFormReference(
+                form=form, model=model.model, start_at=stamps[0],
+                turn_at=model.turn_at, turn_kind=model.turn_kind,
+                knot_at=model.knot_at, hinge_order=model.hinge_order,
+                parameter_count=model.parameter_count, search_count=model.search_count,
+                initial_newest_at=stamps[-1], current_not_before=current_not_before,
+            )
+        fixed = (positive if not supplied_reference else
+                 _fixed_form_model(selected, noise, policy, reference, records))
+        reference_gain = reference_resolution = None
+        reference_evidence = "unresolved"
+        replacement_gain = replacement_cost = None
+        displaced = False
+        if fixed is not None and fixed[0].compatible is False:
+            reference_evidence = "rejects"
+        elif fixed is not None and fixed[0].compatible is True and counter is not None:
+            reference_gain = counter[0].score - fixed[0].score
+            reference_resolution = len(selected) * ulp(max(
+                abs(counter[0].score), abs(fixed[0].score),
+            ))
+            if abs(reference_gain) > reference_resolution:
+                reference_evidence = "supports" if reference_gain > 0 else "rejects"
+        if supplied_reference and fixed is not None and positive is not None:
+            best = positive[0]
+            moved = int(best.turn_at != reference.turn_at) + int(best.knot_at != reference.knot_at)
+            if moved:
+                replacement_gain = fixed[0].score - best.score
+                replacement_cost = moved * log(len(selected)) + best.search_cost
+                displaced = replacement_gain > replacement_cost + (resolution or 0.0)
+                if displaced:
+                    reference_evidence = "rejects"
+        flank_cache = {}
+        before_trend = after_trend = None
+        before_count = after_count = 0
+        flank_evidence = "unresolved"
+        if reference is not None:
+            (before_trend, after_trend, before_count, after_count,
+             flank_evidence) = _form_flanks(
+                samples, reference.turn_at, form, current_not_before, policy, flank_cache,
+            )
+        influence_evidence = "not_assessed"
+        influence_gain = influence_resolution = None
+        removed_at = None
+        if (form_evidence == reference_evidence == flank_evidence == "supports"
+                and fixed is not None and counter is not None):
+            removed = max(range(len(selected)), key=lambda index: (
+                abs(counter[2][index]), index,
+            ))
+            removed_at = selected[removed][0]
+            retained = [point for point in samples if point[0] != removed_at]
+            retained_selected = [point for index, point in enumerate(selected) if index != removed]
+            influence_evidence = "unresolved"
+            if len(retained_selected) >= 2 * policy.min_side_samples:
+                rescue = _form_models(retained_selected, noise, policy, form,
+                    knot_times=knot_times, retained_search_count=search_count)
+                if rescue is not None:
+                    rescue_records, _, _ = rescue
+                    _, rescue_counter, _, _, rescue_form = _form_comparison(
+                        rescue_records, len(retained_selected),
+                    )
+                    rescue_fixed = _fixed_form_model(
+                        retained_selected, noise, policy, reference, rescue_records,
+                    )
+                    if rescue_fixed is not None and rescue_fixed[0].compatible is False:
+                        influence_evidence = "rejects"
+                    elif (rescue_fixed is not None and rescue_fixed[0].compatible is True
+                          and rescue_counter is not None):
+                        influence_gain = rescue_counter[0].score - rescue_fixed[0].score
+                        influence_resolution = len(retained_selected) * ulp(max(
+                            abs(rescue_counter[0].score), abs(rescue_fixed[0].score),
+                        ))
+                        _, _, _, _, rescue_flanks = _form_flanks(
+                            retained, reference.turn_at, form, current_not_before,
+                            policy, flank_cache,
+                        )
+                        if rescue_form == "rejects" or rescue_flanks == "rejects":
+                            influence_evidence = "rejects"
+                        elif abs(influence_gain) > influence_resolution:
+                            if influence_gain < 0:
+                                influence_evidence = "rejects"
+                            elif rescue_form == rescue_flanks == "supports":
+                                influence_evidence = "supports"
+        if form_evidence != "supports":
+            evidence, reason = form_evidence, "form_comparison_" + form_evidence
+        elif reference_evidence != "supports":
+            evidence = reference_evidence
+            reason = "positive_geometry_displaces_reference" if displaced else "frozen_geometry_" + reference_evidence
+        elif flank_evidence != "supports":
+            evidence, reason = flank_evidence, "original_flanks_" + flank_evidence
+        elif influence_evidence != "supports":
+            evidence, reason = influence_evidence, "one_point_removal_" + influence_evidence
+        else:
+            evidence, reason = "supports", "form_and_frozen_geometry_supported"
+        observed_form = None
+        if flank_evidence == "supports":
+            observed_form = ("rise_to_fall" if form == "peak" else
+                             "fall_to_level" if after_trend.direction == 0 else "fall_to_rise")
+        return CurveFormFeatures(
+            evidence=evidence, form_evidence=form_evidence,
+            reference_evidence=reference_evidence, influence_evidence=influence_evidence,
+            reason=reason, form=form, start_at=stamps[0], newest_at=stamps[-1],
+            count=len(selected), original_count=len(samples), noise_scale=noise,
+            positive_score=positive[0].score if positive is not None else None,
+            counter_score=counter[0].score if counter is not None else None,
+            score_gain=gain, positive_model=positive[0].model if positive is not None else None,
+            counter_model=counter[0].model if counter is not None else None,
+            turn_at=reference.turn_at if reference is not None else None,
+            reference=reference, reference_score=fixed[0].score if fixed is not None else None,
+            reference_score_gain=reference_gain, replacement_gain=replacement_gain,
+            replacement_cost=replacement_cost,
+            fresh_original_count=(sum(stamp > reference.initial_newest_at for stamp in stamps)
+                                  if supplied_reference else 0),
+            before_trend=before_trend, after_trend=after_trend,
+            before_count=before_count, after_count=after_count, removed_at=removed_at,
+            influence_score_gain=influence_gain,
+            candidate_models=tuple(record[0] for record in records),
+            score_resolution=resolution, reference_score_resolution=reference_resolution,
+            influence_score_resolution=influence_resolution, observed_form=observed_form,
+            reference_model=fixed[0] if fixed is not None else None,
+        )
+    except (
+        AttributeError, IndexError, KeyError, OverflowError, TypeError, ValueError,
+        ZeroDivisionError,
+    ):
         return None
