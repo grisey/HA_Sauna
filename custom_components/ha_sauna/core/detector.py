@@ -1,6 +1,7 @@
 """Kausaler laufender Tür-/Gangdetektor ohne HA, NumPy oder Recorderwissen."""
 
 from collections import deque
+from copy import deepcopy
 from dataclasses import dataclass, replace
 from datetime import timedelta
 from hashlib import sha256
@@ -196,6 +197,7 @@ class Detector:
         self._curve_status = {}
         self._curve_proposals = {}
         self._curve_proposal_status = {}
+        self._curve_proposal_checks = {}
         self._curve_fit_cache = {}
         self._curve_recovery_evidence = {}
         self._curve_door_context = 0
@@ -1171,6 +1173,21 @@ class Detector:
             } for candidate_key, candidate in proposal.candidates),
         }
 
+    def _record_curve_proposal_check(self, key, **check):
+        """Aktuelle Gates zeigen; nur echte Pakete besitzen eine Historie."""
+        _, positions, quantities = key
+        check = {
+            "positions": tuple(position.value for position in positions),
+            "quantities": tuple(quantity.value for quantity in quantities),
+            **check,
+        }
+        self._curve_proposal_checks[key] = {
+            **self._curve_proposal_checks.get(key, {}), **check,
+        }
+        history = self._curve_proposal_status.get(key)
+        if history is not None and history.get("proposal_id") is not None:
+            self._curve_proposal_status[key] = {**history, **check}
+
     def _remember_curve_proposal(
         self, route, positions, quantities, *, floor, context, observed_at,
     ):
@@ -1214,13 +1231,9 @@ class Detector:
                     candidate is None or candidate.onset_at < floor
                     or self._curve_status.get(candidate_key, {}).get("status") != "supported"
                 ):
-                    self._curve_proposal_status[key] = {
-                        "status": "incomplete",
-                        **self._curve_proposal_status.get(key, {}),
-                        "positions": tuple(position.value for position in positions),
-                        "quantities": tuple(quantity.value for quantity in quantities),
-                        "assembly_gates": assembly, "assembly_result": False,
-                    }
+                    self._record_curve_proposal_check(
+                        key, assembly_gates=assembly, assembly_result=False,
+                    )
                     return
                 candidates.append((candidate_key, candidate))
         onsets = [candidate.onset_at for _, candidate in candidates]
@@ -1231,13 +1244,9 @@ class Detector:
             unit="s", reference="required_candidate_onset_spread",
         )
         if spread > window:
-            self._curve_proposal_status[key] = {
-                "status": "incomplete",
-                **self._curve_proposal_status.get(key, {}),
-                "positions": tuple(position.value for position in positions),
-                "quantities": tuple(quantity.value for quantity in quantities),
-                "assembly_gates": assembly, "assembly_result": False,
-            }
+            self._record_curve_proposal_check(
+                key, assembly_gates=assembly, assembly_result=False,
+            )
             return
         if proposal is None:
             proposal = _CurveProposal(context, tuple(candidates), observed_at)
@@ -1253,10 +1262,9 @@ class Detector:
                     "reason": "competing_complete_proposal",
                     "competing_onsets": tuple(candidate.onset_at for _, candidate in candidates),
                 }
-        self._curve_proposal_status[key] = {
-            **self._curve_proposal_status[key],
-            "assembly_gates": assembly, "assembly_result": True,
-        }
+        self._record_curve_proposal_check(
+            key, assembly_gates=assembly, assembly_result=True,
+        )
 
     def _bind_close_evidence(self, positions, *, floor, now):
         """Den vollständigen T-Knick nach echter Originalfortbestätigung binden."""
@@ -1315,18 +1323,10 @@ class Detector:
         }
 
         def finish(result, reason=None):
-            self._curve_proposal_status[key] = {
-                "status": (
-                    "incomplete" if proposal is None else
-                    "ambiguous" if proposal.ambiguous else
-                    "bound" if proposal.evidence_bound_at is not None else "available"
-                ),
-                **self._curve_proposal_status.get(key, {}),
-                "positions": tuple(position.value for position in positions),
-                "quantities": tuple(quantity.value for quantity in quantities),
-                "confirmation_result": result, "confirmation_gates": gates,
-                "confirmation_reason": reason,
-            }
+            self._record_curve_proposal_check(
+                key, confirmation_result=result, confirmation_gates=gates,
+                confirmation_reason=reason,
+            )
             return result
 
         if proposal is None or proposal.ambiguous:
@@ -2667,6 +2667,7 @@ class Detector:
     ):
         p = self.p
         self._curve_fit_cache = {}
+        self._curve_proposal_checks = {}
         if operation_restarted:
             self._finish_infusion_context("operation_restarted")
         if not enabled or not gang_permitted:
@@ -2779,6 +2780,15 @@ class Detector:
             curve_proposals = {}
             for (route, _, _), status in self._curve_proposal_status.items():
                 curve_proposals.setdefault(route, []).append(dict(status))
+            proposal_checks = {}
+            for (route, positions, quantities), check in self._curve_proposal_checks.items():
+                proposal_checks.setdefault(route, {}).setdefault(
+                    ",".join(position.value for position in positions), {},
+                )[",".join(quantity.value for quantity in quantities)] = deepcopy(check)
+            _decision(
+                trace, "curve_proposal_checks", None, proposal_checks,
+                evaluated=bool(proposal_checks),
+            )
             trace.update(
                 holds=dict(self.counts),
                 signals=tuple(d.kind for d in output),
