@@ -116,18 +116,25 @@ class DetectionEvaluation:
         object.__setattr__(self, "detections", _tuple_of(self.detections, Detection))
         required = {
             "at": datetime,
+            "original_prefix_overflow": bool,
             "channels": tuple,
             "metrics": FrozenMap,
             "conditions": FrozenMap,
             "checks": FrozenMap,
+            "decisions": FrozenMap,
             "holds": FrozenMap,
             "signals": tuple,
             "door_open": bool,
             "ventilation_context": bool,
+            "curve_candidates": FrozenMap,
+            "curve_proposals": FrozenMap,
+            "infusion_episode": FrozenMap,
         }
         for name, expected in required.items():
             if name not in self.diagnostic:
                 raise ValueError(f"Detector diagnostic is missing {name}")
+            if name == "infusion_episode" and self.diagnostic[name] is None:
+                continue
             _instance(self.diagnostic[name], expected)
         for channel in self.diagnostic["channels"]:
             _instance(channel, str)

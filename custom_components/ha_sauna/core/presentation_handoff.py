@@ -60,12 +60,10 @@ class PanelIssue(WireValue):
 @dataclass(frozen=True)
 class PanelPresence(WireValue):
     current: PresenceReport | FrozenMap | None
-    external: FrozenMap
 
     def __post_init__(self):
         if isinstance(self.current, Mapping):
             object.__setattr__(self, "current", frozen_map(self.current))
-        object.__setattr__(self, "external", frozen_map(self.external))
 
 
 @dataclass(frozen=True)

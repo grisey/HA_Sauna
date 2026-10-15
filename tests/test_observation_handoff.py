@@ -127,6 +127,35 @@ class ObservationHandoffTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             DetectionEvaluation(diagnostic, ())
 
+    def test_detection_evaluation_preserves_open_raster_output_and_optional_episode(self):
+        detector = Detector(parameters(), T0)
+        detections = detector.advance(T0, enabled=True)
+        diagnostic = dict(detector.diagnostic)
+        diagnostic["future_output"] = {"values": ["original"]}
+        no_episode = DetectionEvaluation(
+            {**diagnostic, "infusion_episode": None}, detections
+        )
+        self.assertIsNone(no_episode.diagnostic["infusion_episode"])
+        episode = {"future_episode_detail": ["original"]}
+        result = DetectionEvaluation(
+            {**diagnostic, "infusion_episode": episode}, detections
+        )
+        diagnostic["future_output"]["values"].append("changed")
+        episode["future_episode_detail"].append("changed")
+        self.assertEqual(result.diagnostic["future_output"]["values"], ("original",))
+        self.assertEqual(
+            result.diagnostic["infusion_episode"]["future_episode_detail"], ("original",)
+        )
+        for name, value in (
+            ("original_prefix_overflow", 0),
+            ("decisions", None),
+            ("curve_candidates", []),
+            ("curve_proposals", False),
+            ("infusion_episode", []),
+        ):
+            with self.subTest(field=name), self.assertRaises(TypeError):
+                DetectionEvaluation({**diagnostic, name: value}, detections)
+
     def test_method_evaluation_keeps_its_full_diagnostic_without_legacy_placeholders(self):
         diagnostic = {
             "fit": {"coefficients": [1.0, 2.0], "uncertainty": None},

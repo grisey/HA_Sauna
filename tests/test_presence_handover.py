@@ -280,7 +280,10 @@ class PresenceHandoverTests(unittest.TestCase):
                               at(first), at(second + 2))
                 result = c.process(value, recognition_at=at(first))
                 self.assertFalse(result.changed)
-                self.assertEqual(result.reason, "entry_context_changed")
+                self.assertEqual(result.reason, (
+                    "person_evidence_unqualified" if kind == Kind.INFUSION
+                    else "entry_context_changed"
+                ))
                 self.assertIsNone(c.session.timeline.active)
                 self.assertIsNone(c.session.after_run)
         self.assertFalse(any(e.kind.startswith("gang_") for e in c.consumer_events))

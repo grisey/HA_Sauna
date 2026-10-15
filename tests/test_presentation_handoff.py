@@ -83,6 +83,17 @@ class PanelSnapshotTests(unittest.TestCase):
         with self.assertRaises(TypeError):
             PanelSnapshot.from_result({**result, "future_top_level_field": True})
 
+    def test_presence_retains_current_only_and_requires_explicit_null(self):
+        _preview, result = panel_result()
+        self.assertEqual(set(result["presence"]), {"current"})
+        result["presence"] = {"current": None}
+        snapshot = PanelSnapshot.from_result(result)
+        self.assertEqual(snapshot.to_wire(), result)
+        self.assertIsNone(snapshot.presence.current)
+        for presence in ({}, {"current": None, "external": {}}):
+            with self.subTest(presence=presence), self.assertRaises(TypeError):
+                PanelSnapshot.from_result({**result, "presence": presence})
+
     def test_extensible_existing_maps_keep_new_fields_and_explicit_null(self):
         _preview, result = panel_result()
         result["detector_trace"] = {"future_metric": {"values": [1, None, 3]}}

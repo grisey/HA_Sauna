@@ -579,10 +579,22 @@ class DoorCycleProjectionTests(unittest.IsolatedAsyncioTestCase):
                 await archive.flush()
                 stored = await asyncio.to_thread(archive.read, "s", now=at(7))
                 before = deepcopy(stored)
-                self.assertEqual(stored["session"], {
+                intervals = [{
+                    "started_at": at(0).isoformat(), "ended_at": at(7).isoformat(),
+                    "source": "unknown", "power_kw": None,
+                }]
+                self.assertEqual(plain(original.energy.intervals), intervals)
+                self.assertEqual(original.energy.unknown_seconds, 7)
+                delta = {"from": None, "to": at(7).isoformat(), "intervals": intervals}
+                raw_payload = {
                     **plain(original), "configuration": configuration,
+                    "energy": {**plain(original.energy), "interval_delta": delta},
+                }
+                self.assertEqual(stored["records"][0]["payload"], raw_payload)
+                self.assertEqual(stored["session"], {
+                    **raw_payload,
+                    "energy": {**raw_payload["energy"], "intervals_available": True},
                 })
-                self.assertEqual(stored["records"][0]["payload"], stored["session"])
                 self.assert_fresh_projection(stored["session"]["timeline"], expected)
                 self.assertEqual(stored, before)
                 self.assertEqual(
