@@ -124,8 +124,6 @@ jobs:
     if: ${{ github.event_name == 'workflow_dispatch' && inputs.proxy_candidate_analysis }}
     runs-on: ${{ fromJSON(needs.configuration.outputs.settings).operating_system }}
     timeout-minutes: ${{ fromJSON(needs.configuration.outputs.settings).job_timeouts_minutes.sessions }}
-    env:
-      SAUNA_CANDIDATE_EVIDENCE: ${{ runner.temp }}/ha-sauna-proxy-candidates
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
@@ -134,6 +132,7 @@ jobs:
       - name: Mathematische Proxykandidaten unabhängig prüfen
         timeout-minutes: ${{ fromJSON(needs.configuration.outputs.settings).step_timeouts_minutes.core }}
         run: |
+          SAUNA_CANDIDATE_EVIDENCE="$RUNNER_TEMP/ha-sauna-proxy-candidates"
           evidence="$SAUNA_CANDIDATE_EVIDENCE/test-process"
           mkdir -p "$evidence"
           git rev-parse HEAD > "$evidence/commit.txt"
@@ -150,6 +149,7 @@ jobs:
       - name: Proxy-Formmodelle auf R01–R04 auswerten
         timeout-minutes: ${{ fromJSON(needs.configuration.outputs.settings).step_timeouts_minutes.sessions }}
         run: |
+          SAUNA_CANDIDATE_EVIDENCE="$RUNNER_TEMP/ha-sauna-proxy-candidates"
           evidence="$SAUNA_CANDIDATE_EVIDENCE/analysis-process"
           mkdir -p "$evidence"
           git rev-parse HEAD > "$evidence/commit.txt"
