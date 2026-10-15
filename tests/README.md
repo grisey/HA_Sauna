@@ -2,10 +2,12 @@
 
 [Arbeitsregeln zur Prüfung](../AGENTS.md#prüfung)
 
-Tests laufen ausschließlich unter Linux. Die maßgeblichen Versionen,
+Tests laufen ausschließlich unter Linux in GitHub Actions auf GitHub-gehosteten
+Runnern. Die maßgeblichen Versionen,
 Abhängigkeiten und Zeitgrenzen stehen in der
 [CI-Konfiguration](../.github/workflows/tests.yml). Alle folgenden Befehle werden
-vom Repository-Hauptverzeichnis aus und jeweils als eigener Prozess ausgeführt.
+in diesen GitHub-Jobs vom Repository-Hauptverzeichnis aus und jeweils als eigener
+Prozess ausgeführt. Lokale oder per Remote-Shell gestartete Tests sind nicht vorgesehen.
 Für jeden Prozess wird sein tatsächlicher Exitcode festgehalten.
 
 ## Prüfebenen
@@ -21,7 +23,7 @@ Für jeden Prozess wird sein tatsächlicher Exitcode festgehalten.
 
 ## Fachkern und JavaScript
 
-Fachkern und Panelmethoden werden wie in der CI ausgeführt:
+Fachkern und Panelmethoden werden in GitHub Actions ausgeführt:
 
 ```sh
 python -m unittest discover -s tests -v
@@ -30,6 +32,12 @@ python -m unittest discover -s tests -v
 ```sh
 node --test tests/panel_*.test.js
 ```
+
+Die Benachrichtigungsgrundformen werden durch `test_notification_recipients.py`
+und `test_notification_exchange.py` im Fachkernlauf erfasst. Die synthetischen
+Eingaben prüfen Identität, gemeinsame Eignungsvalidierung, Mengenbildung und
+Nachrichtenzuordnung. Diese Prüfungen enthalten keinen HA-Adapter und belegen
+weder Empfang noch Rückmeldungen eines tatsächlichen Companion-Clients.
 
 Szenarien und die gebundenen realen Replay-Aufzeichnungen sind im Checkout enthalten.
 Die Manifeste binden Daten und Bewertungen durch Prüfsummen. Fehlende oder
@@ -83,7 +91,7 @@ SAUNA_SESSION_EVIDENCE=/tmp/ha-sauna-sessions python -m unittest discover -s tes
 
 `SAUNA_SESSION_EVIDENCE` speichert pro Lauf jede gebundene Bewertung mit Sollwert,
 Ist-Abweichung, Bedienfolge und ausgegebenen Diensten. Die CI führt jede gebundene
-Grund-ID einschließlich sämtlicher Varianten aus. Für die Fehlersuche auf Linux kann
+Grund-ID einschließlich sämtlicher Varianten aus. Für die Fehlersuche in GitHub Actions kann
 `SAUNA_SESSION_CASE` einzelne IDs auswählen.
 
 [`coverage_ownership.json`](coverage_ownership.json) bindet entfernte
@@ -132,7 +140,7 @@ Ofenwahl. Die Lichtwerte folgen der produktiven Lichtplanung. „Steuerung folge
 führt die simulierte Ofenrückmeldung nach; „Ein“, „Aus“ und „Unbekannt“ halten sie
 fest. Beendete Sitzungen bleiben bis zum Zurücksetzen des Szenarios im Verlauf.
 Nicht angebundene Einstellungsaktionen zeigen eine
-Fehlermeldung. Automatisierte Prüfungen laufen weiterhin ausschließlich unter Linux.
+Fehlermeldung. Automatisierte Prüfungen laufen ausschließlich in GitHub Actions.
 
 ## Sitzungsverlauf im Browser
 
