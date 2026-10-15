@@ -312,8 +312,7 @@ const parameters = fixtureValues();
       value("diagnostic_plot_height_px") - value("diagnostic_axis_bottom_padding_px"),
     low = -value("diagnostic_scale_padding"),
     high =
-      Math.max(35, archivedHumidityLossPercent) +
-      value("diagnostic_scale_padding"),
+      Math.max(35, archivedHumidityLossPercent) + value("diagnostic_scale_padding"),
     expectedPoint = (second, percentage) => [
       Number(
         (left + ((right - left) * second) / 60).toFixed(
@@ -340,16 +339,8 @@ const parameters = fixtureValues();
     ["M", ...expectedPoint(20, 25)],
     ["L", ...expectedPoint(20 + parameters.grid_seconds, 35)],
   ]);
-  assert.ok(
-    plots.innerHTML.includes(
-      `Schwelle oben: ${archivedHumidityLossPercent}`,
-    ),
-  );
-  assert.ok(
-    !plots.innerHTML.includes(
-      `Schwelle oben: ${changedHumidityLossPercent}`,
-    ),
-  );
+  assert.ok(plots.innerHTML.includes(`Schwelle oben: ${archivedHumidityLossPercent}`));
+  assert.ok(!plots.innerHTML.includes(`Schwelle oben: ${changedHumidityLossPercent}`));
   const missingGridPoint = 20 + parameters.grid_seconds * 2;
   p.shown.records = traces.map((payload, index) => ({
     kind: "detector_trace",
