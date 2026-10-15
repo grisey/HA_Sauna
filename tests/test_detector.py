@@ -507,7 +507,8 @@ class DetectorTests(unittest.TestCase):
                           missing=(), source=None):
         positions = detector.positions if positions is None else positions
         output = []
-        for index in range(detector.index + 1, through // detector.grid_seconds + 1):
+        final_index = int(through // detector.grid_seconds)
+        for index in range(detector.index + 1, final_index + 1):
             second = index * detector.grid_seconds
             now = T0 + timedelta(seconds=second)
             for position in positions:
@@ -918,14 +919,47 @@ class DetectorTests(unittest.TestCase):
 
 
     def test_delayed_humidity_fall_opens_without_inventing_a_water_plateau(self):
-        detector = self._ventilation_detector()
-        events = self._segment(detector, self._settling_time(detector), (80, 40))
-        events += self._segment(detector, 20, (80, 40), (78, 40))
-        # The temperature hint exists before the later humidity loss qualifies the mixed route.
-        events += self._segment(detector, 20, (78, 40), (76, 38))
-        self.assertTrue(detector.open)
-        self.assertEqual(detector.door_episode["positions"], detector.positions)
-        self.assertNotIn(Kind.VENTILATION, [item.kind for item in events])
+        for delay in ("outside_temperature_turn", "one_original"):
+            with self.subTest(humidity_delay=delay):
+                traces = []
+                detector = Detector(detection_parameters(), T0, observer=traces.append)
+                step = detector.grid_seconds
+                if delay == "outside_temperature_turn":
+                    events = self._segment(detector, self._settling_time(detector), (80, 40))
+                    begin = detector.index + 1
+                    events += self._segment(detector, 20, (80, 40), (78, 40))
+                    events += self._segment(detector, 20, (78, 40), (76, 38))
+                    turns = (begin, begin + 20)
+                    # At the later RH fall, both T windows have the same
+                    # negative slope. This input does not assert an opening.
+                else:
+                    begin, _, end, values = self._ventilation_curve(detector, water_tail="fall")
+
+                    def delayed_humidity(second):
+                        # RH starts one original later while the negative T
+                        # turn remains in the original windows.
+                        return values(second)[0], values(max(0, second - step))[1]
+
+                    events = self._feed_ventilation(detector, end, delayed_humidity)
+                    turns = (begin, begin + step)
+                diagnostic = self._door_failure_message(
+                    events, traces, input_turns_s=turns,
+                    original_forms=[
+                        ((row["at"] - T0).total_seconds(), row.get("original_forms"),
+                         row["decisions"].get("door_open"))
+                        for row in traces
+                        if begin <= (row["at"] - T0).total_seconds()
+                        <= turns[-1] + 2 * detector.p["curve_original_samples"] * step
+                    ],
+                )
+                self.assertNotIn(Kind.VENTILATION, [item.kind for item in events], msg=diagnostic)
+                if delay == "one_original":
+                    self.assertTrue(detector.open, msg=diagnostic)
+                    self.assertEqual([item.kind for item in events].count(Kind.DOOR_OPEN), 1,
+                                     msg=diagnostic)
+                    self.assertEqual(detector.door_episode["positions"], detector.positions,
+                                     msg=diagnostic)
+                    self.assertNotIn(Kind.DOOR_CLOSE, [item.kind for item in events], msg=diagnostic)
 
 
     def test_temperature_plateau_or_recovery_does_not_confirm_ventilation(self):
