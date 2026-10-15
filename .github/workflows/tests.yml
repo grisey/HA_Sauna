@@ -26,9 +26,17 @@ on:
         type: boolean
         default: false
       proxy_candidate_analysis:
-        description: 'Analyze mathematical proxy candidates on R01–R04 without running the controller; takes precedence over other analysis flags'
+        description: 'Analyze mathematical proxy candidates on R01–R04 without running the controller; takes precedence over form analysis'
         type: boolean
         default: false
+      proxy_expectation_analysis:
+        description: 'Run only the diagnostic analysis of explicit expectations on stored original replays; takes precedence over other analysis flags'
+        type: boolean
+        default: false
+      proxy_expectation_cases:
+        description: 'Explicit schema-version-1 JSON string with cases for proxy_expectation_analysis'
+        type: string
+        default: ''
       integration_tests:
         description: 'Optional comma-separated integration unittest names: test_module.Class.test_method'
         type: string
@@ -56,7 +64,7 @@ on:
 permissions:
   contents: read
 concurrency:
-  group: tests-${{ github.workflow }}-${{ github.ref }}-${{ inputs.proxy_candidate_analysis && 'proxy-candidate-analysis' || inputs.checks || 'all' }}
+  group: tests-${{ github.workflow }}-${{ github.ref }}-${{ inputs.proxy_expectation_analysis && 'proxy-expectation-analysis' || inputs.proxy_candidate_analysis && 'proxy-candidate-analysis' || inputs.checks || 'all' }}
   cancel-in-progress: true
 jobs:
   configuration:
@@ -73,6 +81,7 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Dispatch-Auswahl prüfen
+        if: ${{ !inputs.proxy_expectation_analysis }}
         run: python -m unittest discover -s tests -p test_ci_settings.py -v
       - id: catalog
         run: python tests/ci_settings.py outputs
@@ -84,7 +93,7 @@ jobs:
           SAUNA_HA_TESTS: ${{ inputs.ha_tests }}
   core:
     needs: configuration
-    if: ${{ !inputs.curve_compare && !inputs.proxy_form_analysis && !inputs.proxy_candidate_analysis && contains(fromJSON(needs.configuration.outputs.checks), 'core') }}
+    if: ${{ !inputs.curve_compare && !inputs.proxy_form_analysis && !inputs.proxy_candidate_analysis && !inputs.proxy_expectation_analysis && contains(fromJSON(needs.configuration.outputs.checks), 'core') }}
     runs-on: ${{ fromJSON(needs.configuration.outputs.settings).operating_system }}
     timeout-minutes: ${{ fromJSON(needs.configuration.outputs.settings).job_timeouts_minutes.core }}
     steps:
@@ -119,9 +128,46 @@ jobs:
           path: ${{ runner.temp }}/ha-sauna-core
           if-no-files-found: error
           retention-days: ${{ fromJSON(needs.configuration.outputs.settings).artifact_retention_days }}
+  proxy_expectation_analysis:
+    needs: configuration
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.proxy_expectation_analysis }}
+    runs-on: ${{ fromJSON(needs.configuration.outputs.settings).operating_system }}
+    timeout-minutes: ${{ fromJSON(needs.configuration.outputs.settings).job_timeouts_minutes.sessions }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: ${{ fromJSON(needs.configuration.outputs.settings).python_core }}
+      - name: Explizite Erwartungen an gespeicherten Original-Replays auswerten
+        timeout-minutes: ${{ fromJSON(needs.configuration.outputs.settings).step_timeouts_minutes.sessions }}
+        env:
+          SAUNA_EXPECTATION_CASES: ${{ inputs.proxy_expectation_cases }}
+          SAUNA_EXPECTATION_EVIDENCE: ${{ runner.temp }}/ha-sauna-proxy-expectations
+        run: |
+          evidence="$SAUNA_EXPECTATION_EVIDENCE"
+          mkdir -p "$evidence"
+          git rev-parse HEAD > "$evidence/commit.txt"
+          git rev-parse 'HEAD^{tree}' > "$evidence/tree.txt"
+          git rev-parse HEAD:custom_components/ha_sauna > "$evidence/product-tree.txt"
+          set +e
+          python tests/analysis/proxy_expectation_analysis.py --cases-json "$SAUNA_EXPECTATION_CASES" --output "$evidence/output" > "$evidence/stdout.log" 2> "$evidence/stderr.log"
+          result=$?
+          echo "$result" > "$evidence/exit-code.txt"
+          echo completed > "$evidence/process-completed.txt"
+          cat "$evidence/stdout.log"
+          cat "$evidence/stderr.log" >&2
+          exit "$result"
+      - name: Erwartungsanalyse und Prozessnachweise sichern
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: proxy-expectation-analysis
+          path: ${{ runner.temp }}/ha-sauna-proxy-expectations
+          if-no-files-found: error
+          retention-days: ${{ fromJSON(needs.configuration.outputs.settings).artifact_retention_days }}
   proxy_candidate_analysis:
     needs: configuration
-    if: ${{ github.event_name == 'workflow_dispatch' && inputs.proxy_candidate_analysis }}
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.proxy_candidate_analysis && !inputs.proxy_expectation_analysis }}
     runs-on: ${{ fromJSON(needs.configuration.outputs.settings).operating_system }}
     timeout-minutes: ${{ fromJSON(needs.configuration.outputs.settings).job_timeouts_minutes.sessions }}
     steps:
@@ -173,7 +219,7 @@ jobs:
           retention-days: ${{ fromJSON(needs.configuration.outputs.settings).artifact_retention_days }}
   proxy_form_analysis:
     needs: configuration
-    if: ${{ github.event_name == 'workflow_dispatch' && inputs.proxy_form_analysis && !inputs.proxy_candidate_analysis }}
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.proxy_form_analysis && !inputs.proxy_candidate_analysis && !inputs.proxy_expectation_analysis }}
     runs-on: ${{ fromJSON(needs.configuration.outputs.settings).operating_system }}
     timeout-minutes: ${{ fromJSON(needs.configuration.outputs.settings).job_timeouts_minutes.core }}
     steps:
@@ -214,7 +260,7 @@ jobs:
           retention-days: ${{ fromJSON(needs.configuration.outputs.settings).artifact_retention_days }}
   curve_compare:
     needs: configuration
-    if: ${{ github.event_name == 'workflow_dispatch' && inputs.curve_compare && !inputs.proxy_form_analysis && !inputs.proxy_candidate_analysis }}
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.curve_compare && !inputs.proxy_form_analysis && !inputs.proxy_candidate_analysis && !inputs.proxy_expectation_analysis }}
     runs-on: ${{ fromJSON(needs.configuration.outputs.settings).operating_system }}
     timeout-minutes: ${{ fromJSON(needs.configuration.outputs.settings).job_timeouts_minutes.core }}
     steps:
@@ -363,7 +409,7 @@ jobs:
           retention-days: ${{ fromJSON(needs.configuration.outputs.settings).artifact_retention_days }}
   ha:
     needs: configuration
-    if: ${{ !inputs.curve_compare && !inputs.proxy_form_analysis && !inputs.proxy_candidate_analysis && contains(fromJSON(needs.configuration.outputs.checks), 'ha') }}
+    if: ${{ !inputs.curve_compare && !inputs.proxy_form_analysis && !inputs.proxy_candidate_analysis && !inputs.proxy_expectation_analysis && contains(fromJSON(needs.configuration.outputs.checks), 'ha') }}
     runs-on: ${{ fromJSON(needs.configuration.outputs.settings).operating_system }}
     timeout-minutes: ${{ fromJSON(needs.configuration.outputs.settings).job_timeouts_minutes.ha }}
     steps:
@@ -419,7 +465,7 @@ jobs:
           retention-days: ${{ fromJSON(needs.configuration.outputs.settings).artifact_retention_days }}
   sessions:
     needs: configuration
-    if: ${{ !inputs.curve_compare && !inputs.proxy_form_analysis && !inputs.proxy_candidate_analysis && contains(fromJSON(needs.configuration.outputs.checks), 'sessions') }}
+    if: ${{ !inputs.curve_compare && !inputs.proxy_form_analysis && !inputs.proxy_candidate_analysis && !inputs.proxy_expectation_analysis && contains(fromJSON(needs.configuration.outputs.checks), 'sessions') }}
     runs-on: ${{ fromJSON(needs.configuration.outputs.settings).operating_system }}
     timeout-minutes: ${{ fromJSON(needs.configuration.outputs.settings).job_timeouts_minutes.sessions }}
     strategy:
@@ -465,7 +511,7 @@ jobs:
           retention-days: ${{ fromJSON(needs.configuration.outputs.settings).artifact_retention_days }}
   browser:
     needs: configuration
-    if: ${{ !inputs.curve_compare && !inputs.proxy_form_analysis && !inputs.proxy_candidate_analysis && contains(fromJSON(needs.configuration.outputs.checks), 'browser') }}
+    if: ${{ !inputs.curve_compare && !inputs.proxy_form_analysis && !inputs.proxy_candidate_analysis && !inputs.proxy_expectation_analysis && contains(fromJSON(needs.configuration.outputs.checks), 'browser') }}
     runs-on: ${{ fromJSON(needs.configuration.outputs.settings).operating_system }}
     timeout-minutes: ${{ fromJSON(needs.configuration.outputs.settings).job_timeouts_minutes.browser }}
     steps:
