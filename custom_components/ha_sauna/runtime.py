@@ -931,7 +931,11 @@ class SaunaRuntime:
                     action_at = max(received_at, self.controller._last_at or received_at)
                     light_selection = self.device.external_light_selection(event, received_at)
                     if light_selection is not None:
-                        self._set_light_override(light_selection, action_at)
+                        context = getattr(event.data.get("new_state"), "context", None)
+                        self._set_light_override(
+                            light_selection, action_at,
+                            actor=ActorRef(getattr(context, "user_id", None), "ha_context"),
+                        )
                     action = self.device.physical_action(event)
                     if action is not None:
                         self._deliver_detection(action_at)
@@ -1752,17 +1756,17 @@ class SaunaRuntime:
             ):
                 return
             now = self._clock()
-            previous = (self.device.light_output.manual_brightness, self.device.light_output.manual_ends_at)
-            self._set_light_override(value, now)
-            current = (self.device.light_output.manual_brightness, self.device.light_output.manual_ends_at)
-            if previous != current:
-                self._record_notification_participant(actor)
+            self._set_light_override(value, now, actor=actor)
             await self._cycle()
 
-    def _set_light_override(self, value, now):
+    def _set_light_override(self, value, now, *, actor: ActorRef | None = None):
         """Record a UI or physical light selection within the current lock."""
+        previous = (self.device.light_output.manual_brightness, self.device.light_output.manual_ends_at)
         self.device.set_light_override(value, at=now)
         self.log.info("light_override", "Manuelle Lichtwahl: %s.", value)
+        current = (self.device.light_output.manual_brightness, self.device.light_output.manual_ends_at)
+        if previous != current:
+            self._record_notification_participant(actor)
 
     def record_manual_light_changes(self, changes, *, selection=None):
         """Archive original light-owner changes before asynchronous output."""
