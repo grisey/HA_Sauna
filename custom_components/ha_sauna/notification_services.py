@@ -1,5 +1,6 @@
 """Explicit mapped-recipient notification service; no automatic sauna messages."""
 
+from copy import deepcopy
 from uuid import uuid4
 
 import voluptuous as vol
@@ -136,35 +137,56 @@ def register(hass):
                                 "evidence": "Current Home Assistant recipient resolution",
                             }
                         )
-            for target in sorted(
-                targets, key=lambda item: (item.transport, item.endpoint)
-            ):
-                notification = NotificationEnvelope(
+            notifications = tuple(
+                NotificationEnvelope(
                     uuid4().hex,
                     correlation_id,
                     entry_id,
                     target,
-                    payload,
+                    deepcopy(payload),
                     session_id,
                 )
-                try:
-                    handoff = await transport.handoff(notification)
-                    accepted, evidence = handoff.accepted, handoff.evidence
-                except Exception as error:  # Continue independent mapped recipients.
-                    accepted, evidence = False, f"{type(error).__name__}: {error}"
-                results.append(
-                    {
-                        "target": {
-                            "transport": target.transport,
-                            "endpoint": target.endpoint,
-                        },
-                        "message_id": notification.message_id,
-                        "accepted": accepted,
-                        "evidence": evidence,
-                        "error": None if accepted else evidence,
-                    }
+                for target in sorted(
+                    targets, key=lambda item: (item.transport, item.endpoint)
                 )
-            return {"correlation_id": correlation_id, "handoffs": results}
+            )
+        for notification in notifications:
+            target = notification.target
+            try:
+                # Admission only: notification I/O must not own the control lock.
+                async with runtime._lock:
+                    if runtime.closed:
+                        prepared = None
+                    else:
+                        current_session_id = (
+                            runtime.session.session_id if runtime.session else None
+                        )
+                        prepared = transport.prepare_handoff(
+                            notification,
+                            correlate=(
+                                session_id is None or session_id == current_session_id
+                            ),
+                        )
+                if prepared is None:
+                    accepted, evidence = False, "Sauna-Instanz ist nicht geladen"
+                else:
+                    handoff = await transport.dispatch(prepared)
+                    accepted, evidence = handoff.accepted, handoff.evidence
+            except Exception as error:  # Continue independent mapped recipients.
+                accepted, evidence = False, f"{type(error).__name__}: {error}"
+            results.append(
+                {
+                    "target": {
+                        "transport": target.transport,
+                        "endpoint": target.endpoint,
+                    },
+                    "message_id": notification.message_id,
+                    "accepted": accepted,
+                    "evidence": evidence,
+                    "error": None if accepted else evidence,
+                }
+            )
+        return {"correlation_id": correlation_id, "handoffs": results}
 
     hass.services.async_register(
         DOMAIN,

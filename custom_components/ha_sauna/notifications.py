@@ -6,6 +6,7 @@ are not rewritten; client rendering and permission remain client responsibilitie
 
 from collections.abc import Callable, Mapping
 from copy import deepcopy
+from dataclasses import dataclass
 from types import MappingProxyType
 
 from homeassistant.components.notify import NotifyEntityFeature
@@ -15,6 +16,7 @@ from homeassistant.helpers import device_registry as dr, entity_registry as er
 
 from .core.notification_exchange import (
     NotificationEnvelope,
+    RegistrationHandle,
     ReplyAssociation,
     ReplyCorrelator,
     ReplyDisposition,
@@ -42,7 +44,7 @@ async def _mobile_actions(hass: HomeAssistant) -> dict[str, dict]:
     if "mobile_app" not in hass.config.components:
         return actions
     devices = []
-    for device in dr.async_get(hass).devices.values():
+    for device in dr.async_get(hass).devices:
         _, entry = dr.async_get_device_and_config_entry_for_domain(
             hass, device.id, domain="mobile_app"
         )
@@ -202,6 +204,13 @@ class _ReplyIngress:
         )
 
 
+@dataclass(frozen=True)
+class _PreparedHandoff:
+    notification: NotificationEnvelope
+    ingress: _ReplyIngress | None
+    registration: RegistrationHandle | None
+
+
 class HomeAssistantNotifications:
     def __init__(
         self,
@@ -213,9 +222,13 @@ class HomeAssistantNotifications:
         self.entry_id = entry_id
         self._reply_callback = reply_callback
         self._ingress: _ReplyIngress | None = None
+        self._closed = False
 
     async def async_start(self) -> None:
-        if self._ingress is None:
+        self._start()
+
+    def _start(self) -> None:
+        if not self._closed and self._ingress is None:
             ingress = self.hass.data.get(_REPLY_INGRESS)
             if ingress is None:
                 ingress = self.hass.data[_REPLY_INGRESS] = _ReplyIngress(self.hass)
@@ -227,6 +240,7 @@ class HomeAssistantNotifications:
 
     def close(self) -> None:
         """Release this entry; remove the shared listener on the last unload."""
+        self._closed = True
         if self._ingress is not None:
             ingress = self._ingress
             ingress.correlator.forget_entry(self.entry_id)
@@ -249,19 +263,24 @@ class HomeAssistantNotifications:
 
     async def handoff(self, notification: NotificationEnvelope) -> TransportHandoff:
         """Register before dispatch; a pending reply never claims accepted handoff."""
-        await self.async_start()
+        return await self.dispatch(self.prepare_handoff(notification))
+
+    def prepare_handoff(
+        self, notification: NotificationEnvelope, *, correlate: bool = True
+    ) -> _PreparedHandoff:
+        """Register at admission, before transport work can yield to lifecycle cleanup."""
+        self._start()
         ingress = self._ingress
-        assert ingress is not None
         payload = notification.payload
         data = payload.get("data", {}) if isinstance(payload, Mapping) else {}
         native_actions = data.get("actions", ()) if isinstance(data, Mapping) else ()
         actions = (
             frozenset(
-                item["action"]
+                value
                 for item in native_actions
                 if isinstance(item, Mapping)
-                and isinstance(item.get("action"), str)
-                and item["action"] != "URI"
+                for value in (item.get("action"), item.get("identifier"))
+                if isinstance(value, str)
             )
             if isinstance(native_actions, (list, tuple))
             else frozenset()
@@ -271,19 +290,30 @@ class HomeAssistantNotifications:
                 notification,
                 reply_keys=(ReplyKey(TRANSPORT, action) for action in actions),
             )
-            if actions
+            if actions and correlate and ingress is not None
             else None
         )
+        return _PreparedHandoff(notification, ingress, registration)
+
+    async def dispatch(self, prepared: _PreparedHandoff) -> TransportHandoff:
+        """Complete an admitted send without starting or registering the adapter."""
+        notification = prepared.notification
+        ingress = prepared.ingress
+        registration = prepared.registration
+        if self._closed:
+            return TransportHandoff(notification, False, "Notification adapter is closed")
         try:
             await self._send(notification)
         except BaseException as err:
             # Cancellation also removes only this in-flight registration.
             if registration is not None:
+                assert ingress is not None
                 ingress.correlator.rollback(registration)
             if not isinstance(err, Exception):
                 raise
             return TransportHandoff(notification, False, f"{type(err).__name__}: {err}")
         if registration is not None:
+            assert ingress is not None
             ingress.correlator.mark_accepted(registration)
         return TransportHandoff(
             notification,
@@ -324,6 +354,8 @@ class HomeAssistantNotifications:
                 "mobile_app",
                 DeviceAutomationType.ACTION,
             )
+            if self._closed:
+                raise RuntimeError("Notification adapter is closed")
             await platform.async_call_action_from_config(self.hass, config, {}, None)
             return
         registry = er.async_get(self.hass)
@@ -344,6 +376,8 @@ class HomeAssistantNotifications:
         ):
             raise ValueError("Notify target does not support title")
         service_data = {key: value for key, value in payload.items() if key != "data"}
+        if self._closed:
+            raise RuntimeError("Notification adapter is closed")
         await self.hass.services.async_call(
             "notify",
             "send_message",

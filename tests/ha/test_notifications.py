@@ -244,8 +244,6 @@ class NotificationTransportTests(unittest.IsolatedAsyncioTestCase):
             ],
         )
         self.assertEqual(self.replies, [])
-        self.hass.bus.async_fire("mobile_app_notification_action", {"action": "URI"})
-        await self.hass.async_block_till_done()
         self.assertEqual(self.wire, [])
         native = {
             "action": "REPLY",
@@ -628,7 +626,9 @@ class NotificationTransportTests(unittest.IsolatedAsyncioTestCase):
             await asyncio.gather(pending, return_exceptions=True)
             blocked.set()
 
-    async def test_navigation_only_payload_needs_no_reply_registration(self):
+    async def test_native_uri_payload_is_unchanged_and_reply_requires_native_event(
+        self,
+    ):
         device_id, _ = await self.mobile()
         payload = {
             "message": "Synthetic",
@@ -636,10 +636,194 @@ class NotificationTransportTests(unittest.IsolatedAsyncioTestCase):
                 "actions": [{"action": "URI", "uri": "https://example.invalid"}],
             },
         }
-        handoff = await self.adapter.handoff(self.notification(device_id, payload))
+        notification = self.notification(device_id, payload)
+        handoff = await self.adapter.handoff(notification)
         self.assertTrue(handoff.accepted, handoff.evidence)
-        self.assertFalse(self.adapter.forget("message"))
         self.assertEqual(self.calls[0]["data"], payload["data"])
+        self.assertEqual(self.replies, [])
+        self.assertEqual(self.wire, [])
+        self.hass.bus.async_fire(
+            "mobile_app_notification_action", {"action": "URI"}
+        )
+        await self.hass.async_block_till_done()
+        self.assertEqual(len(self.replies), 1)
+        self.assertIs(self.replies[0].notification, notification)
+        self.assertTrue(self.replies[0].handoff_accepted)
+        self.assertEqual(self.replies[0].reply.reply_key.value, "URI")
+        self.assertTrue(self.adapter.forget("message"))
+
+    async def test_native_identifier_only_action_preserves_payload_and_matches_reply(
+        self,
+    ):
+        device_id, _ = await self.mobile()
+        payload = {
+            "message": "Synthetic",
+            "data": {
+                "actions": [{"identifier": "IOS_REPLY", "title": "Answer"}],
+                "custom": {"values": [1, "unchanged"]},
+            },
+        }
+        notification = self.notification(device_id, payload)
+        handoff = await self.adapter.handoff(notification)
+        self.assertTrue(handoff.accepted, handoff.evidence)
+        self.assertEqual(self.calls[0]["data"], payload["data"])
+        self.hass.bus.async_fire(
+            "mobile_app_notification_action", {"action": "IOS_REPLY"}
+        )
+        await self.hass.async_block_till_done()
+        self.assertEqual(len(self.replies), 1)
+        self.assertIs(self.replies[0].notification, notification)
+        self.assertTrue(self.replies[0].handoff_accepted)
+        self.assertEqual(self.replies[0].reply.reply_key.value, "IOS_REPLY")
+
+    async def test_distinct_native_action_and_identifier_both_match_without_rewrite(
+        self,
+    ):
+        device_id, _ = await self.mobile()
+        payload = {
+            "message": "Synthetic",
+            "data": {
+                "actions": [
+                    {
+                        "action": "ANDROID_REPLY",
+                        "identifier": "IOS_REPLY",
+                        "title": "Answer",
+                    }
+                ],
+            },
+        }
+        notification = self.notification(device_id, payload)
+        self.assertTrue((await self.adapter.handoff(notification)).accepted)
+        self.assertEqual(self.calls[0]["data"], payload["data"])
+        for action in ("ANDROID_REPLY", "IOS_REPLY"):
+            self.hass.bus.async_fire(
+                "mobile_app_notification_action", {"action": action}
+            )
+        await self.hass.async_block_till_done()
+        self.assertEqual(
+            [item.reply.reply_key.value for item in self.replies],
+            ["ANDROID_REPLY", "IOS_REPLY"],
+        )
+        for association in self.replies:
+            self.assertIs(association.notification, notification)
+            self.assertTrue(association.handoff_accepted)
+        self.assertTrue(self.adapter.forget("message"))
+
+    async def test_native_uri_action_and_identifier_both_match_without_rewrite(self):
+        device_id, _ = await self.mobile()
+        payload = {
+            "message": "Synthetic",
+            "data": {
+                "actions": [
+                    {
+                        "action": "URI",
+                        "identifier": "IOS_REPLY",
+                        "title": "Answer",
+                    }
+                ],
+            },
+        }
+        notification = self.notification(device_id, payload)
+        self.assertTrue((await self.adapter.handoff(notification)).accepted)
+        self.assertEqual(self.calls[0]["data"], payload["data"])
+        self.hass.bus.async_fire(
+            "mobile_app_notification_action", {"action": "URI"}
+        )
+        await self.hass.async_block_till_done()
+        self.assertEqual(len(self.replies), 1)
+        self.assertIs(self.replies[0].notification, notification)
+        self.assertTrue(self.replies[0].handoff_accepted)
+        self.hass.bus.async_fire(
+            "mobile_app_notification_action", {"action": "IOS_REPLY"}
+        )
+        await self.hass.async_block_till_done()
+        self.assertEqual(len(self.replies), 2)
+        self.assertIs(self.replies[1].notification, notification)
+        self.assertTrue(self.replies[1].handoff_accepted)
+        self.assertEqual(
+            [item.reply.reply_key.value for item in self.replies],
+            ["URI", "IOS_REPLY"],
+        )
+
+    async def test_close_during_mobile_discovery_prevents_outbound_send_and_restart(
+        self,
+    ):
+        from unittest.mock import patch
+        from test_settings import async_timeout
+        from custom_components.ha_sauna.notifications import _mobile_actions
+
+        device_id, _ = await self.mobile()
+        discovered = asyncio.Event()
+        release = asyncio.Event()
+
+        async def paused_discovery(hass):
+            actions = await _mobile_actions(hass)
+            discovered.set()
+            await release.wait()
+            return actions
+
+        payload = {"message": "Synthetic", "data": {"actions": [{"action": "REPLY"}]}}
+        with patch(
+            "custom_components.ha_sauna.notifications._mobile_actions",
+            side_effect=paused_discovery,
+        ):
+            pending = asyncio.create_task(
+                self.adapter.handoff(self.notification(device_id, payload))
+            )
+            try:
+                await asyncio.wait_for(discovered.wait(), async_timeout("service"))
+                self.adapter.close()
+                self.assertNotIn(
+                    "ha_sauna_notification_reply_ingress", self.hass.data
+                )
+                release.set()
+                handoff = await asyncio.wait_for(pending, async_timeout("service"))
+                self.assertFalse(handoff.accepted)
+                self.assertIn("Notification adapter is closed", handoff.evidence)
+                self.assertEqual(self.calls, [])
+                await self.adapter.async_start()
+                self.assertIsNone(self.adapter._ingress)
+                self.assertNotIn(
+                    "ha_sauna_notification_reply_ingress", self.hass.data
+                )
+                self.hass.bus.async_fire(
+                    "mobile_app_notification_action", {"action": "REPLY"}
+                )
+                await self.hass.async_block_till_done()
+                self.assertEqual(self.replies, [])
+                self.assertEqual(self.wire, [])
+            finally:
+                release.set()
+                pending.cancel()
+                await asyncio.gather(pending, return_exceptions=True)
+
+    async def test_closed_adapter_rejects_prepared_and_direct_sends_without_restart(
+        self,
+    ):
+        endpoint, _ = await self.mobile()
+        notification = self.notification(
+            endpoint,
+            {"message": "Synthetic", "data": {"actions": [{"action": "REPLY"}]}},
+        )
+        prepared = self.adapter.prepare_handoff(notification)
+        self.assertIsNotNone(prepared.registration)
+        ingress = self.adapter._ingress
+        self.adapter.close()
+        self.assertIsNone(self.adapter._ingress)
+        self.assertNotIn("ha_sauna_notification_reply_ingress", self.hass.data)
+        self.assertFalse((await self.adapter.dispatch(prepared)).accepted)
+        await self.adapter.async_start()
+        self.assertFalse((await self.adapter.handoff(notification)).accepted)
+        self.assertIsNone(self.adapter._ingress)
+        self.assertNotIn("ha_sauna_notification_reply_ingress", self.hass.data)
+        self.assertFalse(ingress.correlator.mark_accepted(prepared.registration))
+        self.assertEqual(self.calls, [])
+        self.hass.bus.async_fire(
+            "mobile_app_notification_action", {"action": "REPLY"}
+        )
+        await self.hass.async_block_till_done()
+        self.assertEqual(self.replies, [])
+        self.assertEqual(self.wire, [])
 
     async def test_plain_route_does_not_load_optional_mobile_platform(self):
         from unittest.mock import AsyncMock, patch

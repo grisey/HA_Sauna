@@ -20,8 +20,11 @@ Saunabedienung und erteilt keine Steuerberechtigung.
 
 Der Companion-Pfad reicht das offene native `data`-Objekt weiter. Die Integration
 führt keinen eigenen Katalog erlaubter App-Funktionen. Native Aktionskennungen
-und Eingabedaten behalten ihre Bedeutung. Einfache Notify-Entitäten unterstützen
-diesen Datenpfad nicht; ein dafür ungeeignetes Ziel muss als solches erkennbar sein.
+in `action` und dem unter iOS verwendeten `identifier` sowie Eingabedaten bleiben
+unverändert. Auch `URI` kann eine native Antwortkennung sein; eine Antwort setzt
+ein tatsächlich eingehendes natives Ereignis voraus. Einfache Notify-Entitäten
+unterstützen diesen Datenpfad nicht; ein dafür ungeeignetes Ziel muss als solches
+erkennbar sein.
 
 Die Companion-App benötigt eine eingerichtete Home-Assistant-Verbindung und
 Benachrichtigungsberechtigungen des Betriebssystems. Unterstützte Datenfelder,
@@ -61,6 +64,9 @@ ohne Sitzung möglich. `user_ids` ist nur bei `audience: users` zulässig und da
 dann nicht leer sein. Benutzergebundene Aufrufe benötigen Steuerberechtigung
 für die Betriebsentität der gewählten Sauna.
 
+Ziele, Sitzungsbezug und Nachrichteninhalt werden beim Aufruf für den Versand
+festgelegt. Während einer laufenden Übergabe bleiben Bedienänderungen möglich.
+
 Die optionale Dienstantwort enthält `correlation_id` und `handoffs`. Jeder
 Versandversuch enthält `target`, `message_id`, `accepted`, `evidence` und
 `error`. Nicht mehr auflösbare zugeordnete Ziele werden bei expliziter
@@ -85,7 +91,11 @@ Benutzeridentität bleibt unbekannt. Die Zielmenge wächst innerhalb derselben
 Sitzung; eine spätere Änderung der Zuordnung entfernt bereits aufgenommene Ziele
 nicht rückwirkend. Gewöhnliches Ausschalten beendet diese Sammlung nicht.
 Sitzungsende und Entladen bereinigen die flüchtige Sammlung und ihre
-Antwortzuordnung.
+Antwortzuordnung. Nach Sitzungsende können Nachrichten an weitere bereits
+ausgewählte Ziele noch an Home Assistant übergeben werden; dabei entstehen keine
+neuen Antwortzuordnungen für die beendete Sitzung. Entladen verhindert noch
+nicht begonnene Übergaben an Home Assistant. Eine bereits laufende externe
+Übergabe kann abschließen.
 
 Antworten werden als `ha_sauna_notification_reply` auf dem Home-Assistant-Eventbus
 bereitgestellt. Das Event enthält `entry_id`, `context_id`, `time_fired`,

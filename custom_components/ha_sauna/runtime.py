@@ -948,11 +948,11 @@ class SaunaRuntime:
                             self._record_physical_rejection(error)
                     elif action is not None:
                         try:
-                            self._prepare_operation(
-                                action, physical=True, at=action_at, received_at=received_at,
-                            )
-                            self._set_operation(
-                                action, at=action_at, received_at=received_at,
+                            context = getattr(event.data.get("new_state"), "context", None)
+                            self._apply_operation(
+                                action, physical=True,
+                                actor=ActorRef(getattr(context, "user_id", None), "ha_context"),
+                                at=action_at, received_at=received_at,
                                 refresh_device=False,
                             )
                         except ValueError as error:
@@ -1646,13 +1646,38 @@ class SaunaRuntime:
         received_at = self._clock()
         async with self.serialized():
             self._require_open()
-            previous_operation = bool(self.session and self.session.operation_enabled)
-            self._prepare_operation(enabled)
-            result = self._set_operation(enabled, received_at=received_at)
-            if previous_operation != bool(self.session and self.session.operation_enabled):
-                self._record_notification_participant(actor)
+            result = self._apply_operation(enabled, actor=actor, received_at=received_at)
             await self._cycle()
             return result
+
+    def _apply_operation(
+        self, enabled, *, physical=False, actor: ActorRef | None = None, at=None,
+        received_at=None, refresh_device=True,
+    ):
+        """Attribute an effective operation after preparation and admission succeed."""
+        session = self.session
+        previous = (
+            session.session_id if session else None,
+            bool(session and session.operation_enabled),
+            self.controller.control_mode,
+            self.controller.heater_override,
+        )
+        self._prepare_operation(
+            enabled, physical=physical, at=at, received_at=received_at,
+        )
+        result = self._set_operation(
+            enabled, at=at, received_at=received_at, refresh_device=refresh_device,
+        )
+        session = self.session
+        current = (
+            session.session_id if session else None,
+            bool(session and session.operation_enabled),
+            self.controller.control_mode,
+            self.controller.heater_override,
+        )
+        if previous != current:
+            self._record_notification_participant(actor)
+        return result
 
     def _set_control_mode(
         self, mode, *, preserve_light=False, restore_program=True, at=None, received_at=None,

@@ -41,15 +41,21 @@ Eingaben prüfen Identität, gemeinsame Eignungsvalidierung, Mengenbildung und
 Nachrichtenzuordnung. `test_notification_runtime.py` prüft Konfigurationsrundlauf,
 private Archivprojektion und Sitzungsgrenzen einschließlich OFF-Pause.
 Die HA-Integrationstests `test_notification_service.py` und
-`test_notification_participation.py` prüfen den registrierten Sendedienst,
-einzelne Übergabeergebnisse und Benutzeridentität bei wirksamen Bedienänderungen.
+`test_notification_participation.py` führen die Optionskonfiguration über
+authentifizierte Entitäts- und HTTP-Aufrufe sowie einen Template-Schalteingang
+zur Sitzungszielmenge, zum registrierten Sendedienst und über den nativen
+HA-Antworteingang zum öffentlichen Event. Der Template-Pfad beginnt beim
+authentifizierten `input_boolean`-Dienst und übernimmt dessen Kontext über den
+echten Template-Binärsensor. Weitere Fälle prüfen Betrieb OFF bei noch laufender
+Notify-Übergabe sowie Sitzungsende und Entladen während des Versands an mehrere
+Ziele.
 `NotificationServiceTests.test_explicit_forget_removes_sessionless_reply_association`
 verfolgt den registrierten Sendedienst über den nativen HA-Antworteingang zur
 gemeinsamen `ReplyAssociation`, zum optionalen Callback und zum öffentlichen
 Event. Unbekannte Herkunftsidentitäten bleiben dabei erhalten; das explizite
 Vergessen beendet beide Ausgaben für diese Zuordnung.
-Diese synthetischen Prüfungen belegen weder Empfang noch Rückmeldungen eines
-tatsächlichen Companion-Clients.
+Der abschließende Notify-Transport ist synthetisch; diese Prüfungen belegen
+weder Empfang noch Rückmeldungen eines tatsächlichen Companion-Clients.
 
 Die [Modellübergaben](../docs/modelluebergaben.md) werden durch
 `test_model_handoff.py`, `test_control_handoff.py`,
