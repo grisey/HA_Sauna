@@ -3045,6 +3045,19 @@ class InfusionLifecycleTests(unittest.TestCase):
         self.side = count
         self.width = (2 * count + 2) * self.step
         points, shapes, _, _ = self._scenario(merged=False)
+        cadence = self.step / 4
+        binding_second = self.begin + count * self.step
+        turn_second = binding_second - count * cadence
+        turn_humidity = self.baseline + (self.peak - self.baseline) / 10
+        # Dense originals would put both K-windows on the same linear rise
+        # before the declared form becomes available. Keep the existing
+        # baseline, peak and fall, but supply a real positive slope turn at
+        # that boundary instead of relying on a declared RH direction alone.
+        points.insert(2, (turn_second, turn_humidity))
+        before_slope = (turn_humidity - self.baseline) / (turn_second - self.begin)
+        after_slope = (self.peak - turn_humidity) / (
+            self.begin + self.width - turn_second
+        )
         first_background = self.begin + 2 * self.width + count * self.step
 
         def forms(windows, **kwargs):
@@ -3059,11 +3072,43 @@ class InfusionLifecycleTests(unittest.TestCase):
         detector = Detector(self.parameters, T0)
         events = []
         with self._patch_math(shapes, forms=forms):
-            cadence = self.step / 4
             for tick in range(int(first_background / cadence) + 1):
                 second = tick * cadence
                 self._send(detector, second, self._value(points, second), events)
+            self.assertEqual(len(self._infusions(events)), 1)
             original = self._infusions(events)[0]
+            self.assertEqual(original.effective_at, self._at(self.begin))
+            component = detector._infusion_episode["original_component"]
+            self.assertEqual(component["received_at"], self._at(binding_second))
+            self.assertEqual({name for name, _ in component["humidity_kinks"]},
+                             {position.value for position in detector.positions})
+            for name, kink in component["humidity_kinks"]:
+                with self.subTest(position=name):
+                    self.assertEqual(kink.factor, self.p["curve_original_kink_factor"])
+                    self.assertEqual(
+                        tuple(stamp for stamp, _ in kink.window.previous),
+                        tuple(self._at(turn_second - (count - 1 - index) * cadence)
+                              for index in range(count)),
+                    )
+                    self.assertEqual(
+                        tuple(stamp for stamp, _ in kink.window.current),
+                        tuple(self._at(turn_second + (index + 1) * cadence)
+                              for index in range(count)),
+                    )
+                    self.assertAlmostEqual(kink.window.b, before_slope)
+                    self.assertAlmostEqual(kink.window.v, after_slope)
+                    self.assertGreater(kink.window.b,
+                                       self.p["curve_original_significance"] * kink.window.e_minus)
+                    self.assertGreater(kink.delta, kink.tolerance)
+                    self.assertGreater(kink.effective_change, 0)
+            self.assertEqual(detector._infusion_episode["confirmation_basis"], "after_fall")
+            self.assertTrue(component["strong"])
+            self.assertTrue(component["qualified"])
+            self.assertTrue(component["fall_confirmed"])
+            bound = dict(component["binding_windows"])
+            for name, pair in component["fall_windows"]:
+                self.assertGreater(pair.temperature.newest_at, bound[name].temperature.newest_at)
+                self.assertGreater(pair.humidity.newest_at, bound[name].humidity.newest_at)
             bound_at = detector.infusion_episode.bound_at
             reference = detector._infusion_episode["original_background"]
             self.assertIsNotNone(reference)
@@ -3081,6 +3126,7 @@ class InfusionLifecycleTests(unittest.TestCase):
                 self._send(detector, second, self.level, events)
             endpoint = detector._original_window_cache[Position.UPPER, Quantity.HUMIDITY][1]
             self.assertIsNotNone(endpoint)
+            self.assertEqual(endpoint.start_at, self._at(first_background + self.step / 2))
             self.assertEqual(endpoint.newest_at, self._at(first_background + self.step))
             self.assertEqual(detector.infusion_episode.phase, "active")
             self.assertIsNone(detector.infusion_episode.level_end_at)
