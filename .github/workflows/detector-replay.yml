@@ -77,8 +77,36 @@ jobs:
           set +e
           case "$SAUNA_DETECTOR_MODE" in
             detector)
-              python -u tests/analysis/detector_replay.py --manifest tests/replay_measurement_manifest.json --recordings "$SAUNA_DETECTOR_RECORDINGS" --output "$evidence/output" > "$evidence/stdout.log" 2> "$evidence/stderr.log"
+              : > "$evidence/stdout.log"
+              manifest=$(python - <<'PY' 2> "$evidence/stderr.log"
+          import json
+          import os
+          import sys
+          from pathlib import Path
+
+          manifests = ("tests/replay_manifest.json", "tests/replay_measurement_manifest.json")
+          recordings = os.environ["SAUNA_DETECTOR_RECORDINGS"]
+          if not recordings.strip():
+              print(manifests[1])
+          else:
+              selected = {identity.strip() for identity in recordings.split(",")}
+              matches = [
+                  path for path in manifests
+                  if selected <= {
+                      entry["id"] for entry in json.loads(Path(path).read_bytes())["sessions"]
+                  }
+              ]
+              if len(matches) != 1:
+                  print("Recording selection must match exactly one replay manifest", file=sys.stderr)
+                  sys.exit(2)
+              print(matches[0])
+          PY
+              )
               result=$?
+              if [ "$result" -eq 0 ]; then
+                python -u tests/analysis/detector_replay.py --manifest "$manifest" --recordings "$SAUNA_DETECTOR_RECORDINGS" --output "$evidence/output" > "$evidence/stdout.log" 2> "$evidence/stderr.log"
+                result=$?
+              fi
               ;;
             original_windows)
               if [ -n "$SAUNA_DETECTOR_RECORDINGS" ]; then
