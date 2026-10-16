@@ -15,18 +15,22 @@ from .notifications import async_resolve_recipients
 
 SERVICE_SEND = "send_notification"
 SERVICE_FORGET = "forget_notification"
-FORGET_SCHEMA = vol.Schema({
-    vol.Required("entry_id"): str,
-    vol.Required("message_id"): vol.All(str, vol.Length(min=1)),
-})
-SEND_SCHEMA = vol.Schema({
-    vol.Required("entry_id"): str,
-    vol.Required("message"): str,
-    vol.Optional("title"): str,
-    vol.Optional("data"): dict,
-    vol.Optional("audience", default="session"): vol.In(("session", "users")),
-    vol.Optional("user_ids", default=[]): [str],
-})
+FORGET_SCHEMA = vol.Schema(
+    {
+        vol.Required("entry_id"): str,
+        vol.Required("message_id"): vol.All(str, vol.Length(min=1)),
+    }
+)
+SEND_SCHEMA = vol.Schema(
+    {
+        vol.Required("entry_id"): str,
+        vol.Required("message"): str,
+        vol.Optional("title"): str,
+        vol.Optional("data"): dict,
+        vol.Optional("audience", default="session"): vol.In(("session", "users")),
+        vol.Optional("user_ids", default=[]): [str],
+    }
+)
 
 
 def register(hass):
@@ -45,8 +49,10 @@ def register(hass):
             operation = er.async_get(hass).async_get_entity_id(
                 "switch", DOMAIN, f"{entry_id}_operation"
             )
-            if user is None or not operation or not user.permissions.check_entity(
-                operation, POLICY_CONTROL
+            if (
+                user is None
+                or not operation
+                or not user.permissions.check_entity(operation, POLICY_CONTROL)
             ):
                 raise Unauthorized()
         return runtime
@@ -56,7 +62,9 @@ def register(hass):
         async with runtime.serialized():
             runtime._require_open()
             if runtime.notification_transport is None:
-                raise HomeAssistantError("Benachrichtigungstransport ist nicht verfügbar")
+                raise HomeAssistantError(
+                    "Benachrichtigungstransport ist nicht verfügbar"
+                )
             runtime.notification_transport.forget(call.data["message_id"])
 
     async def send(call):
@@ -70,61 +78,105 @@ def register(hass):
             session_id = runtime.session.session_id if runtime.session else None
             if call.data["audience"] == "users":
                 if not call.data["user_ids"]:
-                    raise HomeAssistantError("user_ids ist für audience users erforderlich")
+                    raise HomeAssistantError(
+                        "user_ids ist für audience users erforderlich"
+                    )
                 selected = SessionRecipients(entry_id, session_id or "explicit-users")
                 for user_id in call.data["user_ids"]:
                     selected = selected.accumulate(
                         ActorRef(user_id, "explicit_notification_audience"),
-                        runtime.configuration.notification_assignments, resolutions,
+                        runtime.configuration.notification_assignments,
+                        resolutions,
                     )
                 targets = selected.targets
             else:
                 if call.data["user_ids"]:
-                    raise HomeAssistantError("user_ids ist nur für audience users gültig")
+                    raise HomeAssistantError(
+                        "user_ids ist nur für audience users gültig"
+                    )
                 targets = recipients.targets if recipients else frozenset()
             transport = runtime.notification_transport
             if transport is None:
-                raise HomeAssistantError("Benachrichtigungstransport ist nicht verfügbar")
-            payload = {key: call.data[key] for key in ("message", "title", "data") if key in call.data}
+                raise HomeAssistantError(
+                    "Benachrichtigungstransport ist nicht verfügbar"
+                )
+            payload = {
+                key: call.data[key]
+                for key in ("message", "title", "data")
+                if key in call.data
+            }
             correlation_id = uuid4().hex
             results = []
             if call.data["audience"] == "users":
                 selected_users = set(call.data["user_ids"])
                 references = {
-                    reference for assignment in runtime.configuration.notification_assignments
-                    if assignment.user_id in selected_users for reference in assignment.recipients
+                    reference
+                    for assignment in runtime.configuration.notification_assignments
+                    if assignment.user_id in selected_users
+                    for reference in assignment.recipients
                 }
                 resolved = {item.reference: item for item in resolutions}
-                for reference in sorted(references, key=lambda item: (item.transport, item.reference_id)):
+                for reference in sorted(
+                    references, key=lambda item: (item.transport, item.reference_id)
+                ):
                     resolution = resolved.get(reference)
-                    if resolution is None or resolution.recipient is None or resolution.recipient.capability.send is None:
-                        results.append({
-                            "reference": {"kind": reference.kind, "reference_id": reference.reference_id},
-                            "accepted": False, "error": "Recipient is unresolved or has no send capability",
-                            "evidence": "Current Home Assistant recipient resolution",
-                        })
-            for target in sorted(targets, key=lambda item: (item.transport, item.endpoint)):
+                    if (
+                        resolution is None
+                        or resolution.recipient is None
+                        or resolution.recipient.capability.send is None
+                    ):
+                        results.append(
+                            {
+                                "reference": {
+                                    "kind": reference.kind,
+                                    "reference_id": reference.reference_id,
+                                },
+                                "accepted": False,
+                                "error": "Recipient is unresolved or has no send capability",
+                                "evidence": "Current Home Assistant recipient resolution",
+                            }
+                        )
+            for target in sorted(
+                targets, key=lambda item: (item.transport, item.endpoint)
+            ):
                 notification = NotificationEnvelope(
-                    uuid4().hex, correlation_id, entry_id, target, payload, session_id,
+                    uuid4().hex,
+                    correlation_id,
+                    entry_id,
+                    target,
+                    payload,
+                    session_id,
                 )
                 try:
                     handoff = await transport.handoff(notification)
                     accepted, evidence = handoff.accepted, handoff.evidence
                 except Exception as error:  # Continue independent mapped recipients.
                     accepted, evidence = False, f"{type(error).__name__}: {error}"
-                results.append({
-                    "target": {"transport": target.transport, "endpoint": target.endpoint},
-                    "message_id": notification.message_id,
-                    "accepted": accepted, "evidence": evidence,
-                    "error": None if accepted else evidence,
-                })
+                results.append(
+                    {
+                        "target": {
+                            "transport": target.transport,
+                            "endpoint": target.endpoint,
+                        },
+                        "message_id": notification.message_id,
+                        "accepted": accepted,
+                        "evidence": evidence,
+                        "error": None if accepted else evidence,
+                    }
+                )
             return {"correlation_id": correlation_id, "handoffs": results}
 
     hass.services.async_register(
-        DOMAIN, SERVICE_SEND, send, schema=SEND_SCHEMA,
+        DOMAIN,
+        SERVICE_SEND,
+        send,
+        schema=SEND_SCHEMA,
         supports_response=SupportsResponse.OPTIONAL,
     )
 
     hass.services.async_register(
-        DOMAIN, SERVICE_FORGET, forget, schema=FORGET_SCHEMA,
+        DOMAIN,
+        SERVICE_FORGET,
+        forget,
+        schema=FORGET_SCHEMA,
     )

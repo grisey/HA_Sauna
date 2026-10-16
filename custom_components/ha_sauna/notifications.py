@@ -18,8 +18,13 @@ from homeassistant.helpers import device_registry as dr, entity_registry as er
 
 from .core.notification_exchange import NotificationEnvelope, TransportHandoff
 from .core.notification_recipients import (
-    ActorRef, CapabilityEvidence, RecipientCapability, RecipientRef,
-    RecipientResolution, ResolvedRecipient, TargetIdentity,
+    ActorRef,
+    CapabilityEvidence,
+    RecipientCapability,
+    RecipientRef,
+    RecipientResolution,
+    ResolvedRecipient,
+    TargetIdentity,
 )
 
 TRANSPORT = "home_assistant"
@@ -42,13 +47,16 @@ async def _mobile_actions(hass: HomeAssistant) -> dict[str, dict]:
         return actions
     # Load the existing action through HA only for a loaded client integration.
     from homeassistant.components.device_automation import (
-        DeviceAutomationType, InvalidDeviceAutomationConfig,
+        DeviceAutomationType,
+        InvalidDeviceAutomationConfig,
         async_get_device_automation_platform,
     )
 
     try:
         platform = await async_get_device_automation_platform(
-            hass, "mobile_app", DeviceAutomationType.ACTION,
+            hass,
+            "mobile_app",
+            DeviceAutomationType.ACTION,
         )
     except InvalidDeviceAutomationConfig:
         return actions
@@ -60,20 +68,35 @@ async def _mobile_actions(hass: HomeAssistant) -> dict[str, dict]:
     return actions
 
 
-async def async_resolve_recipients(hass: HomeAssistant) -> tuple[RecipientResolution, ...]:
+async def async_resolve_recipients(
+    hass: HomeAssistant,
+) -> tuple[RecipientResolution, ...]:
     """Discover registered notify entities and currently offered mobile actions."""
     actions = await _mobile_actions(hass)
     resolutions = []
     mobile = RecipientCapability(
-        send=CapabilityEvidence("mobile_app device action", "message/title/native data"),
-        reply=CapabilityEvidence("mobile_app_notification_action", "observational action event"),
+        send=CapabilityEvidence(
+            "mobile_app device action", "message/title/native data"
+        ),
+        reply=CapabilityEvidence(
+            "mobile_app_notification_action", "observational action event"
+        ),
     )
     for device_id in sorted(actions):
         ref = RecipientRef("device", device_id, TRANSPORT)
-        resolutions.append(RecipientResolution(ref, ResolvedRecipient(
-            ref, TargetIdentity(TRANSPORT, device_id), mobile,
-        )))
-    for entity in sorted(er.async_get(hass).entities.values(), key=lambda item: item.entity_id):
+        resolutions.append(
+            RecipientResolution(
+                ref,
+                ResolvedRecipient(
+                    ref,
+                    TargetIdentity(TRANSPORT, device_id),
+                    mobile,
+                ),
+            )
+        )
+    for entity in sorted(
+        er.async_get(hass).entities.values(), key=lambda item: item.entity_id
+    ):
         if entity.domain != "notify" or entity.disabled_by is not None:
             continue
         ref = RecipientRef("entity", entity.entity_id, TRANSPORT)
@@ -82,11 +105,22 @@ async def async_resolve_recipients(hass: HomeAssistant) -> tuple[RecipientResolu
             resolutions.append(RecipientResolution(ref))
             continue
         alias = entity.platform == "mobile_app" and entity.device_id in actions
-        capability = mobile if alias else RecipientCapability(send=CapabilityEvidence(
-            "registered notify entity", "message/title when NotifyEntityFeature.TITLE",
-        ))
-        target = TargetIdentity(TRANSPORT, entity.device_id if alias else entity.entity_id)
-        resolutions.append(RecipientResolution(ref, ResolvedRecipient(ref, target, capability)))
+        capability = (
+            mobile
+            if alias
+            else RecipientCapability(
+                send=CapabilityEvidence(
+                    "registered notify entity",
+                    "message/title when NotifyEntityFeature.TITLE",
+                )
+            )
+        )
+        target = TargetIdentity(
+            TRANSPORT, entity.device_id if alias else entity.entity_id
+        )
+        resolutions.append(
+            RecipientResolution(ref, ResolvedRecipient(ref, target, capability))
+        )
     return tuple(resolutions)
 
 
@@ -121,7 +155,8 @@ class _ReplyIngress:
         self.hass = hass
         self.adapters: set["HomeAssistantNotifications"] = set()
         self.unsubscribe = hass.bus.async_listen(
-            "mobile_app_notification_action", self.receive,
+            "mobile_app_notification_action",
+            self.receive,
         )
 
     @callback
@@ -140,35 +175,48 @@ class _ReplyIngress:
         adapter, registration = matches[0] if len(matches) == 1 else (None, None)
         notification = registration.notification if registration else None
         observation = NotificationReplyObservation(
-            event.context.id, event.time_fired,
+            event.context.id,
+            event.time_fired,
             ActorRef(event.context.user_id, "HA event context"),
             MappingProxyType(deepcopy(dict(event.data))),
-            notification=notification, ambiguous=len(matches) > 1,
+            notification=notification,
+            ambiguous=len(matches) > 1,
             handoff_accepted=True if registration and registration.accepted else None,
         )
         if adapter is not None and adapter._reply_callback is not None:
             adapter._reply_callback(observation)
-        self.hass.bus.async_fire(EVENT_REPLY, {
-            "entry_id": adapter.entry_id if adapter else None,
-            "context_id": observation.context_id,
-            "time_fired": observation.time_fired.isoformat(),
-            "actor_user_id": observation.actor.user_id,
-            "source": None,
-            "message_id": notification.message_id if notification else None,
-            "correlation_id": notification.correlation_id if notification else None,
-            "session_id": notification.session_id if notification else None,
-            "target": ({"transport": notification.target.transport,
-                        "endpoint": notification.target.endpoint}
-                       if notification else None),
-            "ambiguous": observation.ambiguous,
-            "handoff_accepted": observation.handoff_accepted,
-            "data": deepcopy(dict(observation.payload)),
-        }, context=event.context)
+        self.hass.bus.async_fire(
+            EVENT_REPLY,
+            {
+                "entry_id": adapter.entry_id if adapter else None,
+                "context_id": observation.context_id,
+                "time_fired": observation.time_fired.isoformat(),
+                "actor_user_id": observation.actor.user_id,
+                "source": None,
+                "message_id": notification.message_id if notification else None,
+                "correlation_id": notification.correlation_id if notification else None,
+                "session_id": notification.session_id if notification else None,
+                "target": (
+                    {
+                        "transport": notification.target.transport,
+                        "endpoint": notification.target.endpoint,
+                    }
+                    if notification
+                    else None
+                ),
+                "ambiguous": observation.ambiguous,
+                "handoff_accepted": observation.handoff_accepted,
+                "data": deepcopy(dict(observation.payload)),
+            },
+            context=event.context,
+        )
 
 
 class HomeAssistantNotifications:
     def __init__(
-        self, hass: HomeAssistant, entry_id: str,
+        self,
+        hass: HomeAssistant,
+        entry_id: str,
         reply_callback: Callable[[NotificationReplyObservation], None] | None = None,
     ) -> None:
         self.hass = hass
@@ -217,12 +265,17 @@ class HomeAssistantNotifications:
         payload = notification.payload
         data = payload.get("data", {}) if isinstance(payload, Mapping) else {}
         native_actions = data.get("actions", ()) if isinstance(data, Mapping) else ()
-        actions = frozenset(
-            item["action"] for item in native_actions
-            if isinstance(item, Mapping)
-            and isinstance(item.get("action"), str)
-            and item["action"] != "URI"
-        ) if isinstance(native_actions, (list, tuple)) else frozenset()
+        actions = (
+            frozenset(
+                item["action"]
+                for item in native_actions
+                if isinstance(item, Mapping)
+                and isinstance(item.get("action"), str)
+                and item["action"] != "URI"
+            )
+            if isinstance(native_actions, (list, tuple))
+            else frozenset()
+        )
         registration = _NotificationRegistration(notification, actions)
         if actions:
             self._sent.append(registration)
@@ -236,14 +289,23 @@ class HomeAssistantNotifications:
             return TransportHandoff(notification, False, f"{type(err).__name__}: {err}")
         registration.accepted = True
         return TransportHandoff(
-            notification, True, "HA blocking call completed; client receipt unknown",
+            notification,
+            True,
+            "HA blocking call completed; client receipt unknown",
         )
 
     async def _send(self, notification: NotificationEnvelope) -> None:
-        if notification.entry_id != self.entry_id or notification.target.transport != TRANSPORT:
+        if (
+            notification.entry_id != self.entry_id
+            or notification.target.transport != TRANSPORT
+        ):
             raise ValueError("Notification belongs to another entry or transport")
         payload = notification.payload
-        if not isinstance(payload, Mapping) or set(payload) - {"message", "title", "data"}:
+        if not isinstance(payload, Mapping) or set(payload) - {
+            "message",
+            "title",
+            "data",
+        }:
             raise ValueError("Payload requires message and optional title/data")
         if not isinstance(payload.get("message"), str):
             raise ValueError("message must be a string")
@@ -256,17 +318,24 @@ class HomeAssistantNotifications:
         if endpoint in actions:
             config = {**actions[endpoint], **deepcopy(dict(payload))}
             from homeassistant.components.device_automation import (
-                DeviceAutomationType, async_get_device_automation_platform,
+                DeviceAutomationType,
+                async_get_device_automation_platform,
             )
 
             platform = await async_get_device_automation_platform(
-                self.hass, "mobile_app", DeviceAutomationType.ACTION,
+                self.hass,
+                "mobile_app",
+                DeviceAutomationType.ACTION,
             )
             await platform.async_call_action_from_config(self.hass, config, {}, None)
             return
         registry = er.async_get(self.hass)
         entity = registry.async_get(endpoint)
-        if entity is None or entity.domain != "notify" or entity.disabled_by is not None:
+        if (
+            entity is None
+            or entity.domain != "notify"
+            or entity.disabled_by is not None
+        ):
             raise ValueError("Notify target is no longer registered or enabled")
         if "data" in payload:
             raise ValueError("notify.send_message cannot forward native data")
@@ -279,6 +348,9 @@ class HomeAssistantNotifications:
             raise ValueError("Notify target does not support title")
         service_data = {key: value for key, value in payload.items() if key != "data"}
         await self.hass.services.async_call(
-            "notify", "send_message", service_data,
-            target={"entity_id": endpoint}, blocking=True,
+            "notify",
+            "send_message",
+            service_data,
+            target={"entity_id": endpoint},
+            blocking=True,
         )
