@@ -199,6 +199,16 @@ aufgelöst gefallen, beendet ihre signifikante Erwärmung
 Vergleiche für Fall, Plateau und Abflachung stehen unter
 [Durchlüften](#durchlüften) und gelten hier entsprechend für die jeweilige
 Messgröße.
+
+Gültige Kurvenbeginnzeugen der ursprünglichen Bindung bleiben bis zur
+Bestätigung an deren Originalstützen gebunden. Fehlt ein solcher Zeuge,
+darf später aufgelöste Temperaturgeometrie einen früheren Beginn nur innerhalb
+dieser ursprünglichen Stützen ergänzen. Ein späterer RH-Kurvenfit verschiebt
+die bereits gebundene Phase nicht. Die Bestätigung durch die neuen
+Temperaturblöcke und die frühere Zuordnung des Beginns bleiben getrennt.
+Die notwendige Belegfolge kann kurze RH-Fälle direkt nach einem vorausgehenden
+Temperaturanstieg unbestätigt lassen.
+
 Eine vollständige Messposition genügt; bei zwei beteiligten Positionen gelten
 die gemeinsamen Kontraste für beide. Das überträgt keinen empirischen
 Nachweis von vier Kanälen auf eine andere Sensoranordnung. Die Regeln gelten
@@ -256,8 +266,12 @@ Temperatur und ohne bereits belegte Feuchteerholung genügt nicht.
 
 Ein weiterer Schließweg verwendet ein neues stabiles Temperaturniveau nach
 einem tatsächlich belegten Fall. Dafür wird je Temperaturposition bereits im
-selben Türvorgang das erste gültige aufgelöst fallende aktuelle Fenster
-gespeichert. Diese Fallfenster können zeitlich auseinanderliegen und schon
+selben Türvorgang ein gültiges aufgelöst fallendes aktuelles Fenster
+gespeichert. Bis zur ersten Erholung ersetzt ein späteres vollständiges
+Fallfenster die Referenz, wenn seine obere Steigungsgrenze `v + sE` kleiner
+ist. Seine tatsächlichen Originalzeiten werden dabei mit übernommen. Sobald
+die Temperatur nicht mehr aufgelöst fällt (`v ≥ −sE`), bleibt diese
+Fallreferenz fest. Die Fallfenster können zeitlich auseinanderliegen und schon
 vor der bestätigten Öffnung entstehen. Der Niveauzweig benötigt keinen
 gemeinsamen momentanen Bremsknick und keinen gewöhnlichen Schließkandidaten.
 Eine Lücke, ein Quellenbruch oder eine Korrektur einer tragenden Stütze
@@ -449,6 +463,23 @@ sein. Eine Rückkehr zum Feuchteniveau vor dem Aufguss oder eine zusätzliche
 Wartezeit ist nicht erforderlich. Der Abschluss (`infusion_background`)
 zählt selbst keinen Aufguss.
 
+Der Endbeleg gehört ausschließlich zum Quellereignis des tatsächlich
+bestätigten Einzelaufgusses. Der normale Hintergrundabschluss verwendet die
+Zeitbasis `evidence_grid`: Seine Endzeit ist der Zeitpunkt des belegten
+Abschlussrasters, keine physisch genau bestimmte Endzeit der Aufgussepisode.
+Bestätigungszeit und zugehöriger Diagnosezeitpunkt bleiben gesondert erhalten.
+
+Eine erkannte Türöffnung beendet eine noch aktive bestätigte Aufgussepisode
+am fachlich zugeordneten Türbeginn (`physical_effective`). Dieser Beginn muss
+mindestens beim zugehörigen Aufgussbeginn liegen; ein widersprechender
+früherer Türbeginn liefert keinen solchen Endbeleg. Ein bereits belegter
+Hintergrundabschluss wird dadurch nicht ersetzt.
+
+Eine Fortsetzung oder eine Korrektur, die den Abschlussbeleg entwertet, nimmt
+das Ende dieses Aufgusses ausdrücklich zurück. Das bloße Zurücksetzen des
+Erkennungszustands behauptet kein Ende. Diese Endbelege ändern weder
+Gangübergänge noch die Aufgusszählung.
+
 Ein später erkannter Anstieg setzt denselben Aufguss fort, sobald an einer
 Position ein gültiger Beginnbeleg spätestens beim Abschluss liegt. Andernfalls
 wird er einer neuen Episode zugeordnet, wenn sämtliche bei der Bindung
@@ -480,18 +511,21 @@ abzuflachen.
 
 Nach dem festen gemeinsamen Absenkungszeugen können diese Formen bereits
 während der noch ausstehenden Öffnungsbestätigung im selben Türvorgang
-vorgemerkt werden. Die Vormerkungen bleiben an ihre Quellen und Stützen sowie
-die Erhaltungsbedingungen der jeweiligen Form gebunden. Ihre Untergrenze ist
+vorgemerkt werden. Unbestätigte Kandidaten bleiben an die
+Erhaltungsbedingungen ihrer Form gebunden. Ein vollständig durch spätere
+Originale belegter RH- oder AH-Verlauf bleibt als vergangener Nachweis auch
+bei anschließendem Nachrauschen erhalten. Quellen, zusammenhängende Stützen
+und tragende Originalkorrekturen werden weiterhin geprüft. Ihre Untergrenze ist
 der Empfangszeitpunkt der aktuellen Öffnungskandidatenbindung, frühestens
 jedoch der Beginn der beteiligten Quellenabschnitte. Dieser Bezug bleibt bei
 der Öffnungsbestätigung erhalten.
 
 Die Veröffentlichung benötigt nach bestätigter Öffnung ein weiteres neues
-und weiterhin passendes Eingangspräfix. Zuerst wird die RH-Stufe, danach die
-AH-Stufe veröffentlicht. Erst dann entstehen Lüftungsereignisse und ihre
-Wirkung auf den Gang. Eine inzwischen belegte Temperaturbremse verwirft die
-noch vorgemerkten Formen; bereits veröffentlichte Lüftungsbelege bleiben
-derselben Türöffnung zugeordnet.
+gültiges Eingangspräfix ohne vorrangige Schließung. Zuerst wird die RH-Stufe,
+danach die AH-Stufe veröffentlicht. Erst dann entstehen Lüftungsereignisse und ihre
+Wirkung auf den Gang. Die öffentliche Ereigniszeit bleibt der aktuelle
+Auswertungszeitpunkt; die frühere Originalbelegzeit datiert sie nicht zurück.
+Bereits veröffentlichte Lüftungsbelege bleiben derselben Türöffnung zugeordnet.
 
 | Stufe | Form und Wirkung |
 | --- | --- |
@@ -534,7 +568,8 @@ beiden Temperaturbedingungen erhalten bleiben. Die Bestätigung benötigt
 außerdem seit der Bindung an sämtlichen Positionen spätere Temperatur- und
 Feuchteoriginale; in der zweiten Stufe müssen die Feuchteoriginale vollständig
 gepaart sein. Ein Zwischenstand außerhalb der erhaltenen Form verwirft den
-jeweiligen unbestätigten oder noch vorgemerkten Stufennachweis.
+jeweiligen noch unbestätigten Stufenkandidaten. Ein bereits vollständig
+belegter und lediglich noch nicht veröffentlichter Nachweis bleibt erhalten.
 
 Schwankungen innerhalb des abgeflachten Verlaufs sind keine zusätzliche
 Ablehnungsbedingung. Eine einzelne kleine Feuchtesteigung ohne vorherigen

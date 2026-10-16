@@ -20,6 +20,7 @@ from custom_components.ha_sauna.core.curve_change import (
     CurveTrendFeatures,
     OriginalPositionWindows,
     original_contrasts,
+    original_followup,
     original_thermal_contrasts,
     original_water_pair,
     original_window,
@@ -275,22 +276,42 @@ class DetectorTests(unittest.TestCase):
                          msg=diagnostic)
         self.assertTrue(row["original_forms"]["complete_fresh_original_block"]["result"],
                         msg=diagnostic)
+        self.assertTrue(row["original_forms"]["complete_temperature_followup"]["result"],
+                        msg=diagnostic)
+        self.assertEqual(row["original_forms"]["confirmation_branch"],
+                         "continued_temperature_fall", msg=diagnostic)
         expected_positions = tuple(position.value for position in detector.positions)
         bound = original_contrasts(dict(native["windows"]), expected_positions=expected_positions)
-        confirmed = original_contrasts(dict(native["confirmation_windows"]),
-                                       expected_positions=expected_positions)
         self.assertGreater(bound.humidity_fall_onset, detector.p["curve_original_significance"],
                            msg=diagnostic)
-        self.assertGreater(confirmed.opening_support, detector.p["curve_original_open_contrast"],
-                           msg=diagnostic)
+        witness = native["lowering_witness"]
+        self.assertLess(native["received_at"], witness["received_at"], msg=diagnostic)
+        self.assertLess(witness["received_at"], native["confirmation_received_at"], msg=diagnostic)
+        lowered = dict(witness["windows"])
+        count = detector.p["curve_original_samples"]
+        contrast = detector.p["curve_original_open_contrast"]
         self.assertEqual(tuple(name for name, _ in native["windows"]), expected_positions,
                          msg=diagnostic)
         for name, binding in native["windows"]:
             confirmation = dict(native["confirmation_windows"])[name]
             for quantity in (Quantity.TEMPERATURE, Quantity.HUMIDITY):
                 before, after = getattr(binding, quantity.value), getattr(confirmation, quantity.value)
-                self.assertEqual(len(after.current), detector.p["curve_original_samples"],
-                                 msg=diagnostic)
+                lower = getattr(lowered[name], quantity.value)
+                lowering = original_followup(lower, before)
+                self.assertIsNotNone(lowering, msg=diagnostic)
+                self.assertEqual(lowering.fresh_current, count, msg=diagnostic)
+                self.assertGreater(lowering.reference_level_loss, contrast, msg=diagnostic)
+                if quantity == Quantity.TEMPERATURE:
+                    self.assertLess(lowering.current_direction, -contrast, msg=diagnostic)
+                    followup = original_followup(after, lower)
+                    self.assertIsNotNone(followup, msg=diagnostic)
+                    self.assertEqual(followup.fresh_previous, count, msg=diagnostic)
+                    self.assertEqual(followup.fresh_current, count, msg=diagnostic)
+                    self.assertLess(followup.previous_direction, -contrast, msg=diagnostic)
+                    self.assertLess(followup.current_direction, -contrast, msg=diagnostic)
+                    self.assertGreater(original_followup(after, before).reference_level_loss,
+                                       contrast, msg=diagnostic)
+                self.assertEqual(len(after.current), count, msg=diagnostic)
                 self.assertGreater(after.current[0][0], before.newest_at, msg=diagnostic)
                 self.assertLessEqual(after.newest_at, opening.trace_at, msg=diagnostic)
                 for stamp, value in after.previous + after.current:
@@ -3917,21 +3938,23 @@ class InfusionLifecycleTests(unittest.TestCase):
             for row in observed
         ))
 
-    def test_ols_opening_uses_only_an_eligible_thermal_onset_without_backdating_confirmation(self):
+    def test_ols_opening_retains_bound_original_onset_without_backdating_confirmation(self):
         flank_seconds = self.p["curve_min_side_samples"] * self.step
         ready = self.begin + flank_seconds
-        confirmed = ready + self.step
+        lowering_at = ready + self.side * self.step
+        confirmed = lowering_at + 2 * self.side * self.step
         recognized_at = self._at(confirmed + 5 * self.step)
-        end = self.begin + self.width
+        end = max(self.begin + self.width, confirmed)
+        fall_seconds = end - self.begin
         initial_t, falling_t = trace(70)[0], trace(70 + self.step)[0]
         # Spread the existing fixture's first loss over the configured local
         # model flank, leaving an observable onset before OLS confirmation.
         temperatures = [(0, self.temperature), (self.begin, self.temperature),
                         (end, self.temperature
-                         + (falling_t - initial_t) * self.width / flank_seconds)]
+                         + (falling_t - initial_t) * fall_seconds / flank_seconds)]
         # Consume the RH noise scales and this fixture's exact time geometry.
-        # The chosen rate first resolves the RH kink at ready, then the next
-        # fresh T/RH pair may confirm independently of optional onset models.
+        # The chosen rate first resolves the RH kink at ready. K new roles
+        # bind its lowering witness; two further K-blocks of T confirm it.
         unit_fall = tuple((self._at(second), -max(0, second - self.begin))
                           for second in range(0, ready + self.step, self.step))
         rate_boundaries = {}
@@ -3952,7 +3975,7 @@ class InfusionLifecycleTests(unittest.TestCase):
         self.assertLess(lower, upper)
         humidity_rate = (lower + upper) / 2
         humidities = [(0, self.baseline), (self.begin, self.baseline),
-                      (end, self.baseline - humidity_rate * self.width)]
+                      (end, self.baseline - humidity_rate * fall_seconds)]
         shapes = [
             self._shape("open", self.begin, end, Quantity.TEMPERATURE),
             self._shape("open", self.begin, end),
@@ -3973,6 +3996,11 @@ class InfusionLifecycleTests(unittest.TestCase):
             native = prepared.door_episode["original_open"]
             self.assertEqual(native["received_at"], self._at(ready))
             self.assertGreater(native["humidity_fall_onset"], self.p["curve_original_significance"])
+            bound_onsets = native["onset_witnesses"]
+            self.assertEqual({key[1:] for key, _ in bound_onsets},
+                             {(position, quantity) for position in positions for quantity in quantities})
+            self.assertEqual({witness.onset_at for _, witness in bound_onsets},
+                             {self._at(self.begin)})
             self.assertIn(thermal_key, prepared._curve_proposals)
             self.assertTrue(prepared._remember_curve_proposal(
                 "door_open", positions, quantities, floor=prepared._curve_closed_since,
@@ -3980,8 +4008,8 @@ class InfusionLifecycleTests(unittest.TestCase):
                 observed_at=self._at(ready),
             ))
             self.assertIn(mixed_key, prepared._curve_proposals)
-            # Reuse this single prefix for the routing guards. Its next fresh
-            # T/RH pair retains the native branch without a local RH model.
+            # Later optional models cannot replace the already bound onset.
+            # Real original T/RH inputs still have to complete confirmation.
             shapes.pop()
             for case in ("complete_thermal", "incomplete_thermal",
                          "ambiguous_mixed", "controller_rejected_mixed"):
@@ -4001,6 +4029,7 @@ class InfusionLifecycleTests(unittest.TestCase):
                             floor=detector._curve_closed_since, kind=Kind.DOOR_OPEN,
                             now=self._at(ready), decision_at=self._at(ready),
                             onset_allowed=lambda *_: False,
+                            bound_candidates=bound_onsets,
                         ), self._at(ready))
                         self.assertEqual(
                             detector._curve_proposal_status[mixed_key]["reason"],
@@ -4018,6 +4047,15 @@ class InfusionLifecycleTests(unittest.TestCase):
                         detector._curve_proposals.pop(thermal_key)
                     found = []
                     native = detector.door_episode["original_open"]
+                    self._feed(detector, lowering_at, humidities, found, temperatures=temperatures)
+                    self.assertFalse(detector.open)
+                    self.assertNotIn(Kind.DOOR_OPEN, [item.kind for item in found])
+                    lowering = native["lowering_witness"]
+                    self.assertEqual(lowering["received_at"], self._at(lowering_at))
+                    self._feed(detector, confirmed - self.step, humidities, found,
+                               temperatures=temperatures)
+                    self.assertFalse(detector.open)
+                    self.assertNotIn(Kind.DOOR_OPEN, [item.kind for item in found])
                     self._send(
                         detector, confirmed, self._value(humidities, confirmed), found,
                         temperature=self._value(temperatures, confirmed),
@@ -4026,8 +4064,7 @@ class InfusionLifecycleTests(unittest.TestCase):
                     openings = [item for item in found if item.kind == Kind.DOOR_OPEN]
                     self.assertEqual(len(openings), 1)
                     opening = openings[0]
-                    uses_thermal = case == "complete_thermal"
-                    effective_at = self._at(self.begin if uses_thermal else confirmed)
+                    effective_at = self._at(self.begin)
                     self.assertEqual(opening.effective_at, effective_at)
                     self.assertEqual(opening.trace_at, self._at(confirmed))
                     self.assertEqual(opening.detected_at, recognized_at)
@@ -4035,11 +4072,19 @@ class InfusionLifecycleTests(unittest.TestCase):
                     self.assertTrue(detector.open)
                     self.assertTrue(detector.door_episode["opening_humidity"])
                     self.assertIs(detector.door_episode["original_open"], native)
+                    self.assertEqual(native["onset_witnesses"], bound_onsets)
                     self.assertEqual(native["confirmation_received_at"], self._at(confirmed))
                     bound = dict(native["windows"])
                     for name, pair in native["confirmation_windows"]:
                         self.assertGreater(pair.temperature.newest_at, bound[name].temperature.newest_at)
                         self.assertGreater(pair.humidity.newest_at, bound[name].humidity.newest_at)
+                        followup = original_followup(pair.temperature,
+                                                     dict(lowering["windows"])[name].temperature)
+                        self.assertIsNotNone(followup)
+                        self.assertEqual(followup.fresh_previous, self.side)
+                        self.assertEqual(followup.fresh_current, self.side)
+                        self.assertLess(followup.previous_direction, -self.p["curve_original_open_contrast"])
+                        self.assertLess(followup.current_direction, -self.p["curve_original_open_contrast"])
                         self.assertEqual(detector.door_episode["sources"][Position(name)],
                                          (f"sensor.{name}_temperature", f"sensor.{name}_humidity"))
                     self.assertEqual(detector.opened_at, effective_at)
@@ -4050,17 +4095,22 @@ class InfusionLifecycleTests(unittest.TestCase):
                                      case != "incomplete_thermal")
                     self.assertEqual(diagnostic["door_open_onset_attribution"], {
                         "confirmation_basis": "original_ols",
-                        "route": "door_open_heating" if uses_thermal else "door_open",
-                        "quantities": (("temperature",) if uses_thermal else
-                                       ("temperature", "humidity")),
-                        "thermal_fallback": uses_thermal,
-                        "used_proposal": uses_thermal,
+                        "route": "door_open",
+                        "quantities": ("temperature", "humidity"),
+                        "thermal_fallback": False,
+                        "attribution_basis": "original_open_binding",
+                        "bound_original_onsets": tuple(
+                            (key[1].value, key[2].value, witness.onset_at, witness.candidate_id)
+                            for key, witness in bound_onsets
+                        ),
+                        "used_proposal": True,
                         "effective_at": effective_at,
                     })
-                    if uses_thermal:
-                        proposal = detector._curve_proposal_status[thermal_key]
-                        self.assertEqual(proposal["confirmed_at"], recognized_at)
-                        self.assertEqual(proposal["consumed_onset_at"], self._at(self.begin))
+                    proposal = detector._curve_proposal_status[mixed_key]
+                    self.assertEqual(proposal["confirmed_at"], recognized_at)
+                    self.assertEqual(proposal["consumed_onset_at"], self._at(self.begin))
+                    self.assertEqual(proposal["consumed_candidate_ids"],
+                                     tuple(witness.candidate_id for _, witness in bound_onsets))
 
     def test_door_context_assigns_a_new_infusion_to_the_next_real_gang(self):
         first_peak = self.begin + self.width
