@@ -21,9 +21,10 @@ Die Übergangsregeln beschreibt die [Gangerkennung](gangmodell.md).
 
 Die gemeinsame Türerkennung und die Aufgusserkennung verwenden je Messkanal
 die letzten `2K` Originalmessungen: ein aktuelles Fenster und sein unmittelbar
-vorhergehendes, disjunktes Fenster mit jeweils `K` Punkten. Die Lüftungsform
-verwendet dieselbe Fensteraufteilung für kausal gepaarte Wasserbelege. In jedem
-Fenster wird eine Gerade durch gewöhnliche kleinste Quadrate (OLS) bestimmt. Für
+vorhergehendes, disjunktes Fenster mit jeweils `K` Punkten. Die beiden
+Lüftungsstufen verwenden dieselbe Fensteraufteilung für relative Feuchte und
+kausal gepaarte Wasserbelege. In jedem Fenster wird eine Gerade durch
+gewöhnliche kleinste Quadrate (OLS) bestimmt. Für
 Originale `(t_i, y_i)` mit Mittelwerten `t̄`, `ȳ` gilt:
 
 ```text
@@ -78,21 +79,35 @@ beschrieben.
 
 ## Öffnen und Schließen der Tür
 
-Für die beteiligten Positionen `p` fasst der Öffnungskontrast die fallende
-Temperatur, die fallende relative Feuchte und den negativen Wechsel der
-Temperatursteigung zusammen:
+Unter den beschriebenen Gültigkeits- und Positionsregeln führt ein frischer
+Steigungswechsel der relativen Feuchte mit passender aktueller Richtung den
+Tür- beziehungsweise Aufgusskandidaten. Für die beteiligten Positionen `p`
+gelten mit `H` als relativer Feuchte:
 
 ```text
-O = min_p {−v_Tp/E_Tp, −v_Hp/E_Hp, −(v_Tp − b_Tp)/(E_Tp + E⁻_Tp)}
+q_Hp = (v_Hp − b_Hp)/(E_Hp + E⁻_Hp)
+A↑   = min_p min(v_Hp/E_Hp, q_Hp)
+A↓   = min_p min(−v_Hp/E_Hp, −q_Hp)
 ```
 
-Ein neues Original mit `O > 0` bindet einen gemeinsamen Öffnungskandidaten.
-Die Bestätigung benötigt `O > γO` und seit der Bindung an jeder beteiligten
-Position mindestens ein späteres Temperatur- und Feuchteoriginal. Bei
-`O ≤ 0` wird dieser gemeinsame Kandidat verworfen. Eine vollständige
-Messposition genügt; bei zwei beteiligten Positionen gilt der Kontrast für
-beide. Das überträgt keinen empirischen Nachweis von vier Kanälen auf eine
-andere Sensoranordnung. Die Regeln gelten auch bei hoher Temperatur.
+Ein neues Original mit `A↓ > s` bindet einen gemeinsamen Öffnungskandidaten.
+Ein Knick der Temperatur ist dafür nicht erforderlich. Die Bestätigung
+benötigt den fortgesetzten gemeinsamen Temperatur- und Feuchtefall:
+
+```text
+O = min_p min(−v_Tp/E_Tp, −v_Hp/E_Hp)
+```
+
+Erforderlich sind `O > γO` und seit der Bindung an jeder beteiligten Position
+mindestens ein späteres Temperatur- und Feuchteoriginal. Der unbestätigte
+RH-Fallast endet, sobald an einer beteiligten Position ein vorheriger Fall
+mit belegter Abflachung in ein Plateau übergeht oder die relative Feuchte
+signifikant steigt (`v_Hp > s E_Hp`). Die drei Feuchtevergleiche für Fall,
+Plateau und Abflachung stehen unter [Durchlüften](#durchlüften).
+Eine vollständige Messposition genügt; bei zwei beteiligten Positionen gelten
+die gemeinsamen Kontraste für beide. Das überträgt keinen empirischen
+Nachweis von vier Kanälen auf eine andere Sensoranordnung. Die Regeln gelten
+auch bei hoher Temperatur.
 
 Ein zusätzlicher Öffnungsweg verwendet allein die Temperaturform bei
 durchgehend bestätigtem Heizen. Er behält den bisherigen BIC-Modellvergleich
@@ -100,8 +115,9 @@ und die erneute Bestätigung seiner festen Originalbelege durch spätere
 Originalmessungen. Sämtliche Originalmessungen des Vergleichs und sein
 belegter Beginn müssen aus diesem Heizabschnitt stammen; die
 Temperaturquellen müssen zur Öffnungsgruppe passen. Eine Heizunterbrechung
-verwirft den Nachweis. Dieser bedingte Heizweg verwendet nicht den
-gemeinsamen OLS-Öffnungskontrast.
+verwirft den Nachweis. Liegen gültige RH-Originalfenster vor, bleibt dieser
+Heizweg an denselben RH-Kandidaten und die gemeinsame Originalbestätigung
+gebunden; sein BIC-Nachweis ersetzt dann keinen frischen RH-Beginn.
 
 Eine Schließung setzt eine erkannte Öffnung voraus. Die Temperaturbremse `B`
 und die schwächste beziehungsweise stärkste aktuelle Erwärmung lauten:
@@ -164,14 +180,24 @@ Positionen:
 ```text
 R = min_p v_Hp/E_Hp
 F = min_p −v_Hp/E_Hp
-Q = min_p (v_Hp − b_Hp)/(E_Hp + E⁻_Hp)
+Q = min_p q_Hp
 ```
 
-Ein neues Original mit `R > s` bindet eine Anstiegskomponente. Ihre Basis ist
-je Position das früheste Minimum des aktuellen `K`-Originalfensters bei der
-Bindung. Als Spitze wird das höchste danach beobachtete Feuchteoriginal
-geführt; bei gleichen Werten bleibt das frühere maßgeblich. Diese
+Ein neues Original mit `A↑ > s` bindet eine Anstiegskomponente. Es benötigt
+damit sowohl einen aufgelösten RH-Anstieg als auch einen neuen positiven
+RH-Steigungswechsel. Ihre Basis ist je Position das früheste Minimum des
+aktuellen `K`-Originalfensters bei der Bindung. Als Spitze wird das höchste
+danach beobachtete Feuchteoriginal geführt; bei gleichen Werten bleibt das
+frühere maßgeblich. Diese
 Originalbezüge legen keine physische Beginnzeit fest.
+
+Ein früherer Kurvenbeginn bleibt an die Originale desselben neuen RH-Astes
+gebunden. Seine festen Stützen müssen die aktuellen RH-Originale tragen;
+bereits der erste Originalblock rechts dieses Beginns muss einen aufgelösten
+Anstieg belegen. Dieser historische Block wird bezogen auf sein jüngstes
+Original und seine eigenen zulässigen Originalabstände geprüft. Ein älterer
+Beginn vor einem dazwischenliegenden Plateau wird einem späteren Ast dadurch
+nicht nachträglich zugeordnet.
 
 Ein starker Anstieg benötigt seit der Bindung neue Temperatur- und
 Feuchteoriginale aller beteiligten Positionen und `R > γN` für eine neue
@@ -186,7 +212,16 @@ Temperaturoriginal; sonst wird die Temperatur dazwischen linear zugeordnet.
 Das Paar ist erst verfügbar, wenn auch das rechte Temperaturoriginal vorliegt
 und der zulässige Stützabstand eingehalten ist. Aus den Wertskalen `ε_Tp` und
 `ε_Hp` werden mit dem vorhandenen Modell für absolute Feuchte eine untere
-Dichte `ρ⁻` und eine obere Dichte `ρ⁺` berechnet. Je Position gilt:
+Dichte `ρ⁻` und eine obere Dichte `ρ⁺` berechnet. Der Wasserbeleg bleibt auf
+die RH-Originale des gebundenen Anstiegsastes begrenzt. Je Position endet
+seine Stützmenge beim jüngsten RH-Original des ersten gültigen Endbelegs
+`v_Hp ≤ s E_Hp`; andere Positionen dürfen dabei noch steigen. Spätere
+Temperaturpartner zu diesen RH-Originalen bleiben zulässig. Eine Korrektur
+tragender Originale prüft diesen Endbeleg erneut. Wird er widerlegt, folgt
+die Stützmenge an der betroffenen Position wieder demselben Anstiegsast bis
+zu einem neuen gültigen Endbeleg; ausstehende Paarungen bleiben erhalten. Später
+hinzukommende RH-Originale im Plateau und ein zugehöriger Temperaturanstieg
+erweitern die Wasserqualifikation nicht. Je Position gilt innerhalb dieser Stützmenge:
 
 ```text
 Q_p = max(verfügbare ρ⁻ seit dem Basisoriginal) − ρ⁺ des Basisoriginals
@@ -247,9 +282,13 @@ Wartezeit ist nicht erforderlich. Der Abschluss (`infusion_background`)
 zählt selbst keinen Aufguss.
 
 Ein später erkannter Anstieg setzt denselben Aufguss fort, sobald an einer
-Position ein gültiger Beginnbeleg spätestens beim Abschluss liegt. Eine neue
-Episode benötigt Beginnbelege aller beteiligten Positionen nach dem Abschluss.
-Fehlt diese eindeutige Zuordnung, bleibt sie offen. Jeder weitere Aufguss
+Position ein gültiger Beginnbeleg spätestens beim Abschluss liegt. Andernfalls
+wird er einer neuen Episode zugeordnet, wenn sämtliche bei der Bindung
+verwendeten RH-Originale aller beteiligten Positionen nach dem Abschluss
+liegen; zusätzliche Kurvenbeginnbelege sind dafür nicht erforderlich.
+Auch gültige Beginnbelege aller Positionen nach dem Abschluss erlauben diese
+Zuordnung. Überlappen die gebundenen RH-Fenster den Abschluss ohne solche
+Belege, bleibt die Zuordnung offen. Jeder weitere Aufguss
 benötigt erneut starken Anstieg und Wasserqualifikation sowie einen der
 beschriebenen Bestätigungswege. Im ununterbrochenen Nachlauf bleibt der
 nachfolgende Abfall Voraussetzung für den Abschluss der Episode.
@@ -265,18 +304,24 @@ führt, ersetzen Personensignale ihn nicht.
 Die absolute Feuchte wird aus frischen, gültigen Temperatur-/Feuchtepaaren
 berechnet und als Diagnosewert je Messposition bereitgestellt.
 
-Die Lüftungsform wird bei allen erkannten Türvorgängen gleich ausgewertet,
-unabhängig von einem laufenden Gang und der Präsenzquelle. Während eines Gangs
-unterscheidet sie die kurze Öffnung vom Durchlüften als Nachweis für das
-Gangende; außerhalb eines Gangs wird sie statistisch erfasst.
+Die beiden Lüftungsstufen werden bei allen erkannten Türvorgängen gleich
+ausgewertet, unabhängig von einem laufenden Gang und der Präsenzquelle. Sie
+benötigen nach der Öffnung einen vorherigen Feuchtefall und dessen belegten
+Übergang in ein Plateau, während die Temperatur weiter fällt, ohne merklich
+abzuflachen.
 
-Der Nachweis benötigt nach der Öffnung einen vorherigen Fall des absoluten
-Wassergehalts und dessen aufgelösten Übergang in einen abgeflachten Verlauf, während
-die Temperatur weiter signifikant fällt. Dazu werden an jeder anfangs
-gebundenen Messposition die letzten genau `2K` aufeinanderfolgenden
-Feuchteoriginale mit ihren kausalen Temperaturpartnern verwendet. Die Paarung
-und ihre Dichtehüllen `ρ⁻`, `ρ⁺` entsprechen der Wasserqualifikation beim
-Aufguss; fehlende oder ungültige Paare werden nicht übersprungen.
+| Stufe | Form und Wirkung |
+| --- | --- |
+| Lüften (`ventilation_confirmed`) | Die relative Feuchte geht vom Fall ins Plateau über. Diese Stufe liefert bereits den Lüftungsnachweis für das Gangende; außerhalb eines Gangs wird sie statistisch erfasst. |
+| Vollständig gelüftet (`ventilation_complete`) | Nach bestätigter erster Stufe wird auch der Übergang des absoluten Wassergehalts vom Fall ins Plateau belegt. Diese Stufe ergänzt einmalig den statistischen Beleg derselben noch offenen Tür ohne zusätzliche Gangwirkung. |
+
+Die erste Stufe verwendet die gültigen RH- und Temperatur-Originalfenster der
+anfangs gebundenen Messpositionen. Eine vollständige Wasserpaarung ist dafür
+nicht erforderlich. Die zweite Stufe verwendet an jeder dieser Positionen
+die letzten genau `2K` aufeinanderfolgenden Feuchteoriginale mit ihren kausalen
+Temperaturpartnern. Die Paarung und ihre Dichtehüllen `ρ⁻`, `ρ⁺` entsprechen
+der Wasserqualifikation beim Aufguss; fehlende oder ungültige Paare werden
+nicht übersprungen.
 
 Für die Hüllmitte `m_i = (ρ⁻_i + ρ⁺_i)/2` und Halbbreite
 `a_i = (ρ⁺_i − ρ⁻_i)/2` werden die Steigungen `b_ρ`, `v_ρ` der beiden
@@ -286,25 +331,33 @@ Für die Hüllmitte `m_i = (ρ⁻_i + ρ⁺_i)/2` und Halbbreite
 E_ρ = Σ|t_i − t̄| · a_i / S_tt
 ```
 
-Mit der entsprechenden Steigungsgrenze `E⁻_ρ` des Vorgängerfensters gelten je
-Position `p` die folgenden Bedingungen:
+Für `X = H` (relative Feuchte, erste Stufe) beziehungsweise `X = ρ`
+(absoluter Wassergehalt, zweite Stufe) gelten je Position `p` die folgenden
+fünf Vergleiche:
 
 ```text
-−b_ρp                 > s E⁻_ρp
-v_ρp − b_ρp           > s (E_ρp + E⁻_ρp)
-|v_ρp|                ≤ s E_ρp
+−b_Xp                 > s E⁻_Xp
+|v_Xp|                ≤ s E_Xp
+v_Xp − b_Xp           > s (E_Xp + E⁻_Xp)
 −v_Tp                 > s E_Tp
+v_Tp − b_Tp           ≤ s (E_Tp + E⁻_Tp)
 ```
 
-Die ersten beiden Bedingungen belegen Fall und Abflachung beim Binden des
-Lüftungskandidaten. Die letzten beiden müssen bis zur Bestätigung erhalten
-bleiben: aktuelle Wassersteigung innerhalb der normierten Auflösung und
-weiter fallende Temperatur. Schwankungen um einen abgeflachten Verlauf sind
-keine zusätzliche Ablehnungsbedingung. Eine flache relative Feuchte oder eine
-einzelne kleine Wassersteigung ohne vorherigen Fall und belegte Abflachung
-genügt nicht. Die gemeinsame Formeinheit `s` und die aus den vorhandenen
-empirischen Skalen abgeleiteten Hüllen sind weder garantierte Einzelmessfehler
-noch eine Ereigniswahrscheinlichkeit.
+Beim Binden des jeweiligen Stufenkandidaten müssen alle fünf Vergleiche an
+allen beteiligten Positionen erfüllt sein: vorheriger Feuchtefall, aktuelles
+Plateau, belegte Abflachung, weiter fallende Temperatur und keine aufgelöste
+Temperaturbremse. Bis zur Bestätigung müssen das aktuelle Plateau und die
+beiden Temperaturbedingungen erhalten bleiben. Die Bestätigung benötigt
+außerdem seit der Bindung an sämtlichen Positionen spätere Temperatur- und
+Feuchteoriginale; in der zweiten Stufe müssen die Feuchteoriginale vollständig
+gepaart sein. Ein Zwischenstand außerhalb der erhaltenen Form verwirft den
+jeweiligen unbestätigten Stufenkandidaten.
+
+Schwankungen innerhalb des abgeflachten Verlaufs sind keine zusätzliche
+Ablehnungsbedingung. Eine einzelne kleine Feuchtesteigung ohne vorherigen
+Fall und belegte Abflachung genügt keiner Stufe. Die gemeinsame Formeinheit
+`s` und die aus den vorhandenen empirischen Skalen abgeleiteten Hüllen sind
+weder garantierte Einzelmessfehler noch eine Ereigniswahrscheinlichkeit.
 
 Als Diagnose beschreibt `D_ρ` die gesamte normierte Streuung des aktuellen
 Fensters um ein frei angepasstes Niveau `c`. Bei positiven Halbbreiten ist
@@ -320,12 +373,10 @@ die Bestätigung. Eine Halbbreite null bindet das Diagnoseniveau an diesen Wert;
 widersprüchliche Bindungen oder nicht auswertbare Rechnungen lassen den
 Diagnosewert offen.
 
-Die Bestätigung benötigt an sämtlichen anfangs gebundenen Positionen spätere
-Temperatur- und Feuchteoriginale mit vollständiger Wasserpaarung. Für eine
-oder zwei Positionen gilt dieselbe Form ohne zusätzliche Mindestöffnungsdauer
-oder feste Temperatur- und Wasserverlustschwelle. Die fünf historischen
-Lüftungsparameter bleiben für ältere Archive und Referenzadapter im
-[Parameterkatalog](../custom_components/ha_sauna/defaults.json); sie bestimmen
+Für eine oder zwei Positionen gilt dieselbe Form ohne zusätzliche
+Mindestöffnungsdauer oder feste Temperatur- und Wasserverlustschwelle. Die
+fünf historischen Lüftungsparameter bleiben für ältere Archive und
+Referenzadapter im [Parameterkatalog](../custom_components/ha_sauna/defaults.json); sie bestimmen
 den aktuellen Nachweis nicht.
 
 Die Auswertung folgt der Reihenfolge der empfangenen Originale. Eine bereits
@@ -335,10 +386,12 @@ späterer Türschluss bleiben auch innerhalb desselben Rasters zwei Ereignisse.
 Für Unterbrechungen und Korrekturen gelten die
 [Regeln bei Messlücken](#erkennungen-bei-messlücken-prüfen).
 
-Ein bestätigter Lüftungsnachweis bleibt seiner Türöffnung auch nach
-Türschluss zugeordnet. Ob damit ein Gang endet und welche Regelwirkung folgt,
-bestimmt die [Gangerkennung](gangmodell.md); bei direkter Präsenzführung gehört
-dazu außerdem eine gültige Abwesenheitsmeldung.
+Beide bestätigten Lüftungsstufen bleiben derselben Türöffnung auch nach
+Türschluss zugeordnet. Für die [Gangerkennung](gangmodell.md) führt die erste
+Stufe: Nach einer Austrittsöffnung beendet sie bei Führung aus Temperatur und
+Feuchte den Gang. Bei direkter Präsenzführung gehört dazu außerdem eine
+gültige Abwesenheitsmeldung. Die zweite Stufe ergänzt den Verlauf ohne
+zusätzliche Regelwirkung auf den Gang.
 
 ## Erkennungen bei Messlücken prüfen
 
@@ -346,10 +399,11 @@ Personenhaltezähler beginnen nach einem Wechsel oder Ausfall der beteiligten
 vollständigen Messpositionen neu. Unbestätigte Kurvennachweise bleiben an ihre
 jeweiligen Quellenabschnitte gebunden.
 
-Bei der Lüftungsform bleibt das reguläre Warten auf einen rechten
-Temperaturpartner offen. Noch ungepaarte Feuchteoriginale liefern keine
-Bestätigungsfrische; bereits vollständige, aufeinanderfolgende Paarfenster
-bleiben auswertbar. Eine Messlücke, ein
+Bei der zweiten Lüftungsstufe bleibt das reguläre Warten auf einen rechten
+Temperaturpartner offen. Noch ungepaarte Feuchteoriginale liefern dieser
+Stufe keine Bestätigungsfrische; bereits vollständige, aufeinanderfolgende
+Paarfenster bleiben auswertbar. Die erste Stufe benötigt die gültigen RH- und
+Temperaturoriginale ohne Wasserpaarung. Eine Messlücke, ein
 Quellenwechsel oder eine Korrektur tragender Originale verwirft die davon
 abhängigen Stützen und den unbestätigten Kandidaten. Mit denselben Quellen
 können im noch offenen Türvorgang Fall und Abflachung aus zusammenhängenden
@@ -386,17 +440,29 @@ fehlenden Nachweises fest. Bei Zahlenvergleichen liegt ein positiver Abstand
 zur Grenze auf der erfüllenden Seite. Jeder Abstand gehört zu genau dieser
 Bedingung; die Abstände werden nicht zu einer Gesamtwahrscheinlichkeit addiert.
 
-Die Originalformen weisen Öffnungs- und Schließkontrast sowie die
-Anstiegs-, Fall- und Hintergrundbedingungen aus. Beim Durchlüften werden
-Wasserfall, Abflachung, aktuelles Fehlerband, konstante Hüllenverträglichkeit
-und fallende Temperatur getrennt geführt; offene Paarungen und die spätere
-Bestätigung bleiben erkennbar. Beim Aufguss werden der
-gespeicherte starke Anstiegsbeleg, die aktuelle Steigung, die verfügbare
-Wasserqualifikation und der nach der Spitze belegte Abfall getrennt geführt.
+Die Türdiagnose trennt den frischen RH-Fallbeginn, die gebundenen
+Kandidatenstützen, den aktuellen gemeinsamen T/RH-Fall (`opening_support`)
+und die spätere Originalbestätigung. Der zusätzlich gespeicherte ältere
+Öffnungskontrast mit Temperaturknick ist keine Voraussetzung der gemeinsamen
+Bestätigung. Schließkontrast sowie Anstiegs-, Fall- und Hintergrundbedingungen
+bleiben getrennt ausgewiesen.
+
+Beim Durchlüften werden RH- und AH-Stufe mit eigenen Kandidaten, Stützen und
+Bestätigungen geführt. Die fünf Vergleiche zeigen jeweils vorherigen Fall,
+aktuelles Plateau, Feuchteabflachung, weiter fallende Temperatur und fehlende
+Temperaturbremse. Die AH-Stufe enthält zusätzlich den Paarungsstand;
+Hüllenstreuung und konstante Hüllenverträglichkeit bleiben Diagnosewerte.
+Beim Aufguss werden der frische RH-Anstiegsbeginn, die gebundenen und
+fortgesetzten Stützen, der gespeicherte starke Anstiegsbeleg, die aktuelle
+Steigung, die begrenzte Wasserqualifikation und der nach der Spitze belegte
+Abfall getrennt geführt.
 Ein passender Kontrast ohne die erforderlichen späteren Originale genügt nicht
 zur Bestätigung. Entsprechend trennt der Hintergrundnachweis den ersten
 Kandidaten vom durch neue Originale bestätigten Abschluss.
 
+Die normalen Originalbestätigungen verwenden die einzelnen nativen
+Formkontraste und die erforderlichen neuen Originale. Sie bilden keine
+kumulierte Evidenzsumme oder kalibrierte Ereigniswahrscheinlichkeit.
 Die weiterhin gespeicherten Modellnachweise für frühere Beginne und den
 Heizsonderweg können zusätzlich Scoregewinn, Vergleichsgrenze und
 Originalbedingungen enthalten. Solche Scores sind keine kalibrierte

@@ -20,7 +20,8 @@ EVENTS = {
     "person_strong": "Person erkannt",
     "person_weak": "Schwaches Personensignal",
     "infusion": "Aufguss",
-    "ventilation_confirmed": "Durchlüften bestätigt",
+    "ventilation_confirmed": "Lüften bestätigt",
+    "ventilation_complete": "Vollständiges Lüften bestätigt",
 }
 
 ROLES = {

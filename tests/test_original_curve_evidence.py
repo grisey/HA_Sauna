@@ -25,6 +25,7 @@ from custom_components.ha_sauna.core import curve_change as curves
 from custom_components.ha_sauna.core.curve_change import (
     OriginalPositionWindows,
     original_contrasts,
+    original_flattening,
     original_water_pair,
     original_water_pair_support,
     original_water_window,
@@ -245,18 +246,30 @@ class OriginalCurveEvidenceTests(unittest.TestCase):
         self.assertAlmostEqual(contrast.braking, 0)
         self.assertAlmostEqual(contrast.opening, 0)
         self.assertLess(contrast.opening, values["curve_original_open_contrast"])
+        # A continuing common fall still supports an already observed opening;
+        # it need not manufacture another temperature kink.
+        self.assertGreater(contrast.opening_support,
+                           values["curve_original_open_contrast"])
+        self.assertAlmostEqual(contrast.humidity_fall_onset, 0)
 
-    def test_constant_positive_rh_ramp_has_no_rise_change(self):
+    def test_constant_rh_ramps_have_direction_without_an_onset(self):
         values = Parameters({}).values
-        originals, _ = humidity_step_originals(values, 1, 1)
-        at = originals["upper_humidity"][-1][0]
-        result = original_contrasts(
-            position_windows(originals, at, values),
-            expected_positions=("upper", "lower"),
-        )
-        self.assertIsNotNone(result)
-        self.assertGreater(result.rise, values["curve_original_new_infusion_contrast"])
-        self.assertAlmostEqual(result.humidity_rise_change, 0)
+        for direction, field, onset in (
+            (1, "rise", "humidity_rise_onset"),
+            (-1, "fall", "humidity_fall_onset"),
+        ):
+            with self.subTest(direction=direction):
+                originals, _ = humidity_step_originals(values, direction, direction)
+                at = originals["upper_humidity"][-1][0]
+                result = original_contrasts(
+                    position_windows(originals, at, values),
+                    expected_positions=("upper", "lower"),
+                )
+                self.assertIsNotNone(result)
+                self.assertGreater(getattr(result, field),
+                                   values["curve_original_new_infusion_contrast"])
+                self.assertAlmostEqual(result.humidity_rise_change, 0)
+                self.assertAlmostEqual(getattr(result, onset), 0)
 
     def test_braked_rh_fall_has_positive_change_without_a_rise(self):
         values = Parameters({}).values
@@ -269,33 +282,118 @@ class OriginalCurveEvidenceTests(unittest.TestCase):
         self.assertIsNotNone(result)
         self.assertGreater(result.humidity_rise_change, 0)
         self.assertLess(result.rise, 0)
+        self.assertLess(result.humidity_rise_onset, 0)
+        self.assertLess(result.humidity_fall_onset, 0)
 
-    def test_rh_rise_change_requires_a_kink_at_every_required_position(self):
+    def test_directed_rh_onset_requires_a_kink_at_every_required_position(self):
         values = Parameters({}).values
-        originals, _ = humidity_step_originals(values, 0, 1)
-        at = originals["upper_humidity"][-1][0]
-        windows = position_windows(originals, at, values)
-        result = original_contrasts(windows, expected_positions=("upper", "lower"))
-        self.assertIsNotNone(result)
-        self.assertGreater(result.humidity_rise_change, 0)
-        self.assertGreater(result.rise, 0)
-        linear, _ = humidity_step_originals(values, 1, 1)
-        linear_windows = position_windows(linear, at, values)
-        for unchanged in ("upper", "lower"):
-            with self.subTest(unchanged_position=unchanged):
-                mixed = {**windows, unchanged: replace(
-                    windows[unchanged], humidity=linear_windows[unchanged].humidity,
-                )}
-                joint = original_contrasts(mixed, expected_positions=("upper", "lower"))
-                self.assertIsNotNone(joint)
-                # Current rises are identical; the absent change at either
-                # required position prevents a joint positive change.
-                self.assertAlmostEqual(joint.rise, result.rise)
-                self.assertAlmostEqual(joint.humidity_rise_change, 0)
-                changed = "lower" if unchanged == "upper" else "upper"
-                selected = original_contrasts(mixed, expected_positions=(changed,))
-                self.assertIsNotNone(selected)
-                self.assertGreater(selected.humidity_rise_change, 0)
+        significance = values["curve_original_significance"]
+        for direction, field, onset in (
+            (1, "rise", "humidity_rise_onset"),
+            (-1, "fall", "humidity_fall_onset"),
+        ):
+            originals, _ = humidity_step_originals(values, 0, direction)
+            at = originals["upper_humidity"][-1][0]
+            windows = position_windows(originals, at, values)
+            result = original_contrasts(windows, expected_positions=("upper", "lower"))
+            self.assertIsNotNone(result)
+            self.assertGreater(getattr(result, onset), significance)
+            linear, _ = humidity_step_originals(values, direction, direction)
+            linear_windows = position_windows(linear, at, values)
+            for unchanged in ("upper", "lower"):
+                with self.subTest(direction=direction, unchanged_position=unchanged):
+                    mixed = {**windows, unchanged: replace(
+                        windows[unchanged], humidity=linear_windows[unchanged].humidity,
+                    )}
+                    joint = original_contrasts(
+                        mixed, expected_positions=("upper", "lower"),
+                    )
+                    self.assertIsNotNone(joint)
+                    # Current directions are identical; either missing kink
+                    # prevents joint onset without discarding that position.
+                    self.assertAlmostEqual(getattr(joint, field),
+                                           getattr(result, field))
+                    self.assertAlmostEqual(getattr(joint, onset), 0)
+                    self.assertEqual(joint.positions, tuple(mixed.items()))
+                    for position in ("upper", "lower"):
+                        selected = original_contrasts(
+                            mixed, expected_positions=(position,),
+                        )
+                        self.assertIsNotNone(selected)
+                        self.assertEqual(selected.positions,
+                                         ((position, mixed[position]),))
+                        if position == unchanged:
+                            self.assertAlmostEqual(getattr(selected, onset), 0)
+                        else:
+                            self.assertGreater(getattr(selected, onset), significance)
+
+    def test_directed_rh_onset_is_independent_of_temperature_shape(self):
+        values = Parameters({}).values
+        significance = values["curve_original_significance"]
+        for direction, onset, opposite in (
+            (1, "humidity_rise_onset", "humidity_fall_onset"),
+            (-1, "humidity_fall_onset", "humidity_rise_onset"),
+        ):
+            originals, _ = humidity_step_originals(values, 0, direction)
+            at = originals["upper_humidity"][-1][0]
+            baseline = None
+            for temperature_direction in (-1, 0, 1):
+                with self.subTest(rh=direction, temperature=temperature_direction):
+                    shaped = {
+                        role: tuple(
+                            (stamp, trace(0)[0] + index * temperature_direction)
+                            for index, (stamp, _) in enumerate(points)
+                        ) if role.endswith("_temperature") else points
+                        for role, points in originals.items()
+                    }
+                    result = original_contrasts(
+                        position_windows(shaped, at, values),
+                        expected_positions=("upper", "lower"),
+                    )
+                    self.assertIsNotNone(result)
+                    self.assertGreater(getattr(result, onset), significance)
+                    self.assertLess(getattr(result, opposite), 0)
+                    if baseline is None:
+                        baseline = getattr(result, onset)
+                    self.assertAlmostEqual(getattr(result, onset), baseline)
+                    if direction == -1:
+                        if temperature_direction == -1:
+                            self.assertGreater(result.opening_support,
+                                               values["curve_original_open_contrast"])
+                        elif temperature_direction == 0:
+                            self.assertAlmostEqual(result.opening_support, 0)
+                        else:
+                            self.assertLess(result.opening_support, 0)
+
+    def test_local_rh_fluctuations_inside_consumed_scale_do_not_create_onset(self):
+        values = Parameters({}).values
+        count = values["curve_original_samples"]
+        significance = values["curve_original_significance"]
+        for index in range(count):
+            for direction in (-1, 1):
+                with self.subTest(current_index=index, direction=direction):
+                    originals, _ = humidity_step_originals(values, 0, 0)
+                    for position in ("upper", "lower"):
+                        role = f"{position}_humidity"
+                        amplitude = (values[f"curve_original_noise_humidity_{position}"]
+                                     * min(0.5, significance / 2))
+                        originals[role] = tuple(
+                            (stamp, value + direction * amplitude
+                             if offset == count + index else value)
+                            for offset, (stamp, value) in enumerate(originals[role])
+                        )
+                    at = originals["upper_humidity"][-1][0]
+                    windows = position_windows(originals, at, values)
+                    result = original_contrasts(
+                        windows, expected_positions=("upper", "lower"),
+                    )
+                    self.assertIsNotNone(result)
+                    for position, pair in result.positions:
+                        self.assertEqual(pair.humidity.scale, channel_arguments(
+                            values, position, "humidity",
+                        )["scale"])
+                    self.assertLess(result.humidity_rise_onset, significance)
+                    self.assertLess(result.humidity_fall_onset, significance)
 
     def test_rh_rise_change_preserves_value_units_and_time_origin(self):
         values = Parameters({}).values
@@ -333,6 +431,10 @@ class OriginalCurveEvidenceTests(unittest.TestCase):
                 self.assertAlmostEqual(result.humidity_rise_change,
                                        baseline.humidity_rise_change)
                 self.assertAlmostEqual(result.rise, baseline.rise)
+                self.assertAlmostEqual(result.humidity_rise_onset,
+                                       baseline.humidity_rise_onset)
+                self.assertAlmostEqual(result.humidity_fall_onset,
+                                       baseline.humidity_fall_onset)
 
     def test_rh_change_overflow_cannot_be_hidden_by_another_position(self):
         values = Parameters({}).values
@@ -639,6 +741,164 @@ class OriginalCurveEvidenceTests(unittest.TestCase):
             with self.subTest(significance=invalid):
                 with self.assertRaises(ValueError):
                     constant.constant_bounds(invalid)
+
+    def test_humidity_flattening_distinguishes_steady_t_fall_from_joint_braking(self):
+        values = Parameters({}).values
+        count = values["curve_original_samples"]
+        significance = values["curve_original_significance"]
+        originals, _ = humidity_step_originals(values, -1, 0)
+        at = originals["upper_humidity"][-1][0]
+        rh = position_windows(originals, at, values)["upper"].humidity
+        fall = 8 * significance
+        envelopes = tuple(
+            (10 + (count - index) * fall - 1,
+             10 + (count - index) * fall + 1)
+            for index in range(count)
+        ) + ((9, 11),) * count
+        pairs, _ = water_envelope_originals(values, envelopes)
+        water = original_water_window(
+            pairs, count=count, at=pairs[-1].available_at,
+            max_gap_seconds=values["curve_original_gap_humidity_upper_seconds"],
+        ).features
+        self.assertIsNotNone(rh)
+        self.assertIsNotNone(water)
+        for current_step, falling, not_braking in (
+            (-1, True, True),
+            (-1 + values["curve_original_noise_temperature_upper"] / 4, True, True),
+            (0, False, False), (-0.25, True, False),
+        ):
+            thermal, _ = humidity_step_originals(values, -1, current_step)
+            temperature = original_window(tuple(
+                (stamp, trace(0)[0] + value - trace(0)[1])
+                for stamp, value in thermal["upper_humidity"]
+            ), at=at, **channel_arguments(values, "upper", "temperature"))
+            self.assertIsNotNone(temperature)
+            for quantity, humidity in (("RH", rh), ("AH", water)):
+                with self.subTest(quantity=quantity, temperature_step=current_step):
+                    result = original_flattening(
+                        humidity, temperature, significance=significance,
+                    )
+                    self.assertIsNotNone(result)
+                    self.assertIs(result.humidity_window, humidity)
+                    self.assertIs(result.temperature_window, temperature)
+                    self.assertEqual(result.significance, significance)
+                    # Each reason remains observable, including T that is
+                    # still falling but has already distinctly braked.
+                    for name, operator, expected in (
+                        ("previous_fall", ">", True),
+                        ("current_flat", "<=", True),
+                        ("braking", ">", True),
+                        ("temperature_falling", ">", falling),
+                        ("temperature_not_braking", "<=", not_braking),
+                    ):
+                        comparison = getattr(result, name)
+                        self.assertEqual(comparison.operator, operator, name)
+                        self.assertEqual(comparison.result, expected, name)
+                        self.assertTrue(isfinite(comparison.value), name)
+                        self.assertTrue(isfinite(comparison.threshold), name)
+                        self.assertGreaterEqual(comparison.threshold, 0, name)
+                    self.assertEqual(result.current_flat.value, 0)
+                    self.assertEqual(result.initial, not_braking)
+                    self.assertEqual(result.maintained, not_braking)
+
+    def test_flattening_stays_maintained_after_previous_fall_rolls_out(self):
+        values = Parameters({}).values
+        count = values["curve_original_samples"]
+        significance = values["curve_original_significance"]
+        originals, step = humidity_step_originals(values, -1, 0)
+        for role, points in tuple(originals.items()):
+            tail_at, tail_value = points[-1]
+            originals[role] += tuple(
+                (tail_at + index * step,
+                 tail_value - index if role.endswith("_temperature") else tail_value)
+                for index in range(1, count + 1)
+            )
+        fall = 8 * significance
+        envelopes = tuple(
+            (10 + (count - index) * fall - 1,
+             10 + (count - index) * fall + 1)
+            for index in range(count)
+        ) + ((9, 11),) * (2 * count)
+        pairs, _ = water_envelope_originals(values, envelopes)
+        first_windows = {}
+        for prefix in (2 * count, 3 * count):
+            selected = {role: points[:prefix] for role, points in originals.items()}
+            at = selected["upper_temperature"][-1][0]
+            windows = position_windows(selected, at, values)["upper"]
+            water = original_water_window(
+                pairs[:prefix], count=count, at=pairs[prefix - 1].available_at,
+                max_gap_seconds=values["curve_original_gap_humidity_upper_seconds"],
+            ).features
+            for quantity, humidity in (("RH", windows.humidity), ("AH", water)):
+                with self.subTest(quantity=quantity, prefix=prefix):
+                    result = original_flattening(
+                        humidity, windows.temperature, significance=significance,
+                    )
+                    self.assertIsNotNone(result)
+                    self.assertTrue(result.maintained)
+                    self.assertEqual(result.initial, prefix == 2 * count)
+                    if prefix == 2 * count:
+                        first_windows[quantity] = humidity
+                    else:
+                        # The old fall is absent from both retained windows;
+                        # the previous window is now the original plateau.
+                        self.assertEqual(humidity.previous,
+                                         first_windows[quantity].current)
+                        self.assertFalse(result.previous_fall.result)
+                        self.assertFalse(result.braking.result)
+
+    def test_flattening_accepts_exact_water_envelopes_and_rejects_unknown_inputs(self):
+        values = Parameters({}).values
+        count = values["curve_original_samples"]
+        significance = values["curve_original_significance"]
+        originals, _ = humidity_step_originals(values, -1, 0)
+        at = originals["upper_temperature"][-1][0]
+        windows = position_windows(originals, at, values)["upper"]
+        pairs, _ = water_envelope_originals(values, tuple(
+            (10 + count - index, 10 + count - index) for index in range(count)
+        ) + ((10, 10),) * count)
+        water = original_water_window(
+            pairs, count=count, at=pairs[-1].available_at,
+            max_gap_seconds=values["curve_original_gap_humidity_upper_seconds"],
+        ).features
+        self.assertIsNotNone(water)
+        self.assertEqual((water.e, water.e_minus), (0, 0))
+        exact = original_flattening(
+            water, windows.temperature, significance=significance,
+        )
+        self.assertIsNotNone(exact)
+        self.assertTrue(exact.initial)
+        self.assertTrue(exact.maintained)
+        for name in ("previous_fall", "current_flat", "braking"):
+            self.assertEqual(getattr(exact, name).threshold, 0)
+        invalid_humidity = (
+            None, replace(windows.humidity, e=0),
+            replace(windows.humidity, v=float("nan")),
+            replace(water, e=-1), replace(water, b=float("inf")),
+            replace(water, v=1e308, b=-1e308),
+            replace(water, e=1e308, e_minus=1e308),
+            replace(water, previous=()), replace(water, current=()),
+            replace(water, current=(None,) + water.current[1:]),
+            replace(water, current=(replace(
+                water.current[0], upper_density=float("inf"),
+            ),) + water.current[1:]),
+        )
+        for index, humidity in enumerate(invalid_humidity):
+            with self.subTest(invalid_humidity=index):
+                self.assertIsNone(original_flattening(
+                    humidity, windows.temperature, significance=significance,
+                ))
+        for temperature in (None, replace(windows.temperature, e=0),
+                            replace(windows.temperature, v=float("nan"))):
+            with self.subTest(invalid_temperature=temperature):
+                self.assertIsNone(original_flattening(
+                    water, temperature, significance=significance,
+                ))
+        for invalid in (0, -1, True, float("nan"), float("inf")):
+            with self.subTest(significance=invalid):
+                self.assertIsNone(original_flattening(
+                    water, windows.temperature, significance=invalid,
+                ))
 
     def test_water_level_deviation_matches_weighted_rational_golden(self):
         values = Parameters({}).values

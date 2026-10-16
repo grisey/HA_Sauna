@@ -170,20 +170,35 @@ def _state(detector, origin):
         return ({key: value[key] for key in keys if key in value}
                 if value is not None else None)
 
+    door_state = picked(episode, (
+        "positions", "started_at", "first_observed_at", "sources", "epochs",
+        "original_context", "original_evaluation_context",
+        "original_thermal_context", "original_open", "original_close",
+        "original_ventilation_newest", "original_ventilation_context",
+        "original_ventilation_floor", "original_ventilation_reset_reason",
+        "retained_heating_only", "invalid",
+    ))
+    if door_state is not None:
+        for key in ("original_ventilation", "original_ventilation_rh",
+                    "original_ventilation_rh_confirmed", "original_ventilation_complete"):
+            if key in episode:
+                # Retain owner anchors; stored windows already have prefix diagnostics.
+                door_state[key] = picked(episode[key], (
+                    "received_at", "newest", "context", "support",
+                    "evaluated", "initial_form", "maintained_form",
+                    "candidate_at", "candidate_originals", "bound_support",
+                    "confirmable", "proven", "close_conflict",
+                    "confirmation_received_at", "confirmation_originals", "paired_support",
+                ))
+
     return relative({
         "door_open": detector.open,
-        "door_episode": picked(episode, (
-            "positions", "started_at", "first_observed_at", "sources", "epochs",
-            "original_context", "original_evaluation_context",
-            "original_thermal_context", "original_open", "original_close",
-            "original_ventilation", "original_ventilation_newest",
-            "original_ventilation_context", "original_ventilation_floor",
-            "original_ventilation_reset_reason", "retained_heating_only", "invalid",
-        )),
+        "door_episode": door_state,
         "original_infusion_candidate": picked(component, (
             "context", "positions", "received_at", "newest", "onsets", "assignment",
             "continuing", "strong", "qualified", "fall_ready", "fall_confirmed",
-            "rise_score", "water_state", "support_end",
+            "rise_score", "water_state", "branch_floors", "support_end", "water_end",
+            "rise_ended",
         )),
         "infusion_episode": picked(infusion, (
             "phase", "positions", "onset_at", "observed_at", "confirmed_at",

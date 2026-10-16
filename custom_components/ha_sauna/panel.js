@@ -288,7 +288,8 @@ const events = {
   person_strong: "Person erkannt",
   person_weak: "Person erkannt (schwach)",
   infusion: "Aufguss",
-  ventilation_confirmed: "Durchlüften bestätigt",
+  ventilation_confirmed: "Lüften bestätigt",
+  ventilation_complete: "Vollständiges Lüften bestätigt",
   operation_off: "Betrieb ausgeschaltet",
   confirmation_expired: "Vorläufigen Gang aufgehoben",
   presence_confirmed: "Gangbeginn · Präsenz nach Türvorgang",
@@ -10555,7 +10556,10 @@ class SaunaPanel extends HTMLElement {
         ...event,
         event_id: event.event_id || `legacy-${index}`,
       }))
-      .filter((event) => event.kind !== "ventilation_confirmed");
+      .filter(
+        (event) =>
+          !["ventilation_confirmed", "ventilation_complete"].includes(event.kind),
+      );
   }
   historyEventsAt(time, tolerance = 0) {
     return orderedHistoryEvents(this.normalHistoryEvents()).filter((event) => {
@@ -10929,7 +10933,7 @@ class SaunaPanel extends HTMLElement {
   }
   diagnosticMarkers(traces, metric, start, end) {
     return this.eventNavigation().flatMap((event, index) => {
-      const route = this.diagnosticRoute(event),
+      const route = this.diagnosticRoute(event, traces),
         at = stamp(event.trace_at || event.effective_at || event.detected_at);
       if (
         !route ||
@@ -10960,7 +10964,32 @@ class SaunaPanel extends HTMLElement {
       ];
     });
   }
-  diagnosticRoute(event) {
+  diagnosticRoute(event, traces = null) {
+    if (event?.kind === "ventilation_confirmed") {
+      const data = this.diagnosticData(),
+        at = stamp(
+          event.trace_at ||
+            data.traceTimes.get(event.event_id) ||
+            event.effective_at,
+        ),
+        candidates =
+          !traces || traces === data.traces
+            ? data.byTime.get(at) || []
+            : traces.filter((trace) => stamp(trace.at) === at),
+        metric =
+          ["ventilation_relative_humidity_slope", "ventilation_water_slope"].find(
+            (metric) =>
+              Number.isFinite(at) &&
+              candidates.some(
+                (trace) =>
+                  (trace.signals || []).includes("ventilation_confirmed") &&
+                  ["upper", "lower"].some((position) =>
+                    Number.isFinite(trace.metrics?.[position]?.[metric]),
+                  ),
+              ),
+          ) || "ventilation_temperature_loss";
+      return [metric, "ventilation_confirmed"];
+    }
     return (
       {
         door_open: ["door_temperature_slope", "door_open"],
@@ -10968,15 +10997,15 @@ class SaunaPanel extends HTMLElement {
         person_strong: ["strong_humidity_slope", "person_strong"],
         person_weak: ["weak_humidity_slope", "person_weak"],
         infusion: ["infusion_humidity_delta", "infusion"],
-        ventilation_confirmed: [
-          "ventilation_temperature_loss",
-          "ventilation_confirmed",
+        ventilation_complete: [
+          "ventilation_water_slope",
+          "ventilation_complete",
         ],
       }[event?.kind] || null
     );
   }
   diagnosticTraceForEvent(traces, event, signal, metric) {
-    const route = this.diagnosticRoute(event);
+    const route = this.diagnosticRoute(event, traces);
     if (!route) return null;
     signal ??= route[1];
     metric ??= route[0];
@@ -11061,6 +11090,18 @@ class SaunaPanel extends HTMLElement {
         "infusion_absolute_humidity_delta",
         "Absoluter Feuchteanstieg · g/m³",
       ],
+      [
+        "Lüftungserkennung",
+        "ventilation_relative_humidity_slope",
+        "Relativer Feuchtetrend · Prozentpunkte/min",
+        (v) => v * 60,
+      ],
+      [
+        "Lüftungserkennung",
+        "ventilation_water_slope",
+        "Absoluter Feuchtetrend · g/m³/min",
+        (v) => v * 60,
+      ],
       ["Lüftungserkennung", "ventilation_temperature_loss", "Temperaturverlust · °C"],
       [
         "Lüftungserkennung",
@@ -11097,13 +11138,16 @@ class SaunaPanel extends HTMLElement {
       labels = {
         ...signalText,
         ventilation: "Lüftung",
-        ventilation_context: "Durchlüften bestätigt",
+        ventilation_complete: "Vollständiges Lüften",
+        ventilation_context: "Lüften bestätigt",
         ventilation_recovery: "Temperaturerholung",
         ventilation_temperature_drop: "Temperaturverlust ausreichend",
         ventilation_water_loss: "Wasserverlust ausreichend",
         ventilation_time_held: "Mindestdauer erreicht",
         ventilation_sources_coherent: "Messquellen durchgängig",
-        ventilation_proven: "Durchlüften belegt",
+        ventilation_proven: "Lüften belegt",
+        ventilation_complete_proven: "Vollständiges Lüften belegt",
+        ventilation_close_conflict: "Türschließung im selben Messstand erkannt",
       },
       value = (item, key, kind) => {
         if (item == null)

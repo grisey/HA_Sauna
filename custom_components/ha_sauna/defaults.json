@@ -1661,7 +1661,7 @@
       "default": 1.0,
       "minimum": null,
       "integer": false,
-      "description": "Dimensionslose Vergleichseinheit für aufgelöste Vorzeichen, Kandidaten, Schlussformen und den Abfall einer Aufgusskomponente. Die normierten Formkontraste beziehen sich auf die empirischen Rauschskalen; der Wert ist keine statistische Irrtumsgrenze und keine Ereigniswahrscheinlichkeit.",
+      "description": "Dimensionslose Vergleichseinheit für Vorzeichen, gerichtete Knicke der relativen Feuchte als Kandidatenbeginn, Schlussformen, Aufgussabfall und die beiden Lüftungsformen: Abflachung der relativen Feuchte und danach der absoluten Feuchte bei weiter ungebremst fallender Temperatur. Die normierten Formkontraste beziehen sich auf die empirischen Rauschskalen; der Wert ist keine statistische Irrtumsgrenze und keine Ereigniswahrscheinlichkeit.",
       "group": "detection",
       "expert": true,
       "step": "any",
@@ -1681,7 +1681,7 @@
       "default": 1.3176998821289658,
       "minimum": null,
       "integer": false,
-      "description": "Empirische Grenze für den normierten Öffnungsformkontrast aus den Abfällen aller vier Kanäle und den negativen Temperatur-Steigungswechseln. Bestätigung erfordert einen strikt größeren Kontrast und neue Originale aller vier Rollen; der Wert ist keine Wahrscheinlichkeit.",
+      "description": "Empirische Grenze für den normierten gemeinsamen Temperatur- und Feuchteabfall an der einen oder den beiden konfigurierten Messpositionen. Nach dem gebundenen Abfallknick der relativen Feuchte erfordert die Öffnungsbestätigung einen strikt größeren Kontrast und neue Originale aller konfigurierten Temperatur- und Feuchterollen. Ein neuer Temperaturknick ist dafür nicht erforderlich; der Wert ist keine Wahrscheinlichkeit.",
       "group": "detection",
       "expert": true,
       "step": "any",
@@ -1701,7 +1701,7 @@
       "default": 7.400558593477964,
       "minimum": null,
       "integer": false,
-      "description": "Empirische Grenze für den normierten gemeinsamen Feuchteanstieg ohne laufende Aufgussepisode. Ein strikt größerer Kontrast liefert den starken Anstiegsbeleg; Wasserbeleg und Originalneuheit bleiben erforderlich. Die Bestätigung benötigt zusätzlich den aktuellen positiven Steigungswechsel oder den späteren Abfall. Der Wert ist keine Wahrscheinlichkeit.",
+      "description": "Empirische Grenze für den normierten gemeinsamen Feuchteanstieg ohne laufende Aufgussepisode. Nach einem frischen Anstiegsknick der relativen Feuchte liefert ein strikt größerer Kontrast mit neuen Originalen aller gebundenen Rollen den starken Anstiegsbeleg. Ein positiver Wasserbeleg bleibt erforderlich. Die erste Bestätigung benötigt zusätzlich den aktuellen positiven Steigungswechsel der relativen Feuchte oder den späteren Abfall. Der Wert ist keine Wahrscheinlichkeit.",
       "group": "detection",
       "expert": true,
       "step": "any",
@@ -1721,7 +1721,7 @@
       "default": 2.4307971596435776,
       "minimum": null,
       "integer": false,
-      "description": "Empirische Grenze für den normierten gemeinsamen Feuchteanstieg innerhalb einer laufenden Aufgussepisode. Ein strikt größerer Kontrast liefert den starken Beleg einer weiteren Komponente derselben Episode; Wasserbeleg, Originalneuheit und nachfolgender Abfall bleiben erforderlich. Der Wert ist keine Wahrscheinlichkeit.",
+      "description": "Empirische Grenze für den normierten gemeinsamen Feuchteanstieg innerhalb einer laufenden Aufgussepisode. Auch eine weitere Komponente beginnt mit einem frischen Anstiegsknick der relativen Feuchte. Ein strikt größerer Kontrast mit neuen Originalen aller gebundenen Rollen liefert den starken Anstiegsbeleg; positiver Wasserbeleg und nachfolgender Abfall bleiben erforderlich. Der Wert ist keine Wahrscheinlichkeit.",
       "group": "detection",
       "expert": true,
       "step": "any",
@@ -6422,8 +6422,8 @@
         "id": "ventilation",
         "label": "Lüften und Gangende",
         "descriptions": {
-          "proxy": "Beim Verlassen wird die Tür zum Durchlüften geöffnet. Bestätigtes Durchlüften nach dieser erneuten Öffnung beendet den Gang.",
-          "ha_presence": "Beim Verlassen wird die Tür zum Durchlüften geöffnet. Diese neue Öffnung, bestätigtes Durchlüften und zugehörige Abwesenheit beenden den Gang."
+          "proxy": "Beim Verlassen wird die Tür zum Lüften erneut geöffnet. Bestätigtes Lüften nach dieser Öffnung beendet den Gang: Die relative Feuchte flacht bei weiter ungebremst fallender Temperatur ab. Die spätere Abflachung der absoluten Feuchte gilt in der Statistik als vollständiges Lüften.",
+          "ha_presence": "Beim Verlassen wird die Tür zum Lüften erneut geöffnet. Diese Öffnung, bestätigtes Lüften und zugehörige Abwesenheit beenden den Gang. Als Lüften zählt die Abflachung der relativen Feuchte bei weiter ungebremst fallender Temperatur. Die spätere Abflachung der absoluten Feuchte gilt in der Statistik als vollständiges Lüften."
         }
       },
       {

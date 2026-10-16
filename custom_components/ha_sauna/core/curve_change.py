@@ -130,7 +130,10 @@ class OriginalContrasts:
     Retained position windows expose every original anchor to the caller.
     humidity_rise_change (Q) is the minimum normalized RH slope change between
     the previous and current disjoint OLS windows, not a second derivative or
-    a probability.
+    a probability. The directed humidity onset properties require both the
+    current RH direction and its new slope change, independently of T.
+    opening_support requires only the continuing joint T/RH fall; opening
+    retains the historical contrast including the temperature slope kink.
     """
 
     positions: tuple[tuple[str, OriginalPositionWindows], ...]
@@ -145,6 +148,32 @@ class OriginalContrasts:
     humidity_recovery: float | None
     closing: float | None
     humidity_rise_change: float
+
+    @property
+    def humidity_rise_onset(self) -> float:
+        """Joint RH rise and new upward slope change at every position."""
+        return min(min(
+            pair.humidity.v / pair.humidity.e,
+            (pair.humidity.v - pair.humidity.b)
+            / (pair.humidity.e + pair.humidity.e_minus),
+        ) for _, pair in self.positions)
+
+    @property
+    def humidity_fall_onset(self) -> float:
+        """Joint RH fall and new downward slope change at every position."""
+        return min(min(
+            -pair.humidity.v / pair.humidity.e,
+            -(pair.humidity.v - pair.humidity.b)
+            / (pair.humidity.e + pair.humidity.e_minus),
+        ) for _, pair in self.positions)
+
+    @property
+    def opening_support(self) -> float:
+        """Continuing joint T/RH fall, without requiring another slope kink."""
+        return min(min(
+            -pair.temperature.v / pair.temperature.e,
+            -pair.humidity.v / pair.humidity.e,
+        ) for _, pair in self.positions)
 
 
 @dataclass(frozen=True)
@@ -310,6 +339,48 @@ class OriginalWaterWindowSupport:
     status: str
     features: OriginalWaterWindowFeatures | None = None
     reason: str | None = None
+
+
+@dataclass(frozen=True)
+class OriginalFlatteningContrast:
+    """One direct slope comparison, retaining both operands for diagnosis."""
+
+    value: float
+    operator: str
+    threshold: float
+    result: bool
+
+
+@dataclass(frozen=True)
+class OriginalFlattening:
+    """Fall-to-flat evidence in native RH or paired AH value units.
+
+    Humidity comparisons have the supplied humidity window's units per
+    second; temperature comparisons have degrees Celsius per second. The
+    retained windows expose the disjoint original supports and all raw slope
+    operands. These are mathematical forms, without event or stage identity.
+    """
+
+    humidity_window: OriginalWindowFeatures | OriginalWaterWindowFeatures
+    temperature_window: OriginalWindowFeatures
+    significance: float
+    previous_fall: OriginalFlatteningContrast
+    current_flat: OriginalFlatteningContrast
+    braking: OriginalFlatteningContrast
+    temperature_falling: OriginalFlatteningContrast
+    temperature_not_braking: OriginalFlatteningContrast
+
+    @property
+    def maintained(self) -> bool:
+        """Flat humidity while temperature still falls without braking."""
+        return (self.current_flat.result and self.temperature_falling.result
+                and self.temperature_not_braking.result)
+
+    @property
+    def initial(self) -> bool:
+        """Maintained form reached by braking a preceding humidity fall."""
+        return (self.maintained and self.previous_fall.result
+                and self.braking.result)
 
 
 def _original_positive(value: object) -> bool:
@@ -741,6 +812,82 @@ def original_water_window(
         )
     except (AttributeError, IndexError, OverflowError, TypeError, ValueError):
         return OriginalWaterWindowSupport("invalid", reason="invalid_support")
+
+
+def original_flattening(
+    humidity_window: OriginalWindowFeatures | OriginalWaterWindowFeatures,
+    temperature_window: OriginalWindowFeatures, *, significance: float,
+) -> OriginalFlattening | None:
+    """Compare a humidity fall-to-flat transition with its temperature form.
+
+    The caller supplies significance and owns support continuity, causal
+    availability and stage identity. The same product comparisons accept
+    native RH bounds and paired AH envelopes, including exact zero-width
+    water envelopes. Invalid support or nonfinite arithmetic stays unknown.
+    """
+    try:
+        if (not _original_positive(significance)
+                or not _original_window_valid(temperature_window)):
+            return None
+        if isinstance(humidity_window, OriginalWindowFeatures):
+            if not _original_window_valid(humidity_window):
+                return None
+        elif isinstance(humidity_window, OriginalWaterWindowFeatures):
+            if (not humidity_window.previous or not humidity_window.current
+                    or any(not _original_water_pair_valid(pair) for pair in (
+                        humidity_window.previous + humidity_window.current
+                    ))
+                    or not all(_profile_number(value) for value in (
+                        humidity_window.v, humidity_window.b,
+                        humidity_window.e, humidity_window.e_minus,
+                    ))
+                    or humidity_window.e < 0 or humidity_window.e_minus < 0):
+                return None
+        else:
+            return None
+        humidity, temperature = humidity_window, temperature_window
+        humidity_change = humidity.v - humidity.b
+        humidity_change_error = humidity.e + humidity.e_minus
+        temperature_change = temperature.v - temperature.b
+        temperature_change_error = temperature.e + temperature.e_minus
+        humidity_previous_bound = significance * humidity.e_minus
+        humidity_current_bound = significance * humidity.e
+        humidity_change_bound = significance * humidity_change_error
+        temperature_current_bound = significance * temperature.e
+        temperature_change_bound = significance * temperature_change_error
+        if not all(_profile_number(value) for value in (
+            humidity_change, humidity_change_error,
+            temperature_change, temperature_change_error,
+            humidity_previous_bound, humidity_current_bound, humidity_change_bound,
+            temperature_current_bound, temperature_change_bound,
+        )):
+            return None
+        return OriginalFlattening(
+            humidity_window=humidity_window, temperature_window=temperature_window,
+            significance=significance,
+            previous_fall=OriginalFlatteningContrast(
+                -humidity.b, ">", humidity_previous_bound,
+                -humidity.b > humidity_previous_bound,
+            ),
+            current_flat=OriginalFlatteningContrast(
+                abs(humidity.v), "<=", humidity_current_bound,
+                abs(humidity.v) <= humidity_current_bound,
+            ),
+            braking=OriginalFlatteningContrast(
+                humidity_change, ">", humidity_change_bound,
+                humidity_change > humidity_change_bound,
+            ),
+            temperature_falling=OriginalFlatteningContrast(
+                -temperature.v, ">", temperature_current_bound,
+                -temperature.v > temperature_current_bound,
+            ),
+            temperature_not_braking=OriginalFlatteningContrast(
+                temperature_change, "<=", temperature_change_bound,
+                temperature_change <= temperature_change_bound,
+            ),
+        )
+    except (AttributeError, IndexError, OverflowError, TypeError, ValueError):
+        return None
 
 
 @dataclass(frozen=True)

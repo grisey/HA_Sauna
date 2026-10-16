@@ -1,6 +1,7 @@
 """Vorläufige Erkennung, Aufgussbestätigung und Zeitzuordnung ohne Home Assistant."""
 import asyncio
 from copy import deepcopy
+from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 import tempfile
@@ -462,10 +463,54 @@ class TimelineTests(unittest.TestCase):
         with self.assertRaises(UnresolvedTransition):
             apply(Timeline("s", t("18:55:42"), door=Door.OPEN), self.vent)
 
+    def test_complete_ventilation_only_adds_idempotent_processed_evidence(self):
+        complete = e("complete", Kind.VENTILATION_COMPLETE, "21:17:00")
+        for state in (self.ventilated, self.direct_exit(closed=False)):
+            with self.subTest(active_direct_gang=state.active is not None):
+                result = apply(state, complete)
+                self.assertEqual(result, replace(
+                    state, processed=state.processed + (complete,),
+                ))
+                self.assertIs(apply(result, complete), result)
+
+    def test_complete_ventilation_requires_current_opening_stage_one_and_order(self):
+        opened = apply(self.empty, e("open", Kind.DOOR_OPEN, "21:14:20"))
+        ventilation = Event(
+            "vent", "s", Kind.VENTILATION, t("21:15:00"), t("21:16:00"),
+            t("21:15:50"), t("21:15:30"),
+        )
+        state = apply(opened, ventilation)
+        complete = Event(
+            "complete", "s", Kind.VENTILATION_COMPLETE,
+            t("21:15:10"), t("21:17:00"), t("21:17:00"), t("21:15:40"),
+        )
+        closed = apply(state, e("close", Kind.DOOR_CLOSE, "21:16:30"))
+        next_open = apply(closed, e("next", Kind.DOOR_OPEN, "21:16:40"))
+        for label, source, evidence in (
+            ("before_stage_one", opened, complete),
+            ("closed", closed, complete),
+            ("new_opening", next_open, complete),
+            ("foreign_opening", replace(state, opening=e(
+                "foreign", Kind.DOOR_OPEN, "21:14:30",
+            )), complete),
+            ("unprocessed_opening", replace(state, processed=(ventilation,)), complete),
+            ("foreign_stage_one", replace(state, open_ventilation=self.vent), complete),
+            ("physical_time", state, replace(complete, effective_at=t("21:14:59"))),
+            ("confirmation_time", state, replace(complete, trace_at=t("21:15:29"))),
+            ("detected_time", state, replace(
+                complete, booking_at=t("21:15:50"), detected_at=t("21:15:59"),
+            )),
+        ):
+            with self.subTest(case=label), self.assertRaises(ValueError):
+                apply(source, evidence)
+
 
 class DoorCycleProjectionTests(unittest.IsolatedAsyncioTestCase):
     @staticmethod
-    def cycle(opening, closing, started, ended, *, links=(), role=None, gang_id=None):
+    def cycle(
+        opening, closing, started, ended, *, links=(), role=None, gang_id=None,
+        ventilation=None, ventilation_complete=None,
+    ):
         return {
             "id": opening,
             "event_ids": [opening, closing] if closing is not None else [opening],
@@ -475,6 +520,14 @@ class DoorCycleProjectionTests(unittest.IsolatedAsyncioTestCase):
             "role": role,
             "gang_id": gang_id,
             "gang_links": list(links),
+            "ventilation_at": at(ventilation[0]).isoformat() if ventilation else None,
+            "ventilation_event_id": ventilation[1] if ventilation else None,
+            "ventilation_complete_at": (
+                at(ventilation_complete[0]).isoformat() if ventilation_complete else None
+            ),
+            "ventilation_complete_event_id": (
+                ventilation_complete[1] if ventilation_complete else None
+            ),
         }
 
     def assert_fresh_projection(self, timeline, expected):
@@ -541,8 +594,18 @@ class DoorCycleProjectionTests(unittest.IsolatedAsyncioTestCase):
         self.assert_object_and_plain(c.session, [entry, self.cycle(
             "o2", None, 4, None, role="exit", gang_id=g1.gang_id,
             links=({"gang_id": g1.gang_id, "role": "exit"},),
+            ventilation=(5, "v2"),
         )])
 
+        complete = Event(
+            "vc2", "s", Kind.VENTILATION_COMPLETE,
+            at(5.25), at(5.75), at(5.5), at(5.375),
+        )
+        before_complete = c.session.timeline
+        c.process(complete)
+        self.assertEqual(c.session.timeline, replace(
+            before_complete, processed=before_complete.processed + (complete,),
+        ))
         c2 = event("c2", Kind.DOOR_CLOSE, 6)
         w2 = event("w2", Kind.INFUSION, 7)
         c.process(c2)
@@ -557,12 +620,12 @@ class DoorCycleProjectionTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(timeline.completed[0].ended_at, at(5))
         self.assertEqual(timeline.completed[0].end_event_id, "v2")
         self.assertEqual(timeline.gang_count, 1)
-        self.assertEqual(timeline.processed, (o1, c1, w1, o2, v2, c2, w2))
+        self.assertEqual(timeline.processed, (o1, c1, w1, o2, v2, complete, c2, w2))
         expected = [entry, self.cycle(
             "o2", "c2", 4, 6, links=(
                 {"gang_id": g1.gang_id, "role": "exit"},
                 {"gang_id": g2.gang_id, "role": "entry"},
-            ),
+            ), ventilation=(5, "v2"), ventilation_complete=(5.25, "vc2"),
         )]
         self.assert_object_and_plain(c.session, expected)
 
@@ -639,6 +702,7 @@ class DoorCycleProjectionTests(unittest.IsolatedAsyncioTestCase):
         ), self.cycle(
             "o2", "c2", 4, 6, role="exit", gang_id=g1.gang_id,
             links=({"gang_id": g1.gang_id, "role": "exit"},),
+            ventilation=(5, "v2"),
         )]
         self.assert_object_and_plain(c.session, expected)
         self.assertFalse(c.observe_direct_presence(absence, at(8)))
