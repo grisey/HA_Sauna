@@ -181,15 +181,18 @@ test("person markers identify the decision-making humidity feature, not contextu
   );
 });
 
-test("diagnostic configuration uses the saved model and keeps recorded features from either person source", () => {
+test("archived diagnostics use their saved person source and retain raw measurement evidence", () => {
   for (const direct of [false, true]) {
     const panel = makePanel();
     panel.state.permissions = { admin: true };
     panel.state.configuration_model = {
       measurement_positions: ["lower"],
-      presence: { direct: !direct },
+      presence: { source: direct ? "proxy" : "ha_presence", direct: !direct },
     };
-    const savedModel = { measurement_positions: ["upper"], presence: { direct } };
+    const savedModel = {
+      measurement_positions: ["upper"],
+      presence: { source: direct ? "ha_presence" : "proxy", direct },
+    };
     panel.shown.session.ended_at = iso(60);
     panel.shown.session.configuration_model = savedModel;
     panel.shown.session.configuration = { parameters: parameterValues() };
@@ -197,17 +200,28 @@ test("diagnostic configuration uses the saved model and keeps recorded features 
       kind: "detector_trace",
       payload: {
         at: iso(5),
-        metrics: { upper: { strong_humidity_slope: 2, strong_temperature_slope: -1 } },
-        checks: { strong: false },
+        metrics: {
+          upper: {
+            strong_humidity_slope: 2,
+            strong_temperature_slope: -1,
+            door_temperature_slope: -1,
+          },
+        },
+        checks: { strong: false, door_open: false },
         conditions: { strong: null },
         holds: { strong: 0 },
         signals: [],
       },
     });
+    const original = JSON.stringify(panel.shown.records);
     panel.ensureHistoryWindow();
     const plots = { innerHTML: "" };
     panel.$ = (selector) => (selector === "#detection-plots" ? plots : null);
-    assert.equal(panel.historyConfigurationModel(), savedModel);
+    assert.equal(
+      panel.historyConfigurationModel().presence.source,
+      savedModel.presence.source,
+    );
+    assert.equal(panel.historyConfigurationModel().measurement_positions[0], "upper");
     panel.drawDiagnostics();
     assert.match(
       plots.innerHTML,
@@ -215,7 +229,23 @@ test("diagnostic configuration uses the saved model and keeps recorded features 
         ? /Personenquelle: Präsenzsensor mit Türereignis/
         : /Personenquelle: Temperatur und Feuchte/,
     );
-    assert.match(plots.innerHTML, /data-series="detector_strong_humidity_slope_upper"/);
+    if (direct) {
+      assert.doesNotMatch(plots.innerHTML, /data-series="detector_(strong|weak)_/);
+      assert.doesNotMatch(plots.innerHTML, /data-key="(?:label|value):strong/);
+    } else {
+      assert.match(
+        plots.innerHTML,
+        /data-series="detector_strong_humidity_slope_upper"/,
+      );
+      const contextChart = plots.innerHTML
+        .split('data-diagnostic-metric="strong_temperature_slope"')[1]
+        .split("</svg>")[0];
+      assert.doesNotMatch(contextChart, /Schwelle oben:/);
+    }
+    assert.match(
+      plots.innerHTML,
+      /data-series="detector_door_temperature_slope_upper"/,
+    );
     assert.doesNotMatch(
       plots.innerHTML,
       /data-series="detector_strong_humidity_slope_lower"/,
@@ -223,10 +253,10 @@ test("diagnostic configuration uses the saved model and keeps recorded features 
     assert.doesNotMatch(plots.innerHTML, /<summary>Messwerte unten<\/summary>/);
     assert.match(plots.innerHTML, /<summary>Messwerte oben<\/summary>/);
     assert.match(plots.innerHTML, /Nicht geprüft/);
-    const contextChart = plots.innerHTML
-      .split('data-diagnostic-metric="strong_temperature_slope"')[1]
-      .split("</svg>")[0];
-    assert.doesNotMatch(contextChart, /Schwelle oben:/);
+    assert.equal(
+      panel.diagnosticData().traces[0].metrics.upper.strong_humidity_slope,
+      2,
+    );
     delete panel.shown.session.configuration_model;
     assert.equal(panel.historyConfigurationModel(), null);
     panel.drawDiagnostics();
@@ -235,7 +265,168 @@ test("diagnostic configuration uses the saved model and keeps recorded features 
       /damalige Anlagenkonfiguration ist nicht gespeichert/,
     );
     assert.match(plots.innerHTML, /data-series="detector_strong_humidity_slope_upper"/);
+    assert.equal(JSON.stringify(panel.shown.records), original);
   }
+});
+
+test("person curves, thresholds, markers and selected evidence stay inside effective proxy sections", () => {
+  const panel = makePanel(),
+    parameters = parameterValues(),
+    step = Math.min(parameters.grid_seconds, parameters.person_step_seconds),
+    plots = { innerHTML: "" };
+  panel.state.permissions = { admin: true };
+  panel.shown.session.ended_at = iso(2 * step);
+  panel.shown.session.configuration = { parameters, presence_source: "ha_presence" };
+  panel.shown.session.configuration_model = {
+    measurement_positions: ["upper"],
+    presence: { source: "ha_presence", direct: true },
+  };
+  // Compact synthetic sections expose a bridge within one normal sample gap.
+  // Qualification belongs to runtime tests; the panel consumes archived markers.
+  const markers = [
+    [0, "ha_presence", null],
+    [step, "proxy", "ha_presence"],
+    [1.4 * step, "ha_presence", "proxy"],
+    [1.6 * step, "proxy", "ha_presence"],
+  ].map(([second, source, previous], index) => ({
+    id: index + 1,
+    kind: "presence_source",
+    received_at: iso(second),
+    payload: {
+      configured_source: "ha_presence",
+      effective_source: source,
+      entity_id: "binary_sensor.saved",
+      ...(previous
+        ? { previous_source: previous, reason: "availability_qualified" }
+        : { external_snapshot: {} }),
+    },
+  }));
+  const kinds = [
+      "person_strong",
+      "person_weak",
+      "door_open",
+      "infusion",
+      "ventilation_confirmed",
+    ],
+    traces = [0.5, 1.1, 1.2, 1.5, 1.8, 1.9].map((fraction, index) => ({
+      at: iso(fraction * step),
+      channels: ["upper"],
+      metrics: {
+        upper: {
+          strong_humidity_slope: index + 1,
+          weak_humidity_slope: index + 1,
+          door_temperature_slope: -1,
+          infusion_humidity_delta: 1,
+          ventilation_temperature_loss: 1,
+        },
+      },
+      checks: {
+        strong: true,
+        weak: true,
+        door_open: true,
+        infusion: true,
+        ventilation: true,
+      },
+      conditions: { strong: true, weak: true, door_open: true },
+      holds: { strong: 1, weak: 1, door_open: 1 },
+      // Inactive person evidence stays in this archive to verify display masking.
+      signals: kinds,
+    }));
+  panel.shown.records = [
+    ...markers,
+    ...traces.map((payload, index) => ({
+      id: markers.length + index + 1,
+      kind: "detector_trace",
+      received_at: payload.at,
+      payload,
+    })),
+  ]
+    .sort((a, b) => Date.parse(a.received_at) - Date.parse(b.received_at))
+    .map((record, index) => ({ ...record, id: index + 1 }));
+  panel.shown.session.timeline.processed = traces.flatMap((trace, index) =>
+    kinds.map((kind) => ({
+      event_id: `${kind}-${index}`,
+      session_id: "s",
+      kind,
+      effective_at: trace.at,
+      detected_at: trace.at,
+      booking_at: trace.at,
+    })),
+  );
+  const original = JSON.stringify(panel.shown.records);
+  panel.window = [Date.parse(iso(0)), Date.parse(iso(2 * step))];
+  panel.$ = (selector) => (selector === "#detection-plots" ? plots : null);
+  panel.drawDiagnostics();
+  const chart = (metric) =>
+      plots.innerHTML
+        .split(`data-diagnostic-metric="${metric}"`)[1]
+        .split("</svg>")[0],
+    path = (metric) =>
+      chart(metric).match(
+        new RegExp(`data-series="detector_${metric}_upper" d="([^"]*)"`),
+      )[1],
+    doorXs = [...path("door_temperature_slope").matchAll(/[ML]([\d.]+),/g)].map(
+      (match) => Number(match[1]),
+    );
+  for (const [metric, kind] of [
+    ["strong_humidity_slope", "person_strong"],
+    ["weak_humidity_slope", "person_weak"],
+  ]) {
+    assert.equal((path(metric).match(/M/g) || []).length, 2);
+    assert.equal((path(metric).match(/L/g) || []).length, 2);
+    const spans = [
+      ...chart(metric).matchAll(
+        /<line x1="([^"]+)" x2="([^"]+)"[^>]*><title>Schwelle oben:/g,
+      ),
+    ].map((match) => [Number(match[1]), Number(match[2])]);
+    assert.equal(spans.length, 2);
+    assert.ok(spans[0][1] < spans[1][0], "thresholds leave the sensor section open");
+    for (const [left, right] of spans) {
+      assert.ok(right > left);
+      assert.ok([doorXs[0], doorXs[3]].every((x) => x < left || x > right));
+    }
+    for (let index = 0; index < traces.length; index++) {
+      assert.equal(
+        chart(metric).includes(`data-event-id="${kind}-${index}"`),
+        ![0, 3].includes(index),
+      );
+    }
+  }
+  for (const [metric, kind] of [
+    ["door_temperature_slope", "door_open"],
+    ["infusion_humidity_delta", "infusion"],
+    ["ventilation_temperature_loss", "ventilation_confirmed"],
+  ]) {
+    assert.equal((path(metric).match(/M/g) || []).length, 1);
+    assert.equal((path(metric).match(/L/g) || []).length, traces.length - 1);
+    assert.ok(
+      traces.every((_trace, index) =>
+        chart(metric).includes(`data-event-id="${kind}-${index}"`),
+      ),
+    );
+  }
+  for (const [index, proxyActive] of [
+    [0, false],
+    [1, true],
+    [3, false],
+    [4, true],
+  ]) {
+    panel.selectedDiagnosticTrace = traces[index];
+    const html = panel.diagnosticSelectionMarkup(panel.diagnosticData().traces);
+    assert.equal(html.includes('data-key="label:strong_humidity_slope"'), proxyActive);
+    assert.equal(html.includes('data-key="label:weak_humidity_slope"'), proxyActive);
+    assert.equal(html.includes('data-key="label:strong"'), proxyActive);
+    assert.equal(html.includes('data-key="label:weak"'), proxyActive);
+    assert.equal(/Signale: [^<]*Person/.test(html), proxyActive);
+    assert.match(html, /data-key="label:door_temperature_slope"/);
+    assert.match(html, /data-key="label:infusion_humidity_delta"/);
+    assert.match(html, /data-key="label:ventilation_temperature_loss"/);
+    assert.equal(
+      panel.diagnosticsParameters(traces[index].at).strong_humidity_upper,
+      proxyActive ? parameters.strong_humidity_upper : undefined,
+    );
+  }
+  assert.equal(JSON.stringify(panel.shown.records), original);
 });
 
 test("a configured but currently missing measurement position stays explicit in the evidence", () => {
