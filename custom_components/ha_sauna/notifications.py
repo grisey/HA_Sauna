@@ -11,8 +11,8 @@ from datetime import datetime
 from types import MappingProxyType
 from typing import Any
 
-from homeassistant.components.mobile_app import device_action
 from homeassistant.components.notify import NotifyEntityFeature
+from homeassistant.config_entries import ConfigEntryState
 from homeassistant.core import Event, HomeAssistant, callback
 from homeassistant.helpers import device_registry as dr, entity_registry as er
 
@@ -29,13 +29,31 @@ _REPLY_INGRESS = "ha_sauna_notification_reply_ingress"
 
 async def _mobile_actions(hass: HomeAssistant) -> dict[str, dict]:
     actions = {}
+    if "mobile_app" not in hass.config.components:
+        return actions
+    devices = []
     for device in dr.async_get(hass).devices.values():
         _, entry = dr.async_get_device_and_config_entry_for_domain(
             hass, device.id, "mobile_app"
         )
-        if entry is None:
-            continue
-        for action in await device_action.async_get_actions(hass, device.id):
+        if entry is not None and entry.state is ConfigEntryState.LOADED:
+            devices.append(device)
+    if not devices:
+        return actions
+    # Load the existing action through HA only for a loaded client integration.
+    from homeassistant.components.device_automation import (
+        DeviceAutomationType, InvalidDeviceAutomationConfig,
+        async_get_device_automation_platform,
+    )
+
+    try:
+        platform = await async_get_device_automation_platform(
+            hass, "mobile_app", DeviceAutomationType.ACTION,
+        )
+    except InvalidDeviceAutomationConfig:
+        return actions
+    for device in devices:
+        for action in await platform.async_get_actions(hass, device.id):
             if action.get("domain") == "mobile_app" and action.get("type") == "notify":
                 actions[device.id] = action
                 break
@@ -237,7 +255,14 @@ class HomeAssistantNotifications:
         actions = await _mobile_actions(self.hass)
         if endpoint in actions:
             config = {**actions[endpoint], **deepcopy(dict(payload))}
-            await device_action.async_call_action_from_config(self.hass, config, {}, None)
+            from homeassistant.components.device_automation import (
+                DeviceAutomationType, async_get_device_automation_platform,
+            )
+
+            platform = await async_get_device_automation_platform(
+                self.hass, "mobile_app", DeviceAutomationType.ACTION,
+            )
+            await platform.async_call_action_from_config(self.hass, config, {}, None)
             return
         registry = er.async_get(self.hass)
         entity = registry.async_get(endpoint)

@@ -61,8 +61,15 @@ class NotificationTransportTests(unittest.IsolatedAsyncioTestCase):
         })
         return entity.entity_id
 
-    def mobile(self):
-        from homeassistant.config_entries import ConfigEntry
+    async def mobile(self):
+        from homeassistant.components.device_automation import (
+            DeviceAutomationType, async_get_device_automation_platform,
+        )
+        from homeassistant.config_entries import ConfigEntry, ConfigEntryState
+        # Exercise HA's platform loader; its optional dependencies are test pins.
+        await async_get_device_automation_platform(
+            self.hass, "mobile_app", DeviceAutomationType.ACTION,
+        )
         from homeassistant.components.mobile_app import const
         from homeassistant.helpers import device_registry as dr, entity_registry as er
         entry = ConfigEntry(
@@ -70,9 +77,11 @@ class NotificationTransportTests(unittest.IsolatedAsyncioTestCase):
             data={const.ATTR_APP_DATA: {const.ATTR_PUSH_WEBSOCKET_CHANNEL: True}},
             source="user", options={}, unique_id="synthetic-phone",
             discovery_keys=MappingProxyType({}), subentries_data=[],
+            state=ConfigEntryState.LOADED,
         )
         # Register fixture ownership without executing unrelated mobile-app setup.
         self.hass.config_entries._entries[entry.entry_id] = entry
+        self.hass.config.components.add("mobile_app")
         device = dr.async_get(self.hass).async_get_or_create(
             config_entry_id=entry.entry_id, identifiers={("mobile_app", "synthetic-phone")},
         )
@@ -121,7 +130,7 @@ class NotificationTransportTests(unittest.IsolatedAsyncioTestCase):
     async def test_native_device_action_payload_alias_and_observational_reply(self):
         from homeassistant.core import Context
         from custom_components.ha_sauna.notifications import async_resolve_recipients
-        device_id, entity_id = self.mobile()
+        device_id, entity_id = await self.mobile()
         resolutions = await async_resolve_recipients(self.hass)
         targets = {item.recipient.target for item in resolutions
                    if item.reference.reference_id in {device_id, entity_id}}
@@ -158,7 +167,7 @@ class NotificationTransportTests(unittest.IsolatedAsyncioTestCase):
         }, sort_keys=True))
 
     async def test_ambiguous_unknown_and_cleanup_reply_paths(self):
-        device_id, _ = self.mobile()
+        device_id, _ = await self.mobile()
         payload = {"message": "Synthetic", "data": {"actions": [{"action": "REPLY"}]}}
         for message_id in ("first", "second"):
             self.assertTrue((await self.adapter.handoff(
@@ -190,7 +199,7 @@ class NotificationTransportTests(unittest.IsolatedAsyncioTestCase):
     async def test_global_ambiguity_has_one_unknown_scope_event_and_explicit_forget(self):
         from custom_components.ha_sauna.notifications import HomeAssistantNotifications
         from dataclasses import replace
-        device_id, _ = self.mobile()
+        device_id, _ = await self.mobile()
         other_replies = []
         other = HomeAssistantNotifications(self.hass, "other-sauna", other_replies.append)
         await other.async_start()
@@ -235,7 +244,7 @@ class NotificationTransportTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_early_response_observes_pending_handoff_then_acceptance(self):
         from test_settings import async_timeout
-        device_id, _ = self.mobile()
+        device_id, _ = await self.mobile()
         observed = asyncio.Event()
 
         def receive(observation):
@@ -272,7 +281,7 @@ class NotificationTransportTests(unittest.IsolatedAsyncioTestCase):
     async def test_failed_send_rolls_back_registration_after_early_observation(self):
         from homeassistant.exceptions import HomeAssistantError
         from test_settings import async_timeout
-        device_id, _ = self.mobile()
+        device_id, _ = await self.mobile()
         observed = asyncio.Event()
 
         def receive(observation):
@@ -304,7 +313,7 @@ class NotificationTransportTests(unittest.IsolatedAsyncioTestCase):
         }, sort_keys=True))
 
     async def test_navigation_only_payload_needs_no_reply_registration(self):
-        device_id, _ = self.mobile()
+        device_id, _ = await self.mobile()
         payload = {"message": "Synthetic", "data": {
             "actions": [{"action": "URI", "uri": "https://example.invalid"}],
         }}
@@ -312,3 +321,35 @@ class NotificationTransportTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(handoff.accepted, handoff.evidence)
         self.assertFalse(self.adapter._sent)
         self.assertEqual(self.calls[0]["data"], payload["data"])
+
+    async def test_plain_route_does_not_load_optional_mobile_platform(self):
+        from unittest.mock import AsyncMock, patch
+        from homeassistant.config_entries import ConfigEntry
+        from homeassistant.helpers import device_registry as dr
+        from custom_components.ha_sauna.notifications import async_resolve_recipients
+        endpoint = self.plain()
+        with patch(
+            "homeassistant.components.device_automation.async_get_device_automation_platform",
+            new=AsyncMock(side_effect=AssertionError("Optional platform must stay unloaded")),
+        ) as load_platform:
+            resolutions = await async_resolve_recipients(self.hass)
+            self.assertEqual(len(resolutions), 1)
+            handoff = await self.adapter.handoff(self.notification(endpoint, {
+                "message": "Plain synthetic notification",
+            }))
+            self.assertTrue(handoff.accepted, handoff.evidence)
+            # A stored but unloaded mobile entry is not an available native route.
+            entry = ConfigEntry(
+                version=1, minor_version=1, domain="mobile_app", title="Unloaded phone",
+                data={}, source="user", options={}, unique_id="unloaded-phone",
+                discovery_keys=MappingProxyType({}), subentries_data=[],
+            )
+            self.hass.config_entries._entries[entry.entry_id] = entry
+            dr.async_get(self.hass).async_get_or_create(
+                config_entry_id=entry.entry_id,
+                identifiers={("mobile_app", "unloaded-phone")},
+            )
+            self.hass.config.components.add("mobile_app")
+            resolutions = await async_resolve_recipients(self.hass)
+            self.assertEqual(len(resolutions), 1)
+            load_platform.assert_not_awaited()
