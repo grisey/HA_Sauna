@@ -43,6 +43,11 @@ private Archivprojektion und Sitzungsgrenzen einschließlich OFF-Pause.
 Die HA-Integrationstests `test_notification_service.py` und
 `test_notification_participation.py` prüfen den registrierten Sendedienst,
 einzelne Übergabeergebnisse und Benutzeridentität bei wirksamen Bedienänderungen.
+`NotificationServiceTests.test_explicit_forget_removes_sessionless_reply_association`
+verfolgt den registrierten Sendedienst über den nativen HA-Antworteingang zur
+gemeinsamen `ReplyAssociation`, zum optionalen Callback und zum öffentlichen
+Event. Unbekannte Herkunftsidentitäten bleiben dabei erhalten; das explizite
+Vergessen beendet beide Ausgaben für diese Zuordnung.
 Diese synthetischen Prüfungen belegen weder Empfang noch Rückmeldungen eines
 tatsächlichen Companion-Clients.
 

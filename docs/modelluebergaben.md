@@ -17,7 +17,7 @@ Es bestehen drei Arten von Übergaben:
 - Zusätzliche Beobachtungsformen beschreiben vollständig übergebbare Werte.
   Ohne einen tatsächlichen Verbraucher werden sie nicht zur Laufzeit erzeugt.
   Dazu gehören insbesondere die vollständigen Controller-, Türvorgangs-,
-  Aufguss- und Benachrichtigungsbeobachtungen.
+  Aufgussbeobachtungen und die expliziten Benachrichtigungssnapshots.
 
 Ein neuer Name oder eine zusätzliche Form begründet keine weitere Auswertung,
 Historie oder Zustellung. Bereits verwendete Fachwerte benötigen keine
@@ -276,7 +276,7 @@ Umschreibung des vorhandenen Anschlusses.
 | 26 | Archiv: Record-, Sitzungslisten- und Sitzungsergebnisformen in `system_handoff.py` | `Archive.read` | Bereits direkt: Archiv-API und Export verwenden die bestehenden geschlossenen Ergebnisse. Zusätzliche Formen bleiben vorbereitet. Leere Liste, fehlende Sitzung, Pagination und offene Payloads bleiben verschieden beziehungsweise vollständig erhalten. |
 | 27 | Darstellung: `PanelSnapshot`, öffentliche Form in `presentation_handoff.py` | State-API und `public_state` | Bereits direkt: Panel konsumiert den bestehenden JSON-Wirevertrag; öffentliche Redaktion liegt bei `public_state`. Zusätzliche Panelbeobachtungen bleiben vorbereitet; entfernte Adminfelder werden nicht als `None` wieder eingeführt. |
 | 28 | Empfänger: `RecipientAssignment`, `RecipientResolution`, `ResolvedRecipient`, `SessionRecipients` | Explizite Auflösung, Zuordnung und Akkumulation | Produktiv verbunden: Optionen speichern explizite HA-Benutzerzuordnungen; der HA-Adapter löst registrierte Ziele auf. Erfolgreiche Sitzungsänderungen akkumulieren Ziele unter der bestehenden Sitzungsidentität, einschließlich OFF-Pause. Fehlende Benutzeridentität bleibt unbekannt. |
-| 29 | Austausch: Envelope- und Korrelationssnapshots in `interaction_handoff.py` | Explizite Transportresultate und `ReplyCorrelator` | Produktiv verbunden: `ha_sauna.send_notification` übergibt explizite Nachrichten an zugeordnete Sitzungs- oder Benutzerziele und meldet Ergebnisse je Ziel. `ha_sauna_notification_reply` beobachtet passende native Antworten ohne Steuerwirkung; eindeutige Nachrichtenzuordnung ist kein Nachweis der Quellidentität. Transportannahme, Geräteempfang und Antwort bleiben getrennte Aussagen. Die zusätzlichen Korrelationssnapshots bleiben vorbereitete Formen. |
+| 29 | Austausch: `NotificationEnvelope`, `ReplyEnvelope`, `ReplyAssociation`, `TransportHandoff`; Snapshots in `interaction_handoff.py` | Explizite Transportresultate und gemeinsamer `ReplyCorrelator` des HA-Antworteingangs | Produktiv verbunden: `ha_sauna.send_notification` übergibt explizite Nachrichten an zugeordnete Sitzungs- oder Benutzerziele und meldet Ergebnisse je Ziel. Native Antworten gehen als `ReplyEnvelope` an den instanzübergreifenden Korrelationsowner. Dessen `ReplyAssociation` wird vom HA-Eventserializer und einem optionalen typisierten Callback konsumiert. Eindeutige Nachrichtenzuordnung ist kein Nachweis der Quellidentität. Transportannahme, Geräteempfang und Antwort bleiben getrennte Aussagen. Die zusätzlichen unveränderlichen Snapshots entstehen nur beim expliziten Aufruf; es gibt keine automatische Vollaufnahme oder Antwortgeschichte. |
 | 30 | Fachereignisverbrauch: Originalereignis; Beobachtung: `ConsumerEventOutput` | Bestehender Ereignisproducer; explizite Bindung an damalige Sitzung beziehungsweise Präsenzmeldung | Bereits direkt: `_publish_consumer` und Archiv konsumieren das ursprüngliche Fachereignis mit bestehender Wiederholungserkennung. `ConsumerEventOutput` bleibt vorbereitet; keine Sitzungsvollkopie je Archiv-Event. |
 
 Backupbarrieren, Workerqueues, HTTP-Anfragen, Registryobjekte, Setup/Unload und
@@ -287,3 +287,8 @@ den genannten Konfigurations-, Archiv-, Diagnose- und Darstellungswerten.
 Ein Formnachweis belegt übernommene Werte, Zeit- und Identitätsbezüge sowie
 Unabhängigkeit von späterer Mutation. Er belegt für sich keine angeschlossene
 Steuerungsfunktion, Companion-Zustellung oder reale Gerätewirkung.
+
+Die offenen Live-Payloads der Benachrichtigungsformen sind keine unveränderlichen
+Snapshots. Der HA-Adapter kopiert native Daten an seiner Grenze defensiv;
+explizite Snapshots frieren die unterstützten Werte für ihre spätere Verwendung
+ein. Daraus folgt keine zusätzliche Laufzeitvalidierung aller Payloadinhalte.

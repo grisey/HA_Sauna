@@ -26,6 +26,7 @@ from custom_components.ha_sauna.core.notification_exchange import (
     DeviceReceipt,
     ReplyCorrelator,
     ReplyDisposition,
+    ReplyKey,
     TransportHandoff,
 )
 from test_button import THRESHOLD, at
@@ -341,6 +342,84 @@ class ReplyCorrelatorSnapshotTests(unittest.TestCase):
         with self.assertRaises(TypeError):
             ReplyAssociationSnapshot.capture(association)
         self.assertIs(association.reply.payload, opaque)
+
+    def test_native_snapshot_keeps_keys_pending_acceptance_and_no_invented_ids(self):
+        key = ReplyKey("home_assistant", "answer")
+        owner = ReplyCorrelator()
+        handle = owner.register(self.notification, reply_keys=(key,))
+        reply = replace(
+            self.reply,
+            reply_id=None,
+            message_id=None,
+            correlation_id=None,
+            entry_id=None,
+            session_id=None,
+            source=None,
+            reply_key=key,
+            context_id="shared-context",
+            observed_at=T0,
+        )
+        early = owner.receive(reply)
+        snapshot = ReplyCorrelatorSnapshot.capture(owner)
+        observation = ReplyAssociationSnapshot.capture(early)
+        registration = snapshot.registrations[0]
+        self.assertEqual(registration.reply_keys, frozenset({key}))
+        self.assertEqual(registration.reply_ids, frozenset())
+        self.assertIsNone(registration.handoff_accepted)
+        self.assertIsNone(observation.handoff_accepted)
+        self.assertIsNone(observation.reply.source)
+        self.assertIsNone(observation.reply.reply_id)
+        self.assertEqual(observation.reply.reply_key, key)
+        self.assertEqual(observation.reply.observed_at, T0)
+        self.assertEqual(observation.reply.context_id, "shared-context")
+        self.assertTrue(owner.mark_accepted(handle))
+        current = ReplyCorrelatorSnapshot.capture(owner)
+        self.assertTrue(current.registrations[0].handoff_accepted)
+        self.assertIsNone(registration.handoff_accepted)
+        self.assertEqual(owner.receive(reply).disposition, ReplyDisposition.ACCEPTED)
+        second = owner.register(
+            replace(self.notification, message_id="second"), reply_keys=(key,)
+        )
+        ambiguous = ReplyAssociationSnapshot.capture(owner.receive(reply))
+        self.assertTrue(ambiguous.ambiguous)
+        self.assertIsNone(ambiguous.notification)
+        self.assertIsNone(ambiguous.handoff_accepted)
+        self.assertTrue(owner.rollback(second))
+        self.assertEqual(len(snapshot.registrations), 1)
+
+    def test_native_same_identity_snapshot_order_uses_complete_frozen_state(self):
+        first = ReplyCorrelator()
+        second = ReplyCorrelator()
+        descriptions = (
+            ({"nested": [{"b", "a"}], "variant": 1}, "answer-a", False, None),
+            ({"nested": [{"b", "a"}], "variant": 1}, "answer-a", False, None),
+            ({"nested": [{"b", "a"}], "variant": 2}, "answer-a", False, None),
+            ({"nested": [{"b", "a"}], "variant": 2}, "answer-b", False, None),
+            ({"nested": [{"b", "a"}], "variant": 2}, "answer-b", True, None),
+            ({"nested": [{"b", "a"}], "variant": 2}, "answer-c", True, "seen"),
+        )
+        for owner, ordered in ((first, descriptions), (second, descriptions[::-1])):
+            for payload, action, accepted, reply_id in ordered:
+                key = ReplyKey("home_assistant", action)
+                handle = owner.register(
+                    replace(self.notification, payload=payload), reply_keys=(key,)
+                )
+                if accepted:
+                    owner.mark_accepted(handle)
+                if reply_id is not None:
+                    reply = replace(self.reply, reply_id=reply_id, reply_key=key)
+                    self.assertEqual(
+                        owner.receive(reply).disposition, ReplyDisposition.ACCEPTED
+                    )
+        before = ReplyCorrelatorSnapshot.capture(first)
+        self.assertEqual(before, ReplyCorrelatorSnapshot.capture(second))
+        self.assertEqual(len(before.registrations), len(descriptions))
+        self.assertEqual(
+            {item.handoff_accepted for item in before.registrations}, {None, True}
+        )
+        self.assertIn(
+            frozenset({"seen"}), {item.reply_ids for item in before.registrations}
+        )
 
 
 if __name__ == "__main__":

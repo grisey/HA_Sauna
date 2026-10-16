@@ -6,17 +6,22 @@ are not rewritten; client rendering and permission remain client responsibilitie
 
 from collections.abc import Callable, Mapping
 from copy import deepcopy
-from dataclasses import dataclass
-from datetime import datetime
 from types import MappingProxyType
-from typing import Any
 
 from homeassistant.components.notify import NotifyEntityFeature
 from homeassistant.config_entries import ConfigEntryState
 from homeassistant.core import Event, HomeAssistant, callback
 from homeassistant.helpers import device_registry as dr, entity_registry as er
 
-from .core.notification_exchange import NotificationEnvelope, TransportHandoff
+from .core.notification_exchange import (
+    NotificationEnvelope,
+    ReplyAssociation,
+    ReplyCorrelator,
+    ReplyDisposition,
+    ReplyEnvelope,
+    ReplyKey,
+    TransportHandoff,
+)
 from .core.notification_recipients import (
     ActorRef,
     CapabilityEvidence,
@@ -124,36 +129,13 @@ async def async_resolve_recipients(
     return tuple(resolutions)
 
 
-@dataclass(frozen=True)
-class NotificationReplyObservation:
-    """Native context/time and association; no authenticated device claim.
-
-    context_id identifies the HA context, not a unique event or delivery.
-    """
-
-    context_id: str
-    time_fired: datetime
-    actor: ActorRef
-    payload: Mapping[str, Any]
-    source: TargetIdentity | None = None
-    notification: NotificationEnvelope | None = None
-    ambiguous: bool = False
-    handoff_accepted: bool | None = None
-
-
-@dataclass
-class _NotificationRegistration:
-    notification: NotificationEnvelope
-    actions: frozenset[str]
-    accepted: bool = False
-
-
 class _ReplyIngress:
     """One HA-wide listener judges native identifiers across all active entries."""
 
     def __init__(self, hass: HomeAssistant) -> None:
         self.hass = hass
         self.adapters: set["HomeAssistantNotifications"] = set()
+        self.correlator = ReplyCorrelator()
         self.unsubscribe = hass.bus.async_listen(
             "mobile_app_notification_action",
             self.receive,
@@ -164,34 +146,42 @@ class _ReplyIngress:
         action = event.data.get("action")
         if not isinstance(action, str):
             return
-        matches = [
-            (adapter, registration)
-            for adapter in self.adapters
-            for registration in adapter._sent
-            if action in registration.actions
-        ]
-        if not matches:
-            return
-        adapter, registration = matches[0] if len(matches) == 1 else (None, None)
-        notification = registration.notification if registration else None
-        observation = NotificationReplyObservation(
-            event.context.id,
-            event.time_fired,
-            ActorRef(event.context.user_id, "HA event context"),
-            MappingProxyType(deepcopy(dict(event.data))),
-            notification=notification,
-            ambiguous=len(matches) > 1,
-            handoff_accepted=True if registration and registration.accepted else None,
+        association = self.correlator.receive(
+            ReplyEnvelope(
+                reply_id=None,
+                message_id=None,
+                correlation_id=None,
+                entry_id=None,
+                source=None,
+                actor=ActorRef(event.context.user_id, "HA event context"),
+                payload=MappingProxyType(deepcopy(dict(event.data))),
+                context_id=event.context.id,
+                observed_at=event.time_fired,
+                reply_key=ReplyKey(TRANSPORT, action),
+            )
         )
+        if association.disposition is ReplyDisposition.UNKNOWN:
+            return
+        notification = association.notification
+        reply = association.reply
+        adapter = next(
+            (
+                item
+                for item in self.adapters
+                if notification is not None and item.entry_id == notification.entry_id
+            ),
+            None,
+        )
+        wire_payload = deepcopy(dict(reply.payload))
         if adapter is not None and adapter._reply_callback is not None:
-            adapter._reply_callback(observation)
+            adapter._reply_callback(association)
         self.hass.bus.async_fire(
             EVENT_REPLY,
             {
                 "entry_id": adapter.entry_id if adapter else None,
-                "context_id": observation.context_id,
-                "time_fired": observation.time_fired.isoformat(),
-                "actor_user_id": observation.actor.user_id,
+                "context_id": reply.context_id,
+                "time_fired": reply.observed_at.isoformat(),
+                "actor_user_id": reply.actor.user_id,
                 "source": None,
                 "message_id": notification.message_id if notification else None,
                 "correlation_id": notification.correlation_id if notification else None,
@@ -204,9 +194,9 @@ class _ReplyIngress:
                     if notification
                     else None
                 ),
-                "ambiguous": observation.ambiguous,
-                "handoff_accepted": observation.handoff_accepted,
-                "data": deepcopy(dict(observation.payload)),
+                "ambiguous": association.ambiguous,
+                "handoff_accepted": association.handoff_accepted,
+                "data": wire_payload,
             },
             context=event.context,
         )
@@ -217,13 +207,12 @@ class HomeAssistantNotifications:
         self,
         hass: HomeAssistant,
         entry_id: str,
-        reply_callback: Callable[[NotificationReplyObservation], None] | None = None,
+        reply_callback: Callable[[ReplyAssociation], None] | None = None,
     ) -> None:
         self.hass = hass
         self.entry_id = entry_id
         self._reply_callback = reply_callback
         self._ingress: _ReplyIngress | None = None
-        self._sent: list[_NotificationRegistration] = []
 
     async def async_start(self) -> None:
         if self._ingress is None:
@@ -240,28 +229,29 @@ class HomeAssistantNotifications:
         """Release this entry; remove the shared listener on the last unload."""
         if self._ingress is not None:
             ingress = self._ingress
+            ingress.correlator.forget_entry(self.entry_id)
             ingress.adapters.discard(self)
             self._ingress = None
             if not ingress.adapters:
                 ingress.unsubscribe()
                 self.hass.data.pop(_REPLY_INGRESS, None)
-        self._sent.clear()
 
     def forget(self, message_id: str) -> bool:
         """Explicitly release this entry's message associations, including sessionless."""
-        previous = len(self._sent)
-        self._sent = [
-            item for item in self._sent if item.notification.message_id != message_id
-        ]
-        return len(self._sent) != previous
+        return bool(
+            self._ingress is not None
+            and self._ingress.correlator.forget_message(self.entry_id, message_id)
+        )
 
     def forget_session(self, session_id: str) -> None:
-        self._sent = [
-            item for item in self._sent if item.notification.session_id != session_id
-        ]
+        if self._ingress is not None:
+            self._ingress.correlator.forget_session(self.entry_id, session_id)
 
     async def handoff(self, notification: NotificationEnvelope) -> TransportHandoff:
         """Register before dispatch; a pending reply never claims accepted handoff."""
+        await self.async_start()
+        ingress = self._ingress
+        assert ingress is not None
         payload = notification.payload
         data = payload.get("data", {}) if isinstance(payload, Mapping) else {}
         native_actions = data.get("actions", ()) if isinstance(data, Mapping) else ()
@@ -276,18 +266,25 @@ class HomeAssistantNotifications:
             if isinstance(native_actions, (list, tuple))
             else frozenset()
         )
-        registration = _NotificationRegistration(notification, actions)
-        if actions:
-            self._sent.append(registration)
+        registration = (
+            ingress.correlator.register(
+                notification,
+                reply_keys=(ReplyKey(TRANSPORT, action) for action in actions),
+            )
+            if actions
+            else None
+        )
         try:
             await self._send(notification)
         except BaseException as err:
             # Cancellation also removes only this in-flight registration.
-            self._sent = [item for item in self._sent if item is not registration]
+            if registration is not None:
+                ingress.correlator.rollback(registration)
             if not isinstance(err, Exception):
                 raise
             return TransportHandoff(notification, False, f"{type(err).__name__}: {err}")
-        registration.accepted = True
+        if registration is not None:
+            ingress.correlator.mark_accepted(registration)
         return TransportHandoff(
             notification,
             True,

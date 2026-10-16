@@ -206,6 +206,12 @@ class NotificationTransportTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_native_device_action_payload_alias_and_observational_reply(self):
         from homeassistant.core import Context
+        from custom_components.ha_sauna.core.notification_exchange import (
+            ReplyAssociation,
+            ReplyDisposition,
+            ReplyEnvelope,
+            ReplyKey,
+        )
         from custom_components.ha_sauna.notifications import async_resolve_recipients
 
         device_id, entity_id = await self.mobile()
@@ -245,6 +251,7 @@ class NotificationTransportTests(unittest.IsolatedAsyncioTestCase):
             "action": "REPLY",
             "reply_text": "Native response",
             "device_id": "untrusted",
+            "nested": {"values": ["original"]},
         }
         context = Context(user_id="synthetic-user")
         self.hass.bus.async_fire(
@@ -252,19 +259,96 @@ class NotificationTransportTests(unittest.IsolatedAsyncioTestCase):
         )
         await self.hass.async_block_till_done()
         observation = self.replies[0]
-        self.assertEqual(dict(observation.payload), native)
-        self.assertEqual(observation.actor.user_id, "synthetic-user")
-        self.assertIsNone(observation.source)
+        self.assertIsInstance(observation, ReplyAssociation)
+        self.assertIsInstance(observation.reply, ReplyEnvelope)
+        self.assertIs(observation.disposition, ReplyDisposition.ACCEPTED)
+        self.assertEqual(observation.reply.reply_key, ReplyKey("home_assistant", "REPLY"))
+        self.assertEqual(observation.reply.context_id, context.id)
+        self.assertEqual(
+            observation.reply.observed_at.isoformat(), self.wire[0]["time_fired"]
+        )
+        for field in (
+            "reply_id", "message_id", "correlation_id", "entry_id", "session_id"
+        ):
+            self.assertIsNone(getattr(observation.reply, field))
+        self.assertEqual(dict(observation.reply.payload), native)
+        self.assertEqual(observation.reply.actor.user_id, "synthetic-user")
+        self.assertIsNone(observation.reply.source)
         self.assertIs(observation.notification, envelope)
         self.assertFalse(observation.ambiguous)
+        native["nested"]["values"].append("later mutation")
+        self.assertEqual(observation.reply.payload["nested"]["values"], ["original"])
+        self.hass.bus.async_fire(
+            "mobile_app_notification_action", native, context=context
+        )
+        await self.hass.async_block_till_done()
+        self.assertEqual(len(self.replies), 2)
+        self.assertEqual(len(self.wire), 2)
+        self.assertEqual(self.replies[1].reply.context_id, context.id)
+        self.assertIsNone(self.replies[1].reply.reply_id)
+        self.assertIsNone(self.replies[1].reply.source)
+        self.assertIs(self.replies[1].disposition, ReplyDisposition.ACCEPTED)
+        self.assertEqual(
+            self.replies[1].reply.payload["nested"]["values"],
+            ["original", "later mutation"],
+        )
         print(
             "NOTIFICATION_EVIDENCE "
             + json.dumps(
                 {
                     "path": "mobile_app device action -> real HA service registry",
+                    "callback_type": type(observation).__name__,
+                    "reply_type": type(observation.reply).__name__,
+                    "reply_id": observation.reply.reply_id,
+                    "reply_source": observation.reply.source,
+                    "native_context_ids": [
+                        item.reply.context_id for item in self.replies
+                    ],
+                    "callback_dispositions": [
+                        item.disposition.value for item in self.replies
+                    ],
+                    "first_nested_payload": observation.reply.payload["nested"],
                     "observed_calls": self.calls,
                     "reply_events": self.wire,
                     "handoff_accepted": handoff.accepted,
+                },
+                sort_keys=True,
+            )
+        )
+
+    async def test_native_callback_payload_mutation_is_independent_of_wire(self):
+        device_id, _ = await self.mobile()
+        payload = {"message": "Synthetic", "data": {"actions": [{"action": "REPLY"}]}}
+        self.assertTrue(
+            (await self.adapter.handoff(self.notification(device_id, payload))).accepted
+        )
+
+        def mutate_callback(association):
+            self.assertEqual(self.wire, [])
+            association.reply.payload["nested"]["values"].append("callback mutation")
+            self.replies.append(association)
+
+        self.adapter._reply_callback = mutate_callback
+        native = {"action": "REPLY", "nested": {"values": ["original"]}}
+        self.hass.bus.async_fire("mobile_app_notification_action", native)
+        await self.hass.async_block_till_done()
+        self.assertEqual(len(self.replies), 1)
+        self.assertEqual(len(self.wire), 1)
+        self.assertEqual(native["nested"]["values"], ["original"])
+        self.assertEqual(self.wire[0]["data"]["nested"]["values"], ["original"])
+        self.assertEqual(
+            self.replies[0].reply.payload["nested"]["values"],
+            ["original", "callback mutation"],
+        )
+        print(
+            "NOTIFICATION_EVIDENCE "
+            + json.dumps(
+                {
+                    "path": "real HA native event callback mutation before wire fire",
+                    "native_data": native,
+                    "callback_data": dict(self.replies[0].reply.payload),
+                    "wire_data": self.wire[0]["data"],
+                    "callback_before_wire": True,
                 },
                 sort_keys=True,
             )
@@ -303,7 +387,7 @@ class NotificationTransportTests(unittest.IsolatedAsyncioTestCase):
         await self.hass.async_block_till_done()
         self.assertEqual(len(self.replies), before)
         self.adapter.close()
-        self.assertFalse(self.adapter._sent)
+        self.assertFalse(self.adapter.forget("message"))
 
     async def test_global_ambiguity_has_one_unknown_scope_event_and_explicit_forget(
         self,
@@ -401,7 +485,7 @@ class NotificationTransportTests(unittest.IsolatedAsyncioTestCase):
         handoff = await self.adapter.handoff(envelope)
         self.assertTrue(handoff.accepted, handoff.evidence)
         self.assertIs(self.replies[0].notification, envelope)
-        self.assertIsNone(self.replies[0].source)
+        self.assertIsNone(self.replies[0].reply.source)
         self.hass.bus.async_fire("mobile_app_notification_action", {"action": "REPLY"})
         await self.hass.async_block_till_done()
         self.assertTrue(self.replies[-1].handoff_accepted)
@@ -447,7 +531,7 @@ class NotificationTransportTests(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(handoff.accepted)
         self.assertEqual(len(self.replies), 1)
         self.assertIsNone(self.replies[0].handoff_accepted)
-        self.assertFalse(self.adapter._sent)
+        self.assertFalse(self.adapter.forget("message"))
         self.hass.bus.async_fire("mobile_app_notification_action", {"action": "REPLY"})
         await self.hass.async_block_till_done()
         self.assertEqual(len(self.replies), 1)
@@ -464,6 +548,80 @@ class NotificationTransportTests(unittest.IsolatedAsyncioTestCase):
             )
         )
 
+    async def test_cancel_after_early_reply_preserves_replacement_registration(self):
+        from test_settings import async_timeout
+
+        device_id, _ = await self.mobile()
+        observed = asyncio.Event()
+        blocked = asyncio.Event()
+
+        def receive(association):
+            self.replies.append(association)
+            observed.set()
+
+        self.adapter._reply_callback = receive
+
+        async def wait_during_send(call):
+            self.calls.append(dict(call.data))
+            self.hass.bus.async_fire(
+                "mobile_app_notification_action", {"action": "REPLY"}
+            )
+            await blocked.wait()
+
+        self.hass.services.async_register(
+            "notify", "synthetic_mobile", wait_during_send
+        )
+        payload = {"message": "Synthetic", "data": {"actions": [{"action": "REPLY"}]}}
+        original = self.notification(device_id, payload)
+        pending = asyncio.create_task(self.adapter.handoff(original))
+        try:
+            await asyncio.wait_for(observed.wait(), async_timeout("service"))
+            self.assertEqual(len(self.replies), 1)
+            early = self.replies[0]
+            self.assertIsNone(early.handoff_accepted)
+            self.assertTrue(self.adapter.forget("message"))
+
+            async def accept_replacement(call):
+                self.calls.append(dict(call.data))
+
+            self.hass.services.async_register(
+                "notify", "synthetic_mobile", accept_replacement
+            )
+            replacement = self.notification(device_id, payload)
+            self.assertTrue((await self.adapter.handoff(replacement)).accepted)
+            pending.cancel()
+            with self.assertRaises(asyncio.CancelledError):
+                await pending
+            blocked.set()
+            self.hass.bus.async_fire(
+                "mobile_app_notification_action", {"action": "REPLY"}
+            )
+            await self.hass.async_block_till_done()
+            self.assertEqual(len(self.replies), 2)
+            self.assertIs(self.replies[-1].notification, replacement)
+            self.assertTrue(self.replies[-1].handoff_accepted)
+            self.assertIs(self.replies[0], early)
+            self.assertIsNone(early.handoff_accepted)
+            print(
+                "NOTIFICATION_EVIDENCE "
+                + json.dumps(
+                    {
+                        "path": "real HA mobile action cancellation after early reply",
+                        "reply_events": self.wire,
+                        "cancel_reraised": True,
+                        "early_acceptance": early.handoff_accepted,
+                        "replacement_acceptance": self.replies[-1].handoff_accepted,
+                        "replacement_identity_preserved": self.replies[-1].notification
+                        is replacement,
+                    },
+                    sort_keys=True,
+                )
+            )
+        finally:
+            pending.cancel()
+            await asyncio.gather(pending, return_exceptions=True)
+            blocked.set()
+
     async def test_navigation_only_payload_needs_no_reply_registration(self):
         device_id, _ = await self.mobile()
         payload = {
@@ -474,7 +632,7 @@ class NotificationTransportTests(unittest.IsolatedAsyncioTestCase):
         }
         handoff = await self.adapter.handoff(self.notification(device_id, payload))
         self.assertTrue(handoff.accepted, handoff.evidence)
-        self.assertFalse(self.adapter._sent)
+        self.assertFalse(self.adapter.forget("message"))
         self.assertEqual(self.calls[0]["data"], payload["data"])
 
     async def test_plain_route_does_not_load_optional_mobile_platform(self):

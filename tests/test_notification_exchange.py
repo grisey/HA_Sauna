@@ -10,6 +10,7 @@ from custom_components.ha_sauna.core.notification_exchange import (
     ReplyCorrelator,
     ReplyDisposition,
     ReplyEnvelope,
+    ReplyKey,
     TransportHandoff,
 )
 from custom_components.ha_sauna.core.notification_recipients import (
@@ -143,7 +144,7 @@ class NotificationExchangeTests(unittest.TestCase):
         changes = (
             (self.notification, {"target": None}),
             (self.notification, {"target": "endpoint"}),
-            (self.reply, {"source": None}),
+            (self.reply, {"source": "endpoint"}),
             (self.reply, {"actor": None}),
             (self.reply, {"actor": "reply-user"}),
         )
@@ -227,6 +228,7 @@ class NotificationExchangeTests(unittest.TestCase):
         for disposition in (
             ReplyDisposition.UNKNOWN,
             ReplyDisposition.MESSAGE_MISMATCH,
+            ReplyDisposition.AMBIGUOUS,
         ):
             association = ReplyAssociation(disposition, self.reply)
             self.assertIsNone(association.notification)
@@ -239,3 +241,120 @@ class NotificationExchangeTests(unittest.TestCase):
                     self.assertRaises(ValueError),
                 ):
                     replace(association, notification=notification)
+
+    def native_reply(self, key):
+        return ReplyEnvelope(
+            None,
+            None,
+            None,
+            None,
+            None,
+            self.reply.actor,
+            {"action": key.value},
+            context_id="shared-context",
+            reply_key=key,
+        )
+
+    def test_native_reply_preserves_unknown_identity_and_repeated_context(self):
+        key = ReplyKey("home_assistant", "answer")
+        owner = ReplyCorrelator()
+        handle = owner.register(self.notification, reply_keys=(key,))
+        reply = self.native_reply(key)
+        early = owner.receive(reply)
+        self.assertEqual(early.disposition, ReplyDisposition.ACCEPTED)
+        self.assertIsNone(early.handoff_accepted)
+        self.assertIsNone(early.reply.reply_id)
+        self.assertIsNone(early.reply.source)
+        self.assertIsNone(early.reply.entry_id)
+        self.assertTrue(owner.mark_accepted(handle))
+        later = owner.receive(reply)
+        self.assertEqual(later.disposition, ReplyDisposition.ACCEPTED)
+        self.assertTrue(later.handoff_accepted)
+        self.assertIsNone(early.handoff_accepted)
+        unknown = owner.receive(
+            replace(reply, reply_key=ReplyKey("other", "answer"))
+        )
+        self.assertEqual(unknown.disposition, ReplyDisposition.UNKNOWN)
+
+    def test_native_ambiguity_does_not_consume_independent_reply_identity(self):
+        key = ReplyKey("home_assistant", "answer")
+        owner = ReplyCorrelator()
+        owner.register(self.notification, reply_keys=(key,))
+        second = owner.register(
+            replace(self.notification, message_id="second"), reply_keys=(key,)
+        )
+        reply = replace(self.native_reply(key), reply_id="real-event")
+        ambiguous = owner.receive(reply)
+        self.assertTrue(ambiguous.ambiguous)
+        self.assertIsNone(ambiguous.notification)
+        self.assertIsNone(ambiguous.handoff_accepted)
+        self.assertTrue(owner.rollback(second))
+        self.assertEqual(owner.receive(reply).disposition, ReplyDisposition.ACCEPTED)
+        self.assertEqual(owner.receive(reply).disposition, ReplyDisposition.DUPLICATE)
+
+    def test_exact_rollback_and_acceptance_preserve_replacement_registration(self):
+        key = ReplyKey("home_assistant", "answer")
+        owner = ReplyCorrelator()
+        old = owner.register(self.notification, reply_keys=(key,))
+        early = owner.receive(self.native_reply(key))
+        self.assertTrue(owner.rollback(old))
+        replacement = owner.register(self.notification, reply_keys=(key,))
+        self.assertFalse(owner.rollback(old))
+        self.assertFalse(owner.mark_accepted(old))
+        self.assertIsNone(owner.receive(self.native_reply(key)).handoff_accepted)
+        self.assertTrue(owner.mark_accepted(replacement))
+        self.assertTrue(owner.receive(self.native_reply(key)).handoff_accepted)
+        self.assertIsNone(early.handoff_accepted)
+        self.assertIs(early.notification, self.notification)
+
+    def test_central_cleanup_is_scoped_to_entry_message_and_session(self):
+        key = ReplyKey("home_assistant", "answer")
+        owner = ReplyCorrelator()
+        for notification in (
+            self.notification,
+            replace(self.notification, message_id="second", session_id=None),
+            replace(self.notification, entry_id="other"),
+        ):
+            owner.register(notification, reply_keys=(key,))
+        self.assertEqual(owner.forget_session("entry", "session"), 1)
+        self.assertEqual(owner.forget_message("entry", "second"), 1)
+        self.assertEqual(owner.forget_entry("entry"), 0)
+        self.assertEqual(
+            owner.receive(self.native_reply(key)).notification.entry_id, "other"
+        )
+        self.assertEqual(owner.forget_entry("other"), 1)
+        self.assertEqual(
+            owner.receive(self.native_reply(key)).disposition, ReplyDisposition.UNKNOWN
+        )
+
+    def test_explicit_message_evidence_disambiguates_native_registrations(self):
+        key = ReplyKey("home_assistant", "answer")
+        owner = ReplyCorrelator()
+        owner.register(self.notification, reply_keys=(key,))
+        second = replace(self.notification, message_id="second")
+        owner.register(second, reply_keys=(key,))
+        self.assertIs(owner.receive(self.reply).notification, self.notification)
+        self.assertIs(
+            owner.receive(replace(self.reply, message_id="second")).notification,
+            second,
+        )
+        self.assertEqual(
+            owner.receive(replace(self.reply, message_id="wrong")).disposition,
+            ReplyDisposition.MESSAGE_MISMATCH,
+        )
+        native = self.native_reply(key)
+        self.assertEqual(owner.receive(native).disposition, ReplyDisposition.AMBIGUOUS)
+        self.assertIs(
+            owner.receive(replace(native, message_id="second")).notification, second
+        )
+
+
+    def test_native_key_preserves_all_existing_string_action_values(self):
+        owner = ReplyCorrelator()
+        for value in ("", " "):
+            key = ReplyKey("home_assistant", value)
+            handle = owner.register(self.notification, reply_keys=(key,))
+            self.assertIs(
+                owner.receive(self.native_reply(key)).notification, self.notification
+            )
+            self.assertTrue(owner.rollback(handle))

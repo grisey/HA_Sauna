@@ -1,5 +1,6 @@
 """Explicit send uses saved mappings and the existing operation permission."""
 
+import json
 import unittest
 from dataclasses import replace
 from unittest.mock import AsyncMock, patch
@@ -7,7 +8,13 @@ from unittest.mock import AsyncMock, patch
 from homeassistant.auth.const import GROUP_ID_USER
 from homeassistant.core import Context
 
-from custom_components.ha_sauna.core.notification_exchange import TransportHandoff
+from custom_components.ha_sauna.core.notification_exchange import (
+    ReplyAssociation,
+    ReplyDisposition,
+    ReplyEnvelope,
+    ReplyKey,
+    TransportHandoff,
+)
 from custom_components.ha_sauna.core.notification_recipients import (
     CapabilityEvidence,
     RecipientAssignment,
@@ -146,6 +153,12 @@ class NotificationServiceTests(unittest.IsolatedAsyncioTestCase):
             ),
         )
         observed = []
+        associations = []
+        callback_patch = patch.object(
+            runtime.notification_transport, "_reply_callback", associations.append
+        )
+        callback_patch.start()
+        self.addCleanup(callback_patch.stop)
         unsubscribe = self.hass.bus.async_listen(
             "ha_sauna_notification_reply", observed.append
         )
@@ -184,6 +197,53 @@ class NotificationServiceTests(unittest.IsolatedAsyncioTestCase):
         await self.hass.async_block_till_done()
         self.assertEqual(len(observed), 1)
         self.assertEqual(observed[0].data["message_id"], message_id)
+        self.assertEqual(len(associations), 1)
+        association = associations[0]
+        self.assertIsInstance(association, ReplyAssociation)
+        self.assertEqual(association.disposition, ReplyDisposition.ACCEPTED)
+        self.assertTrue(association.handoff_accepted)
+        self.assertEqual(association.notification.message_id, message_id)
+        reply = association.reply
+        self.assertIsInstance(reply, ReplyEnvelope)
+        self.assertEqual(
+            reply.reply_key,
+            ReplyKey("home_assistant", "synthetic_forget_action"),
+        )
+        self.assertIsNone(reply.reply_id)
+        self.assertIsNone(reply.source)
+        self.assertIsNone(reply.entry_id)
+        self.assertIsNone(reply.message_id)
+        self.assertIsNone(reply.correlation_id)
+        self.assertIsNone(reply.session_id)
+        self.assertEqual(reply.payload, observed[0].data["data"])
+        self.assertEqual(reply.context_id, observed[0].data["context_id"])
+        self.assertEqual(reply.observed_at.isoformat(), observed[0].data["time_fired"])
+        self.assertIsNone(observed[0].data["source"])
+        print(
+            "NOTIFICATION_EVIDENCE "
+            + json.dumps(
+                {
+                    "selector": "NotificationServiceTests.test_explicit_forget_removes_sessionless_reply_association",
+                    "association_type": type(association).__name__,
+                    "reply_type": type(reply).__name__,
+                    "disposition": association.disposition.value,
+                    "handoff_accepted": association.handoff_accepted,
+                    "native_reply_id": reply.reply_id,
+                    "native_source": reply.source,
+                    "native_entry_id": reply.entry_id,
+                    "native_message_id": reply.message_id,
+                    "native_correlation_id": reply.correlation_id,
+                    "native_session_id": reply.session_id,
+                    "wire_matches_association": (
+                        observed[0].data["message_id"]
+                        == association.notification.message_id
+                    ),
+                    "callback_count": len(associations),
+                    "event_count": len(observed),
+                },
+                sort_keys=True,
+            )
+        )
         await self.hass.services.async_call(
             "ha_sauna",
             "forget_notification",
@@ -199,6 +259,7 @@ class NotificationServiceTests(unittest.IsolatedAsyncioTestCase):
         )
         await self.hass.async_block_till_done()
         self.assertEqual(len(observed), 1)
+        self.assertEqual(len(associations), 1)
 
     async def test_forget_uses_the_same_user_permission_boundary(self):
         from homeassistant.exceptions import Unauthorized

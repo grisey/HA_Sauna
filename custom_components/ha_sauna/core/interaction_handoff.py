@@ -6,12 +6,13 @@ reply, expire registrations, or emit any action.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, fields, is_dataclass
 from datetime import datetime, timedelta
+from enum import Enum
 from typing import TYPE_CHECKING
 
 from .model_handoff import freeze_data
-from .notification_exchange import ReplyDisposition
+from .notification_exchange import ReplyDisposition, ReplyKey
 from .notification_recipients import ActorRef, TargetIdentity
 
 if TYPE_CHECKING:
@@ -98,14 +99,17 @@ class NotificationEnvelopeSnapshot:
 class ReplyEnvelopeSnapshot:
     """The complete reply, including independent provenance and opaque payload."""
 
-    reply_id: str
-    message_id: str
-    correlation_id: str
-    entry_id: str
-    source: TargetIdentity
+    reply_id: str | None
+    message_id: str | None
+    correlation_id: str | None
+    entry_id: str | None
+    source: TargetIdentity | None
     actor: ActorRef
     payload: object
     session_id: str | None
+    context_id: str | None
+    observed_at: datetime | None
+    reply_key: ReplyKey | None
 
     @classmethod
     def capture(cls, envelope: ReplyEnvelope) -> ReplyEnvelopeSnapshot:
@@ -119,6 +123,9 @@ class ReplyEnvelopeSnapshot:
             actor=envelope.actor,
             payload=freeze_data(envelope.payload),
             session_id=envelope.session_id,
+            context_id=envelope.context_id,
+            observed_at=envelope.observed_at,
+            reply_key=envelope.reply_key,
         )
 
 
@@ -161,11 +168,17 @@ class ReplyAssociationSnapshot:
     disposition: ReplyDisposition
     reply: ReplyEnvelopeSnapshot
     notification: NotificationEnvelopeSnapshot | None
+    handoff_accepted: bool | None
+
+    @property
+    def ambiguous(self) -> bool:
+        return self.disposition is ReplyDisposition.AMBIGUOUS
 
     @classmethod
     def capture(cls, association: ReplyAssociation) -> ReplyAssociationSnapshot:
         return cls(
             disposition=association.disposition,
+            handoff_accepted=association.handoff_accepted,
             reply=ReplyEnvelopeSnapshot.capture(association.reply),
             notification=(
                 NotificationEnvelopeSnapshot.capture(association.notification)
@@ -181,6 +194,29 @@ class ReplyRegistrationSnapshot:
 
     notification: NotificationEnvelopeSnapshot
     reply_ids: frozenset[str]
+    reply_keys: frozenset[ReplyKey]
+    handoff_accepted: bool | None
+
+
+def _snapshot_order(value: object) -> tuple:
+    """Compare already frozen snapshot values, including unordered collections."""
+    value_type = type(value)
+    name = f"{value_type.__module__}.{value_type.__qualname__}"
+    if is_dataclass(value):
+        return (
+            name,
+            tuple(
+                (definition.name, _snapshot_order(getattr(value, definition.name)))
+                for definition in fields(value)
+            ),
+        )
+    if isinstance(value, tuple):
+        return name, tuple(_snapshot_order(item) for item in value)
+    if isinstance(value, frozenset):
+        return name, tuple(sorted(_snapshot_order(item) for item in value))
+    if isinstance(value, Enum):
+        return name, _snapshot_order(value.value)
+    return name, repr(value)
 
 
 @dataclass(frozen=True)
@@ -192,25 +228,30 @@ class ReplyCorrelatorSnapshot:
     @classmethod
     def capture(cls, owner: ReplyCorrelator) -> ReplyCorrelatorSnapshot:
         """Read a deterministic snapshot without changing deduplication state."""
-        registrations = sorted(
-            owner._registrations.values(),
-            key=lambda registration: (
-                registration.notification.entry_id,
-                registration.notification.session_id or "",
-                registration.notification.correlation_id,
-                registration.notification.target.transport,
-                registration.notification.target.endpoint,
-                registration.notification.message_id,
-            ),
+        registrations = tuple(
+            ReplyRegistrationSnapshot(
+                notification=NotificationEnvelopeSnapshot.capture(
+                    registration.notification
+                ),
+                reply_ids=frozenset(registration.reply_ids),
+                reply_keys=registration.reply_keys,
+                handoff_accepted=registration.handoff_accepted,
+            )
+            for registration in owner._registrations.values()
         )
         return cls(
             registrations=tuple(
-                ReplyRegistrationSnapshot(
-                    notification=NotificationEnvelopeSnapshot.capture(
-                        registration.notification
+                sorted(
+                    registrations,
+                    key=lambda registration: (
+                        registration.notification.entry_id,
+                        registration.notification.session_id or "",
+                        registration.notification.correlation_id,
+                        registration.notification.target.transport,
+                        registration.notification.target.endpoint,
+                        registration.notification.message_id,
+                        _snapshot_order(registration),
                     ),
-                    reply_ids=frozenset(registration.reply_ids),
                 )
-                for registration in registrations
             )
         )

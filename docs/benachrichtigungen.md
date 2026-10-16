@@ -98,3 +98,13 @@ Instanz-, Nachrichten- und Zielangaben und `ambiguous: true` ausgegeben. Eine
 frühe Antwort während des laufenden Versandaufrufs kann bereits zugeordnet
 werden; `handoff_accepted` bleibt bis dessen Abschluss unbekannt. Antworten lösen
 keine Saunabedienung aus.
+
+Alle geladenen Instanzen verwenden einen gemeinsamen Korrelationsowner für
+native Aktionskennungen. Der Eingang bewahrt die native Antwort als
+`ReplyEnvelope`; die resultierende `ReplyAssociation` verbindet sie gegebenenfalls
+mit der gesendeten Nachricht. Unbekannte Antwort-, Nachrichten-, Instanz- und
+Quellidentitäten bleiben im Eingang unbekannt. Die HA-Kontextkennung und die
+Ereigniszeit sind eigene Metadaten und keine Antwortidentität. Mehrere native
+Ereignisse mit derselben Kontextkennung bleiben einzeln beobachtbar. Die
+Eventausgabe projiziert die gemeinsame Zuordnung; sie führt keinen eigenen
+Zuordnungsbestand.
