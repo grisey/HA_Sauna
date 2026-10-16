@@ -513,17 +513,13 @@ test("non-DWD weather keeps supplied metrics and escapes source strings", () => 
     "weather-evidence " +
       JSON.stringify({ scenario: "non-DWD", environment: p.state.environment, html }),
   );
-  assert.ok(
-    html.includes('<div class="weather-heading"><span>Umgebungswetter</span>'),
-  );
+  assert.ok(html.includes('<div class="weather-heading"><span>Umgebungswetter</span>'));
   assert.ok(!html.includes("DWD"));
   assert.ok(html.includes('role="img"'));
   assert.ok(html.includes("Leicht bewölkt"));
   assert.ok(html.includes("16,4"));
   assert.ok(
-    html.includes(
-      "Private Wetterstation &lt;img src=x onerror=&quot;bad()&quot;&gt;",
-    ),
+    html.includes("Private Wetterstation &lt;img src=x onerror=&quot;bad()&quot;&gt;"),
   );
   assert.ok(html.includes("Außen &lt;b&gt;"));
   assert.ok(html.includes("&lt;script&gt;bad()&lt;/script&gt;"));

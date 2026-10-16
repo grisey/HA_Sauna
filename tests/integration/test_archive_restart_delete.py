@@ -52,8 +52,15 @@ class ArchiveRestartDeleteTests(unittest.IsolatedAsyncioTestCase):
                 self.assertTrue(runtime.archive.closed)
                 self.assertIs(runtime.device.command, False)
                 stopped = runtime.archive.read(identity, now=observed_at)
+                print(json.dumps({
+                    "evidence": "archive_stop",
+                    "completed_before_stop": completed,
+                    "session_id": stopped["session"]["timeline"]["session_id"],
+                    "ended_at": stopped["session"]["ended_at"],
+                    "heater_commanded": runtime.device.command,
+                }, ensure_ascii=False, sort_keys=True), flush=True)
                 self.assertEqual(stopped["session"]["ended_at"], before["session"]["ended_at"])
-                self.assertEqual(stopped["session"]["session_id"], identity)
+                self.assertEqual(stopped["session"]["timeline"]["session_id"], identity)
                 self.assertEqual(stopped["session"]["timeline"]["session_started_at"], original.timeline.session_started_at.isoformat())
                 self.assertEqual(stopped["session"]["timeline"]["completed"], before["session"]["timeline"]["completed"])
                 if not completed:
@@ -87,7 +94,7 @@ class ArchiveRestartDeleteTests(unittest.IsolatedAsyncioTestCase):
                     },
                     "active_session_after_restart": new_runtime.session,
                     "automatic_operation_after_restart": new_runtime.controller.automatic_operation_enabled,
-                }, ensure_ascii=False, sort_keys=True))
+                }, ensure_ascii=False, sort_keys=True), flush=True)
                 async with client.post(base + "/archive/erase", json={"session_id": identity}) as response:
                     self.assertEqual(response.status, 200, await response.text())
                     self.assertEqual((await response.json())["deleted_sessions"], 1)
