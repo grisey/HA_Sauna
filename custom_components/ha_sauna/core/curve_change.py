@@ -93,6 +93,36 @@ class OriginalWindowFeatures:
 
 
 @dataclass(frozen=True)
+class OriginalKinkTolerance:
+    """Causal background scale and the remaining signed raw slope change.
+
+    The historical scale is the median absolute change between neighboring
+    K-original OLS slopes. It describes observed ordinary slope-change
+    strength in input units per second (pp/s for RH), not a measurement-error
+    guarantee or an event probability. Its windows may overlap.
+    history_count counts complete historical 2K supports; their combined
+    original support runs from history_start through history_end. With no
+    complete historical window those times and history_scale are None.
+    An exactly zero historical scale is valid. Insufficient history retains
+    its evidence, while used_scale falls back to the calibrated catalogue.
+    The detector owns direction requirements and all admission decisions.
+    """
+
+    window: OriginalWindowFeatures
+    factor: float
+    history_count: int
+    history_start: datetime | None
+    history_end: datetime | None
+    history_scale: float | None
+    status: str
+    catalog_scale: float
+    used_scale: float
+    tolerance: float
+    delta: float
+    effective_change: float
+
+
+@dataclass(frozen=True)
 class OriginalPositionWindows:
     """The temperature and RH original windows of one configured position."""
 
@@ -480,6 +510,111 @@ def original_window(
             previous=previous, current=current, scale=float(scale),
             v=new[0], b=old[0], e=new[1], e_minus=old[1],
             mean=new[2], mean_minus=old[2], r=new[3], r_minus=old[3],
+        )
+    except (AttributeError, IndexError, OverflowError, TypeError, ValueError):
+        return None
+
+
+def original_kink_tolerance(
+    samples: Sequence[tuple[datetime, float]], window: OriginalWindowFeatures, *,
+    factor: float, min_history_windows: int, max_gap_seconds: float,
+) -> OriginalKinkTolerance | None:
+    """Shrink one raw slope change by a caller-scaled causal background.
+
+    Only originals strictly before window.previous[0] supply history. Every
+    consecutive historical 2K block uses the same K and the actual original
+    times with _original_line. Its score is abs(v_j - b_j), so a smooth bend
+    may contribute a nonzero scale even without erratic variation.
+    A valid gap exceeding max_gap_seconds cuts off older history, including
+    at the connection to the current support. Malformed causal originals and
+    invalid current support remain unknown (None), never repaired.
+    Originals after window.newest_at do not affect this result. The caller
+    supplies bounded history from one source and epoch; its source identity
+    and the raw current values are not reconstructed or changed here.
+    Work is bounded by that supplied history and K. No numerical noise floor
+    is added. factor == 0 preserves the raw delta as a control case.
+    """
+    try:
+        if (not _original_window_valid(window)
+                or not _profile_number(factor) or factor < 0
+                or not isinstance(min_history_windows, int)
+                or isinstance(min_history_windows, bool)
+                or min_history_windows <= 0
+                or not _original_positive(max_gap_seconds)):
+            return None
+        count = len(window.previous)
+        if count < 2 or len(window.current) != count:
+            return None
+        previous_at = None
+        for stamp, value in window.previous + window.current:
+            if not isinstance(stamp, datetime) or not _profile_number(value):
+                return None
+            if previous_at is not None and not (
+                0 < (stamp - previous_at).total_seconds() <= max_gap_seconds
+            ):
+                return None
+            previous_at = stamp
+        start_at = window.start_at
+        newest_at = window.newest_at
+        history = []
+        previous_at = None
+        for stamp, value in samples:
+            if not isinstance(stamp, datetime):
+                return None
+            if stamp > newest_at:
+                continue
+            if previous_at is not None and stamp <= previous_at:
+                return None
+            previous_at = stamp
+            if stamp >= start_at:
+                continue
+            if not _profile_number(value):
+                return None
+            if history and (
+                stamp - history[-1][0]
+            ).total_seconds() > max_gap_seconds:
+                history.clear()
+            history.append((stamp, float(value)))
+        if history and (
+            start_at - history[-1][0]
+        ).total_seconds() > max_gap_seconds:
+            history.clear()
+        historical_changes = []
+        for end in range(2 * count, len(history) + 1):
+            old = _original_line(
+                tuple(history[end - 2 * count:end - count]), window.scale,
+            )
+            new = _original_line(tuple(history[end - count:end]), window.scale)
+            if old is None or new is None:
+                return None
+            difference = abs(new[0] - old[0])
+            if not _profile_number(difference):
+                return None
+            historical_changes.append(difference)
+        history_count = len(historical_changes)
+        history_scale = median(historical_changes) if history_count else None
+        catalog_scale = window.e + window.e_minus
+        if (not _original_positive(catalog_scale)
+                or (history_scale is not None and not _profile_number(history_scale))):
+            return None
+        enough_history = history_count >= min_history_windows
+        used_scale = catalog_scale
+        if enough_history:
+            used_scale = max(catalog_scale, history_scale)
+        tolerance = factor * used_scale
+        delta = window.v - window.b
+        if not all(_profile_number(value) for value in (tolerance, delta)):
+            return None
+        remaining = max(0.0, abs(delta) - tolerance)
+        effective_change = -remaining if delta < 0 else remaining
+        return OriginalKinkTolerance(
+            window=window, factor=float(factor), history_count=history_count,
+            history_start=history[0][0] if history_count else None,
+            history_end=history[-1][0] if history_count else None,
+            history_scale=history_scale,
+            status="history" if enough_history else "insufficient",
+            catalog_scale=catalog_scale, used_scale=used_scale,
+            tolerance=tolerance, delta=delta, effective_change=effective_change,
         )
     except (AttributeError, IndexError, OverflowError, TypeError, ValueError):
         return None

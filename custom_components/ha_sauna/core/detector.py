@@ -21,6 +21,7 @@ from .curve_change import (
     curve_trend,
     original_contrasts,
     original_flattening,
+    original_kink_tolerance,
     original_thermal_contrasts,
     original_water_pair,
     original_water_pair_support,
@@ -109,6 +110,7 @@ class _OriginalPrefix:
     points: tuple
     windows: tuple
     temperatures: tuple
+    humidity_kinks: tuple = ()
 
 
 def robust_slope(values, step=BY_KEY["grid_seconds"].default):
@@ -264,6 +266,7 @@ class Detector:
         self._original_prefix_overflow = False
         self._original_window_cache = {}
         self._original_points_cache = {}
+        self._original_kink_cache = {}
         self._original_infusion_candidate = None
 
     @property
@@ -429,7 +432,7 @@ class Detector:
 
     def _record_original_prefix(self, received_at, *, original):
         """Jedes angenommene Präfix erhalten; ein Raster ist kein neues Original."""
-        points, windows, temperatures = [], [], []
+        points, windows, temperatures, humidity_kinks = [], [], [], []
         for position in self.positions:
             streams = []
             for quantity in (Quantity.TEMPERATURE, Quantity.HUMIDITY):
@@ -458,6 +461,20 @@ class Detector:
                 if feature is not None and (received_at - feature.newest_at).total_seconds() > gap:
                     feature = None
                 features.append(feature)
+                if quantity == Quantity.HUMIDITY:
+                    cached = self._original_kink_cache.get(position)
+                    if cached is None or cached[0] != series["version"]:
+                        kink = (original_kink_tolerance(
+                            samples, feature,
+                            factor=self.p["curve_original_kink_factor"],
+                            min_history_windows=self.p["curve_original_kink_history_windows"],
+                            max_gap_seconds=gap,
+                        ) if feature is not None else None)
+                        cached = (series["version"], kink)
+                        self._original_kink_cache[position] = cached
+                    humidity_kinks.append((
+                        position.value, cached[1] if feature is not None else None,
+                    ))
             if features[0] is not None:
                 temperatures.append((position.value, features[0]))
             if all(feature is not None for feature in features):
@@ -466,8 +483,57 @@ class Detector:
             self._original_prefix_overflow = True
         self._original_prefixes.append(_OriginalPrefix(
             received_at, original, self._original_context(), tuple(points), tuple(windows),
-            tuple(temperatures),
+            tuple(temperatures), tuple(humidity_kinks),
         ))
+
+    @staticmethod
+    def _original_humidity_kinks(prefix, positions):
+        """Nur die vor der Entscheidung empfangenen RH-Toleranzen verwenden."""
+        kinks = dict(prefix.humidity_kinks)
+        return tuple((position.value, kinks.get(position.value)) for position in positions)
+
+    def _original_humidity_kink_gate(self, kinks, *, rising):
+        """Jede gebundene RH-Rolle muss den gerichteten Knick selbst belegen."""
+        control_mode = self.p["curve_original_kink_factor"] == 0
+        positions = {}
+        for position, kink in kinks:
+            passed = None
+            if kink is not None:
+                passed = kink.effective_change > 0 if rising else kink.effective_change < 0
+            threshold = None
+            if kink is not None:
+                threshold = kink.tolerance if rising else -kink.tolerance
+            record = _gate(
+                passed, value=kink.delta if kink is not None else None,
+                operator=">" if rising else "<",
+                threshold=threshold, unit="%/s",
+                reason="invalid_original_kink_support" if kink is None else None,
+            )
+            record["valid"] = kink is not None
+            record["status"] = kink.status if kink is not None else "invalid"
+            if kink is not None:
+                record.update(
+                    factor=kink.factor, catalog_scale=kink.catalog_scale,
+                    history_scale=kink.history_scale, used_scale=kink.used_scale,
+                    tolerance=kink.tolerance, delta=kink.delta,
+                    effective_change=kink.effective_change,
+                    scale_source=("catalog_history_max" if kink.status == "history"
+                                  else "catalog_fallback"),
+                    history_count=kink.history_count, history_start=kink.history_start,
+                    history_end=kink.history_end, start_at=kink.window.start_at,
+                    newest_at=kink.window.newest_at,
+                )
+            positions[position] = record
+        return {
+            # Faktor null ist der unveränderte rohe Kontrollpfad, auch wenn
+            # zusätzliche historische Toleranzstützen nicht auswertbar sind.
+            "result": bool(positions) and (control_mode or all(
+                record["result"] is True for record in positions.values()
+            )),
+            "direction": "rise" if rising else "fall", "positions": positions,
+            "factor": self.p["curve_original_kink_factor"],
+            "applied": not control_mode, "control_mode": control_mode,
+        }
 
     @staticmethod
     def _original_bound_context(context, positions):
@@ -974,6 +1040,20 @@ class Detector:
                     if episode is not None:
                         episode.pop("original_open", None)
                     continue
+                humidity_kinks = self._original_humidity_kinks(prefix, positions)
+                kink_gate = self._original_humidity_kink_gate(humidity_kinks, rising=False)
+                raw_binding = bool(
+                    prefix.original and contrasts.humidity_fall_onset > significance
+                )
+                binding = bool(raw_binding and kink_gate["result"])
+                forms.update(
+                    binding_humidity_fall_onset=_gate(
+                        raw_binding, value=contrasts.humidity_fall_onset, operator=">",
+                        threshold=significance, unit="contrast",
+                    ),
+                    binding_humidity_fall_kink=kink_gate,
+                    binding_humidity_fall=_gate(binding),
+                )
                 fall_ends = {
                     name: original_flattening(pair.humidity, pair.temperature,
                                               significance=significance)
@@ -1009,7 +1089,6 @@ class Detector:
                         self.baseline = {}
                         self.ventilation_positions = ()
                     continue
-                binding = bool(prefix.original and contrasts.humidity_fall_onset > significance)
                 if episode is None and binding:
                     self._start_door_episode(positions, now, now)
                     episode = self.door_episode
@@ -1025,6 +1104,7 @@ class Detector:
                             "newest": self._original_newest(contrasts),
                             "context": context, "windows": contrasts.positions,
                             "humidity_fall_onset": contrasts.humidity_fall_onset,
+                            "humidity_kinks": humidity_kinks,
                         }
                         episode["original_open"] = candidate
                 opening = bool(
@@ -1033,12 +1113,11 @@ class Detector:
                     and self._original_newer(contrasts, candidate["newest"])
                 )
                 forms.update(
-                    binding_humidity_fall_onset=_gate(
-                        binding, value=contrasts.humidity_fall_onset, operator=">",
-                        threshold=significance, unit="contrast",
-                    ),
                     bound_humidity_fall_onset=(candidate["humidity_fall_onset"]
                                               if candidate is not None else None),
+                    bound_humidity_fall_kink=(self._original_humidity_kink_gate(
+                        candidate["humidity_kinks"], rising=False,
+                    ) if candidate is not None else None),
                     candidate_received_at=(candidate["received_at"] if candidate is not None else None),
                     candidate_originals=candidate["newest"] if candidate is not None else (),
                     binding_support=(self._original_support(candidate["windows"])
@@ -1350,6 +1429,13 @@ class Detector:
                 if episode is not None:
                     episode["original_background"] = None
                 continue
+            humidity_kinks = self._original_humidity_kinks(prefix, positions)
+            kink_gate = self._original_humidity_kink_gate(humidity_kinks, rising=True)
+            tolerated_onset = bool(
+                contrasts.humidity_rise_onset > significance
+                and kink_gate["result"]
+            )
+            binding = bool(prefix.original and tolerated_onset)
             trace["original_infusion"] = {
                 "received_at": prefix.received_at,
                 "positions": expected,
@@ -1367,6 +1453,8 @@ class Detector:
                     value=contrasts.humidity_rise_onset,
                     operator=">", threshold=significance, unit="contrast",
                 ),
+                "binding_humidity_rise_kink": kink_gate,
+                "binding_humidity_rise": _gate(binding),
                 "fall_contrast": _gate(
                     contrasts.fall > significance, value=contrasts.fall,
                     operator=">", threshold=significance, unit="contrast",
@@ -1412,9 +1500,9 @@ class Detector:
                        for _, pair in contrasts.positions):
                     component["rise_ended"] = True
             if (component is not None and (component["fall_confirmed"] or component["rise_ended"])
-                    and contrasts.humidity_rise_onset > significance):
+                    and tolerated_onset):
                 self._original_infusion_candidate = component = None
-            if component is None and prefix.original and contrasts.humidity_rise_onset > significance:
+            if component is None and binding:
                 previous_component = (episode.get("original_component")
                                       if episode is not None else None)
                 branch_floors = {
@@ -1439,6 +1527,11 @@ class Detector:
                     "binding_windows": contrasts.positions,
                     "branch_floors": branch_floors,
                     "humidity_rise_onset": contrasts.humidity_rise_onset,
+                    "humidity_kinks": humidity_kinks,
+                    "humidity_kink_originals": tuple(
+                        (position.value, humidity)
+                        for position, _, humidity in prefix.points if position in positions
+                    ),
                     "onsets": onsets, "assignment": assignment,
                     "continuing": assignment == "continuation", "rise_score": None,
                     "strong": False, "qualified": False, "fall_confirmed": False,
@@ -1542,6 +1635,9 @@ class Detector:
                         binding_support=self._original_support(component["binding_windows"]),
                         continued_support=self._original_support(contrasts.positions),
                         bound_humidity_rise_onset=component["humidity_rise_onset"],
+                        bound_humidity_rise_kink=self._original_humidity_kink_gate(
+                            component["humidity_kinks"], rising=True,
+                        ),
                         branch_floors={position.value: stamp for position, stamp
                                        in component["branch_floors"].items()},
                         water_support_end={position.value: stamp for position, stamp
@@ -3195,6 +3291,16 @@ class Detector:
                 self._original_context(), component["positions"],
             ):
                 continue
+            kink = dict(component.get("humidity_kinks", ())).get(position.value)
+            if (quantity == Quantity.HUMIDITY and kink is not None and kink.factor > 0
+                    and kink.status == "history"
+                    and kink.history_start <= corrected_at <= kink.history_end
+                    and any(stamp == corrected_at for stamp, _ in dict(
+                        component["humidity_kink_originals"],
+                    ).get(position.value, ()))):
+                # Der unveränderlich gebundene Hintergrund ist korrigiert.
+                # Eine spätere Historie darf diesen Beginn nicht neu zulassen.
+                component_invalid = True
             end_windows = dict(component.get("rise_end_windows", ()))
             end_pair = end_windows.get(position.value)
             if end_pair is not None:
@@ -3232,6 +3338,12 @@ class Detector:
                     component["rise_score"] = contrasts.rise
                 if key == "binding_windows" and contrasts is not None:
                     component["humidity_rise_onset"] = contrasts.humidity_rise_onset
+                    if quantity == Quantity.HUMIDITY and kink is not None and kink.factor > 0:
+                        humidity = dict(windows)[position.value].humidity
+                        # Nur den korrigierten gebundenen Anstieg mit seiner
+                        # ursprünglichen Toleranz vergleichen; Beleg und
+                        # historische Originale bleiben unverändert.
+                        component_invalid |= humidity.v - humidity.b <= kink.tolerance
                 if contrasts is None or getattr(contrasts, score) <= threshold:
                     component_invalid = True
                     if key == "fall_windows":
