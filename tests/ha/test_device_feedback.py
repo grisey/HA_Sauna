@@ -5,8 +5,7 @@ import importlib.util
 import json
 import os
 import sys
-from collections import deque
-from dataclasses import fields, is_dataclass, replace
+from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from tempfile import TemporaryDirectory
@@ -466,22 +465,20 @@ class DeviceFeedbackTests(unittest.TestCase):
     async def prepare_infusion_packet(
         self, runtime, adapter, clock, at, *, temperature=90,
     ):
-        """Prepare a pending RH pulse using genuine HA original reports.
+        """Reserve the K-th post-peak humidity original for the caller.
 
-        Original reports rise from 20 to a peak above the caller's final 24,
-        then decline until the first supported, unconfirmed decay candidate.
-        Subsequent ticks add no originals; the final 24 report remains reserved
-        for the caller's same-time packet. No completed detection or
-        confirmation time supplies fixture values.
-
-        Minimum lead is (5 * curve_min_side_samples + 6) * grid_seconds.
-        Callers also provide the ordinary RH/AH comparison and median warmup.
+        A 20-to-28 RH rise supplies the strong, water-positive component.
+        Exactly K-1 falling originals precede the caller's RH=24 original:
+        the current K-original window still contains the peak until that packet
+        (docs/erkennung.md, Aufgussbestätigung). Ticks cannot replace originals.
+        No detected candidate or confirmation time determines the input sequence.
         """
         values = runtime.configuration.parameters.values
         side = values["curve_min_side_samples"]
+        count = values["curve_original_samples"]
         step = timedelta(seconds=values["grid_seconds"])
         flank_steps = 2 * side + 2
-        peak_at = at - flank_steps * step
+        peak_at = at - count * step
         rising_at = peak_at - flank_steps * step
         baseline_start = rising_at - (side + 1) * step
         baseline_end = baseline_start - step
@@ -501,116 +498,30 @@ class DeviceFeedbackTests(unittest.TestCase):
         baseline_humidity, final_humidity = 20, 24
         peak_humidity = final_humidity + (final_humidity - baseline_humidity)
 
-        # Fixture-local observation only: retain owner values, never derive a
-        # replacement proof from the pulse schedule or mutate detector state.
-        receipts = deque(maxlen=256)
-        traces = deque(maxlen=8)
-        receipt_count = 0
-        emitted = False
-        first_confirmation_trace = None
-        ingest = adapter.ingest
-        observer = runtime.detector.observer
-
-        def wire(value):
-            if isinstance(value, datetime):
-                return value.isoformat()
-            if is_dataclass(value):
-                return {field.name: wire(getattr(value, field.name))
-                        for field in fields(value)}
-            if isinstance(value, dict):
-                return {str(wire(key)): wire(item) for key, item in value.items()}
-            if isinstance(value, (tuple, list, deque)):
-                return [wire(item) for item in value]
-            if isinstance(value, (set, frozenset)):
-                return sorted((wire(item) for item in value), key=str)
-            return value
-
-        initial_measurements = wire(adapter.measurements)
-
-        def observed_ingest(role, reported, received_at, **kwargs):
-            nonlocal receipt_count
-            result = ingest(role, reported, received_at, **kwargs)
-            if role in adapter.measurements:
-                receipt_count += 1
-                receipts.append(wire({
-                    "ordinal": receipt_count, "role": role,
-                    "measurement": adapter.measurements[role],
-                }))
-            return result
-
-        def observed_trace(trace):
-            nonlocal first_confirmation_trace
-            episode = runtime.detector._infusion_episode
-            component = (episode.get("original_component") if episode else None)
-            if component is None:
-                component = runtime.detector._original_infusion_candidate
-            observation = wire({
-                "trace": trace,
-                "original_component": component,
-                "original_series": {
-                    f"{position.value}_{quantity.value}": {
-                        key: series[key]
-                        for key in ("source", "time_basis", "received_at", "points")
-                    }
-                    for (position, quantity), series
-                    in runtime.detector._curve_series.items()
-                },
-                "confirmed_detection": (
-                    episode.get("confirmed_detection") if episode else None
-                ),
-            })
-            traces.append(observation)
-            if (first_confirmation_trace is None
-                    and Kind.INFUSION in trace.get("signals", ())):
-                first_confirmation_trace = observation
-            if observer is not None:
-                observer(trace)
-
-        def emit_first_confirmation():
-            nonlocal emitted
-            events = tuple(
-                event for event in runtime.session.timeline.processed
-                if event.kind == Kind.INFUSION
-                and event.event_id not in prior_infusions
-            )
-            if emitted or not events:
-                return
-            emitted = True
-            print("CONFIRMATION_EVIDENCE " + json.dumps(wire({
-                "schema_version": 1, "fixture": "prepare_infusion_packet",
-                "observed_at": clock[0], "reserved_packet_at": at,
-                "reserved_packet_delivered": False,
-                "time_basis": {
-                    "measurement": "Original Measurement fields; null measured_at is unknown",
-                    "support_points": "Original series supplies its actual measured/received time_basis",
-                    "event": "Original Event fields; event_id is not detected_at",
-                },
-                "initial_adapter_measurements": initial_measurements,
-                "receipt_count": receipt_count,
-                "omitted_receipts": receipt_count - len(receipts),
-                "receipts": receipts, "recent_detector_observations": traces,
-                "first_confirmation_trace": first_confirmation_trace,
-                "events": events,
-            }), sort_keys=True, separators=(",", ":")), flush=True)
-
         async def originals(humidity):
-            with (
-                patch.object(adapter, "ingest", observed_ingest),
-                patch.object(runtime.detector, "observer", observed_trace),
-            ):
-                await asyncio.gather(*(
-                    runtime.device_input(self.detection_edge(
-                        runtime, f"{position}_{quantity}", value,
-                    ))
-                    for position in positions
-                    for quantity, value in (
-                        ("temperature", temperature), ("humidity", humidity),
-                    )
+            await asyncio.gather(*(
+                runtime.device_input(self.detection_edge(
+                    runtime, f"{position}_{quantity}", value,
                 ))
-            emit_first_confirmation()
+                for position in positions
+                for quantity, value in (
+                    ("temperature", temperature), ("humidity", humidity),
+                )
+            ))
+            print("CONFIRMATION_PREFIX " + json.dumps({
+                "packet_at": at.isoformat(),
+                "measurements": [
+                    {"role": f"{position}_{quantity}",
+                     "value": adapter.measurements[f"{position}_{quantity}"].value,
+                     "received_at": adapter.measurements[
+                         f"{position}_{quantity}"
+                     ].received_at.isoformat()}
+                    for position in positions
+                    for quantity in ("temperature", "humidity")
+                ],
+            }, sort_keys=True, separators=(",", ":")), flush=True)
 
         def no_early_confirmation():
-            emit_first_confirmation()
             self.assertEqual(tuple(
                 event.event_id for event in runtime.session.timeline.processed
                 if event.kind == Kind.INFUSION
@@ -655,54 +566,44 @@ class DeviceFeedbackTests(unittest.TestCase):
             no_early_confirmation()
         onset_at = pending_pulse()["onset_at"]
 
-        prepared = None
-        for index in range(1, flank_steps):
+        for index in range(1, count):
             clock[0] = peak_at + index * step
             await originals(
-                peak_humidity + (final_humidity - peak_humidity) * index / flank_steps,
+                peak_humidity + (final_humidity - peak_humidity) * index / count,
             )
             acknowledge()
             no_early_confirmation()
             self.assertEqual(pending_pulse()["onset_at"], onset_at)
-            statuses = runtime.detector.diagnostic["curve_candidates"].get(
-                "infusion_decay", {},
-            )
-            candidates = [statuses.get(position, {}).get("humidity", {})
-                          for position in positions]
-            if all(candidate.get("status") == "supported" for candidate in candidates):
-                self.assertTrue(all(candidate["fresh_newest_at"] is None
-                                    for candidate in candidates))
-                prepared = tuple(candidate["candidate_id"] for candidate in candidates)
-                break
-        self.assertIsNotNone(
-            prepared,
-            "Declared pulse prefix supplied no first decay candidate: "
-            f"{runtime.detector.diagnostic!r}",
-        )
-        while clock[0] + step < at:
-            clock[0] += step
-            with patch.object(runtime.detector, "observer", observed_trace):
-                await runtime.tick()
-            emit_first_confirmation()
-            acknowledge()
+        self.assertEqual(clock[0], at - step)
         no_early_confirmation()
         self.assertEqual(pending_pulse()["onset_at"], onset_at)
-        statuses = runtime.detector.diagnostic["curve_candidates"]["infusion_decay"]
-        candidates = [statuses[position]["humidity"] for position in positions]
-        self.assertEqual(
-            tuple(candidate["candidate_id"] for candidate in candidates), prepared,
-        )
-        self.assertTrue(all(candidate["status"] == "supported"
-                            and candidate["fresh_newest_at"] is None
-                            for candidate in candidates))
-        self.assertTrue(all(
-            (at - candidate["onset_at"]).total_seconds()
-            <= values["curve_window_seconds"]
-            and (at - candidate["newest_at"]).total_seconds()
-            <= values["sensor_timeout_seconds"]
-            for candidate in candidates
-        ))
         clock[0] = at
+
+    @staticmethod
+    def report_infusion_packet(runtime, adapter, at, outputs, **context):
+        """Print actual packet receipts and outcomes for the CI process artifact."""
+        print("CONFIRMATION_PACKET " + json.dumps({
+            "packet_at": at.isoformat(),
+            "context": context,
+            "measurements": [
+                {"role": role, "value": measurement.value,
+                 "received_at": measurement.received_at.isoformat(),
+                 "measured_at": (measurement.measured_at.isoformat()
+                                 if measurement.measured_at is not None else None)}
+                for role, measurement in sorted(adapter.measurements.items())
+                if role.endswith(("temperature", "humidity"))
+            ],
+            "infusions": [
+                {"event_id": event.event_id,
+                 "effective_at": event.effective_at.isoformat(),
+                 "detected_at": event.detected_at.isoformat(),
+                 "trace_at": event.trace_at.isoformat() if event.trace_at else None,
+                 "booking_at": event.booking_at.isoformat() if event.booking_at else None}
+                for event in runtime.session.timeline.processed
+                if event.kind == Kind.INFUSION
+            ],
+            "outputs": outputs,
+        }, sort_keys=True, separators=(",", ":")), flush=True)
 
     def test_received_readiness_releases_override_before_current_output(self):
         async def exercise(queued, same_time, path):
@@ -1220,6 +1121,15 @@ class DeviceFeedbackTests(unittest.TestCase):
                                                T0 + timedelta(seconds=confirmation_at))
             self.assertEqual(clock[0], T0 + timedelta(seconds=confirmation_at))
             self.assertFalse(old.infusion_events)
+            adapter.apply = AsyncMock(wraps=adapter.apply)
+
+            def packet_result():
+                self.report_infusion_packet(
+                    runtime, adapter, clock[0], adapter.apply.await_count,
+                    tick_first=tick_first,
+                )
+                return runtime, old
+
             if tick_first in ("control_split", "control_last"):
                 upper = runtime.device_input(self.detection_edge(runtime, "upper_humidity", 24))
                 lower = runtime.device_input(self.detection_edge(runtime, "lower_humidity", 24))
@@ -1228,7 +1138,7 @@ class DeviceFeedbackTests(unittest.TestCase):
                     await asyncio.gather(upper, off, lower)
                 else:
                     await asyncio.gather(upper, lower, off)
-                return runtime, old
+                return packet_result()
             if tick_first == "split":
                 # HA dispatch order: upper callback, due tick, lower callback.
                 await asyncio.gather(
@@ -1236,14 +1146,14 @@ class DeviceFeedbackTests(unittest.TestCase):
                     runtime.tick(),
                     runtime.device_input(self.detection_edge(runtime, "lower_humidity", 24)),
                 )
-                return runtime, old
+                return packet_result()
             if tick_first is None:
                 # Normal concurrently dispatched callbacks, without a test-held lock.
                 await asyncio.gather(
                     runtime.device_input(self.detection_edge(runtime, "upper_temperature", 90)),
                     runtime.device_input(self.detection_edge(runtime, "upper_humidity", 24)),
                 )
-                return runtime, old
+                return packet_result()
             await runtime._lock.acquire()
             async def humidity():
                 await runtime.device_input(self.detection_edge(runtime, "upper_humidity", 24))
@@ -1253,7 +1163,7 @@ class DeviceFeedbackTests(unittest.TestCase):
             await asyncio.sleep(0)
             runtime._lock.release()
             await asyncio.gather(first, second)
-            return runtime, old
+            return packet_result()
 
         confirmation = 11 + Parameters({}).seconds("confirmation_minutes")
         for confirmation_at in (confirmation - 1, confirmation, confirmation + 1):

@@ -4,6 +4,7 @@ import asyncio
 import unittest
 from datetime import timedelta
 from itertools import permutations
+from unittest.mock import AsyncMock
 
 import test_device_feedback as fixtures
 
@@ -26,12 +27,15 @@ class TemperaturePacketTests(unittest.TestCase):
             values["infusion_window_seconds"] + values["median_seconds"]
             + values["grid_seconds"]
         )
-        # The helper's original-report prefix follows comparison admission.
-        prefix_lead = (5 * values["curve_min_side_samples"] + 6) * values["grid_seconds"]
+        # Baseline side+2, rising 2*side+2, then K post-peak originals.
+        prefix_lead = (
+            3 * values["curve_min_side_samples"] + 4 + values["curve_original_samples"]
+        ) * values["grid_seconds"]
         packet_at = fixtures.T0 + timedelta(seconds=admission_lead + prefix_lead)
         await fixture.prepare_infusion_packet(
             runtime, adapter, clock, packet_at, temperature=initial,
         )
+        adapter.apply = AsyncMock(wraps=adapter.apply)
         inputs = {
             "humidity": ("upper_humidity", 24, "22"),
             "temperature": ("upper_temperature", temperature, str(initial)),
@@ -49,6 +53,10 @@ class TemperaturePacketTests(unittest.TestCase):
         finally:
             runtime._lock.release()
         await asyncio.gather(*tasks)
+        fixture.report_infusion_packet(
+            runtime, adapter, packet_at, adapter.apply.await_count,
+            order=order, minimum_offset=minimum_offset,
+        )
         self.assertIsNone(runtime.controller._recognition_temperature_raster)
         self.assertFalse(runtime.session.operation_enabled)
         self.assertEqual(runtime.controller.temperature, temperature)
