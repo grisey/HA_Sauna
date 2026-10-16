@@ -1674,6 +1674,11 @@ class OriginalFollowupArithmeticTests(unittest.TestCase):
                     self.assertEqual(form.current_change, 1)
                     self.assertEqual(form.previous_direction, -2 if length == 6 else 0)
                     self.assertEqual(form.previous_change, 0 if length == 6 else 1)
+                    # The reference's current slope is zero, unlike its
+                    # previous slope -1; both denominators here equal 1.
+                    self.assertEqual(form.current_change_from_reference_current, 0)
+                    self.assertEqual(form.previous_change_from_reference_current,
+                                     -1 if length == 6 else 0)
                     self.assertEqual(form.level_change, -2 if length == 6 else 0)
                     self.assertEqual(form.residual, 0)
 
@@ -1702,6 +1707,11 @@ class OriginalFollowupArithmeticTests(unittest.TestCase):
                 # Reference previous mean 10 versus current mean 4:
                 # L=(10-4)/(2*1)=3; reflection reverses this signed loss.
                 self.assertAlmostEqual(followup.reference_level_loss, 3 * sign)
+                # The new current OLS slope is (1-6)/4=-5/4 and its
+                # previous section is constant; reference.v=0, e=e_minus=1/2.
+                self.assertAlmostEqual(followup.current_change_from_reference_current,
+                                       -5 / 4 * sign)
+                self.assertEqual(followup.previous_change_from_reference_current, 0)
 
     def test_edge_counterform_needs_resolved_fall_and_rejects_invalid_support(self):
         reference = self._window((12, 10, 8, 6, 10, 14))
@@ -1730,6 +1740,7 @@ class OriginalFollowupArithmeticTests(unittest.TestCase):
         invalid_pairs = (
             (None, reference), (window, None), (object(), reference),
             (window, object()), (replace(window, scale=2), reference),
+            (replace(window, e=0), reference), (window, replace(reference, e=0)),
             (replace(window, current=window.current[:-1]), reference),
             (smaller, reference), (duplicate, reference), (reference, window),
         )
@@ -1738,6 +1749,13 @@ class OriginalFollowupArithmeticTests(unittest.TestCase):
                 self.assertIsNone(original_followup(current, binding))
                 self.assertIsNone(original_edge_change(current, binding))
         self.assertIsNone(original_edge_change(reference, reference))
+        # Only a denominator involving reference.e overflows here; the old
+        # reference.e_minus comparisons would still have finite bounds.
+        for field in ("e", "e_minus"):
+            with self.subTest(overflowing_current_reference_bound=field):
+                self.assertIsNone(original_followup(
+                    replace(window, **{field: 1e308}), replace(reference, e=1e308),
+                ))
 
 
 class OriginalCurveFollowupTests(unittest.TestCase):
@@ -1916,8 +1934,11 @@ class OriginalCurveFollowupTests(unittest.TestCase):
                 ) if lower_plateau else None
                 detector, events, candidate = self._bind(route, fall_step=short_fall)
                 bound_at = self._at(detector.index)
-                # The short joint loss stops at its actual first binding.
-                # All following originals stay at that lower observed level.
+                if lower_plateau:
+                    # V3 requires a complete fresh common fall before a
+                    # lower plateau can supply the later independent proof.
+                    events += self._ramp(detector, self.count, self.fall_step)
+                    self.assertNotIn(Kind.DOOR_OPEN, [item.kind for item in events])
                 events += self._ramp(detector, 4 * self.count, delta)
                 confirmations = [item for item in events if item.kind is kind]
                 self.assertEqual(len(confirmations), 1)
@@ -1942,6 +1963,22 @@ class OriginalCurveFollowupTests(unittest.TestCase):
                     ], [Kind.DOOR_OPEN, Kind.DOOR_CLOSE])
                     self.assertFalse(detector.open)
                     self.assertIsNone(detector.door_episode)
+
+    def test_small_joint_dip_returns_without_a_door_event(self):
+        detector = self._detector()
+        events = self._feed(detector, (self.initial for _ in range(self.baseline_ticks)))
+        # Reuse one K-section of the existing fixture's slow loss and reverse
+        # it immediately. The complete excursion returns to the old level;
+        # it supplies neither a long continued fall nor a lower stable step.
+        events += self._ramp(detector, self.count, self.fall_step)
+        events += self._ramp(detector, self.count, tuple(-step for step in self.fall_step))
+        events += self._feed(detector, (self.initial for _ in range(self.tail_ticks)))
+        self.assertEqual([
+            item.kind for item in events
+            if item.kind in (Kind.DOOR_OPEN, Kind.DOOR_CLOSE)
+        ], [])
+        self.assertFalse(detector.open)
+        self.assertNotIn(Kind.VENTILATION, [item.kind for item in events])
 
     def test_short_rh_pulse_confirms_once_after_its_peak(self):
         detector = self._detector()
@@ -1994,20 +2031,200 @@ class OriginalCurveFollowupTests(unittest.TestCase):
         self.assertIsNot(detector.door_episode.get("original_close"), previous)
 
     def test_temperature_plateau_closes_but_flat_rh_with_continued_cooling_does_not(self):
-        for plateau in (False, True):
-            with self.subTest(temperature_plateau=plateau):
+        for tail in ("cooling", "early_rh_plateau", "plateau", "staggered_plateau"):
+            with self.subTest(temperature_tail=tail):
                 detector, events, _ = self._bind("opening")
-                events += self._ramp(detector, 4 * self.count, self.fall_step)
-                self.assertTrue(detector.open)
-                self.assertEqual([item.kind for item in events].count(Kind.DOOR_OPEN), 1)
-                delta = tuple(
-                    0 if plateau or role.endswith("humidity") else change
+                cooling = tail in ("cooling", "early_rh_plateau")
+                cooling_delta = tuple(
+                    change if role.endswith("temperature") else 0
                     for role, change in zip(CLIMATE, self.fall_step, strict=True)
                 )
-                events += self._ramp(detector, self.tail_ticks, delta)
-                closes = [item for item in events if item.kind is Kind.DOOR_CLOSE]
-                self.assertEqual(len(closes), int(plateau))
-                self.assertEqual(detector.open, not plateau)
+                if tail == "early_rh_plateau":
+                    events += self._ramp(detector, self.count, self.fall_step)
+                    self.assertFalse(detector.open)
+                    self.assertNotIn(Kind.DOOR_OPEN, [item.kind for item in events])
+                    self.assertNotIn(Kind.VENTILATION, [item.kind for item in events])
+                    plateau_start = self._originals(detector)
+                    # RH ends its fall before opening has its two new T
+                    # sections. Public ventilation must still wait for OPEN.
+                    events += self._ramp(detector, 2 * self.count - 1, cooling_delta)
+                    originals = self._originals(detector)
+                    for role in CLIMATE:
+                        self.assertEqual(sum(
+                            stamp > plateau_start[role][-1][0]
+                            for stamp, _ in originals[role]
+                        ), 2 * self.count - 1)
+                    self.assertFalse(detector.open)
+                    self.assertNotIn(Kind.DOOR_OPEN, [item.kind for item in events])
+                    self.assertNotIn(Kind.VENTILATION, [item.kind for item in events])
+                    events += self._ramp(detector, self.count, cooling_delta)
+                else:
+                    events += self._ramp(detector, 4 * self.count, self.fall_step)
+                self.assertTrue(detector.open)
+                self.assertEqual([item.kind for item in events].count(Kind.DOOR_OPEN), 1)
+                if tail == "staggered_plateau":
+                    # Upper T is already flat in both OLS sections before
+                    # lower T brakes. No prefix has a common local brake;
+                    # their actual earlier falls belong to the same episode.
+                    lower_fall = tuple(
+                        change if role == "lower_temperature" else 0
+                        for role, change in zip(CLIMATE, self.fall_step, strict=True)
+                    )
+                    events += self._ramp(detector, 3 * self.count, lower_fall)
+                    self.assertTrue(detector.open)
+                    self.assertNotIn(Kind.DOOR_CLOSE, [item.kind for item in events])
+                delta = tuple(
+                    change if cooling and role.endswith("temperature") else 0
+                    for role, change in zip(CLIMATE, self.fall_step, strict=True)
+                )
+                if tail == "staggered_plateau":
+                    plateau_state = self._latest(detector)
+                    events += self._feed(detector, (
+                        plateau_state for _ in range(self.count - 1)
+                    ))
+                    # Mathematical endpoint perturbation: the last secant is
+                    # resolved at -1.3 error bounds, but the whole K=7 OLS
+                    # section remains flat. It is no new physical door loss.
+                    noise = self.values["curve_original_noise_temperature_lower"]
+                    perturbed = tuple(
+                        value - 2.6 * noise if role == "lower_temperature" else value
+                        for role, value in zip(CLIMATE, plateau_state, strict=True)
+                    )
+                    events += self._feed(detector, (perturbed,))
+                    thermal = original_window(
+                        self._originals(detector)["lower_temperature"],
+                        at=self._at(detector.index),
+                        **channel_arguments(self.values, "lower", "temperature"),
+                    )
+                    self.assertIsNotNone(thermal)
+                    self.assertLessEqual(abs(thermal.v),
+                                         self.values["curve_original_significance"] * thermal.e)
+                    self.assertNotIn(Kind.DOOR_CLOSE, [item.kind for item in events])
+                    events += self._feed(detector, (
+                        plateau_state for _ in range(self.tail_ticks)
+                    ))
+                else:
+                    events += self._ramp(detector, self.tail_ticks, delta)
+                doors = [item.kind for item in events
+                         if item.kind in (Kind.DOOR_OPEN, Kind.DOOR_CLOSE)]
+                if cooling:
+                    self.assertEqual(doors, [Kind.DOOR_OPEN])
+                    self.assertTrue(detector.open)
+                    self.assertEqual([item.kind for item in events].count(Kind.VENTILATION), 1)
+                    self.assertNotIn(Kind.VENTILATION_COMPLETE, [item.kind for item in events])
+                    self.assertEqual([
+                        item.kind for item in events
+                        if item.kind in (Kind.DOOR_OPEN, Kind.VENTILATION)
+                    ], [Kind.DOOR_OPEN, Kind.VENTILATION])
+                else:
+                    self.assertEqual(doors, [Kind.DOOR_OPEN, Kind.DOOR_CLOSE])
+                    self.assertFalse(detector.open)
+                    self.assertIsNone(detector.door_episode)
+                if tail == "early_rh_plateau":
+                    events += self._ramp(detector, self.close_ticks, self.recovery_step)
+                    self.assertFalse(detector.open)
+                    self.assertIsNone(detector.door_episode)
+                    self.assertEqual([
+                        item.kind for item in events
+                        if item.kind in (Kind.DOOR_OPEN, Kind.VENTILATION, Kind.DOOR_CLOSE)
+                    ], [Kind.DOOR_OPEN, Kind.VENTILATION, Kind.DOOR_CLOSE])
+                    # A formerly ventilated, now closed episode must not
+                    # suppress the next pending RH stage before its OPEN.
+                    events += self._ramp(
+                        detector, self.door_ticks, self.fall_step,
+                        stop_when=lambda: bool(detector.door_episode
+                                               and detector.door_episode.get("original_open")),
+                    )
+                    self.assertTrue(detector.door_episode
+                                    and detector.door_episode.get("original_open"))
+                    events += self._ramp(detector, self.count, self.fall_step)
+                    events += self._ramp(detector, 2 * self.count - 1, cooling_delta)
+                    self.assertFalse(detector.open)
+                    self.assertEqual([item.kind for item in events].count(Kind.DOOR_OPEN), 1)
+                    self.assertEqual([item.kind for item in events].count(Kind.VENTILATION), 1)
+                    events += self._ramp(detector, 2 * self.count, cooling_delta)
+                    self.assertTrue(detector.open)
+                    self.assertEqual([
+                        item.kind for item in events
+                        if item.kind in (Kind.DOOR_OPEN, Kind.VENTILATION, Kind.DOOR_CLOSE)
+                    ], [Kind.DOOR_OPEN, Kind.VENTILATION, Kind.DOOR_CLOSE,
+                        Kind.DOOR_OPEN, Kind.VENTILATION])
+                if tail == "staggered_plateau":
+                    events += self._ramp(detector, 4 * self.count, self.fall_step)
+                    events += self._ramp(detector, self.tail_ticks, (0,) * len(CLIMATE))
+                    self.assertEqual([
+                        item.kind for item in events
+                        if item.kind in (Kind.DOOR_OPEN, Kind.DOOR_CLOSE)
+                    ], [Kind.DOOR_OPEN, Kind.DOOR_CLOSE, Kind.DOOR_OPEN, Kind.DOOR_CLOSE])
+                    self.assertFalse(detector.open)
+                    self.assertIsNone(detector.door_episode)
+
+    def test_same_stamp_temperature_edge_correction_waits_for_new_temperature_support(self):
+        detector, events, _ = self._bind("opening")
+        events += self._ramp(detector, 4 * self.count, self.fall_step)
+        lower_fall = tuple(
+            change if role == "lower_temperature" else 0
+            for role, change in zip(CLIMATE, self.fall_step, strict=True)
+        )
+        events += self._ramp(detector, 3 * self.count, lower_fall)
+        self.assertTrue(detector.open)
+        plateau = self._latest(detector)
+        epochs = detector._original_context()
+        before = self._originals(detector)["upper_temperature"]
+        original = detector.latest[Position.UPPER, Quantity.TEMPERATURE]
+        corrected_at = original.measured_at
+        fall = detector.door_episode["original_temperature_falls"][Position.UPPER]
+        self.assertTrue(all(
+            stamp != corrected_at
+            for window in (fall["window"], fall.get("recovery_window"))
+            if window is not None
+            for stamp, _ in window.previous + window.current
+        ))
+        received = self._at(detector.index + 1)
+        value = original.value - 2.6 * self.values["curve_original_noise_temperature_upper"]
+        self.assertTrue(detector.accept(replace(
+            original, value=value, raw_value=str(value), received_at=received,
+        )))
+        events += detector.advance(received, enabled=True)
+        after = self._originals(detector)["upper_temperature"]
+        self.assertEqual(tuple(stamp for stamp, _ in after),
+                         tuple(stamp for stamp, _ in before))
+        self.assertEqual(after[:-1], before[:-1])
+        self.assertEqual(after[-1], (corrected_at, value))
+        thermal = original_window(
+            after, at=received, **channel_arguments(self.values, "upper", "temperature"),
+        )
+        self.assertIsNotNone(thermal)
+        self.assertLessEqual(abs(thermal.v),
+                             self.values["curve_original_significance"] * thermal.e)
+        self.assertNotIn(Kind.DOOR_CLOSE, [item.kind for item in events])
+
+        # Finish lower T's plateau inside the next raster. Upper T remains
+        # within its original gap limit, with no new original or freshness.
+        interval = timedelta(seconds=self.step / (2 * self.count + 2))
+        lower = detector.latest[Position.LOWER, Quantity.TEMPERATURE]
+        for index in range(1, 2 * self.count + 1):
+            at = received + index * interval
+            self.assertTrue(detector.accept(replace(lower, received_at=at, measured_at=at)))
+        rh_at = received + (2 * self.count + 1) * interval
+        for position in detector.positions:
+            humidity = detector.latest[position, Quantity.HUMIDITY]
+            self.assertTrue(detector.accept(replace(
+                humidity, received_at=rh_at, measured_at=rh_at,
+            )))
+        events += detector.advance(received + timedelta(seconds=self.step), enabled=True)
+        self.assertEqual(self._originals(detector)["upper_temperature"], after)
+        self.assertEqual(detector._original_context(), epochs)
+        self.assertTrue(detector.open)
+        self.assertNotIn(Kind.DOOR_CLOSE, [item.kind for item in events])
+
+        events += self._feed(detector, (plateau for _ in range(2 * self.count)))
+        self.assertEqual([
+            item.kind for item in events
+            if item.kind in (Kind.DOOR_OPEN, Kind.DOOR_CLOSE)
+        ], [Kind.DOOR_OPEN, Kind.DOOR_CLOSE])
+        self.assertFalse(detector.open)
+        self.assertIsNone(detector.door_episode)
 
     def test_equal_originals_have_same_events_across_advance_grouping(self):
         states = [self.initial] * self.baseline_ticks
