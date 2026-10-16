@@ -20,7 +20,9 @@ from .curve_change import (
     curve_recovery,
     curve_trend,
     original_contrasts,
+    original_edge_change,
     original_flattening,
+    original_followup,
     original_kink_tolerance,
     original_thermal_contrasts,
     original_water_pair,
@@ -589,6 +591,69 @@ class Detector:
             for position, pair in contrasts.positions
         )
 
+    @staticmethod
+    def _original_role_windows(windows, quantities):
+        """Die Rollen eines gespeicherten Positionsbelegs unverändert lesen."""
+        return tuple(
+            (name, quantity, getattr(pair, quantity.value))
+            for name, pair in windows for quantity in quantities
+        )
+
+    def _original_contiguous(self, prefix, references):
+        """Jedes Original seit der letzten Stütze muss anschließen können."""
+        streams = {
+            (position.value, quantity): samples
+            for position, temperature, humidity in prefix.points
+            for quantity, samples in (
+                (Quantity.TEMPERATURE, temperature), (Quantity.HUMIDITY, humidity),
+            )
+        }
+        for name, quantity, stamp in references:
+            points = streams.get((name, quantity), ())
+            start = bisect_left(points, stamp, key=lambda point: point[0])
+            if start == len(points) or points[start][0] != stamp:
+                return False
+            gap = self.p[f"curve_original_gap_{quantity.value}_{name}_seconds"]
+            if any(not 0 < (right[0] - left[0]).total_seconds() <= gap
+                   for left, right in zip(points[start:], points[start + 1:])):
+                return False
+        return bool(references)
+
+    def _original_followups(self, prefix, references, *, continuity=None):
+        """Neue Stützblöcke nur im lückenlosen Ast des gebundenen Belegs."""
+        anchors = tuple(
+            (name, quantity, reference.newest_at)
+            for name, quantity, reference in references
+        ) if continuity is None else continuity
+        if not self._original_contiguous(prefix, anchors):
+            return None
+        temperatures, positions = dict(prefix.temperatures), dict(prefix.windows)
+        result = {}
+        for name, quantity, reference in references:
+            window = (temperatures.get(name) if quantity == Quantity.TEMPERATURE else
+                      positions[name].humidity if name in positions else None)
+            followup = original_followup(window, reference)
+            if followup is None:
+                return None
+            result[name, quantity] = followup
+        return result or None
+
+    @staticmethod
+    def _original_followup_trace(followups):
+        """Normierte Formabstände beschreiben keine Wahrscheinlichkeit."""
+        result = {}
+        for (name, quantity), followup in (followups or {}).items():
+            result.setdefault(name, {})[quantity.value] = {
+                "reference_newest_at": followup.reference.newest_at,
+                "current_start_at": followup.window.current[0][0],
+                "newest_at": followup.window.newest_at,
+                **{key: getattr(followup, key) for key in (
+                    "fresh_previous", "fresh_current", "current_direction", "previous_direction",
+                    "current_change", "previous_change", "level_change", "residual",
+                )},
+            }
+        return result
+
     def _original_humidity_available(self, positions, now):
         """Gültige RH-Originalfenster begrenzen den vorhandenen Heiz-Sonderweg."""
         return bool(positions) and all(
@@ -967,6 +1032,7 @@ class Detector:
     def _original_door_evidence(self, prefixes, channels, now, decision_at, trace, emit):
         """Türformen und Lüftung kausal im einzigen Türbestand fortschreiben."""
         opening = closing = close_candidate = False
+        level_close = False
         closing_positions = ()
         opening_value = closing_value = None
         significance = self.p["curve_original_significance"]
@@ -1064,7 +1130,24 @@ class Detector:
                     and form.current_flat.result and form.braking.result
                     for form in fall_ends.values()
                 )
+                candidate = episode.get("original_open") if episode is not None else None
+                temperature_counterform = False
+                if candidate is not None and prefix.original:
+                    falling = candidate["falling_temperatures"]
+                    for name, pair in contrasts.positions:
+                        temperature = pair.temperature
+                        ended = original_flattening(
+                            temperature, pair.humidity, significance=significance,
+                        )
+                        temperature_counterform |= bool(
+                            name in falling and temperature.v > significance * temperature.e
+                            or ended is not None and ended.previous_fall.result
+                            and ended.current_flat.result and ended.braking.result
+                        )
+                        if temperature.v < -significance * temperature.e:
+                            falling.add(name)
                 forms["humidity_fall_ended"] = _gate(fall_ended)
+                forms["temperature_fall_counterform"] = _gate(temperature_counterform)
                 forms["humidity_fall_end_contrasts"] = {
                     name: {
                         comparison: _gate(
@@ -1076,10 +1159,12 @@ class Detector:
                     }
                     for name, form in fall_ends.items() if form is not None
                 }
-                if fall_ended or any(pair.humidity.v > significance * pair.humidity.e
-                                     for _, pair in contrasts.positions):
+                if (fall_ended or temperature_counterform
+                        or any(pair.humidity.v > significance * pair.humidity.e
+                               for _, pair in contrasts.positions)):
                     forms["opening_candidate_reset_reason"] = (
-                        "humidity_fall_ended" if fall_ended else "humidity_counterform"
+                        "humidity_fall_ended" if fall_ended else
+                        "temperature_counterform" if temperature_counterform else "humidity_counterform"
                     )
                     if episode is not None and episode.get("retained_heating_only"):
                         episode.pop("original_open", None)
@@ -1103,14 +1188,50 @@ class Detector:
                             "received_at": prefix.received_at,
                             "newest": self._original_newest(contrasts),
                             "context": context, "windows": contrasts.positions,
+                            "continuity": tuple(
+                                (name, quantity, window.newest_at)
+                                for name, quantity, window in self._original_role_windows(
+                                    contrasts.positions, (Quantity.TEMPERATURE, Quantity.HUMIDITY),
+                                )
+                            ),
                             "humidity_fall_onset": contrasts.humidity_fall_onset,
                             "humidity_kinks": humidity_kinks,
+                            "falling_temperatures": {
+                                name for name, pair in contrasts.positions
+                                if pair.temperature.v < -significance * pair.temperature.e
+                            },
                         }
                         episode["original_open"] = candidate
+                followups = (self._original_followups(
+                    prefix, self._original_role_windows(
+                        candidate["windows"], (Quantity.TEMPERATURE, Quantity.HUMIDITY),
+                    ),
+                    continuity=candidate["continuity"],
+                ) if candidate is not None else None)
+                fresh_block = bool(followups) and all(
+                    form.fresh_current == self.p["curve_original_samples"]
+                    for form in followups.values()
+                )
+                forms.update(
+                    followup=self._original_followup_trace(followups),
+                    complete_fresh_original_block=_gate(fresh_block),
+                    contiguous_candidate_support=_gate(
+                        followups is not None if candidate is not None else None,
+                    ),
+                )
+                if candidate is not None and followups is None:
+                    forms["opening_candidate_reset_reason"] = "original_support_disconnected"
+                    episode.pop("original_open", None)
+                    continue
+                if candidate is not None and prefix.original:
+                    candidate["continuity"] = tuple(
+                        (name, quantity, form.window.newest_at)
+                        for (name, quantity), form in followups.items()
+                    )
                 opening = bool(
                     candidate is not None and prefix.original
                     and contrasts.opening_support > self.p["curve_original_open_contrast"]
-                    and self._original_newer(contrasts, candidate["newest"])
+                    and fresh_block
                 )
                 forms.update(
                     bound_humidity_fall_onset=(candidate["humidity_fall_onset"]
@@ -1175,7 +1296,111 @@ class Detector:
                 contrasts is not None and same_opening_sources
                 and minima is not None and closing_positions == episode["positions"]
             )
+            close_candidate = thermal.braking > significance or thermal.warming_min > significance
+            newest = tuple((position.value, dict(prefix.temperatures)[position.value].newest_at)
+                           for position in closing_positions)
+            candidate = episode.get("original_close")
+            if candidate is not None and tuple(name for name, _ in candidate["newest"]) != tuple(
+                name for name, _ in newest
+            ):
+                candidate = None
+                episode.pop("original_close", None)
+            if candidate is None and close_candidate and prefix.original:
+                candidate = {
+                    "received_at": prefix.received_at, "newest": newest,
+                    "windows": tuple((position.value, dict(prefix.temperatures)[position.value])
+                                     for position in closing_positions),
+                    "context": thermal_context,
+                    "continuity": tuple((name, Quantity.TEMPERATURE, stamp)
+                                        for name, stamp in newest),
+                }
+                candidate["recovery_windows"] = candidate["windows"]
+                episode["original_close"] = candidate
+            followups = (self._original_followups(
+                prefix, tuple((name, Quantity.TEMPERATURE, window)
+                              for name, window in candidate["windows"]),
+                continuity=candidate["continuity"],
+            ) if candidate is not None else None)
+            counterform = False
+            edges = {}
+            if followups is not None:
+                recovery = dict(candidate["recovery_windows"])
+                for (name, _), form in followups.items():
+                    supported = recovery[name]
+                    edge = original_edge_change(form.window, supported)
+                    edges[name] = {
+                        "previous_original_at": form.window.current[-2][0],
+                        "newest_original_at": form.window.newest_at,
+                        "reference_newest_at": supported.newest_at,
+                        "direction": _gate(
+                            edge.direction < -significance if edge is not None else None,
+                            value=edge.direction if edge is not None else None,
+                            operator="<", threshold=-significance, unit="contrast",
+                        ),
+                        "change": _gate(
+                            edge.change < -significance if edge is not None else None,
+                            value=edge.change if edge is not None else None,
+                            operator="<", threshold=-significance, unit="contrast",
+                        ),
+                    }
+                    # Ein alter Bremsbeleg darf nach einer erneuten
+                    # Abwärtsbeschleunigung nicht wiederverwendet werden.
+                    # Die neue Kante muss selbst aufgelöst fallen; bloßes
+                    # Abbremsen einer Erwärmung zum Plateau ist kein Fall.
+                    counterform |= bool(
+                        edge is not None and edge.direction < -significance
+                        and edge.change < -significance
+                        or form.current_direction < -significance
+                        and (form.window.v - supported.v)
+                        < -significance * (form.window.e + supported.e)
+                        or form.reference.b < -significance * form.reference.e_minus
+                        and form.current_direction < -significance
+                        and form.current_change <= significance
+                    )
+                    if form.window.v > supported.v:
+                        recovery[name] = form.window
+                if prefix.original:
+                    candidate["recovery_windows"] = tuple(recovery.items())
+                    candidate["continuity"] = tuple(
+                        (name, quantity, form.window.newest_at)
+                        for (name, quantity), form in followups.items()
+                    )
+            if candidate is not None and (followups is None or counterform):
+                forms["closing_candidate_reset_reason"] = (
+                    "temperature_counterform" if counterform else "original_support_disconnected"
+                )
+                episode.pop("original_close", None)
+                candidate = None
+                followups = None
+            count = self.p["curve_original_samples"]
+            fresh_block = bool(followups) and all(
+                form.fresh_current == count for form in followups.values()
+            )
+            bound_braking = (min(form.current_change for form in followups.values())
+                             if followups else None)
             closing_value = contrasts.closing if combined else thermal.closing
+            if bound_braking is not None:
+                branches = [min(bound_braking, thermal.warming_max), thermal.warming_min]
+                if combined:
+                    branches.append(min(bound_braking, contrasts.humidity_recovery))
+                closing_value = max(branches)
+            # Eine neue Ebene bestätigt das Ende des gebundenen Temperaturfalls
+            # selbst. Flache RH bei weiter fallendem T erfüllt diesen Zweig nie.
+            level_close = bool(followups) and all(
+                form.fresh_previous == count and form.fresh_current == count
+                and form.reference.b < -significance * form.reference.e_minus
+                and abs(form.current_direction) <= significance
+                and abs(form.previous_direction) <= significance
+                and abs(form.level_change) <= significance
+                and form.current_change > significance
+                and form.previous_change > significance
+                for form in followups.values()
+            )
+            close_candidate = candidate is not None
+            closing = bool(
+                candidate is not None and prefix.original and fresh_block
+                and (closing_value > significance or level_close)
+            )
             forms.update(
                 thermal_evaluable=True,
                 closing=closing_value, closing_positions=tuple(p.value for p in closing_positions),
@@ -1184,31 +1409,33 @@ class Detector:
                     closing_value > significance, value=closing_value,
                     operator=">", threshold=significance, unit="contrast",
                 ),
+                followup=self._original_followup_trace(followups),
+                complete_fresh_original_block=_gate(fresh_block),
+                temperature_counterform=_gate(counterform),
+                temperature_edge_counterform=edges,
+                bound_temperature_braking=_gate(
+                    bound_braking > significance if bound_braking is not None else None,
+                    value=bound_braking, operator=">", threshold=significance, unit="contrast",
+                ),
+                new_temperature_level=_gate(level_close),
+                candidate_received_at=candidate["received_at"] if candidate is not None else None,
+                candidate_originals=candidate["newest"] if candidate is not None else (),
+                later_original_confirmation=_gate(closing),
             )
-            close_candidate = thermal.braking > significance or thermal.warming_min > significance
-            newest = tuple((position.value, dict(prefix.temperatures)[position.value].newest_at)
-                           for position in closing_positions)
-            candidate = episode.get("original_close")
-            if candidate is not None and tuple(name for name, _ in candidate) != tuple(
-                name for name, _ in newest
-            ):
-                candidate = None
-                episode.pop("original_close", None)
-            if candidate is None and close_candidate and prefix.original:
-                episode["original_close"] = newest
-            elif candidate is not None:
-                previous = dict(candidate)
-                closing = bool(
-                    prefix.original and closing_value > significance
-                    and all(stamp > previous[name] for name, stamp in newest)
+            if closing:
+                forms["confirmation_received_at"] = prefix.received_at
+                forms["confirmation_originals"] = newest
+                candidate["confirmation_windows"] = tuple(
+                    (position.value, dict(prefix.temperatures)[position.value])
+                    for position in closing_positions
                 )
-                if closing:
-                    forms["confirmation_received_at"] = prefix.received_at
+                candidate["confirmation_received_at"] = prefix.received_at
             self._original_ventilation_evidence(
                 prefix, channels, now, decision_at, trace, emit, closing=closing,
                 close_value=closing_value,
             )
             if closing:
+                self._original_prefixes.extend(prefixes[index + 1:])
                 break
         episode = self.door_episode
         if (episode is not None and self.open
@@ -1248,6 +1475,7 @@ class Detector:
                 closing_value > significance if closing_value is not None and self.open else None,
                 value=closing_value, operator=">", threshold=significance, unit="contrast",
             ),
+            "new_temperature_level": _gate(level_close if self.open else None),
             "later_original_confirmation": _gate(closing if self.open else None),
         }, evaluated=self.open)
         return opening, close_candidate, closing, closing_positions
@@ -1469,6 +1697,20 @@ class Detector:
             component = self._original_infusion_candidate
             if component is not None and component["context"] != context:
                 self._original_infusion_candidate = component = None
+            if component is not None and not self._original_contiguous(
+                prefix, component["continuity"],
+            ):
+                self._pause_infusion_episode()
+                episode = self._infusion_episode
+                component = None
+                trace["original_infusion"]["candidate_reset_reason"] = "original_support_disconnected"
+            if component is not None and prefix.original:
+                component["continuity"] = tuple(
+                    (name, quantity, window.newest_at)
+                    for name, quantity, window in self._original_role_windows(
+                        contrasts.positions, (Quantity.TEMPERATURE, Quantity.HUMIDITY),
+                    )
+                )
             # Der Kandidatenablauf begrenzt unbestätigte Belege. Ein bereits
             # wasserqualifizierter Folgeanstieg der bestätigten Episode bleibt
             # bis zu seinem Fall geführt; ein optional früherer Onset darf
@@ -1525,6 +1767,12 @@ class Detector:
                     "received_at": prefix.received_at,
                     "newest": self._original_newest(contrasts),
                     "binding_windows": contrasts.positions,
+                    "continuity": tuple(
+                        (name, quantity, window.newest_at)
+                        for name, quantity, window in self._original_role_windows(
+                            contrasts.positions, (Quantity.TEMPERATURE, Quantity.HUMIDITY),
+                        )
+                    ),
                     "branch_floors": branch_floors,
                     "humidity_rise_onset": contrasts.humidity_rise_onset,
                     "humidity_kinks": humidity_kinks,
@@ -1578,7 +1826,20 @@ class Detector:
                     later_original = bool(
                         prefix.original and self._original_newer(contrasts, component["newest"])
                     )
-                    if later_original:
+                    followups = self._original_followups(
+                        prefix, self._original_role_windows(
+                            component["binding_windows"], (Quantity.HUMIDITY,),
+                        ),
+                        # Die Originalfolge wird oben an jedem Präfix geprüft.
+                        # Ihr eingefrorener Beginn muss bei einem langen
+                        # Anstieg nicht dauerhaft im Ringspeicher liegen.
+                        continuity=component["continuity"],
+                    )
+                    fresh_block = bool(followups) and all(
+                        form.fresh_current == self.p["curve_original_samples"]
+                        for form in followups.values()
+                    )
+                    if later_original and fresh_block:
                         if component["rise_score"] is None or contrasts.rise > component["rise_score"]:
                             component["rise_score"] = contrasts.rise
                             component["rise_windows"] = contrasts.positions
@@ -1634,6 +1895,8 @@ class Detector:
                         binding_originals=component["newest"],
                         binding_support=self._original_support(component["binding_windows"]),
                         continued_support=self._original_support(contrasts.positions),
+                        followup=self._original_followup_trace(followups),
+                        complete_fresh_original_block=_gate(fresh_block),
                         bound_humidity_rise_onset=component["humidity_rise_onset"],
                         bound_humidity_rise_kink=self._original_humidity_kink_gate(
                             component["humidity_kinks"], rising=True,
@@ -1659,7 +1922,7 @@ class Detector:
                         "original_rise_contrast": _gate(
                             component["strong"], value=component["rise_score"],
                             operator=">", threshold=threshold, unit="contrast",
-                            reference="bound_maximum_fresh_original_rise",
+                            reference="bound_fresh_original_rise_block",
                         ),
                         "current_original_rise": _gate(
                             contrasts.rise > early_threshold, value=contrasts.rise,
@@ -1672,6 +1935,7 @@ class Detector:
                             operator=">", threshold=significance, unit="contrast",
                         ),
                         "later_original_confirmation": _gate(later_original),
+                        "complete_fresh_original_block": _gate(fresh_block),
                         "episode_assignment_known": _gate(component["assignment"] != "unknown"),
                         "positive_available_water": _gate(positive),
                         "water": {position.value: _gate(
@@ -1724,7 +1988,7 @@ class Detector:
                         if component["fall_ready"]:
                             component["fall_confirmed"] = True
                         early_rise = bool(
-                            later_original and contrasts.rise > early_threshold
+                            later_original and fresh_block and contrasts.rise > early_threshold
                             and contrasts.humidity_rise_change > significance and positive
                         )
                         pending_confirmation = bool(
@@ -1798,15 +2062,31 @@ class Detector:
                     episode["original_background"] = self._original_newest(contrasts)
                     episode["original_end_windows"] = contrasts.positions
             elif prefix.original and self._original_newer(contrasts, episode["original_background"]):
-                episode["phase"] = "ended"
-                episode["level_end_at"] = now
-                episode["end_basis"] = "original_background"
-                episode["original_background"] = None
-                episode["original_end_windows"] = contrasts.positions
-                self._infusion_segment_start = {
-                    Position(name): pair.humidity.current[0][0]
-                    for name, pair in contrasts.positions
-                }
+                followups = self._original_followups(
+                    prefix, self._original_role_windows(
+                        episode["original_end_windows"], (Quantity.HUMIDITY,),
+                    ),
+                )
+                fresh_block = bool(followups) and all(
+                    form.fresh_current == self.p["curve_original_samples"]
+                    for form in followups.values()
+                )
+                trace["original_infusion"].update(
+                    background_followup=self._original_followup_trace(followups),
+                    complete_fresh_background_block=_gate(fresh_block),
+                )
+                if followups is None:
+                    episode["original_background"] = None
+                elif fresh_block:
+                    episode["phase"] = "ended"
+                    episode["level_end_at"] = now
+                    episode["end_basis"] = "original_background"
+                    episode["original_background"] = None
+                    episode["original_end_windows"] = contrasts.positions
+                    self._infusion_segment_start = {
+                        Position(name): pair.humidity.current[0][0]
+                        for name, pair in contrasts.positions
+                    }
 
     def _clear_curve_route(self, route, *, keep_status=False, reason=None, position=None):
         if reason is not None:

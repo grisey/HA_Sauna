@@ -12,7 +12,7 @@ from datetime import datetime, timedelta
 import gzip
 import hashlib
 import json
-from math import isfinite, sqrt
+from math import ceil, isfinite, sqrt
 import os
 from pathlib import Path
 import unittest
@@ -25,15 +25,20 @@ from custom_components.ha_sauna.core import curve_change as curves
 from custom_components.ha_sauna.core.curve_change import (
     OriginalPositionWindows,
     original_contrasts,
+    original_edge_change,
     original_flattening,
+    original_followup,
     original_kink_tolerance,
     original_water_pair,
     original_water_pair_support,
     original_water_window,
     original_window,
 )
+from custom_components.ha_sauna.core.detector import Detector
+from custom_components.ha_sauna.core.models import Measurement, Position, Quantity
 from custom_components.ha_sauna.core.moisture import absolute_humidity
 from custom_components.ha_sauna.core.parameters import Parameters
+from custom_components.ha_sauna.core.timeline import Kind
 
 
 ROOT = Path(__file__).resolve().parent
@@ -1623,6 +1628,354 @@ class OriginalCurveEvidenceTests(unittest.TestCase):
         self.assertAlmostEqual(
             result.closing, max(min(result.braking, significance), result.warming_min),
         )
+
+
+class OriginalFollowupArithmeticTests(unittest.TestCase):
+    """Rational arithmetic criteria; these numbers are not sensor scenarios."""
+
+    @staticmethod
+    def _window(values, *, start=0, time_factor=1, value_factor=1, offset=0,
+                shift=timedelta(0)):
+        points = tuple(
+            (ORIGIN + timedelta(seconds=2 * time_factor * (start + index)) + shift,
+             value_factor * value + offset)
+            for index, value in enumerate(values)
+        )
+        return original_window(
+            points, count=3, scale=abs(value_factor),
+            max_gap_seconds=2 * time_factor, at=points[-1][0],
+        )
+
+    def test_followup_counts_against_fixed_reference_without_accumulating_overlap(self):
+        values = (12, 10, 8, 6, 6, 6) + (6,) * 6
+        reference = self._window(values[:6])
+        self.assertIsNotNone(reference)
+        for length, previous, current in (
+            (6, 0, 0), (7, 0, 1), (8, 0, 2), (9, 0, 3),
+            (10, 1, 3), (11, 2, 3), (12, 3, 3),
+        ):
+            with self.subTest(prefix=length):
+                window = self._window(values[:length])
+                form = original_followup(window, reference)
+                self.assertIsNotNone(form)
+                self.assertIs(form.window, window)
+                self.assertIs(form.reference, reference)
+                self.assertEqual((form.fresh_previous, form.fresh_current),
+                                 (previous, current))
+                self.assertEqual(original_followup(window, reference), form)
+                if length in (6, 9, 12):
+                    # OLS over three originals at 0,2,4 has e=1/2.
+                    # The fixed previous reference falls at b=-1.
+                    self.assertEqual(form.current_direction, 0)
+                    self.assertEqual(form.current_change, 1)
+                    self.assertEqual(form.previous_direction, -2 if length == 6 else 0)
+                    self.assertEqual(form.previous_change, 0 if length == 6 else 1)
+                    self.assertEqual(form.level_change, -2 if length == 6 else 0)
+                    self.assertEqual(form.residual, 0)
+
+    def test_edge_change_matches_rational_secant_and_affine_symmetries(self):
+        for time_factor, value_factor, offset, shift in (
+            (1, 1, 0, timedelta(0)),
+            (3, 4, 100, timedelta(days=2)),
+            (2, -2, -30, timedelta(days=-1)),
+        ):
+            with self.subTest(time_factor=time_factor, value_factor=value_factor):
+                arguments = dict(time_factor=time_factor, value_factor=value_factor,
+                                 offset=offset, shift=shift)
+                reference = self._window((12, 10, 8, 6, 6, 6), **arguments)
+                window = self._window((6, 6, 6, 6, 5, 1), start=6, **arguments)
+                edge = original_edge_change(window, reference)
+                self.assertIsNotNone(edge)
+                self.assertIs(edge.window, window)
+                self.assertIs(edge.reference, reference)
+                # Last secant is (1-5)/2=-2 with error 2*1/2=1.
+                # Reference v=0 and e=1/2, so change=-2/(3/2).
+                sign = 1 if value_factor > 0 else -1
+                self.assertAlmostEqual(edge.direction, -2 * sign)
+                self.assertAlmostEqual(edge.change, -4 / 3 * sign)
+
+    def test_edge_counterform_needs_resolved_fall_and_rejects_invalid_support(self):
+        reference = self._window((12, 10, 8, 6, 10, 14))
+        # reference.v=2 and e=1/2. Stopping that rise gives a negative
+        # change, while its actual last direction remains flat or unresolved.
+        for drop, direction, change, falling in (
+            (0, 0, -4 / 3, False),
+            (0.5, -1 / 4, -3 / 2, False),
+            (4, -2, -8 / 3, True),
+        ):
+            with self.subTest(last_drop=drop):
+                window = self._window((14, 14, 14, 14, 14, 14 - drop), start=6)
+                edge = original_edge_change(window, reference)
+                self.assertIsNotNone(edge)
+                self.assertAlmostEqual(edge.direction, direction)
+                self.assertAlmostEqual(edge.change, change)
+                self.assertEqual(edge.direction < -1 and edge.change < -1, falling)
+        duplicate = replace(window, current=window.current[:-1] + (
+            (window.current[-2][0], window.current[-1][1]),
+        ))
+        smaller = original_window(
+            (window.previous + window.current)[-4:], count=2, scale=1,
+            max_gap_seconds=2, at=window.newest_at,
+        )
+        self.assertIsNotNone(smaller)
+        invalid_pairs = (
+            (None, reference), (window, None), (object(), reference),
+            (window, object()), (replace(window, scale=2), reference),
+            (replace(window, current=window.current[:-1]), reference),
+            (smaller, reference), (duplicate, reference), (reference, window),
+        )
+        for index, (current, binding) in enumerate(invalid_pairs):
+            with self.subTest(invalid=index):
+                self.assertIsNone(original_followup(current, binding))
+                self.assertIsNone(original_edge_change(current, binding))
+        self.assertIsNone(original_edge_change(reference, reference))
+
+
+class OriginalCurveFollowupTests(unittest.TestCase):
+    """Functional robustness criteria on declared, catalogue-timed originals.
+
+    The bound scenario's ``exit`` endpoints supply all four climate values;
+    ``construction.stay`` supplies door, recovery and settled-tail durations.
+    Linear joins isolate continuation and counterforms without claiming an
+    exact physical event time. No detector decision or fitted form is replaced.
+    """
+
+    def setUp(self):
+        manifest = json.loads((ROOT / "scenario_manifest.json").read_text(
+            encoding="utf-8",
+        ))
+
+        def declared_input(key, hash_key):
+            path = ROOT / manifest[key]
+            payload = path.read_bytes()
+            self.assertEqual(hashlib.sha256(payload).hexdigest(),
+                             manifest[hash_key])
+            return json.loads(payload)
+
+        source = declared_input("source_curves", "source_curves_sha256")
+        construction = declared_input("construction_file", "construction_sha256")
+        self.parameters = Parameters({})
+        self.values = self.parameters.values
+        self.count = self.values["curve_original_samples"]
+        self.step = self.values["grid_seconds"]
+        self.baseline_ticks = ceil(max(
+            self.values["curve_window_seconds"],
+            (2 * self.count + self.values["curve_original_kink_history_windows"])
+            * self.step,
+        ) / self.step) + 1
+        self.door_ticks = ceil(construction["stay"]["brief_door_seconds"] / self.step)
+        self.close_ticks = ceil(construction["stay"]["brief_close_seconds"] / self.step)
+        self.tail_ticks = ceil(
+            construction["stay"]["closed_entry_tail_seconds"] / self.step
+        )
+        curve = source["curves"]["exit"]
+        columns = tuple(curve["roles"].index(role) + 1 for role in CLIMATE)
+        self.initial = tuple(curve["rows"][0][column] for column in columns)
+        self.exchanged = tuple(curve["rows"][-1][column] for column in columns)
+        self.fall_step = tuple(
+            (after - before) / self.door_ticks
+            for before, after in zip(self.initial, self.exchanged, strict=True)
+        )
+        self.recovery_step = tuple(
+            (before - after) / self.close_ticks if role.endswith("temperature") else 0
+            for role, before, after in zip(
+                CLIMATE, self.initial, self.exchanged, strict=True,
+            )
+        )
+
+    def _detector(self):
+        detector = Detector(self.parameters, ORIGIN)
+        detector.report_heating(False, ORIGIN)
+        return detector
+
+    def _at(self, tick):
+        return ORIGIN + timedelta(seconds=tick * self.step)
+
+    def _accept(self, detector, tick, state):
+        at = self._at(tick)
+        for role, value in zip(CLIMATE, state, strict=True):
+            position, quantity = role.split("_", 1)
+            self.assertTrue(detector.accept(Measurement(
+                Position(position), Quantity(quantity), value, str(value),
+                f"sensor.followup_{role}", at, at,
+            )))
+
+    @staticmethod
+    def _latest(detector):
+        return tuple(
+            detector.latest[Position(position), Quantity(quantity)].value
+            for position, quantity in (role.split("_", 1) for role in CLIMATE)
+        )
+
+    @staticmethod
+    def _originals(detector):
+        return {
+            role: tuple(detector._curve_series[
+                Position(position), Quantity(quantity)
+            ]["points"])
+            for role in CLIMATE
+            for position, quantity in (role.split("_", 1),)
+        }
+
+    def _feed(self, detector, states, *, stop_when=None):
+        events = []
+        for state in states:
+            tick = detector.index + 1
+            self._accept(detector, tick, state)
+            events.extend(detector.advance(self._at(tick), enabled=True))
+            if stop_when is not None and stop_when():
+                break
+        return events
+
+    def _ramp(self, detector, ticks, delta, *, stop_when=None):
+        initial = self._latest(detector)
+        return self._feed(detector, (
+            tuple(value + index * change for value, change in zip(
+                initial, delta, strict=True,
+            ))
+            for index in range(1, ticks + 1)
+        ), stop_when=stop_when)
+
+    def _bind(self, route):
+        detector = self._detector()
+        events = self._feed(detector, (self.initial for _ in range(self.baseline_ticks)))
+
+        def pending(key):
+            return bool(detector.door_episode and detector.door_episode.get(key))
+
+        events += self._ramp(
+            detector, self.door_ticks, self.fall_step,
+            stop_when=lambda: pending("original_open"),
+        )
+        self.assertTrue(pending("original_open"))
+        self.assertNotIn(Kind.DOOR_OPEN, [item.kind for item in events])
+        if route == "opening":
+            return detector, events, detector.door_episode["original_open"]
+        events += self._ramp(detector, 4 * self.count, self.fall_step)
+        self.assertEqual([item.kind for item in events].count(Kind.DOOR_OPEN), 1)
+        self.assertTrue(detector.open)
+        events += self._ramp(
+            detector, self.close_ticks, self.recovery_step,
+            stop_when=lambda: pending("original_close"),
+        )
+        self.assertTrue(pending("original_close"))
+        self.assertNotIn(Kind.DOOR_CLOSE, [item.kind for item in events])
+        return detector, events, detector.door_episode["original_close"]
+
+    def test_ticks_duplicates_and_overlapping_old_originals_do_not_confirm(self):
+        for route, kind, key, delta in (
+            ("opening", Kind.DOOR_OPEN, "original_open", self.fall_step),
+            ("closing", Kind.DOOR_CLOSE, "original_close", self.recovery_step),
+        ):
+            with self.subTest(route=route):
+                detector, events, candidate = self._bind(route)
+                originals = self._originals(detector)
+                bound_tick = detector.index
+                for _ in range(2 * self.count):
+                    events += detector.advance(self._at(bound_tick), enabled=True)
+                for measurement in tuple(detector.latest.values()):
+                    self.assertTrue(detector.accept(measurement))
+                events += detector.advance(self._at(bound_tick + 1), enabled=True)
+                self.assertEqual(self._originals(detector), originals)
+                events += self._ramp(detector, self.count - 1, delta)
+                current = self._originals(detector)
+                for role in CLIMATE:
+                    self.assertLessEqual(current[role][-self.count][0],
+                                         originals[role][-1][0])
+                self.assertNotIn(kind, [item.kind for item in events])
+                self.assertIs(detector.door_episode[key], candidate)
+
+    def test_clear_continued_original_shapes_confirm_once_after_binding(self):
+        for route, kind, delta in (
+            ("opening", Kind.DOOR_OPEN, self.fall_step),
+            ("closing", Kind.DOOR_CLOSE, self.recovery_step),
+        ):
+            with self.subTest(route=route):
+                detector, events, candidate = self._bind(route)
+                bound_at = self._at(detector.index)
+                events += self._ramp(detector, 4 * self.count, delta)
+                confirmations = [item for item in events if item.kind is kind]
+                self.assertEqual(len(confirmations), 1)
+                self.assertGreater(confirmations[0].trace_at, bound_at)
+                if route == "opening":
+                    self.assertIs(detector.door_episode["original_open"], candidate)
+                    newest = {name: (temperature, humidity)
+                              for name, temperature, humidity in candidate["newest"]}
+                    for name, pair in candidate["confirmation_windows"]:
+                        self.assertGreater(pair.temperature.current[0][0], newest[name][0])
+                        self.assertGreater(pair.humidity.current[0][0], newest[name][1])
+                else:
+                    self.assertFalse(detector.open)
+                    self.assertIsNone(detector.door_episode)
+
+    def test_renewed_fall_prevents_late_isolated_recovery_confirming_old_close(self):
+        detector, events, previous = self._bind("closing")
+        # A short approach is followed immediately by a contradictory original
+        # fall; the first falling sample must not complete the old warm tail.
+        events += self._ramp(detector, self.count - 1, self.recovery_step)
+        self.assertNotIn(Kind.DOOR_CLOSE, [item.kind for item in events])
+        events += self._ramp(detector, 3 * self.count, self.fall_step)
+        self.assertTrue(detector.open)
+        self.assertIsNot(detector.door_episode.get("original_close"), previous)
+        self.assertNotIn(Kind.DOOR_CLOSE, [item.kind for item in events])
+        # This new fragment has a fitting local brake but lacks a complete new
+        # continuation. It cannot reactivate the much earlier close binding.
+        events += self._ramp(detector, self.count - 1, self.recovery_step)
+        self.assertTrue(detector.open)
+        self.assertNotIn(Kind.DOOR_CLOSE, [item.kind for item in events])
+        self.assertIsNot(detector.door_episode.get("original_close"), previous)
+
+    def test_temperature_plateau_closes_but_flat_rh_with_continued_cooling_does_not(self):
+        for plateau in (False, True):
+            with self.subTest(temperature_plateau=plateau):
+                detector, events, _ = self._bind("opening")
+                events += self._ramp(detector, 4 * self.count, self.fall_step)
+                self.assertTrue(detector.open)
+                self.assertEqual([item.kind for item in events].count(Kind.DOOR_OPEN), 1)
+                delta = tuple(
+                    0 if plateau or role.endswith("humidity") else change
+                    for role, change in zip(CLIMATE, self.fall_step, strict=True)
+                )
+                events += self._ramp(detector, self.tail_ticks, delta)
+                closes = [item for item in events if item.kind is Kind.DOOR_CLOSE]
+                self.assertEqual(len(closes), int(plateau))
+                self.assertEqual(detector.open, not plateau)
+
+    def test_equal_originals_have_same_events_across_advance_grouping(self):
+        states = [self.initial] * self.baseline_ticks
+        states.extend(tuple(
+            before + index * change for before, change in zip(
+                self.initial, self.fall_step, strict=True,
+            )
+        ) for index in range(1, self.door_ticks + 1))
+        states.extend(tuple(
+            before + index * change for before, change in zip(
+                self.exchanged, self.recovery_step, strict=True,
+            )
+        ) for index in range(1, self.close_ticks + 1))
+        states.extend([states[-1]] * self.tail_ticks)
+        observed = []
+        for cadence, repeated in ((1, False), (1, True), (self.count, False)):
+            with self.subTest(cadence=cadence, repeated=repeated):
+                detector = self._detector()
+                events = []
+                for tick, state in enumerate(states):
+                    self._accept(detector, tick, state)
+                    if (tick + 1) % cadence == 0:
+                        events += detector.advance(self._at(tick), enabled=True)
+                        if repeated:
+                            events += detector.advance(self._at(tick), enabled=True)
+                events += detector.advance(self._at(len(states)), enabled=True)
+                kinds = tuple(item.kind for item in events)
+                doors = tuple(kind for kind in kinds if kind in (
+                    Kind.DOOR_OPEN, Kind.DOOR_CLOSE,
+                ))
+                self.assertEqual(doors, (Kind.DOOR_OPEN, Kind.DOOR_CLOSE))
+                self.assertFalse(detector.open)
+                self.assertIsNone(detector.door_episode)
+                observed.append(kinds)
+        self.assertEqual(observed[0], observed[1])
+        self.assertEqual(observed[0], observed[2])
 
 
 if __name__ == "__main__":

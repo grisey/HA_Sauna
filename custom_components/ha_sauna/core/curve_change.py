@@ -93,6 +93,46 @@ class OriginalWindowFeatures:
 
 
 @dataclass(frozen=True)
+class OriginalFollowupFeatures:
+    """Raw follow-up contrasts against one retained original reference.
+
+    Fresh counts include only originals strictly after reference.newest_at.
+    An overlapping window remains valid, but does not supply a complete new
+    K-original section until its corresponding fresh count reaches K.
+    The caller owns the fixed reference, source continuity and every decision.
+    Changes use the reference's previous slope as their common background;
+    level_change compares only the two sections of the supplied window.
+    """
+
+    window: OriginalWindowFeatures
+    reference: OriginalWindowFeatures
+    fresh_previous: int
+    fresh_current: int
+    current_direction: float
+    previous_direction: float
+    current_change: float
+    previous_change: float
+    level_change: float
+    residual: float
+
+
+@dataclass(frozen=True)
+class OriginalEdgeChange:
+    """Direction and change of the last two current originals' secant.
+
+    Both contrasts retain their sign. A slowdown can have a negative change
+    while direction remains positive or zero. The reference's current OLS
+    slope supplies the comparison; its identity and all decisions are owned
+    by the caller. window retains both timestamps and their original values.
+    """
+
+    window: OriginalWindowFeatures
+    reference: OriginalWindowFeatures
+    direction: float
+    change: float
+
+
+@dataclass(frozen=True)
 class OriginalKinkTolerance:
     """Causal background scale and the remaining signed raw slope change.
 
@@ -429,6 +469,33 @@ def _original_window_valid(window: object) -> bool:
             and window.r >= 0 and window.r_minus >= 0)
 
 
+def _original_comparable_windows_valid(
+    window: OriginalWindowFeatures, reference: OriginalWindowFeatures,
+) -> bool:
+    if (not _original_window_valid(window)
+            or not _original_window_valid(reference)
+            or window.scale != reference.scale):
+        return False
+    count = len(reference.previous)
+    if count < 2:
+        return False
+    for features in (window, reference):
+        previous_at = None
+        for section in (features.previous, features.current):
+            if not isinstance(section, tuple) or len(section) != count:
+                return False
+            for point in section:
+                if not isinstance(point, tuple) or len(point) != 2:
+                    return False
+                stamp, value = point
+                if (not isinstance(stamp, datetime)
+                        or not _profile_number(value)
+                        or (previous_at is not None and stamp <= previous_at)):
+                    return False
+                previous_at = stamp
+    return True
+
+
 def _original_line(
     points: tuple[tuple[datetime, float], ...], scale: float,
 ) -> tuple[float, float, float, float] | None:
@@ -510,6 +577,92 @@ def original_window(
             previous=previous, current=current, scale=float(scale),
             v=new[0], b=old[0], e=new[1], e_minus=old[1],
             mean=new[2], mean_minus=old[2], r=new[3], r_minus=old[3],
+        )
+    except (AttributeError, IndexError, OverflowError, TypeError, ValueError):
+        return None
+
+
+def original_followup(
+    window: OriginalWindowFeatures, reference: OriginalWindowFeatures,
+) -> OriginalFollowupFeatures | None:
+    """Compare immutable, ordered 2K support with a fixed earlier reference.
+
+    Both supports retain the same K and value scale. No refit or overlap-based
+    evidence accumulation takes place. Equal newest times are valid and have
+    no fresh originals; a window older than its reference is unknown (None).
+    Invalid support or nonfinite arithmetic is also unknown. Source identity,
+    gap limits and the amount of fresh support required belong to the caller.
+    """
+    try:
+        if not _original_comparable_windows_valid(window, reference):
+            return None
+        reference_at = reference.newest_at
+        if window.newest_at < reference_at:
+            return None
+        current_error = window.e + reference.e_minus
+        previous_error = window.e_minus + reference.e_minus
+        level_scale = 2 * window.scale
+        if not all(_original_positive(value) for value in (
+            current_error, previous_error, level_scale,
+        )):
+            return None
+        current_direction = window.v / window.e
+        previous_direction = window.b / window.e_minus
+        current_change = (window.v - reference.b) / current_error
+        previous_change = (window.b - reference.b) / previous_error
+        level_change = (window.mean - window.mean_minus) / level_scale
+        residual = max(window.r, window.r_minus)
+        if not all(_profile_number(value) for value in (
+            current_direction, previous_direction, current_change,
+            previous_change, level_change, residual,
+        )):
+            return None
+        return OriginalFollowupFeatures(
+            window=window, reference=reference,
+            fresh_previous=sum(stamp > reference_at for stamp, _ in window.previous),
+            fresh_current=sum(stamp > reference_at for stamp, _ in window.current),
+            current_direction=current_direction,
+            previous_direction=previous_direction,
+            current_change=current_change, previous_change=previous_change,
+            level_change=level_change, residual=residual,
+        )
+    except (AttributeError, IndexError, OverflowError, TypeError, ValueError):
+        return None
+
+
+def original_edge_change(
+    window: OriginalWindowFeatures, reference: OriginalWindowFeatures,
+) -> OriginalEdgeChange | None:
+    """Compare the newest secant with a retained current OLS reference.
+
+    Only a strictly newer original than reference.newest_at can supply this
+    contrast. The secant uses the final two current originals and their actual
+    time difference. Its slope bound is exactly 2 * scale / time difference;
+    change compares with reference.v using that bound plus reference.e.
+    No fit, threshold or reference update takes place. Invalid support and
+    nonfinite or unresolved numerical bounds remain unknown (None).
+    """
+    try:
+        if (not _original_comparable_windows_valid(window, reference)
+                or window.newest_at <= reference.newest_at):
+            return None
+        previous, current = window.current[-2:]
+        duration = (current[0] - previous[0]).total_seconds()
+        if not _original_positive(duration):
+            return None
+        slope = (current[1] - previous[1]) / duration
+        error = 2 * window.scale / duration
+        change_error = error + reference.e
+        if (not _profile_number(slope)
+                or not _original_positive(error)
+                or not _original_positive(change_error)):
+            return None
+        direction = slope / error
+        change = (slope - reference.v) / change_error
+        if not all(_profile_number(value) for value in (direction, change)):
+            return None
+        return OriginalEdgeChange(
+            window=window, reference=reference, direction=direction, change=change,
         )
     except (AttributeError, IndexError, OverflowError, TypeError, ValueError):
         return None

@@ -1020,12 +1020,33 @@ class DetectorTests(unittest.TestCase):
 
     def test_close_on_same_prefix_prevents_pending_rh_stage_confirmation(self):
         detector = self._ventilation_detector()
-        begin, plateau, _, values = self._ventilation_curve(detector)
+        begin, plateau, _, falling = self._ventilation_curve(detector)
         count, step = detector.p["curve_original_samples"], detector.grid_seconds
         humidity_plateau = begin + (plateau - begin) // 2
         pending_at = humidity_plateau + (count - 1) * step
-        found = self._feed_ventilation(detector, pending_at - step, values)
+        braking_at = humidity_plateau - count * step
+        braking_temperature = falling(braking_at)[0]
         significance = detector.p["curve_original_significance"]
+
+        def values(second):
+            temperature, humidity = falling(second)
+            if second > braking_at:
+                temperature = braking_temperature + (temperature - braking_temperature) / 2
+            return temperature, humidity
+
+        # Bind the close owner at a real brake, then retain the shallower fall
+        # until both T windows again support the pending RH flattening.
+        found = self._feed_ventilation(detector, pending_at, values)
+        self.assertIn("original_ventilation_rh", detector.door_episode)
+        closing = detector.door_episode["original_close"]
+        forms = detector.diagnostic["original_forms"]
+        self.assertTrue(forms["complete_fresh_original_block"]["result"])
+        self.assertGreater(forms["bound_temperature_braking"]["value"], significance)
+        relative = detector.diagnostic["original_ventilation"]["relative_humidity"]
+        self.assertTrue(relative["initial_form"])
+        self.assertFalse(relative["confirmable"])
+        self.assertNotIn(Kind.DOOR_CLOSE, [item.kind for item in found])
+        self.assertNotIn(Kind.VENTILATION, [item.kind for item in found])
 
         def closing_form(*args, **kwargs):
             form = original_thermal_contrasts(*args, **kwargs)
@@ -1034,21 +1055,10 @@ class DetectorTests(unittest.TestCase):
                 warming_max=2 * significance,
             )
 
-        def combined_closing_form(*args, **kwargs):
-            form = original_contrasts(*args, **kwargs)
-            return None if form is None else replace(form, closing=2 * significance)
-
         # Only the comparison establishing simultaneous closure is declared.
-        # RH/T windows, pending anchors and freshness remain real inputs.
+        # The bound close owner, complete fresh T blocks and RH/T windows stay real.
         with patch("custom_components.ha_sauna.core.detector.original_thermal_contrasts",
-                   side_effect=closing_form), patch(
-                       "custom_components.ha_sauna.core.detector.original_contrasts",
-                       side_effect=combined_closing_form,
-                   ):
-            found += self._feed_ventilation(detector, pending_at, values)
-            self.assertIn("original_ventilation_rh", detector.door_episode)
-            self.assertIn("original_close", detector.door_episode)
-            self.assertNotIn(Kind.VENTILATION, [item.kind for item in found])
+                   side_effect=closing_form):
             second = pending_at + step
             for quantity, value in ((Quantity.HUMIDITY, values(second)[1]),
                                     (Quantity.TEMPERATURE, values(second)[0])):
@@ -1058,6 +1068,11 @@ class DetectorTests(unittest.TestCase):
                         measured=T0 + timedelta(seconds=second),
                     ))
             found += detector.advance(T0 + timedelta(seconds=second), enabled=True)
+        self.assertEqual(closing["confirmation_received_at"], T0 + timedelta(seconds=second))
+        ventilation = detector.diagnostic["original_ventilation"]
+        self.assertTrue(ventilation["close_same_prefix"])
+        self.assertTrue(ventilation["relative_humidity"]["confirmable"])
+        self.assertFalse(ventilation["relative_humidity"]["proven"])
         self.assertEqual([item.kind for item in found].count(Kind.DOOR_CLOSE), 1)
         self.assertNotIn(Kind.VENTILATION, [item.kind for item in found])
         self.assertNotIn(Kind.VENTILATION_COMPLETE, [item.kind for item in found])
