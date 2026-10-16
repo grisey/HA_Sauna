@@ -38,7 +38,13 @@ const state = (id = "live", ended = false) => ({
   permissions: { admin: true },
   frontend_defaults: frontendDefaults,
   session: {
-    timeline: { session_id: id, completed: [], active: null, processed: [], retracted: [] },
+    timeline: {
+      session_id: id,
+      completed: [],
+      active: null,
+      processed: [],
+      retracted: [],
+    },
     ...(ended ? { ended_at: "2032-01-01T12:10:00Z" } : {}),
   },
   phase_projection: { intervals: [] },
@@ -132,8 +138,12 @@ function historyUiPanel(api) {
         },
       };
       const event = {
-        key, target, defaultPrevented: false,
-        preventDefault() { this.defaultPrevented = true; },
+        key,
+        target,
+        defaultPrevented: false,
+        preventDefault() {
+          this.defaultPrevented = true;
+        },
       };
       for (const callback of listeners.get("keydown") || []) callback(event);
       assert.equal(event.defaultPrevented, true, `chart key ${key} is handled`);
@@ -742,8 +752,12 @@ test("a stale admin page cannot write after role loss and return to admin", asyn
 test("fixed user and admin panels navigate an archive while its first page loads", async () => {
   const session = {
     timeline: {
-      session_id: "old", session_started_at: "2020-01-01T10:00:00Z",
-      completed: [], active: null, processed: [], retracted: [],
+      session_id: "old",
+      session_started_at: "2020-01-01T10:00:00Z",
+      completed: [],
+      active: null,
+      processed: [],
+      retracted: [],
     },
     ended_at: "2020-01-01T12:00:00Z",
   };
@@ -797,8 +811,8 @@ test("fixed user and admin panels navigate an archive while its first page loads
     key("ArrowLeft");
     assert.deepEqual(Array.from(p.window), zoomed);
     key("Home");
-    p.ensureHistoryWindow();
     assert.deepEqual(Array.from(p.window), domain);
+    // The next key arrives before any renderer can restore a missing window.
     key("+");
     const navigated = Array.from(p.window);
     response.resolve({ records: [], next_after: null, session });

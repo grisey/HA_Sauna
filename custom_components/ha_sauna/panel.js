@@ -1274,7 +1274,7 @@ function HistoryInteraction(panel, surface, wrap, tooltip, cursor) {
     const time = start + ((point.x - left) / (right - left)) * (end - start);
     return { point, time, geometry, start, end, left, right };
   };
-  const readValues = (series, content, boundary = "value") => {
+  const readValues = (series, content, timeZone, boundary = "value") => {
     const visible = new Set();
     for (const [key, measurement] of content) {
       const { position, quantity } = measurement,
@@ -1286,7 +1286,7 @@ function HistoryInteraction(panel, surface, wrap, tooltip, cursor) {
         `${quantity === "temperature" ? "Temperatur" : "Luftfeuchte"}${panel.historyDetail ? ` ${position === "upper" ? "oben" : "unten"}` : ""}: `,
       );
       setValue(row, value, quantity);
-      if (value) row.value.setAttribute("title", panel.tooltipWhen(value.time));
+      if (value) row.value.setAttribute("title", panel.tooltipWhen(value.time, timeZone));
       else row.value.removeAttribute("title");
       if (row.row.hidden) row.row.hidden = false;
       visible.add(key);
@@ -1427,9 +1427,9 @@ function HistoryInteraction(panel, surface, wrap, tooltip, cursor) {
     layoutValues(range);
     showValueTimes(selection.start, range ? selection.end : null, timeZone);
     if (range) {
-      readValues(nodes.endSeries, content, "end");
+      readValues(nodes.endSeries, content, timeZone, "end");
     }
-    readValues(nodes.series, content);
+    readValues(nodes.series, content, timeZone);
     setText(nodes.status, `Saunastatus · ${phases[phase?.phase] || "Unbekannt"}`);
     nodes.status.hidden = eventContext || !panel.historyDetail || range;
     panel.syncHistoryInformation(selection, phase, false, information);
@@ -1546,7 +1546,7 @@ function HistoryInteraction(panel, surface, wrap, tooltip, cursor) {
       selection = { kind: "point", start: time, end: time },
       information = panel.historyInformationContent(selection, phase),
       label = panel.historyInformationHeading(selection, phase, timeZone, information);
-    readValues(nodes.series, information.measurements);
+    readValues(nodes.series, information.measurements, timeZone);
     setText(nodes.heading, label);
     nodes.heading.setAttribute("title", panel.tooltipWhen?.(time, timeZone) || label);
     showValueTimes(time, null, timeZone);
@@ -1758,13 +1758,17 @@ class HistoryChart {
         });
     }
     const eventVisibilityKey = panel.historyEventVisibilityKey(),
-      phaseKey = `${model.width}:${model.height}:${model.left}:${model.right}:${model.top}:${model.bottom}:${geometry.canvas.cssWidth}:${geometry.canvas.cssHeight}:${valueScaleKey}:${model.start}:${model.end}:${panel.historyTimelineRevision}:${panel.historyRecords("phase").length}:${session.ended_at || panel.state.now}:${JSON.stringify(panel.shown.phase_projection || null)}:${timeZone}:${eventVisibilityKey}`;
-    if (phaseKey !== this.phaseKey) {
+      annotationKey = `${model.width}:${model.height}:${model.left}:${model.right}:${model.top}:${model.bottom}:${valueScaleKey}:${model.start}:${model.end}:${panel.historyTimelineRevision}:${panel.historyRecords("phase").length}:${session.ended_at || panel.state.now}:${JSON.stringify(panel.shown.phase_projection || null)}:${timeZone}:${eventVisibilityKey}`,
+      phaseKey = `${annotationKey}:${geometry.canvas.cssWidth}:${geometry.canvas.cssHeight}`;
+    if (annotationKey !== this.annotationKey) {
       panel.$("[data-history-annotations]").innerHTML = panel.historyAnnotations(
         model,
         session,
         gangs,
       );
+      this.annotationKey = annotationKey;
+    }
+    if (phaseKey !== this.phaseKey) {
       panel.updateMarkup(
         "[data-history-phase-band]",
         panel.historyPhaseBand(model, session, geometry.canvas.cssWidth, geometry),
@@ -5617,9 +5621,9 @@ class SaunaPanel extends HTMLElement {
         if (["ArrowLeft", "ArrowRight", "Home", "+", "-", "="].includes(e.key)) {
           e.preventDefault();
           if (e.key === "Home") {
-            this.cancelHistoryViewTransition();
+            this.cancelHistoryInput();
+            this.setHistoryWindow(...this.historyDomain());
             this.zoom = 1;
-            this.window = null;
           } else if (e.key === "ArrowLeft" || e.key === "ArrowRight") {
             const offset =
               width *
@@ -9890,9 +9894,12 @@ class SaunaPanel extends HTMLElement {
         powerDetails = measuredPower
           ? `<p>Gemessene Leistung · ${this.clock(content.start)} – ${powerEnd ? this.clock(powerEnd) : "Ende nicht aufgezeichnet"}${measuredPower.complete ? "" : " · Nur gemessene Abschnitte"}</p><div class="history-information-values">${valueRow("power-mean", "Mittlere gemessene Leistung", measuredPower.mean_w, "W")}${valueRow("power-peak", "Höchste gemessene Leistung", measuredPower.peak_w, "W")}</div>`
           : '<p class="muted">Gemessene Leistung: Nicht verfügbar</p>';
+      const selectedGang = singleGang
+        ? `<div data-history-selected-gang data-gang-id="${esc(rows[0].gang.gang_id)}" data-start="${esc(rows[0].gang.started_at)}"><p>${esc(rows[0].label)} · <strong>${esc(rows[0].confirmationText)}</strong></p><p>Beginn · <time datetime="${esc(rows[0].gang.started_at)}" title="${esc(this.tooltipWhen(rows[0].originalStarted))}">${this.clock(rows[0].originalStarted)}</time></p></div>`
+        : "";
       this.updateMarkup(
         "[data-history-session-summary]",
-        `<div class="history-information-values">${overview ? `<div data-key="history-information-gang-count"><span data-history-label>Saunagänge</span><span class="history-tooltip-value"><span class="history-tooltip-number">${gangCount}</span><span class="history-tooltip-unit"></span></span></div>` : ""}${maximumRows}${valueRow("energy", "Energieverbrauch", energyValue, "kWh", energyReference, energy ? "Nicht verfügbar" : this.historyLoad ? "Nachladend" : "Für diesen Zeitraum nicht belegt")}</div><details id="history-information-details"><summary>Weitere Daten · ${overview ? "Sitzung" : "Ausgewählter Zeitraum"}</summary><p class="muted">${this.clock(content.start)} – ${this.clock(content.end)}${overview && energy?.accounted_at ? ` · Energie bis ${this.clock(energy.accounted_at)}` : ""}</p>${powerDetails}</details>`,
+        `<div class="history-information-values">${overview ? `<div data-key="history-information-gang-count"><span data-history-label>Saunagänge</span><span class="history-tooltip-value"><span class="history-tooltip-number">${gangCount}</span><span class="history-tooltip-unit"></span></span></div>` : ""}${maximumRows}${valueRow("energy", "Energieverbrauch", energyValue, "kWh", energyReference, energy ? "Nicht verfügbar" : this.historyLoad ? "Nachladend" : "Für diesen Zeitraum nicht belegt")}</div><details id="history-information-details"><summary>Weitere Daten · ${overview ? "Sitzung" : "Ausgewählter Zeitraum"}</summary><p class="muted">${this.clock(content.start)} – ${this.clock(content.end)}${overview && energy?.accounted_at ? ` · Energie bis ${this.clock(energy.accounted_at)}` : ""}</p>${selectedGang}${powerDetails}</details>`,
       );
     }
     this.updateMarkup(
@@ -11371,25 +11378,43 @@ class SaunaPanel extends HTMLElement {
   }
   syncHistorySourceSelection() {
     const selection = this.historyValueSelection;
-    if (!selection?.eventIds?.length || selection.identity !== this.historyValueIdentity()) return;
+    if (
+      !selection?.eventIds?.length ||
+      selection.identity !== this.historyValueIdentity()
+    )
+      return;
     const projection = this.historyEventProjection(),
       visible = this.historyDetail ? projection.events : projection.mainEvents,
       available = new Map(visible.map((event) => [event.event_id, event])),
       members = selection.eventIds.map((id) => available.get(id));
     if (members.some((event) => !event)) {
       this.resetHistorySelectionState();
-      if (this.historySelectionDrag) this.historySelectionDrag.selection = null;
       return;
     }
     const span = this.historyEventSpan(members),
-      snapAt = (time) => projection.snapTargets.find((target) =>
-        target.time === time && selection.eventIds.includes(target.eventId)) || null,
+      snapAt = (time) =>
+        projection.snapTargets.find(
+          (target) =>
+            target.time === time && selection.eventIds.includes(target.eventId),
+        ) || null,
       kind = span.start === span.end ? "point" : "range";
-    if (selection.start !== span.start || selection.end !== span.end || selection.kind !== kind
-        || selection.eventLabel !== span.roleLabel || selection.sourceGroupKey !== span.sourceGroupKey) {
-      this.historyValueSelection = {...selection, kind, start: span.start, end: span.end,
-        sourceGroupKey: span.sourceGroupKey, eventLabel: span.roleLabel,
-        startSnap: snapAt(span.start), endSnap: snapAt(span.end)};
+    if (
+      selection.start !== span.start ||
+      selection.end !== span.end ||
+      selection.kind !== kind ||
+      selection.eventLabel !== span.roleLabel ||
+      selection.sourceGroupKey !== span.sourceGroupKey
+    ) {
+      this.historyValueSelection = {
+        ...selection,
+        kind,
+        start: span.start,
+        end: span.end,
+        sourceGroupKey: span.sourceGroupKey,
+        eventLabel: span.roleLabel,
+        startSnap: snapAt(span.start),
+        endSnap: snapAt(span.end),
+      };
     }
   }
   inspectHistoryEvent(eventId) {
@@ -11442,8 +11467,11 @@ class SaunaPanel extends HTMLElement {
         current?.eventIds?.length === ids.length &&
         ids.every((id) => current.eventIds.includes(id));
     const snapAt = (time) => {
-      return this.historyEventProjection().snapTargets.find((target) =>
-        target.time === time && ids.includes(target.eventId)) || null;
+      return (
+        this.historyEventProjection().snapTargets.find(
+          (target) => target.time === time && ids.includes(target.eventId),
+        ) || null
+      );
     };
     this.selectHistoryValueContext(
       {
@@ -11506,7 +11534,7 @@ class SaunaPanel extends HTMLElement {
     const end = event.infusion_ref?.end,
       at = stamp(end?.effective_at);
     if (!Number.isFinite(at) || at < stamp(event.effective_at))
-      return '<span>Ende nicht belegt</span>';
+      return "<span>Ende nicht belegt</span>";
     return `<span>Ende <time datetime="${esc(end.effective_at)}" title="${esc(this.tooltipWhen(end.effective_at))}">${esc(this.clock(end.effective_at))}</time></span><span>Bestätigt <time datetime="${esc(end.confirmed_at)}" title="${esc(this.tooltipWhen(end.confirmed_at))}">${esc(this.clock(end.confirmed_at))}</time></span>`;
   }
   syncHistorySnapTargets() {
@@ -12088,17 +12116,25 @@ class SaunaPanel extends HTMLElement {
     );
     const dx = event.clientX - pointer.startX,
       dy = event.clientY - pointer.startY,
-      rect = pointer.geometry?.rects?.[
-        pointer.svg.matches?.("[data-history-time-axis]") ? "timeAxis" : "surface"
-      ],
+      rect =
+        pointer.geometry?.rects?.[
+          pointer.svg.matches?.("[data-history-time-axis]") ? "timeAxis" : "surface"
+        ],
       model = pointer.model,
-      plotWidth = model && rect ? (model.right - model.left) / model.width * rect.width : 0;
+      plotWidth =
+        model && rect ? ((model.right - model.left) / model.width) * rect.width : 0;
     if (pointer.movement > this.preference("history_tap_movement_px")) {
       pointer.tap = false;
       pointer.panAllowed ??= Math.abs(dx) > Math.abs(dy);
     }
-    if (!pointer.tap && pointer.panAllowed && this.chartPointers.size === 1 && pointer.window && plotWidth > 0) {
-      const shift = -dx / plotWidth * (pointer.window[1] - pointer.window[0]);
+    if (
+      !pointer.tap &&
+      pointer.panAllowed &&
+      this.chartPointers.size === 1 &&
+      pointer.window &&
+      plotWidth > 0
+    ) {
+      const shift = (-dx / plotWidth) * (pointer.window[1] - pointer.window[0]);
       this.setHistoryWindow(pointer.window[0] + shift, pointer.window[1] + shift);
       this.scheduleHistoryRender("viewport");
       event.preventDefault?.();
@@ -12169,7 +12205,7 @@ class SaunaPanel extends HTMLElement {
           `<g class="history-selection-handle" data-history-selection-handle="${boundary}" role="slider" tabindex="-1" visibility="hidden" aria-hidden="true"><line class="history-selection-guide" vector-effect="non-scaling-stroke" data-history-selection-${boundary}-tick/><ellipse class="history-selection-hit" data-history-selection-${boundary}-hit/></g>`,
       )
       .join("");
-    return `<div class="history-timeline-strip" data-history-timeline-strip role="group" aria-label="Phasen der Sitzung"><div class="history-band-names" data-history-band-names></div><div class="history-phase-band" data-history-phase-band></div></div><div class="plot-wrap history-stack"><svg class="chart history-background" preserveAspectRatio="none" aria-hidden="true"><defs><clipPath id="history-layer-clip"><rect data-history-clip/></clipPath></defs><g data-history-annotations clip-path="url(#history-layer-clip)"></g></svg><canvas class="chart history-curves" role="img" aria-label="Temperatur- und Feuchteverlauf; Ereignisse und Zeiten stehen in den nachfolgenden Tabellen." aria-describedby="gangs event-list">Temperatur und Feuchte der Sitzung. Ereignisse und Saunagänge sind in den Tabellen unter dem Diagramm zugänglich.</canvas><svg class="chart session-chart" preserveAspectRatio="none" role="group" tabindex="0" aria-label="Sitzungsverlauf"><g data-history-axes></g><g data-history-selection clip-path="url(#history-layer-clip)" visibility="hidden" aria-hidden="true"><rect class="history-selection-band" data-history-selection-band/></g><g data-history-events clip-path="url(#history-layer-clip)"></g><line class="history-selection-guide" vector-effect="non-scaling-stroke" data-history-selection-start visibility="hidden"/><line class="history-selection-guide" vector-effect="non-scaling-stroke" data-history-selection-end visibility="hidden"/><line id="cursor" stroke="var(--sauna-color-chart-text)" visibility="hidden"/></svg></div><div class="history-lower-band" data-history-lower-band data-history-strip-events role="group" aria-label="Türvorgänge und Aufgüsse"></div><svg class="chart history-time-axis" data-history-time-axis preserveAspectRatio="none" role="group" tabindex="0" aria-label="Zeitachse der Sitzung"><g data-history-time-ticks></g><g data-history-selection-context data-action="history-selection-window" role="button" tabindex="-1" visibility="hidden" aria-hidden="true"><line class="history-selection-context-hit" vector-effect="non-scaling-stroke"/></g>${handles}</svg>`;
+    return `<div class="history-timeline-strip" data-history-timeline-strip role="group" aria-label="Phasen der Sitzung"><div class="history-band-names" data-history-band-names></div><div class="history-phase-band" data-history-phase-band></div></div><div class="plot-wrap history-stack"><svg class="chart history-background" preserveAspectRatio="none" aria-hidden="true"><defs><clipPath id="history-layer-clip"><rect data-history-clip/></clipPath></defs><g data-history-annotations clip-path="url(#history-layer-clip)"></g></svg><canvas class="chart history-curves" role="img" aria-label="Temperatur- und Feuchteverlauf; Phasenbänder, Auswahldetails und Ereignisliste enthalten Ereignisse und Zeiten." aria-describedby="history-inspection event-list">Temperatur und Feuchte der Sitzung. Saunagänge sind über die Phasenbänder auswählbar. Zeiten und Status stehen in den Auswahldetails; weitere Ereignisse in der Ereignisliste.</canvas><svg class="chart session-chart" preserveAspectRatio="none" role="group" tabindex="0" aria-label="Sitzungsverlauf"><g data-history-axes></g><g data-history-selection clip-path="url(#history-layer-clip)" visibility="hidden" aria-hidden="true"><rect class="history-selection-band" data-history-selection-band/></g><g data-history-events clip-path="url(#history-layer-clip)"></g><line class="history-selection-guide" vector-effect="non-scaling-stroke" data-history-selection-start visibility="hidden"/><line class="history-selection-guide" vector-effect="non-scaling-stroke" data-history-selection-end visibility="hidden"/><line id="cursor" stroke="var(--sauna-color-chart-text)" visibility="hidden"/></svg></div><div class="history-lower-band" data-history-lower-band data-history-strip-events role="group" aria-label="Türvorgänge und Aufgüsse"></div><svg class="chart history-time-axis" data-history-time-axis preserveAspectRatio="none" role="group" tabindex="0" aria-label="Zeitachse der Sitzung"><g data-history-time-ticks></g><g data-history-selection-context data-action="history-selection-window" role="button" tabindex="-1" visibility="hidden" aria-hidden="true"><line class="history-selection-context-hit" vector-effect="non-scaling-stroke"/></g>${handles}</svg>`;
   }
   syncHistoryGeometry(plot = this.historyGeometry(), geometry) {
     const attributes = (node, values) => {
@@ -12906,12 +12942,18 @@ class SaunaPanel extends HTMLElement {
     if (!session)
       return { allEvents: [], events: [], mainEvents: [], groups: [], snapTargets: [] };
     const timeline = session.timeline,
-      gangs = [...(timeline.completed || []), ...(timeline.active ? [timeline.active] : [])],
+      gangs = [
+        ...(timeline.completed || []),
+        ...(timeline.active ? [timeline.active] : []),
+      ],
       infusionEvidence = new Map();
     for (const gang of gangs) {
-      const owned = new Set((gang.infusion_events || []).map((event) => event.event_id));
+      const owned = new Set(
+        (gang.infusion_events || []).map((event) => event.event_id),
+      );
       for (const infusion of gang.infusions || [])
-        if (owned.has(infusion.source_event_id)) infusionEvidence.set(infusion.source_event_id, infusion);
+        if (owned.has(infusion.source_event_id))
+          infusionEvidence.set(infusion.source_event_id, infusion);
     }
     const allEvents = this.historyEventSources().map((event) => {
         const category = this.historyEventCategory(event),
@@ -12923,7 +12965,8 @@ class SaunaPanel extends HTMLElement {
           history_visible: this.historyEventVisible(event),
           display_label: label,
           ...(event.kind === "infusion" && infusionEvidence.has(event.event_id)
-            ? {infusion_ref: infusionEvidence.get(event.event_id)} : {}),
+            ? { infusion_ref: infusionEvidence.get(event.event_id) }
+            : {}),
           snap:
             category && Number.isFinite(at)
               ? { time: at, eventId: event.event_id, kind: event.kind, label }
@@ -12960,10 +13003,10 @@ class SaunaPanel extends HTMLElement {
         return groups.at(-1);
       };
     const doors = new Map(
-        source
-          .filter((event) => event.history_category === "door")
-          .map((event) => [event.event_id, event]),
-      );
+      source
+        .filter((event) => event.history_category === "door")
+        .map((event) => [event.event_id, event]),
+    );
     for (const cycle of session.door_cycles || []) {
       const members = (cycle.event_ids || []).map((id) => doors.get(id)),
         start = stamp(cycle.started_at),
@@ -13006,7 +13049,8 @@ class SaunaPanel extends HTMLElement {
           claimed.add(id);
           return infusions.get(id);
         });
-      for (const event of members) append("infusion", `event:${event.event_id}`, [event], false, gang);
+      for (const event of members)
+        append("infusion", `event:${event.event_id}`, [event], false, gang);
     }
     for (const [id, event] of infusions)
       if (!claimed.has(id)) append("infusion", `event:${id}`, [event]);
@@ -13037,7 +13081,8 @@ class SaunaPanel extends HTMLElement {
       }
       group.label = this.historyEventBandLabel(group);
       group.selectionLabel =
-        group.roleLabel || (["heater", "infusion"].includes(group.kind) ? group.label : undefined);
+        group.roleLabel ||
+        (["heater", "infusion"].includes(group.kind) ? group.label : undefined);
       group.visible = group.first.event.history_visible;
       group.annotation =
         group.kind === "heater"
@@ -13046,10 +13091,14 @@ class SaunaPanel extends HTMLElement {
             ? "door"
             : null;
       group.snapTargets = group.members.map(({ event }) => event.snap).filter(Boolean);
-      if (group.end_ref) group.snapTargets.push({
-        time: group.end, eventId: group.first.event.event_id,
-        kind: "infusion_end", boundary: "end", label: "Aufgussende",
-      });
+      if (group.end_ref)
+        group.snapTargets.push({
+          time: group.end,
+          eventId: group.first.event.event_id,
+          kind: "infusion_end",
+          boundary: "end",
+          label: "Aufgussende",
+        });
       group.children =
         group.kind === "infusion" && group.members.length > 1
           ? group.members.map((member) => ({
@@ -13070,11 +13119,18 @@ class SaunaPanel extends HTMLElement {
         allEvents.filter((event) => event.history_visible),
       ),
       mainEvents = events.filter((event) => event.history_category),
-      snapTargets = [...new Map([
-        ...mainEvents.map((event) => event.snap).filter(Boolean),
-        ...groups.filter((group) => group.visible).flatMap((group) =>
-          group.snapTargets.filter((target) => target.boundary === "end")),
-      ].map((target) => [`${target.eventId}:${target.time}`, target])).values()];
+      snapTargets = [
+        ...new Map(
+          [
+            ...mainEvents.map((event) => event.snap).filter(Boolean),
+            ...groups
+              .filter((group) => group.visible)
+              .flatMap((group) =>
+                group.snapTargets.filter((target) => target.boundary === "end"),
+              ),
+          ].map((target) => [`${target.eventId}:${target.time}`, target]),
+        ).values(),
+      ];
     return {
       allEvents,
       events,

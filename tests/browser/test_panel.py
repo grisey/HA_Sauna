@@ -2542,8 +2542,15 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
         chart = self.panel.locator("svg.session-chart")
         await expect(chart.locator(".axis-temperature").first).to_have_css("fill", "rgb(230, 74, 235)")
         await expect(chart.locator(".axis-humidity").first).to_have_css("fill", "rgb(35, 221, 204)")
-        await expect(chart).to_contain_text("Temperatur (°C)")
-        await expect(chart).to_contain_text("Luftfeuchte (%)")
+        await expect(chart).to_have_attribute(
+            "aria-label", "Sitzungsverlauf: Temperatur und relative Luftfeuchte"
+        )
+        await expect(chart.locator(".axis-temperature").filter(has_text="°C")).to_have_text("°C")
+        humidity_axis = chart.locator('[data-action="history-humidity"]')
+        await expect(humidity_axis).to_have_text("%")
+        await expect(humidity_axis).to_have_attribute(
+            "aria-label", "Relative Feuchte (%), zu absoluter Feuchte wechseln"
+        )
         await self.page.screenshot(path=str(screenshots / "history_desktop.png"), full_page=True)
         await self.panel.locator('.main-tabs [data-action="details"]').click()
         await self.panel.locator('[data-action="diagnostics"]').click()
@@ -2994,6 +3001,19 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.errors,[])
 
     async def test_live_history_assignment_diagnostics_and_authenticated_download(self):
+        async def selected_gang_details(panel):
+            phase = panel.locator('.history-phase-band-segment[data-history-phase="saunagang"]').first
+            await expect(phase).to_be_visible(timeout=browser_timeout("update"))
+            if await phase.get_attribute("aria-pressed") != "true":
+                await phase.click()
+            details = panel.locator("#history-information-details")
+            await expect(details).to_be_attached(timeout=browser_timeout("update"))
+            if await details.get_attribute("open") is None:
+                await details.locator("summary").click()
+            gang = details.locator("[data-history-selected-gang]")
+            await expect(gang).to_be_visible(timeout=browser_timeout("update"))
+            return gang
+
         await self.panel.locator('#current [data-action="operation"]').click()
         await expect(self.panel.locator('#current [data-phase="aufheizen"]')).to_be_visible()
         identity = self.runtime.session.session_id
@@ -3030,14 +3050,19 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
         }, identity)
         await self.runtime.archive.flush()
         await self.panel.locator('[data-action="history"]').click()
-        await expect(self.panel.locator('[data-gang-id]')).to_contain_text("Vorläufig", timeout=browser_timeout("update"))
-        gang_id = await self.panel.locator('[data-gang-id]').get_attribute("data-gang-id")
-        start = await self.panel.locator('[data-gang-id]').get_attribute("data-start")
+        gang = await selected_gang_details(self.panel)
+        await expect(gang).to_contain_text("Vorläufig", timeout=browser_timeout("update"))
+        gang_id = await gang.get_attribute("data-gang-id")
+        start = await gang.get_attribute("data-start")
+        await expect(gang.locator("time")).to_have_attribute("datetime", start)
         self.assertEqual(start, (self.base+timedelta(seconds=25)).isoformat())
         await self.emit(Kind.INFUSION, 40)
-        await expect(self.panel.locator('[data-gang-id]')).to_contain_text("Bestätigt", timeout=browser_timeout("update"))
-        self.assertEqual(await self.panel.locator('[data-gang-id]').get_attribute("data-gang-id"), gang_id)
-        self.assertEqual(await self.panel.locator('[data-gang-id]').get_attribute("data-start"), start)
+        gang = await selected_gang_details(self.panel)
+        await expect(gang).to_contain_text("Bestätigt", timeout=browser_timeout("update"))
+        self.assertEqual(await gang.get_attribute("data-gang-id"), gang_id)
+        self.assertEqual(await gang.get_attribute("data-start"), start)
+        await expect(gang.locator("time")).to_have_attribute("datetime", start)
+        await self.panel.locator('[data-action="clear-history-selection"]').click()
         # Normal history exposes only the leading measurement height.
         await expect(self.panel.locator('canvas.history-curves[role="img"]')).to_be_visible()
         self.assertFalse(await self.panel.evaluate("p=>p.historyDetail"))
@@ -3094,13 +3119,13 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
         humidity_label = readout.get_by_text("Luftfeuchte:", exact=True)
         humidity = humidity_label.locator("..").locator("span").nth(1)
         humidity_positions = []
-        for second, temperature_text in ((5, "73"), (7, "73,4")):
+        for second, temperature_text in ((5, "73,0"), (7, "73,4")):
             at = (self.base + timedelta(seconds=second)).timestamp() * 1000
             x = await self.panel.evaluate("(p,t)=>{const model=p.historyChart.model;return model.x(t)/model.width*p.historyChart.surface.getBoundingClientRect().width;}", at)
             await chart.hover(position={"x": x, "y": 200})
             await expect(temperature.locator('.history-tooltip-number')).to_have_text(temperature_text)
             await expect(temperature.locator('.history-tooltip-unit')).to_have_text("°C")
-            await expect(humidity.locator('.history-tooltip-number')).to_have_text("15")
+            await expect(humidity.locator('.history-tooltip-number')).to_have_text("15,0")
             await expect(humidity.locator('.history-tooltip-unit')).to_have_text("%")
             humidity_positions.append((await humidity_label.bounding_box(), await humidity.bounding_box()))
         for before, after in zip(*humidity_positions):
@@ -3256,7 +3281,12 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
         # controller tracks instead of duplicating those events.
         await self.panel.locator('.main-tabs [data-action="history"]').click()
         await expect(self.panel.locator('#event-list')).to_be_visible()
-        await self.panel.locator('#event-list details').first.locator('summary').click()
+        door_category = self.panel.locator('[data-action="history-event-category:door"]')
+        if await door_category.get_attribute("aria-pressed") != "true":
+            await door_category.click()
+        event_details = self.panel.locator('#event-list details').first
+        if await event_details.get_attribute("open") is None:
+            await event_details.locator('summary').click()
         event_link = self.panel.locator('#event-list [data-action^="event-row:"]').first
         await expect(event_link).to_be_visible()
         event_id = (await event_link.get_attribute('data-action')).split(':', 1)[1]
@@ -3355,8 +3385,10 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
         await expect(archived_option).not_to_contain_text("beendet")
         await expect(self.panel.locator("svg.session-chart")).to_be_visible()
         await self.select_dropdown(self.panel.locator("#session"), identity)
-        await expect(self.panel.locator('[data-gang-id]')).to_contain_text("Bestätigt", timeout=browser_timeout("update"))
-        self.assertEqual(await self.panel.locator('[data-gang-id]').get_attribute("data-start"), start)
+        gang = await selected_gang_details(self.panel)
+        await expect(gang).to_contain_text("Bestätigt", timeout=browser_timeout("update"))
+        self.assertEqual(await gang.get_attribute("data-start"), start)
+        await expect(gang.locator("time")).to_have_attribute("datetime", start)
         tokens = await self.page.evaluate("localStorage.getItem('hassTokens')")
 
         async def zone_snapshot(zone):
@@ -3383,15 +3415,12 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
                   while (p.busy) await new Promise(resolve => setTimeout(resolve, window.testSettings.browser.poll_ms));
                   if (p.historyLoad) await p.historyLoad.promise;
                 }""")
-                await expect(panel.locator("[data-gang-id]")).to_contain_text(
-                    "Bestätigt", timeout=browser_timeout("update")
-                )
-                self.assertEqual(
-                    await panel.locator("[data-gang-id]").get_attribute("data-start"),
-                    start,
-                )
+                gang = await selected_gang_details(panel)
+                await expect(gang).to_contain_text("Bestätigt", timeout=browser_timeout("update"))
+                self.assertEqual(await gang.get_attribute("data-start"), start)
+                await expect(gang.locator("time")).to_have_attribute("datetime", start)
                 return await panel.evaluate("""p => ({
-                  gang: p.$('#gangs tbody tr td:nth-child(3)').textContent,
+                  gang: p.$('[data-history-selected-gang] time').textContent,
                   events: [...p.shadowRoot.querySelectorAll('#event-list .history-event-time')].map(e=>e.textContent),
                   annotations: [...p.shadowRoot.querySelectorAll('[data-history-annotations] title')].filter(e=>/Aufguss|Heizzeit/.test(e.textContent)).map(e=>e.textContent),
                   session: p.$('#session').selectedOptions[0].textContent,

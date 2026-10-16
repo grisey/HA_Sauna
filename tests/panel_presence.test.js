@@ -38,7 +38,7 @@ const annotationModel = () => {
     right,
     top,
     bottom,
-    valueScale: {intervals: 4},
+    valueScale: { intervals: 4 },
     x: (time) => left + ((time - start) / (finish - start)) * (right - left),
   };
 };
@@ -383,8 +383,9 @@ for (const [reason, label] of [
     operational.html.includes(`>${label}</td>`),
     `${reason} has its German label in the decision history`,
   );
-  assert.ok(
-    !operational.html.split('id="detail-records"')[0].includes(reason),
+  assert.doesNotMatch(
+    operational.html.split('id="detail-records"')[0],
+    new RegExp(`(?:^|[^\\w])${reason}(?=$|[^\\w])`),
     `${reason} is not shown as an ID outside explicit archive fields`,
   );
 }

@@ -59,7 +59,10 @@ class Node extends EventTarget {
     for (const node of nodes) node.parentNode = this;
   }
   remove() {
-    if (this.parentNode) this.parentNode.children = this.parentNode.children.filter((node) => node !== this);
+    if (this.parentNode)
+      this.parentNode.children = this.parentNode.children.filter(
+        (node) => node !== this,
+      );
     this.parentNode = null;
   }
   replaceChildren(...nodes) {
@@ -68,7 +71,9 @@ class Node extends EventTarget {
     this.append(...nodes);
   }
   get textContent() {
-    return this.children.length ? this.children.map((node) => node.textContent).join("") : this._textContent;
+    return this.children.length
+      ? this.children.map((node) => node.textContent).join("")
+      : this._textContent;
   }
   set textContent(value) {
     this.ownerDocument.trace?.push("write");
@@ -85,8 +90,12 @@ class Node extends EventTarget {
     this.writes.push(["attribute", name, value]);
     this.attributes.set(name, value);
   }
-  getAttribute(name) { return this.attributes.get(name) ?? null; }
-  removeAttribute(name) { this.attributes.delete(name); }
+  getAttribute(name) {
+    return this.attributes.get(name) ?? null;
+  }
+  removeAttribute(name) {
+    this.attributes.delete(name);
+  }
   getRootNode() {
     let node = this;
     while (node.parentNode) node = node.parentNode;
@@ -183,12 +192,22 @@ const load = () => {
 
 const panel = (calls, environment) =>
   Object.assign(fixturePanel(Panel), {
-    $: (selector) => selector === "[data-history-time-axis]" ? environment?.overview : null,
+    $: (selector) =>
+      selector === "[data-history-time-axis]" ? environment?.overview : null,
     window: [0, 1000],
     positions: new Set(["upper", "lower"]),
     historyDetail: true,
     shown: {
-      session: { measurement_ttl_seconds: fixtureValues().sensor_timeout_seconds, timeline: {session_id: "geometry", session_started_at: new Date(0).toISOString(), completed: [], processed: [], active: null} },
+      session: {
+        measurement_ttl_seconds: fixtureValues().sensor_timeout_seconds,
+        timeline: {
+          session_id: "geometry",
+          session_started_at: new Date(0).toISOString(),
+          completed: [],
+          processed: [],
+          active: null,
+        },
+      },
     },
     state: {
       now: new Date(10000).toISOString(),
@@ -269,7 +288,11 @@ test("hover uses the shared transform and does not read layout after root writes
   );
   const descendants = (node) => [node, ...node.children.flatMap(descendants)];
   const writes = descendants(environment.tooltip).flatMap((node) => node.writes);
-  assert.match(environment.tooltip.textContent, /0 °C/, "the composed readout retains its numeric value and unit");
+  const temperature = descendants(environment.tooltip).find(
+    (node) => node.getAttribute?.("data-quantity") === "temperature",
+  ).parentNode.children[1];
+  assert.equal(temperature.children[0].textContent, "0,0");
+  assert.equal(temperature.children[1].textContent, "°C");
   assert.ok(
     writes.every(
       ([kind, text]) =>

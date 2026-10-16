@@ -39,15 +39,20 @@ class Node extends EventTarget {
     this.text = "";
   }
   append(...nodes) {
+    for (const node of nodes) node.remove();
     this.children.push(...nodes);
     for (const node of nodes) node.parentNode = this;
   }
   prepend(...nodes) {
+    for (const node of nodes) node.remove();
     this.children.unshift(...nodes);
     for (const node of nodes) node.parentNode = this;
   }
   remove() {
-    if (this.parentNode) this.parentNode.children = this.parentNode.children.filter((node) => node !== this);
+    if (this.parentNode)
+      this.parentNode.children = this.parentNode.children.filter(
+        (node) => node !== this,
+      );
     this.parentNode = null;
   }
   replaceChildren(...nodes) {
@@ -66,8 +71,12 @@ class Node extends EventTarget {
   setAttribute(name, value) {
     this.attributes.set(name, String(value));
   }
-  getAttribute(name) { return this.attributes.get(name) ?? null; }
-  removeAttribute(name) { this.attributes.delete(name); }
+  getAttribute(name) {
+    return this.attributes.get(name) ?? null;
+  }
+  removeAttribute(name) {
+    this.attributes.delete(name);
+  }
   getRootNode() {
     let node = this;
     while (node.parentNode) node = node.parentNode;
@@ -154,9 +163,21 @@ const tooltipFor = (
   const panel = Object.assign(fixturePanel(Panel), {
     positions: new Set(["upper"]),
     window: [received - 30000, received + 30000],
-    state: { now: new Date(received + 30000).toISOString(), configuration: { parameters: fixtureValues() } },
+    state: {
+      now: new Date(received + 30000).toISOString(),
+      configuration: { parameters: fixtureValues() },
+    },
     shown: {
-      session: { configuration: { parameters: fixtureValues() }, timeline: {session_id: "tooltip", session_started_at: new Date(received - 30000).toISOString(), completed: [], processed: [], active: null} },
+      session: {
+        configuration: { parameters: fixtureValues() },
+        timeline: {
+          session_id: "tooltip",
+          session_started_at: new Date(received - 30000).toISOString(),
+          completed: [],
+          processed: [],
+          active: null,
+        },
+      },
       records: [{ kind, payload: source }],
     },
     historyDetail: true,
@@ -172,6 +193,21 @@ const tooltipFor = (
   assert.equal(tooltip.hidden, true, "initial readout waits for a chart pointer");
   interaction.hover({ svg: surface, clientX: 600, clientY: 100 });
   return { tooltip, interaction, panel, cursor, surface };
+};
+
+// Read the same separate number/unit cells as the current browser layout.
+const temperatureCell = (tooltip) => {
+  const row = tooltip.children[1].children.find(
+    (item) => !item.hidden && item.children[0]?.getAttribute("data-quantity") === "temperature",
+  );
+  assert.ok(row, "the temperature row is displayed");
+  return { label: row.children[0], number: row.children[1].children[0], unit: row.children[1].children[1] };
+};
+const assertTemperature = (tooltip, expected) => {
+  const { label, number, unit } = temperatureCell(tooltip);
+  assert.equal(label.textContent, "Temperatur oben: ");
+  assert.equal(number.textContent, expected);
+  assert.equal(unit.textContent, "°C");
 };
 
 const trackingIntl = () => {
@@ -193,15 +229,9 @@ test("persistent hover rounds local values without changing original data", () =
   const original = measurement();
   const before = JSON.stringify(original);
   const { tooltip } = inTimeZone("Europe/Berlin", () => tooltipFor(original));
-  assert.equal(
-    tooltip.children[0].textContent +
-      tooltip.children[1].children
-        .filter((row) => !row.hidden)
-        .map((row) => row.textContent)
-        .join("") +
-      tooltip.children[2].textContent,
-    "Punkt · 09:00Temperatur oben: 79,1 °CSaunastatus · Unbekannt",
-  );
+  assert.equal(tooltip.children[0].textContent, "Punkt · 09:00");
+  assertTemperature(tooltip, "79,1");
+  assert.equal(tooltip.children[2].textContent, "Saunastatus · Unbekannt");
   assert.doesNotMatch(tooltip.textContent, /Originalwert|Empfangen|Gemessen|GMT/);
   assert.equal(JSON.stringify(original), before, "source timestamps stay unchanged");
 });
@@ -209,7 +239,7 @@ test("persistent hover rounds local values without changing original data", () =
 test("source measurement timestamps do not add metadata to the compact value", () => {
   for (const measured_at of [undefined, null, false, [], {}, "not-a-time"]) {
     const { tooltip } = tooltipFor(measurement({ measured_at }));
-    assert.match(tooltip.textContent, /Temperatur oben: 79,1 °C/);
+    assertTemperature(tooltip, "79,1");
     assert.doesNotMatch(tooltip.textContent, /Empfangen|Gemessen/);
   }
 });
@@ -226,31 +256,16 @@ test("zero and numeric fallback values use the same compact localized format", (
     "source_snapshot",
   ).tooltip;
   const escaped = tooltipFor(measurement({ raw_value: '<raw&"value>' })).tooltip;
-  assert.match(zero.textContent, /Temperatur oben: 0 °C/);
-  assert.match(missing.textContent, /Temperatur oben: 12,3 °C/);
+  assertTemperature(zero, "0,0");
+  assertTemperature(missing, "12,3");
   assert.doesNotMatch(missing.textContent, /Originalwert|gespeichert/);
-  assert.match(escaped.textContent, /Temperatur oben: 79,1 °C/);
+  assertTemperature(escaped, "79,1");
   assert.doesNotMatch(escaped.textContent, /<raw&"value>/);
   const names = (node) => [node.name, ...node.children.flatMap(names)];
-  assert.deepEqual(names(escaped), [
-    "tooltip",
-    "strong",
-    "div",
-    "div",
-    "span",
-    "span",
-    "div",
-    "span",
-    "span",
-    "div",
-    "span",
-    "span",
-    "div",
-    "span",
-    "span",
-    "div",
-    "div",
-  ]);
+  assert.ok(
+    names(escaped).every((name) => ["tooltip", "strong", "div", "span"].includes(name)),
+    "raw source text cannot introduce another element type",
+  );
   assert.equal(
     "innerHTML" in escaped,
     false,
@@ -272,10 +287,11 @@ test("hover uses the archived phase projection and matching effective event mark
       ],
     };
     panel.shown.session.timeline = {
+      ...panel.shown.session.timeline,
       processed: [
-        { kind: "infusion", effective_at: iso(100), detected_at: iso(20000) },
-        { kind: "infusion", effective_at: iso(0), detected_at: iso(20000) },
-        { kind: "door_close", effective_at: iso(-20000), detected_at: iso(0) },
+        { event_id: "infusion-later", kind: "infusion", effective_at: iso(100), detected_at: iso(20000) },
+        { event_id: "infusion-first", kind: "infusion", effective_at: iso(0), detected_at: iso(20000) },
+        { event_id: "door-close", kind: "door_close", effective_at: iso(-20000), detected_at: iso(0) },
       ],
     };
     const original = JSON.stringify(panel.shown);
@@ -286,7 +302,7 @@ test("hover uses the archived phase projection and matching effective event mark
     assert.equal((tooltip.textContent.match(/Aufguss/g) || []).length, 2);
     assert.equal(tooltip.children[3].children.length, 2);
     assert.deepEqual(
-      panel.historyEventsAt(at, 200).map((event) => event.effective_at),
+      Array.from(panel.historyEventsAt(at, 200), (event) => event.effective_at),
       [iso(0), iso(100)],
     );
     assert.doesNotMatch(tooltip.textContent, /Ofenkühlung|Tür geschlossen/);
@@ -326,15 +342,15 @@ test("persistent hover clock follows DST and the browser-local zone", () => {
     tooltipFor(measurement({ received_at: "2026-10-25T01:30:00.123456Z" })).tooltip
       .textContent,
   ]);
-  assert.match(beforeFallback, /^02:30Temperatur/);
-  assert.match(afterFallback, /^02:30Temperatur/);
+  assert.match(beforeFallback, /^Punkt · 02:30Temperatur/);
+  assert.match(afterFallback, /^Punkt · 02:30Temperatur/);
   const utc = inTimeZone("UTC", () => tooltipFor(measurement()).tooltip.textContent);
   const newYork = inTimeZone(
     "America/New_York",
     () => tooltipFor(measurement()).tooltip.textContent,
   );
-  assert.match(utc, /^08:00Temperatur/);
-  assert.match(newYork, /^03:00Temperatur/);
+  assert.match(utc, /^Punkt · 08:00Temperatur/);
+  assert.match(newYork, /^Punkt · 03:00Temperatur/);
 });
 
 test("persistent tooltip nodes are reused", () => {

@@ -46,7 +46,7 @@ const annotationModel = () => {
     right,
     top,
     bottom,
-    valueScale: {intervals: 4},
+    valueScale: { intervals: 4 },
     x: (time) =>
       left + ((time - domainStart) / (domainEnd - domainStart)) * (right - left),
   };

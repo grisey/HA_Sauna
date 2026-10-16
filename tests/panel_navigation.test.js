@@ -19,7 +19,8 @@ vm.runInNewContext(fs.readFileSync("custom_components/ha_sauna/panel.js", "utf8"
   Object,
   Array,
   Infinity,
-  clearTimeout, setTimeout,
+  clearTimeout,
+  setTimeout,
 });
 
 const navigationPanel = () => {
@@ -171,7 +172,10 @@ test("empty history clears the retained inspection and every visible sink", () =
         replaceChildren() {
           this.innerHTML = "";
         },
-        remove() { this.innerHTML = ""; this.textContent = ""; },
+        remove() {
+          this.innerHTML = "";
+          this.textContent = "";
+        },
       });
     return nodes.get(selector);
   };
@@ -189,7 +193,10 @@ test("empty history clears the retained inspection and every visible sink", () =
   panel.clearHistoryDisplay();
   assert.equal(destroyed, 1);
   assert.equal(node(".history-tooltip-events").innerHTML, "");
-  assert.equal(node(".history-inspection-heading .history-tooltip-time").textContent, "");
+  assert.equal(
+    node(".history-inspection-heading .history-tooltip-time").textContent,
+    "",
+  );
   assert.equal(node("#tooltip").innerHTML, "");
   assert.equal(node("#tooltip").hidden, true);
   assert.equal(node("#tooltip").attributes.get("data-phase"), "");

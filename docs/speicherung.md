@@ -62,6 +62,8 @@ Konfiguration unbekannt; vorhandene Messungen werden trotzdem angezeigt.
 Phasen und Ereignisse erscheinen in eigenen Bändern am Diagramm. Ein Klick auf
 einen Zeitpunkt markiert dessen Messwerte, ein zweiter einen Zeitraum. Ein
 weiterer Klick oder **Auswahl aufheben** stellt die Sitzungsübersicht wieder her.
+Für einen ausgewählten Saunagang enthält **Weitere Daten** den ursprünglichen
+Beginn und den Bestätigungsstand **Vorläufig** oder **Bestätigt**.
 Phasen und Ereignisse wählen ihre belegten Zeitgrenzen aus. Die Markierung in
 der Zeitachse wechselt zwischen dem gewählten Ausschnitt und der gesamten Sitzung;
 ihre Griffe ändern die Zeitgrenzen.

@@ -95,9 +95,17 @@ function panelFixture(panelOrClass) {
 function elementClassList(element) {
   const values = () => new Set((element.className || "").split(/\s+/).filter(Boolean));
   return {
-    add(...names) { element.className = [...new Set([...values(), ...names])].join(" "); },
-    remove(...names) { element.className = [...values()].filter((name) => !names.includes(name)).join(" "); },
-    contains(name) { return values().has(name); },
+    add(...names) {
+      element.className = [...new Set([...values(), ...names])].join(" ");
+    },
+    remove(...names) {
+      element.className = [...values()]
+        .filter((name) => !names.includes(name))
+        .join(" ");
+    },
+    contains(name) {
+      return values().has(name);
+    },
   };
 }
 

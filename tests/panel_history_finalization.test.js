@@ -16,7 +16,13 @@ vm.runInNewContext(fs.readFileSync(panelPath, "utf8"), {
 });
 
 const openSession = (id = "live") => ({
-  timeline: { session_id: id, completed: [], active: null, processed: [], retracted: [] },
+  timeline: {
+    session_id: id,
+    completed: [],
+    active: null,
+    processed: [],
+    retracted: [],
+  },
 });
 const closedSession = (id = "live") => ({
   ...openSession(id),

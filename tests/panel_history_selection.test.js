@@ -158,15 +158,12 @@ const humidityReadouts = (tooltip) =>
   tooltip
     .querySelectorAll(".history-tooltip-values")
     .filter((container) => !container.hidden)
-    .flatMap((container) =>
-      container.children
-        .filter(
-          (row) =>
-            !row.hidden &&
-            row.children[0]?.getAttribute("data-quantity") === "humidity",
-        )
-        .map(visibleText),
-    );
+    .flatMap((container) => container.children.filter((row) =>
+      !row.hidden && row.children[0]?.getAttribute("data-quantity") === "humidity"))
+    .flatMap((row) => row.children.filter((cell) =>
+      !cell.hidden && cell.className?.split(/\s+/).includes("history-tooltip-value"))
+      .map((cell) => `${row.children[0].textContent}${cell.querySelector(".history-tooltip-number").textContent}${cell.querySelector(".history-tooltip-unit").textContent ? ` ${cell.querySelector(".history-tooltip-unit").textContent}` : ""}`));
+
 
 const makeFixture = (catalogOverrides = {}, scale = 1) => {
   const panel = Object.assign(panelFixture(context.Panel), {
@@ -183,7 +180,9 @@ const makeFixture = (catalogOverrides = {}, scale = 1) => {
           session_id: "selection-session",
           session_started_at: iso(0),
           processed: [],
-          completed: [], active: null, retracted: [],
+          completed: [],
+          active: null,
+          retracted: [],
         },
       },
       records: [record(20, 70), record(60, 80)],
@@ -238,7 +237,11 @@ const makeFixture = (catalogOverrides = {}, scale = 1) => {
     "[data-history-band-names]",
     "[data-history-strip-events]",
     "[data-history-selection-context]",
-    ...["start", "end"].flatMap((boundary) => [`[data-history-selection-handle="${boundary}"]`, `[data-history-selection-${boundary}-tick]`, `[data-history-selection-${boundary}-hit]`]),
+    ...["start", "end"].flatMap((boundary) => [
+      `[data-history-selection-handle="${boundary}"]`,
+      `[data-history-selection-${boundary}-tick]`,
+      `[data-history-selection-${boundary}-hit]`,
+    ]),
     "[data-history-annotations]",
     "[data-history-events]",
     "[data-history-clip]",
@@ -246,6 +249,8 @@ const makeFixture = (catalogOverrides = {}, scale = 1) => {
     "#history-legends",
     "#history-zoom-value",
     "#history-event-inspection",
+    "[data-history-session-summary]",
+    "[data-history-context-gangs]",
     '[data-action="clear-history-selection"]',
     '[data-action="history-to-selection"]',
   ])
@@ -553,7 +558,10 @@ test("phase snapping uses the catalogue radius in CSS pixels at its inclusive bo
     assert.equal(cursor.getAttribute("visibility"), "visible");
     assert.equal(Number(cursor.getAttribute("x1")), model.x(at(100)));
     assert.equal(tooltip.getAttribute("data-snap"), "true");
-    assert.equal(tooltip.getAttribute("aria-description"), `Bereit · ${panel.tooltipWhen(at(100))}`);
+    assert.equal(
+      tooltip.getAttribute("aria-description"),
+      `Bereit · ${panel.tooltipWhen(at(100))}`,
+    );
     interaction.hover(point(at(100), radius + definition.step), model);
     assert.notEqual(cursor.getAttribute("data-snap"), "true");
     assert.equal(tooltip.getAttribute("data-snap"), "false");
@@ -838,7 +846,7 @@ test("hover and pinned boundaries retain absolute times through zoom, pan and sa
   assert.equal(cursor.getAttribute("visibility"), "visible");
   assert.equal(Number(cursor.getAttribute("x1")), chart.model.x(at(20)));
   assert.notEqual(Number(cursor.getAttribute("x1")), initialCursorX);
-  assert.match(visibleText(tooltip), /70 °C/);
+  assert.match(visibleText(tooltip), /70,0°C/);
   panel.setHistoryWindow(at(30), at(90));
   render();
   assert.equal(panel.historyHoverPreview.time, at(20));
@@ -856,8 +864,8 @@ test("hover and pinned boundaries retain absolute times through zoom, pan and sa
   const text = visibleText(tooltip);
   assert.match(text, /Beginn/);
   assert.match(text, /Ende/);
-  assert.match(text, /70 °C/);
-  assert.match(text, /80 °C/);
+  assert.match(text, /70,0°C/);
+  assert.match(text, /80,0°C/);
   interaction.hover(point(at(90)));
   interaction.hide();
   assert.equal(tooltip.hidden, false);
@@ -990,20 +998,24 @@ test("pointer taps keep the starting time transform during incoming session grow
 });
 
 test("a frozen chart domain and its owning pointer govern panning through session growth", () => {
-  const {panel, surface, point, refreshModel} = makeFixture();
+  const { panel, surface, point, refreshModel } = makeFixture();
   panel.setHistoryWindow(at(20), at(80));
   refreshModel();
   const start = point(at(50));
   panel.beginChartPointer(start, surface);
   panel.state.now = iso(200);
-  panel.shown.measurement_window = {started_at: iso(0), ended_at: iso(200), complete: true};
+  panel.shown.measurement_window = {
+    started_at: iso(0),
+    ended_at: iso(200),
+    complete: true,
+  };
   refreshModel();
-  const moved = {...start, clientX: start.clientX - 10000};
-  panel.updateChartPointer({...moved, pointerId: 99});
+  const moved = { ...start, clientX: start.clientX - 10000 };
+  panel.updateChartPointer({ ...moved, pointerId: 99 });
   assert.deepEqual(Array.from(panel.window), [at(20), at(80)]);
   panel.updateChartPointer(moved);
   assert.equal(panel.window[1], at(100), "the active pan retains its original domain");
-  panel.endChartPointer({...moved, type: "pointerup"});
+  panel.endChartPointer({ ...moved, type: "pointerup" });
   assert.equal(panel.historyInputSnapshot, null);
   assert.equal(panel.historyValueSelection, null);
   assert.deepEqual(Array.from(panel.historyChart.domain), [at(0), at(200)]);
@@ -1063,7 +1075,7 @@ test("foreign pointers, cancellation, scrolling, motion and pinch cannot become 
 });
 
 test("keyboard selection moves by its catalogue fraction, commits boundaries and clears with Escape", () => {
-  const { panel, tooltip, cursor, chart, interaction } = makeFixture({
+  const { panel, surface, tooltip, cursor, chart, interaction } = makeFixture({
     history_phase_snap_radius_px: 0,
   });
   const definition =
@@ -1072,7 +1084,8 @@ test("keyboard selection moves by its catalogue fraction, commits boundaries and
   definition.default += definition.step;
   const key = (name, shiftKey = false) => {
     let prevented = false;
-    panel.keyHistorySelection({ target: surface,
+    panel.keyHistorySelection({
+      target: surface,
       key: name,
       shiftKey,
       preventDefault: () => (prevented = true),

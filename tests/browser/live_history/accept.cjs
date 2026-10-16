@@ -212,7 +212,10 @@ fs.mkdirSync(output, { recursive: true });
   assert.notDeepEqual(await page.evaluate(() => [...f.panel.window]), windowBeforeDrag);
   await surface.focus();
   await page.evaluate(() => f.tick());
-  assert.equal(await surface.evaluate((svg) => svg.getRootNode().activeElement === svg), true);
+  assert.equal(
+    await surface.evaluate((svg) => svg.getRootNode().activeElement === svg),
+    true,
+  );
   // Scroll the actual shadow ancestor, then re-enter the chart with the mouse.
   await surface.scrollIntoViewIfNeeded();
   const currentBox = await surface.boundingBox();
@@ -359,7 +362,10 @@ fs.mkdirSync(output, { recursive: true });
         values = (quantity) =>
           labels
             .filter((node) => node.dataset.quantity === quantity)
-            .map((node) => node.nextElementSibling.textContent),
+            .map((node) => {
+              const value = node.nextElementSibling;
+              return `${value.querySelector(".history-tooltip-number").textContent} ${value.querySelector(".history-tooltip-unit").textContent}`;
+            }),
         button = p.$('[data-action="history-humidity"]'),
         axis = [...p.$("[data-history-axes]").querySelectorAll(".axis-humidity")].at(
           -1,
@@ -367,6 +373,7 @@ fs.mkdirSync(output, { recursive: true });
       return {
         mode: p.historyHumidityMode,
         label: button.textContent,
+        accessibleLabel: button.getAttribute("aria-label"),
         pressed: button.getAttribute("aria-pressed"),
         axis: axis.textContent,
         humidity: values("humidity"),
@@ -395,11 +402,13 @@ fs.mkdirSync(output, { recursive: true });
   const assertHumidity = async (mode, before) => {
     const after = await humidityState(),
       absolute = mode === "absolute",
-      label = absolute ? "Absolute Feuchte (g/m³)" : "Relative Feuchte (%)";
+      label = absolute ? "Absolute Feuchte (g/m³)" : "Relative Feuchte (%)",
+      unit = absolute ? "g/m³" : "%";
     assert.equal(after.mode, mode);
-    assert.equal(after.label, label);
+    assert.equal(after.label, unit);
+    assert.equal(after.accessibleLabel, `${label}, ${absolute ? "zu relativer Feuchte wechseln" : "zu absoluter Feuchte wechseln"}`);
     assert.equal(after.pressed, String(absolute));
-    assert.equal(after.axis, label);
+    assert.equal(after.axis, unit);
     assert.ok(after.humidity.length > 0, "the selected humidity readout is visible");
     assert.ok(
       after.humidity.every((value) => value.endsWith(absolute ? " g/m³" : " %")),
@@ -444,7 +453,11 @@ fs.mkdirSync(output, { recursive: true });
   const assertSelectionCleared = async () => {
     const cleared = await selectionPage.evaluate(() => {
       const p = f.panel,
-        nodes = [...p.shadowRoot.querySelectorAll("[data-history-selection], [data-history-selection] *, [data-history-selection-start], [data-history-selection-end], [data-history-selection-handle], [data-history-selection-context], #cursor")];
+        nodes = [
+          ...p.shadowRoot.querySelectorAll(
+            "[data-history-selection], [data-history-selection] *, [data-history-selection-start], [data-history-selection-end], [data-history-selection-handle], [data-history-selection-context], #cursor",
+          ),
+        ];
       return {
         selection: p.historyValueSelection,
         preview: p.historyHoverPreview,
@@ -464,7 +477,11 @@ fs.mkdirSync(output, { recursive: true });
     assert.equal(cleared.preview, null);
     assert.equal(cleared.inspected, null);
     assert.equal(cleared.tooltipHidden, false);
-    assert.equal(cleared.readoutKind, "overview", "clearing restores the full-session summary");
+    assert.equal(
+      cleared.readoutKind,
+      "overview",
+      "clearing restores the full-session summary",
+    );
     assert.equal(cleared.inspectionHidden, true);
     assert.ok(
       cleared.visibility.every((value) => value === "hidden"),
@@ -546,9 +563,10 @@ fs.mkdirSync(output, { recursive: true });
   });
   const initialHumidity = await humidityState();
   assert.equal(initialHumidity.mode, "relative");
-  assert.equal(initialHumidity.label, "Relative Feuchte (%)");
+  assert.equal(initialHumidity.label, "%");
+  assert.equal(initialHumidity.accessibleLabel, "Relative Feuchte (%), zu absoluter Feuchte wechseln");
   assert.equal(initialHumidity.pressed, "false");
-  assert.equal(initialHumidity.axis, "Relative Feuchte (%)");
+  assert.equal(initialHumidity.axis, "%");
   const legend = selectionPanel.locator("#history-legends");
   assert.deepEqual(await legend.locator(".history-legend > strong").allTextContents(), [
     "Phasen",
@@ -1070,7 +1088,9 @@ fs.mkdirSync(output, { recursive: true });
       y: rect.top + ((model.top + model.bottom) / 2 / model.height) * rect.height,
     };
   });
-  const previewHeading = await selectionPanel.locator(".history-tooltip-time").innerText();
+  const previewHeading = await selectionPanel
+    .locator(".history-tooltip-time")
+    .innerText();
   const boundaryValues = () =>
     selectionTooltip
       .locator(".history-tooltip-values > div > span[data-quantity]")
@@ -1295,7 +1315,7 @@ fs.mkdirSync(output, { recursive: true });
   const narrowMetrics = await selectionPage.evaluate(() => {
     const box = f.panel.$(".history-readout"),
       value = f.panel.$(
-        ".history-tooltip-values > div:not([hidden]) > span:last-child",
+        ".history-tooltip-values:not([hidden]) > div:not([hidden]) > .history-tooltip-value:not([hidden])",
       );
     return {
       clientWidth: box.clientWidth,
@@ -1311,9 +1331,7 @@ fs.mkdirSync(output, { recursive: true });
     await selectionPage.evaluate(() => f.panel.preference("font_size_large_px")),
     "narrow values retain the catalogue's actual text size",
   );
-  for (const action of [
-    "clear-history-selection",
-  ]) {
+  for (const action of ["clear-history-selection"]) {
     const button = selectionPanel.locator(`[data-action="${action}"]`);
     await button.scrollIntoViewIfNeeded();
     const bounds = await button.boundingBox();
@@ -1411,7 +1429,9 @@ fs.mkdirSync(output, { recursive: true });
     "a new live session clears the previous pin/range",
   );
   assert.equal(
-    await selectionPage.evaluate(() => f.panel.historyInspectedEvent()?.event_id ?? null),
+    await selectionPage.evaluate(
+      () => f.panel.historyInspectedEvent()?.event_id ?? null,
+    ),
     null,
     "a new live session clears the selected event",
   );

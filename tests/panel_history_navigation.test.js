@@ -98,23 +98,41 @@ test("overview handles remain bounded and synchronous zoom retains its anchor", 
 test("chart panning captures its owning pointer and keeps the starting viewport during growth", () => {
   const p = panel();
   p.window = [Date.parse(iso(900)), Date.parse(iso(2700))];
-  const invalidations = [], captures = [];
-  const geometry = {rects: {surface: {left: 10, top: 0, width: 800, height: 320}}};
-  const svg = {setPointerCapture: (id) => captures.push(id), matches: () => false};
-  p.historyChart = {
-    domain: p.historyDomain(), model: {start: p.window[0], end: p.window[1], left: 0, right: 1200, width: 1200},
-    interaction: {invalidateGeometry: (...args) => invalidations.push(args), readGeometry: () => geometry},
+  const invalidations = [],
+    captures = [];
+  const geometry = {
+    rects: { surface: { left: 10, top: 0, width: 800, height: 320 } },
   };
-  const event = {pointerId: 7, clientX: 100, clientY: 10, preventDefault() {this.prevented = true;}};
+  const svg = { setPointerCapture: (id) => captures.push(id), matches: () => false };
+  p.historyChart = {
+    domain: p.historyDomain(),
+    model: { start: p.window[0], end: p.window[1], left: 0, right: 1200, width: 1200 },
+    interaction: {
+      invalidateGeometry: (...args) => invalidations.push(args),
+      readGeometry: () => geometry,
+    },
+  };
+  const event = {
+    pointerId: 7,
+    clientX: 100,
+    clientY: 10,
+    preventDefault() {
+      this.prevented = true;
+    },
+  };
   p.beginChartPointer(event, svg);
   assert.deepEqual(captures, [7]);
   assert.deepEqual(invalidations, [["geometry", false]]);
-  p.updateChartPointer({...event, pointerId: 9, clientX: 140});
-  assert.equal(p.window[0], Date.parse(iso(900)), "another pointer cannot move the viewport");
-  p.updateChartPointer({...event, clientX: 140});
+  p.updateChartPointer({ ...event, pointerId: 9, clientX: 140 });
+  assert.equal(
+    p.window[0],
+    Date.parse(iso(900)),
+    "another pointer cannot move the viewport",
+  );
+  p.updateChartPointer({ ...event, clientX: 140 });
   assert.equal(p.window[0], Date.parse(iso(810)));
   assert.equal(p.window[1], Date.parse(iso(2610)));
-  p.endChartPointer({...event, clientX: 140, type: "pointerup"});
+  p.endChartPointer({ ...event, clientX: 140, type: "pointerup" });
   assert.equal(p.historyValueSelection, null, "a pan cannot become a point selection");
   assert.equal(p.historyInputSnapshot, null);
 });
