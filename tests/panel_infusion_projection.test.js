@@ -105,3 +105,66 @@ test("an end-only update changes the history revision while original event start
   assert.equal(panel.historyEventProjection().groups[0].end, at(32));
   assert.equal(JSON.stringify(events), starts);
 });
+
+test("source-bound selection follows late, corrected and withdrawn ends while a manual range stays fixed", () => {
+  const {panel, gang} = fixture();
+  gang.infusions[0].end = null;
+  panel.inspectHistoryEvent("first");
+  assert.equal(panel.historyValueSelection.kind, "point");
+  const window = [...panel.window];
+  gang.infusions[0].end = end(30);
+  panel.syncHistorySelection();
+  assert.equal(panel.historyValueSelection.kind, "range");
+  assert.equal(panel.historyValueSelection.end, at(30));
+  gang.infusions[0].end = end(32);
+  panel.syncHistorySelection();
+  assert.equal(panel.historyValueSelection.end, at(32));
+  gang.infusions[0].end = null;
+  panel.syncHistorySelection();
+  assert.equal(panel.historyValueSelection.kind, "point");
+  assert.equal(panel.historyValueSelection.end, at(20));
+  assert.deepEqual(Array.from(panel.window), window);
+  panel.historyValueSelection = {identity: panel.historyValueIdentity(), kind: "range", start: at(10), end: at(40)};
+  const manual = panel.historyValueSelection;
+  gang.infusions[0].end = end(35);
+  panel.syncHistorySelection();
+  assert.equal(panel.historyValueSelection, manual);
+});
+
+test("visible door events without a complete cycle retain their original snap target", () => {
+  const {panel, session} = fixture();
+  panel.historyEventVisibility.set("door", true);
+  session.timeline.processed.push({event_id: "orphan-door", session_id: "s", kind: "door_open", effective_at: iso(50)});
+  const targets = panel.historyEventProjection().snapTargets;
+  assert.equal(targets.filter((target) => target.eventId === "orphan-door").length, 1);
+  assert.ok(targets.some((target) => target.eventId === "orphan-door" && target.time === at(50)));
+});
+
+test("detail-only event selection uses the same visible source during initial and later synchronization", () => {
+  const {panel, session} = fixture();
+  panel.historyDetail = true;
+  session.timeline.processed.push({event_id: "presence", session_id: "s", kind: "presence_confirmed", effective_at: iso(10)});
+  panel.inspectHistoryEvent("presence");
+  panel.syncHistorySelection();
+  assert.deepEqual(Array.from(panel.historyValueSelection.eventIds), ["presence"]);
+  assert.equal(panel.historyValueSelection.start, at(10));
+});
+
+test("withdrawal of the selected event clears its keyboard and hover consumers without resurrecting it", () => {
+  const {panel, session} = fixture();
+  panel.inspectHistoryEvent("first");
+  panel.historyKeyboardPreview = true;
+  panel.historyKeyboardTarget = {time: at(30), snap: panel.historyValueSelection.endSnap};
+  panel.historyHoverPreview = {time: at(20)};
+  panel.pendingHover = panel.lastHistoryPointer = {time: at(20)};
+  session.timeline.processed = session.timeline.processed.filter((event) => event.event_id !== "first");
+  panel.syncHistorySelection();
+  assert.equal(panel.historyValueSelection, null);
+  assert.equal(panel.historyKeyboardTime, null);
+  assert.equal(panel.historyKeyboardTarget, null);
+  assert.equal(panel.historyKeyboardPreview, false);
+  assert.equal(panel.historyHoverPreview, null);
+  assert.equal(panel.pendingHover, null);
+  assert.equal(panel.lastHistoryPointer, null);
+  assert.equal(panel.historyInspectedEvent(), null);
+});

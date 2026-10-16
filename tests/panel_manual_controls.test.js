@@ -1481,7 +1481,7 @@ const renderCurrent = (
   assert.doesNotMatch(details, /Zwangskühlung/);
   assert.match(details, /data-phase-timer="heating"/);
   assert.match(details, /Lichtnachlauf/);
-  assert.match(details, /Nennleistung für die Verbrauchsschätzung/);
+  assert.match(detailNodes.get("#current").innerHTML, /Nennleistung/);
   assert.match(details, /Erkennung mit: oberer Messposition/);
   assert.match(details, /Licht<\/h2>[\s\S]*Automatik/);
   assert.match(details, /Wiedereinschaltschwelle<\/dt><dd>77 °C<\/dd>/);
@@ -1537,6 +1537,7 @@ const renderCurrent = (
     message: () => {},
     $: (selector) => nodes[selector],
     drawHistory: () => {},
+    renderHistory: () => {},
     shadowRoot: {
       querySelectorAll: (selector) =>
         selector === ".detail-tabs button" ? detailTabs : [],

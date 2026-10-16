@@ -170,6 +170,8 @@ test("record-budget LRU keeps active sources and reloads an evicted archive from
     },
     $: () => ({ hidden: false, setAttribute() {}, replaceChildren() {} }),
     drawHistory() {},
+    // This fixture observes archive eviction/loading, not canvas rendering.
+    renderHistory() {},
     syncHistorySessions() {},
     message() {},
   });

@@ -85,7 +85,8 @@ fs.mkdirSync(output, { recursive: true });
     profile.liveCounts = { ...f.counts };
     profile.liveMeasurements = structuredClone(f.measurements);
   });
-  await page.locator("ha-sauna-panel").locator('[data-action="zoom-in"]').click();
+  await surface.focus();
+  await surface.press("+");
   await page.evaluate(async () => {
     await f.settle();
     f.reset();

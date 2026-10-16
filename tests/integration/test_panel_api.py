@@ -1027,6 +1027,12 @@ class PanelAPITests(unittest.IsolatedAsyncioTestCase):
                 "role": role,
                 "gang_id": gang_id,
                 "gang_links": [{"gang_id": gang_id, "role": role}],
+                "ventilation_at": (
+                    (start + timedelta(milliseconds=55)).isoformat() if role == "exit" else None
+                ),
+                "ventilation_event_id": "exit-ventilation" if role == "exit" else None,
+                "ventilation_complete_at": None,
+                "ventilation_complete_event_id": None,
             } for role, opened, closed in pairs]
 
         user = await self.hass.auth.async_create_user("Public presence", group_ids=[GROUP_ID_USER])

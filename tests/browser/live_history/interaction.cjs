@@ -39,7 +39,7 @@ Real-browser live-history interaction benchmark
 Measures the current working-tree panel.js with the declared history dataset
 in tests/settings.json; the history view selects its leading position.
 INPUT_STEPS must be a positive integer (default ${settings.fixtures.history.interaction_steps}). It sends real
-browser pointer moves, Ctrl-wheel zoom in/out and minimap drag moves, while
+browser pointer moves, Ctrl-wheel zoom in/out and chart drag moves, while
 calling fixture.tick() after every ${tickEvery} inputs. Results are JSON at
 INTERACTION_EVIDENCE (or ${output}).
 `);
@@ -165,7 +165,7 @@ async function installInstrumentation(page) {
       tooltip: panel.$("#tooltip"),
       surface: panel.$("svg.session-chart"),
       canvas: panel.$("canvas.history-curves"),
-      overview: panel.$("#history-overview svg"),
+      timeAxis: panel.$("[data-history-time-axis]"),
     };
     wrap(panel, "renderHistory", "panel.renderHistory", completeEvents);
     for (const name of [
@@ -192,15 +192,12 @@ async function installInstrumentation(page) {
       const contains = (selector) =>
         nodes.some((node) => node?.matches?.(selector) || node?.closest?.(selector));
       const inChart = contains("svg.session-chart");
-      const inMinimap = contains("#history-overview svg");
-      if (!inChart && !inMinimap) return;
-      // Moving into the minimap before pointerdown has no product gesture and
-      // consequently no render to time.  Measure the captured drag moves.
-      if (inMinimap && !panel.historyGesture) return;
+      if (!inChart) return;
+      const panning = event.type === "pointermove" && !!(event.buttons & 1);
       bench.events.push({
         id: ++bench.nextEventId,
         type: event.type,
-        stream: inMinimap ? "minimap" : event.type === "wheel" ? "wheel" : "pointer",
+        stream: panning ? "pan" : event.type === "wheel" ? "wheel" : "pointer",
         at: performance.now(),
       });
     };
@@ -256,7 +253,7 @@ async function installInstrumentation(page) {
       const tooltip = panel.$("#tooltip");
       const surface = panel.$("svg.session-chart");
       const canvas = panel.$("canvas.history-curves");
-      const overview = panel.$("#history-overview svg");
+      const timeAxis = panel.$("[data-history-time-axis]");
       // The fixture's upper temperature is always 69..75 °C and humidity
       // 25..31 %. This oracle does not call the product's lookup/formatter.
       const values = [...tooltip.querySelectorAll(".history-tooltip-values > div")]
@@ -291,7 +288,7 @@ async function installInstrumentation(page) {
           tooltip: bench.initialNodes.tooltip === tooltip,
           surface: bench.initialNodes.surface === surface,
           canvas: bench.initialNodes.canvas === canvas,
-          overview: bench.initialNodes.overview === overview,
+          timeAxis: !!timeAxis && bench.initialNodes.timeAxis === timeAxis,
         },
       };
     };
@@ -376,7 +373,7 @@ async function runInputSequence(page) {
   }
 
   // One 24-step zoom phase contains an actual zoom-in and zoom-out portion.
-  // Its in/out imbalance leaves a narrowed window for the minimap pan.
+  // Its in/out imbalance leaves a narrowed window for the chart pan.
   const zoomInSteps = Math.ceil((steps * 2) / 3);
   for (let index = 0; index < steps; index++) {
     await doWheel(
@@ -385,13 +382,10 @@ async function runInputSequence(page) {
     );
     interleaveTick(index);
   }
-  const windowRect = page
-    .locator("ha-sauna-panel")
-    .locator("#history-overview [data-history-window]");
-  const minimapBox = await windowRect.boundingBox();
-  if (!minimapBox) throw Error("history minimap window has no bounding box");
-  const startX = minimapBox.x + minimapBox.width / 2;
-  const startY = minimapBox.y + minimapBox.height / 2;
+  const panBox = await surface.boundingBox();
+  if (!panBox) throw Error("history chart has no bounding box");
+  const startX = panBox.x + panBox.width / 2;
+  const startY = panBox.y + panBox.height / 2;
   await page.mouse.move(startX, startY);
   await page.mouse.down();
   for (let index = 0; index < steps; index++) {
@@ -401,14 +395,14 @@ async function runInputSequence(page) {
       startY,
     );
     const event = await waitForInputRender(page, before, "pointermove");
-    inputLatency.push({ ...event, stream: "minimap" });
+    inputLatency.push({ ...event, stream: "pan" });
     interleaveTick(index);
   }
   await page.mouse.up();
   const ticks = await Promise.all(pendingTicks);
-  // Re-enter the real chart after releasing the minimap capture. This gives
+  // Re-enter the real chart after releasing the chart capture. This gives
   // the endpoint assertion a sampled chart position rather than the pointerout
-  // state that deliberately hides the tooltip during minimap interactions.
+  // state that restores the session summary during chart-pan interactions.
   const finalBox = await surface.boundingBox();
   if (!finalBox) throw Error("history surface lost its bounding box");
   const finalBefore = await latestInputId(page);
@@ -438,7 +432,7 @@ function summarizeCase(raw, input) {
     ]),
   );
   const latencyByStream = Object.fromEntries(
-    ["pointer", "wheel-in", "wheel-out", "minimap"].map((stream) => [
+    ["pointer", "wheel-in", "wheel-out", "pan"].map((stream) => [
       stream,
       numericSummary(
         input.inputLatency
@@ -453,7 +447,7 @@ function summarizeCase(raw, input) {
     zoom: raw.zoom,
     inputLatency: latencyByStream,
     renderDurationByStream: Object.fromEntries(
-      ["pointer", "wheel-in", "wheel-out", "minimap"].map((stream) => [
+      ["pointer", "wheel-in", "wheel-out", "pan"].map((stream) => [
         stream,
         numericSummary(
           input.inputLatency
@@ -571,7 +565,7 @@ async function runCase(browser) {
         tickEvery,
         notes: [
           "Fixture transport is synthetic; panel rendering, input, refresh and canvas paths are product code.",
-          "Pointer and minimap inputs use Playwright's native mouse. WebKit automation drops Control from mouse.wheel, so the Ctrl-wheel phase uses bubbling, cancelable DOM WheelEvents with ctrlKey true on the product SVG; no handlers or paints are called directly.",
+          "Pointer and chart-pan inputs use Playwright's native mouse. WebKit automation drops Control from mouse.wheel, so the Ctrl-wheel phase uses bubbling, cancelable DOM WheelEvents with ctrlKey true on the product SVG; no handlers or paints are called directly.",
           "Latency is delivered DOM input to completion of the next actual panel.renderHistory callback; it does not include device or browser event-queue time before DOM delivery.",
           "The 40 ms synthetic archive-response delay permits DOM inputs to overlap live refreshes; it is not a Companion App measurement.",
           "methods are synchronous wall-clock durations of observed product method calls; fixtureMethods are the fixture's existing method observers.",

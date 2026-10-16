@@ -236,14 +236,14 @@ window.installHistoryFixture = async function ({
   let rendered = panel.historyChart,
     canvas = panel.$("canvas.history-curves"),
     surface = panel.$("svg.session-chart"),
-    overview = panel.$("#history-overview svg");
+    timeAxis = panel.$("[data-history-time-axis]");
   const identity = () => ({
     hasInstance: !!panel.historyChart,
     hasCanvas: !!panel.$("canvas.history-curves"),
     instance: rendered === panel.historyChart,
     canvas: canvas === panel.$("canvas.history-curves"),
     surface: surface === panel.$("svg.session-chart"),
-    overview: overview === panel.$("#history-overview svg"),
+    timeAxis: !!timeAxis && timeAxis === panel.$("[data-history-time-axis]"),
   });
   const reset = () => {
     for (const key of Object.keys(measurements)) delete measurements[key];

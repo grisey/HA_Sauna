@@ -19,7 +19,7 @@ vm.runInNewContext(fs.readFileSync("custom_components/ha_sauna/panel.js", "utf8"
   Object,
   Array,
   Infinity,
-  clearTimeout,
+  clearTimeout, setTimeout,
 });
 
 const navigationPanel = () => {
@@ -156,7 +156,7 @@ test("focused button program keeps its choice while accepting a new lock", () =>
   assert.equal(field.value, "program-a");
 });
 
-test("empty history clears the retained overview and every visible sink", () => {
+test("empty history clears the retained inspection and every visible sink", () => {
   const nodes = new Map();
   const node = (selector) => {
     if (!nodes.has(selector))
@@ -171,6 +171,7 @@ test("empty history clears the retained overview and every visible sink", () => 
         replaceChildren() {
           this.innerHTML = "";
         },
+        remove() { this.innerHTML = ""; this.textContent = ""; },
       });
     return nodes.get(selector);
   };
@@ -187,7 +188,8 @@ test("empty history clears the retained overview and every visible sink", () => 
   });
   panel.clearHistoryDisplay();
   assert.equal(destroyed, 1);
-  assert.equal(node("#history-overview").innerHTML, "");
+  assert.equal(node(".history-tooltip-events").innerHTML, "");
+  assert.equal(node(".history-inspection-heading .history-tooltip-time").textContent, "");
   assert.equal(node("#tooltip").innerHTML, "");
   assert.equal(node("#tooltip").hidden, true);
   assert.equal(node("#tooltip").attributes.get("data-phase"), "");

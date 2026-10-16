@@ -95,29 +95,28 @@ test("overview handles remain bounded and synchronous zoom retains its anchor", 
   assert.equal(p.window[1] - p.window[0], width / 2);
 });
 
-test("gesture ownership captures the overview pointer and defers rendering until movement", () => {
+test("chart panning captures its owning pointer and keeps the starting viewport during growth", () => {
   const p = panel();
-  p.window = [10, 20];
-  const invalidations = [];
+  p.window = [Date.parse(iso(900)), Date.parse(iso(2700))];
+  const invalidations = [], captures = [];
+  const geometry = {rects: {surface: {left: 10, top: 0, width: 800, height: 320}}};
+  const svg = {setPointerCapture: (id) => captures.push(id), matches: () => false};
   p.historyChart = {
-    interaction: { invalidateGeometry: (...args) => invalidations.push(args) },
+    domain: p.historyDomain(), model: {start: p.window[0], end: p.window[1], left: 0, right: 1200, width: 1200},
+    interaction: {invalidateGeometry: (...args) => invalidations.push(args), readGeometry: () => geometry},
   };
-  const captures = [];
-  const svg = { setPointerCapture: (pointerId) => captures.push(pointerId) };
-  const event = {
-    pointerId: 7,
-    target: { dataset: { historyHandle: "start" }, closest: () => null },
-    preventDefault: () => (event.prevented = true),
-    clientX: 100,
-  };
-  p.overviewFraction = () => 0.25;
-  p.beginHistoryGesture(event, svg);
-  assert.equal(event.prevented, true);
+  const event = {pointerId: 7, clientX: 100, clientY: 10, preventDefault() {this.prevented = true;}};
+  p.beginChartPointer(event, svg);
   assert.deepEqual(captures, [7]);
   assert.deepEqual(invalidations, [["geometry", false]]);
-  assert.equal(p.historyGesture.pointerId, 7);
-  assert.equal(p.historyGesture.kind, "start");
-  assert.equal(p.historyGesture.fraction, 0.25);
+  p.updateChartPointer({...event, pointerId: 9, clientX: 140});
+  assert.equal(p.window[0], Date.parse(iso(900)), "another pointer cannot move the viewport");
+  p.updateChartPointer({...event, clientX: 140});
+  assert.equal(p.window[0], Date.parse(iso(810)));
+  assert.equal(p.window[1], Date.parse(iso(2610)));
+  p.endChartPointer({...event, clientX: 140, type: "pointerup"});
+  assert.equal(p.historyValueSelection, null, "a pan cannot become a point selection");
+  assert.equal(p.historyInputSnapshot, null);
 });
 
 test("a cursor frame preserves the existing chart object and interaction nodes", () => {
@@ -225,7 +224,7 @@ test("pointer-owned pinch suppresses duplicate Safari gesture zoom", () => {
 test("a retargeted WebKit gesture resolves its chart through the composed path", () => {
   const p = panel();
   const svg = {
-    matches: (selector) => selector === "svg.session-chart",
+    matches: (selector) => selector.split(", ").includes("svg.session-chart"),
     getBoundingClientRect: () => ({ left: 10, width: 800 }),
   };
   const factors = [];

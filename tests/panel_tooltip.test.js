@@ -66,6 +66,8 @@ class Node extends EventTarget {
   setAttribute(name, value) {
     this.attributes.set(name, String(value));
   }
+  getAttribute(name) { return this.attributes.get(name) ?? null; }
+  removeAttribute(name) { this.attributes.delete(name); }
   getRootNode() {
     let node = this;
     while (node.parentNode) node = node.parentNode;
@@ -152,9 +154,9 @@ const tooltipFor = (
   const panel = Object.assign(fixturePanel(Panel), {
     positions: new Set(["upper"]),
     window: [received - 30000, received + 30000],
-    state: { configuration: { parameters: fixtureValues() } },
+    state: { now: new Date(received + 30000).toISOString(), configuration: { parameters: fixtureValues() } },
     shown: {
-      session: { configuration: { parameters: fixtureValues() } },
+      session: { configuration: { parameters: fixtureValues() }, timeline: {session_id: "tooltip", session_started_at: new Date(received - 30000).toISOString(), completed: [], processed: [], active: null} },
       records: [{ kind, payload: source }],
     },
     historyDetail: true,
@@ -198,7 +200,7 @@ test("persistent hover rounds local values without changing original data", () =
         .map((row) => row.textContent)
         .join("") +
       tooltip.children[2].textContent,
-    "09:00Temperatur oben: 79,1 °CSaunastatus · Unbekannt",
+    "Punkt · 09:00Temperatur oben: 79,1 °CSaunastatus · Unbekannt",
   );
   assert.doesNotMatch(tooltip.textContent, /Originalwert|Empfangen|Gemessen|GMT/);
   assert.equal(JSON.stringify(original), before, "source timestamps stay unchanged");

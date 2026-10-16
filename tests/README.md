@@ -293,8 +293,9 @@ synthetischen Messreihen bleiben im Archiv erhalten; die aktuelle Verlaufsansich
 zeigt die führende Messposition. Eine frühere Messhöhenumschaltung und fest
 codierte Gitvergleichsstände sind kein Bestandteil dieser Prüfungen.
 
-`accept.cjs` bedient Zoomknöpfe, Verlaufsnavigation und die Übersicht mit
-Browserinteraktionen. Die Tooltipprüfung verlangt die sichtbaren Messgrößen und
+`accept.cjs` bedient Diagramm und Zeitachse mit Zeiger, Touchscreen und Tastatur.
+Zoomen, Verschieben, Phasen-/Ereignisauswahl und Sitzungswechsel verwenden die
+aktuellen Bedienelemente. Die Tooltipprüfung verlangt die sichtbaren Messgrößen und
 Einheiten; `interaction.cjs` prüft zusätzlich deren Werte gegen die unabhängig
 festgelegten Bereiche der synthetischen Daten. Interne Aufrufzähler dienen nur
 der Beobachtung von Zeichenarbeit und Knotenerhalt. Archivfehler und

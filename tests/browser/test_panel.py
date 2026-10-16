@@ -623,31 +623,31 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
                       p.setHistoryWindow(a, a + (b-a)/2);
                       p.drawHistory();
                     }""")
-                    await panel.locator('[data-action="zoom-in"]').click()
+                    surface = panel.locator("svg.session-chart")
+                    await surface.press("+")
                     self.assertEqual(await panel.evaluate("p => p.zoom"), 4)
-                    await panel.locator("svg.session-chart").press("ArrowRight")
-                    overview = panel.locator("#history-overview [data-history-window]")
-                    await overview.scroll_into_view_if_needed()
-                    await expect(overview).to_be_in_viewport(ratio=1)
-                    box = await overview.bounding_box()
+                    await surface.press("ArrowRight")
+                    await surface.scroll_into_view_if_needed()
+                    await expect(surface).to_be_in_viewport(ratio=1)
+                    box = await surface.bounding_box()
                     self.assertIsNotNone(box)
                     x, y = box["x"] + box["width"] / 2, box["y"] + box["height"] / 2
-                    hit = await overview.evaluate("""(node, point) => {
+                    hit = await surface.evaluate("""(node, point) => {
                       const target = node.getRootNode().elementFromPoint(point.x, point.y);
-                      return {matches: target === node, element: target?.outerHTML};
+                      return {matches: target === node || node.contains(target), element: target?.outerHTML};
                     }""", {"x": x, "y": y})
                     self.assertTrue(hit["matches"], hit["element"])
                     before_drag = await panel.evaluate("p => [...p.window]")
                     await page.mouse.move(x, y)
                     await page.mouse.down()
-                    await page.mouse.move(x + 20, y)
+                    await page.mouse.move(x - 20, y)
                     await page.mouse.up()
                     self.assertGreater(
                         await panel.evaluate("p => p.window[0]"), before_drag[0]
                     )
-                    await panel.locator('[data-action="reset-zoom"]').click()
+                    await surface.press("Home")
                     self.assertEqual(await panel.evaluate("p => p.zoom"), 1)
-                    await panel.locator('[data-action="zoom-in"]').click()
+                    await surface.press("+")
                     window = await panel.evaluate("p => [...p.window]")
                     session_select = panel.locator("#session")
                     await self.dropdown_trigger(session_select).click()
@@ -765,7 +765,7 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
         await expect(current.locator('[role="alert"]')).to_contain_text("Temperatur oben")
         self.assertEqual(self.errors, [])
 
-    async def test_empty_history_uses_card_palette_and_clears_overview(self):
+    async def test_empty_history_uses_card_palette_and_clears_chart_and_readout(self):
         await self.panel.locator('.main-tabs [data-action="settings"]').click()
         await self.open_appearance()
         editor = self.panel.locator('#appearance-settings')
@@ -779,7 +779,11 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
         await expect(empty).to_be_visible()
         await expect(empty).to_have_css('background-color', 'rgb(5, 5, 5)')
         await expect(empty).to_have_css('color', 'rgb(255, 255, 255)')
-        await expect(self.panel.locator('#history-overview')).to_be_empty()
+        await expect(self.panel.locator('svg.session-chart')).to_have_count(0)
+        await expect(self.panel.locator('[data-history-time-axis]')).to_have_count(0)
+        await expect(self.panel.locator('#tooltip')).to_be_hidden()
+        await expect(self.panel.locator('#history-event-inspection')).to_be_hidden()
+        await expect(self.panel.locator('[data-history-session-summary]')).to_be_hidden()
 
     async def test_instance_switch_waits_for_its_own_status_before_exposing_controls(self):
         first_target = self.runtime.configuration.parameters.values["target_temperature_c"]
@@ -3043,7 +3047,7 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
         chart = self.panel.locator("svg.session-chart")
         # Hover over a recorded sample, not the empty lead-in before the session.
         sample_time = (self.base + timedelta(seconds=7)).timestamp() * 1000
-        sample_x = await self.panel.evaluate("(p,t)=>{const [a,b]=p.window;return (65+(t-a)/(b-a)*1070)/1200*p.shadowRoot.querySelector('svg.session-chart').getBoundingClientRect().width;}", sample_time)
+        sample_x = await self.panel.evaluate("(p,t)=>{const model=p.historyChart.model;return model.x(t)/model.width*p.historyChart.surface.getBoundingClientRect().width;}", sample_time)
         legend_before = await self.panel.locator("#history-legends").bounding_box()
         plot_before = await chart.bounding_box()
         await chart.hover(position={"x": sample_x, "y": 200})
@@ -3056,21 +3060,20 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
         readout_box = await self.panel.locator("#tooltip").bounding_box()
         frame = self.panel.locator(".history-plot-frame")
         await expect(frame.locator("#plots")).to_have_count(1)
-        await expect(frame.locator("#history-navigation")).to_have_count(1)
-        await expect(frame.locator("#history-overview canvas")).to_have_count(0)
+        await expect(frame.locator("[data-history-time-axis]")).to_have_count(1)
         alignment = await self.panel.evaluate("""p => {
           const chart = p.historyChart, plot = chart.surface.getBoundingClientRect();
-          const selection = p.$('#history-overview [data-history-window]').getBoundingClientRect();
-          const [start, end] = chart.domain, model = chart.model;
-          const screenX = time => plot.left + (model.left + (time - start) / (end - start)
-            * (model.right - model.left)) / model.width * plot.width;
-          return {left: selection.left, right: selection.right,
-            expectedLeft: screenX(p.window[0]), expectedRight: screenX(p.window[1])};
+          const axis = p.$('[data-history-time-axis]'), rect = axis.getBoundingClientRect();
+          const model = chart.model, width = axis.viewBox.baseVal.width;
+          return {left: rect.left + model.left / width * rect.width,
+            right: rect.left + model.right / width * rect.width,
+            expectedLeft: plot.left + model.left / model.width * plot.width,
+            expectedRight: plot.left + model.right / model.width * plot.width};
         }""")
         self.assertAlmostEqual(alignment["left"], alignment["expectedLeft"], delta=1)
         self.assertAlmostEqual(alignment["right"], alignment["expectedRight"], delta=1)
         await expect(frame.locator("#history-inspection")).to_have_count(0)
-        navigation_box = await frame.locator("#history-navigation").bounding_box()
+        navigation_box = await frame.locator("[data-history-time-axis]").bounding_box()
         inspection_box = await self.panel.locator("#history-inspection").bounding_box()
         self.assertGreaterEqual(navigation_box["y"], curve_box["y"] + curve_box["height"] - 1)
         self.assertLessEqual(navigation_box["y"] + navigation_box["height"], inspection_box["y"] + 1)
@@ -3091,25 +3094,29 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
         humidity_label = readout.get_by_text("Luftfeuchte:", exact=True)
         humidity = humidity_label.locator("..").locator("span").nth(1)
         humidity_positions = []
-        for second, temperature_text in ((5, "73 °C"), (7, "73,4 °C")):
+        for second, temperature_text in ((5, "73"), (7, "73,4")):
             at = (self.base + timedelta(seconds=second)).timestamp() * 1000
-            x = await self.panel.evaluate("(p,t)=>{const [a,b]=p.window;return (65+(t-a)/(b-a)*1070)/1200*p.shadowRoot.querySelector('svg.session-chart').getBoundingClientRect().width;}", at)
+            x = await self.panel.evaluate("(p,t)=>{const model=p.historyChart.model;return model.x(t)/model.width*p.historyChart.surface.getBoundingClientRect().width;}", at)
             await chart.hover(position={"x": x, "y": 200})
-            await expect(temperature).to_have_text(temperature_text)
-            await expect(humidity).to_have_text("15 %")
+            await expect(temperature.locator('.history-tooltip-number')).to_have_text(temperature_text)
+            await expect(temperature.locator('.history-tooltip-unit')).to_have_text("°C")
+            await expect(humidity.locator('.history-tooltip-number')).to_have_text("15")
+            await expect(humidity.locator('.history-tooltip-unit')).to_have_text("%")
             humidity_positions.append((await humidity_label.bounding_box(), await humidity.bounding_box()))
         for before, after in zip(*humidity_positions):
             for coordinate in ("x", "y"):
                 self.assertAlmostEqual(before[coordinate], after[coordinate], delta=0.1)
         await self.dropdown_trigger(self.panel.locator("#session")).hover()
-        await expect(self.panel.locator("#tooltip")).to_be_hidden()
+        await expect(self.panel.locator("#tooltip")).to_be_visible()
+        await expect(self.panel.locator("#tooltip")).to_have_attribute("data-selection", "overview")
         legend_hidden = await self.panel.locator("#history-legends").bounding_box()
         plot_hidden = await chart.bounding_box()
         self.assertAlmostEqual(legend_after["y"] - plot_after["y"],
                                legend_hidden["y"] - plot_hidden["y"], delta=1)
         await expect(self.panel).to_have_js_property("busy", False)
         await self.panel.evaluate("panel => panel.refresh(true)")
-        await expect(self.panel.locator("#tooltip")).to_be_hidden()
+        await expect(self.panel.locator("#tooltip")).to_be_visible()
+        await expect(self.panel.locator("#tooltip")).to_have_attribute("data-selection", "overview")
         # Valid but hostile palette: inspect rendered text consumers, not only
         # the palette variables. Curves must keep the chosen measurement color.
         await self.panel.locator('.main-tabs [data-action="settings"]').click()
@@ -3156,29 +3163,24 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
         label = visible_values.get_by_text("Temperatur:", exact=True)
         await expect(label).to_have_count(1)
         await expect(label).to_be_visible()
-        await expect(self.panel.locator("#tooltip .history-tooltip-time")).to_have_text(re.compile(r"^\d{2}:\d{2}$"))
+        await expect(self.panel.locator(".history-inspection-heading .history-tooltip-time")).to_have_text(
+            re.compile(r"^Aufheizen · \d{2}:\d{2}$")
+        )
         await expect(self.panel.locator("#tooltip .history-tooltip-status")).to_have_text("Saunastatus · Aufheizen")
         temperature_value = label.locator("..").locator("span").nth(1)
         humidity_value = visible_values.get_by_text("Luftfeuchte:", exact=True).locator("..").locator("span").nth(1)
-        await expect(temperature_value).to_have_text(re.compile(r"^\d+(?:,\d)? °C$"))
-        await expect(humidity_value).to_have_text(re.compile(r"^\d+(?:,\d)? %$"))
+        await expect(temperature_value.locator('.history-tooltip-number')).to_have_text(re.compile(r"^\d+(?:,\d)?$"))
+        await expect(temperature_value.locator('.history-tooltip-unit')).to_have_text("°C")
+        await expect(humidity_value.locator('.history-tooltip-number')).to_have_text(re.compile(r"^\d+(?:,\d)?$"))
+        await expect(humidity_value.locator('.history-tooltip-unit')).to_have_text("%")
         await expect(label).to_have_css("color", "rgb(255, 255, 255)")
         await expect(self.panel.locator("#tooltip")).to_have_attribute("data-phase", "aufheizen")
         await expect(self.panel.locator("#tooltip")).to_have_css("background-color", "rgba(0, 0, 0, 0)")
-        phase_colors = await self.panel.evaluate("""p => {
-          const inspection = p.$('#history-inspection'), tooltip = p.$('#tooltip');
-          const active = getComputedStyle(inspection);
-          const colors = {background: active.backgroundColor,
-            phase: active.getPropertyValue('--history-phase-color').trim(),
-            expected: getComputedStyle(p).getPropertyValue('--sauna-color-phase-warmup').trim()};
-          const phase = tooltip.dataset.phase;
-          tooltip.dataset.phase = '';
-          colors.neutral = getComputedStyle(inspection).backgroundColor;
-          tooltip.dataset.phase = phase;
-          return colors;
-        }""")
-        self.assertEqual(phase_colors["phase"], phase_colors["expected"])
-        self.assertNotEqual(phase_colors["background"], phase_colors["neutral"])
+        # The phase now appears in the heading and timeline band; the readout
+        # keeps its neutral card palette instead of changing its background.
+        await expect(self.panel.locator('[data-history-phase="aufheizen"]').first).to_have_css(
+            "font-weight", "600"
+        )
         self.assertEqual(await self.panel.evaluate("p=>p.historyChart.curves.styles['upper:temperature'].stroke"), "#000000")
         await expect(self.panel.locator('[data-action="history-detail"]')).to_have_count(0)
         self.assertEqual(await self.panel.evaluate("p=>p.positions.size"), 1)
@@ -3197,12 +3199,14 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
         await expect(error_notice).to_have_css("background-color", "rgb(35, 35, 35)")
         await expect(error_notice).to_have_css("color", "rgb(255, 255, 255)")
         await self.panel.locator('.main-tabs [data-action="history"]').click()
-        compare = self.panel.locator('[data-action="reset-zoom"]')
-        # Zoom belongs to the chart surface. Check rendered contrast rather
-        # than imposing the foreground color of the surrounding cards.
+        await chart.click(position={"x": sample_x, "y": 200})
+        compare = self.panel.locator('[data-action="clear-history-selection"]')
+        await expect(compare).to_be_visible()
+        # The current selection control must remain readable and keyboard
+        # focusable under the same deliberately hostile palette.
         zoom_contrast = """button => {
           const style = getComputedStyle(button);
-          const surface = getComputedStyle(button.closest('.history-plot-frame')).backgroundColor;
+          const surface = style.backgroundColor;
           const light = color => color.match(/[\\d.]+/g).slice(0, 3).map(Number)
             .reduce((sum, value, index) => {
               const x = value / 255;
@@ -3215,14 +3219,10 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
           };
           return {text: ratio(style.color), outline: ratio(style.outlineColor)};
         }"""
-        await expect(compare).to_have_css("background-color", "rgba(0, 0, 0, 0)")
         self.assertGreaterEqual((await compare.evaluate(zoom_contrast))["text"], 4.5)
         await compare.hover()
         await expect(compare).to_have_css("filter", "none")
-        await expect(compare).to_have_css("background-color", "rgba(0, 0, 0, 0)")
         self.assertGreaterEqual((await compare.evaluate(zoom_contrast))["text"], 4.5)
-        await expect(compare).to_have_css("outline-style", "solid")
-        self.assertGreaterEqual((await compare.evaluate(zoom_contrast))["outline"], 3)
         await expect(compare).to_have_css("text-decoration-line", "none")
         await compare.focus()
         await compare.press("Tab")
@@ -3231,6 +3231,8 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
         await expect(compare).to_have_css("outline-style", "solid")
         await expect(compare).to_have_css("outline-width", "2px")
         self.assertGreaterEqual((await compare.evaluate(zoom_contrast))["outline"], 3)
+        await compare.click()
+        self.assertIsNone(await self.panel.evaluate("p => p.historyValueSelection"))
         await self.panel.locator('.main-tabs [data-action="settings"]').click()
         await editor.locator('[data-action="appearance-discard"]').click()
         await self.panel.locator('.main-tabs [data-action="history"]').click()
@@ -3241,9 +3243,9 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
             await chart.dispatch_event("wheel", {"deltaY": -1000, "ctrlKey": True, "clientX": 250, "clientY": 200})
         self.assertGreater(await self.panel.evaluate("p=>p.zoom"), zoom)
         self.assertLessEqual(await self.panel.evaluate("p=>p.zoom"), 256)
-        await self.panel.locator('[data-action="zoom-in"]').click()
+        await chart.press("+")
         self.assertLessEqual(await self.panel.evaluate("p=>p.zoom"), 256)
-        await self.panel.locator('[data-action="reset-zoom"]').click()
+        await chart.press("Home")
         await self.panel.locator('[data-action="details"]').click()
         await self.set_source("upper_temperature", "unavailable")
         await expect(self.panel.locator('#details')).to_contain_text("Messwert fehlt", timeout=browser_timeout("update"))

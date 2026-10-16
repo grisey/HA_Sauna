@@ -183,6 +183,7 @@ const makeFixture = (catalogOverrides = {}, scale = 1) => {
           session_id: "selection-session",
           session_started_at: iso(0),
           processed: [],
+          completed: [], active: null, retracted: [],
         },
       },
       records: [record(20, 70), record(60, 80)],
@@ -228,10 +229,16 @@ const makeFixture = (catalogOverrides = {}, scale = 1) => {
     "[data-history-selection-band]",
     "[data-history-selection-start]",
     "[data-history-selection-end]",
-    "[data-history-selection-start-snap]",
-    "[data-history-selection-end-snap]",
+    '[data-history-selection-handle="start"]',
+    '[data-history-selection-handle="end"]',
     "[data-history-snap-halo]",
     "[data-history-axes]",
+    "[data-history-time-ticks]",
+    "[data-history-phase-band]",
+    "[data-history-band-names]",
+    "[data-history-strip-events]",
+    "[data-history-selection-context]",
+    ...["start", "end"].flatMap((boundary) => [`[data-history-selection-handle="${boundary}"]`, `[data-history-selection-${boundary}-tick]`, `[data-history-selection-${boundary}-hit]`]),
     "[data-history-annotations]",
     "[data-history-events]",
     "[data-history-clip]",
@@ -254,7 +261,7 @@ const makeFixture = (catalogOverrides = {}, scale = 1) => {
   };
   panel.$ = (selector) => nodes.get(selector) || null;
   panel.shadowRoot.querySelectorAll = (selector) =>
-    selector === "[data-history-event-id]" ? [...eventMarkers.values()] : [];
+    selector.includes("[data-history-event-id]") ? [...eventMarkers.values()] : [];
   panel.updateMarkup = (selector, html) => {
     panel.$(selector).innerHTML = html;
   };
@@ -320,14 +327,15 @@ test("three plot clicks create a point, a normalized range and complete clearing
   assert.deepEqual(selectionBounds(panel), ["range", at(20), at(60)]);
   click(at(40));
   assert.equal(panel.historyValueSelection, null);
-  assert.equal(tooltip.hidden, true);
+  assert.equal(tooltip.hidden, false);
+  assert.equal(tooltip.getAttribute("data-selection"), "overview");
   for (const selector of [
     "[data-history-selection]",
     "[data-history-selection-band]",
     "[data-history-selection-start]",
     "[data-history-selection-end]",
-    "[data-history-selection-start-snap]",
-    "[data-history-selection-end-snap]",
+    '[data-history-selection-handle="start"]',
+    '[data-history-selection-handle="end"]',
   ])
     assert.equal(nodes.get(selector).getAttribute("visibility"), "hidden");
   click(at(40));
@@ -544,20 +552,13 @@ test("phase snapping uses the catalogue radius in CSS pixels at its inclusive bo
     assert.equal(cursor.getAttribute("data-snap"), "true");
     assert.equal(cursor.getAttribute("visibility"), "visible");
     assert.equal(Number(cursor.getAttribute("x1")), model.x(at(100)));
-    const previewHalo = nodes.get("[data-history-snap-halo]");
-    assert.equal(previewHalo.getAttribute("visibility"), "visible");
-    assert.equal(Number(previewHalo.getAttribute("cx")), model.x(at(100)));
-    const snapHint = tooltip.querySelector(".history-tooltip-snap");
-    assert.ok(
-      snapHint && !snapHint.hidden,
-      "the phase boundary is visible before clicking",
-    );
-    assert.equal(visibleText(snapHint), `Bereit · ${panel.tooltipWhen(at(100))}`);
+    assert.equal(tooltip.getAttribute("data-snap"), "true");
+    assert.equal(tooltip.getAttribute("aria-description"), `Bereit · ${panel.tooltipWhen(at(100))}`);
     interaction.hover(point(at(100), radius + definition.step), model);
     assert.notEqual(cursor.getAttribute("data-snap"), "true");
-    assert.equal(previewHalo.getAttribute("visibility"), "hidden");
+    assert.equal(tooltip.getAttribute("data-snap"), "false");
     assert.ok(
-      !snapHint.parentNode || snapHint.hidden,
+      !tooltip.getAttribute("aria-description"),
       "moving beyond the radius removes snap feedback",
     );
     const input = { ...nearStart, type: "pointerdown" };
@@ -568,16 +569,16 @@ test("phase snapping uses the catalogue radius in CSS pixels at its inclusive bo
     const heading = tooltip.children[0].textContent;
     const first = nodes.get("[data-history-selection-start]");
     assert.equal(first.getAttribute("data-snap"), "true");
-    const selectedHalo = nodes.get("[data-history-selection-start-snap]");
+    const selectedHalo = nodes.get('[data-history-selection-handle="start"]');
     assert.equal(selectedHalo.getAttribute("visibility"), "visible");
-    assert.equal(Number(selectedHalo.getAttribute("cx")), model.x(at(100)));
+    assert.equal(selectedHalo.getAttribute("data-snap"), "true");
     interaction.hover(point(at(300), -radius + definition.step), model);
     assert.equal(panel.historyValueSelection, pin);
     assert.equal(tooltip.children[0].textContent, heading);
     assert.equal(cursor.getAttribute("data-snap"), "true");
     assert.equal(Number(cursor.getAttribute("x1")), model.x(at(300)));
-    assert.equal(Number(previewHalo.getAttribute("cx")), model.x(at(300)));
-    assert.ok(!tooltip.querySelector(".history-tooltip-snap").hidden);
+    assert.equal(tooltip.getAttribute("data-snap"), "true");
+    assert.match(tooltip.getAttribute("aria-description"), /Bereit/);
     panel.shown.phase_projection.intervals = [];
     panel.syncHistorySelection(model);
     interaction.refreshHover(model);
@@ -587,14 +588,13 @@ test("phase snapping uses the catalogue radius in CSS pixels at its inclusive bo
     assert.equal(first.getAttribute("visibility"), "visible");
     assert.equal(Number(first.getAttribute("x1")), model.x(at(100)));
     assert.notEqual(first.getAttribute("data-snap"), "true");
-    assert.equal(selectedHalo.getAttribute("visibility"), "hidden");
+    assert.equal(selectedHalo.getAttribute("data-snap"), "false");
     assert.equal(cursor.getAttribute("visibility"), "visible");
     assert.equal(Number(cursor.getAttribute("x1")), model.x(at(300)));
     assert.notEqual(cursor.getAttribute("data-snap"), "true");
-    assert.equal(previewHalo.getAttribute("visibility"), "hidden");
-    const correctedHint = tooltip.querySelector(".history-tooltip-snap");
+    assert.equal(tooltip.getAttribute("data-snap"), "false");
     assert.ok(
-      !correctedHint || correctedHint.hidden,
+      !tooltip.getAttribute("aria-description"),
       "retracted phase boundaries lose their feedback without moving the selected times",
     );
     panel.clearHistorySelection();
@@ -604,7 +604,7 @@ test("phase snapping uses the catalogue radius in CSS pixels at its inclusive bo
     assert.notEqual(first.getAttribute("data-snap"), "true");
     assert.equal(first.getAttribute("visibility"), "hidden");
     assert.equal(selectedHalo.getAttribute("visibility"), "hidden");
-    assert.equal(previewHalo.getAttribute("visibility"), "hidden");
+    assert.equal(tooltip.getAttribute("data-snap"), "false");
     interaction.hover(point(at(200)), model);
     assert.notEqual(cursor.getAttribute("data-snap"), "true");
     const clearedHint = tooltip.querySelector(".history-tooltip-snap");
@@ -842,7 +842,8 @@ test("hover and pinned boundaries retain absolute times through zoom, pan and sa
   panel.setHistoryWindow(at(30), at(90));
   render();
   assert.equal(panel.historyHoverPreview.time, at(20));
-  assert.equal(tooltip.hidden, true);
+  assert.equal(tooltip.hidden, false);
+  assert.equal(tooltip.getAttribute("data-selection"), "overview");
   assert.equal(cursor.getAttribute("visibility"), "hidden");
   panel.setHistoryWindow(at(0), at(100));
   render();
@@ -917,7 +918,8 @@ test("the displayed session identity clears an old pin before showing another se
   panel.syncHistoryValueIdentity();
   assert.equal(panel.historyValueSelection, null);
   assert.equal(panel.historyKeyboardTime, null);
-  assert.equal(tooltip.hidden, true);
+  assert.equal(tooltip.hidden, false);
+  assert.equal(tooltip.getAttribute("data-selection"), "overview");
   panel.selectHistoryTime(at(60));
   assert.deepEqual(selectionBounds(panel), ["point", at(60), at(60)]);
   assert.equal(panel.historyValueSelection.identity, "entry:next-session");
@@ -926,7 +928,7 @@ test("the displayed session identity clears an old pin before showing another se
   assert.equal(panel.historyValueSelection, null);
 });
 
-test("event inspection remains separate from time selection and clears completely with or without a pin", () => {
+test("event inspection replaces the shared time selection and clears every consumer", () => {
   const { panel, tooltip, nodes, marker } = makeFixture();
   panel.shown.session.timeline.processed = [
     { event_id: "infusion", kind: "infusion", effective_at: iso(90) },
@@ -937,14 +939,15 @@ test("event inspection remains separate from time selection and clears completel
   panel.selectHistoryTime(at(20));
   const selection = panel.historyValueSelection;
   panel.inspectHistoryEvent("infusion");
-  assert.equal(panel.historyValueSelection, selection);
+  assert.notEqual(panel.historyValueSelection, selection);
+  assert.deepEqual(selectionBounds(panel), ["point", at(90), at(90)]);
   assert.equal(panel.historyInspectedEvent().event_id, "infusion");
   assert.equal(eventMarker.getAttribute("aria-pressed"), "true");
   assert.equal(inspection.hidden, false);
   assert.match(visibleText(tooltip), /Aufguss/);
   panel.selectHistoryTime(at(60));
-  assert.equal(panel.historyInspectedEvent().event_id, "infusion");
-  assert.deepEqual(selectionBounds(panel), ["range", at(20), at(60)]);
+  assert.equal(panel.historyInspectedEvent(), null);
+  assert.deepEqual(selectionBounds(panel), ["range", at(60), at(90)]);
   panel.clearHistorySelection();
   assert.equal(panel.historyValueSelection, null);
   assert.equal(panel.historyInspectedEvent(), null);
@@ -953,9 +956,10 @@ test("event inspection remains separate from time selection and clears completel
   assert.equal(inspection.hidden, true);
   assert.equal(inspection.textContent, "");
   assert.equal(clear.disabled, true);
-  assert.equal(tooltip.hidden, true);
+  assert.equal(tooltip.hidden, false);
+  assert.equal(tooltip.getAttribute("data-selection"), "overview");
   panel.inspectHistoryEvent("infusion");
-  assert.equal(panel.historyValueSelection, null);
+  assert.deepEqual(selectionBounds(panel), ["point", at(90), at(90)]);
   assert.equal(eventMarker.getAttribute("aria-pressed"), "true");
   assert.equal(clear.disabled, false, "an event inspection alone can be cleared");
   panel.clearHistorySelection();
@@ -985,36 +989,24 @@ test("pointer taps keep the starting time transform during incoming session grow
   assert.deepEqual(Array.from(chart.domain), [at(0), at(400)]);
 });
 
-test("a frozen overview domain and its owning pointer govern a resize through session growth", () => {
-  const { panel, chart, overview, refreshModel } = makeFixture();
-  panel.setHistoryWindow(at(20), at(60));
+test("a frozen chart domain and its owning pointer govern panning through session growth", () => {
+  const {panel, surface, point, refreshModel} = makeFixture();
+  panel.setHistoryWindow(at(20), at(80));
   refreshModel();
-  const rect = overview.getBoundingClientRect();
-  const plot = panel.historyGeometry();
-  const input = (fraction, pointerId = 1) => ({
-    pointerId,
-    target: { dataset: { historyHandle: "end" }, closest: () => null },
-    clientX: rect.left + plot.left + fraction * (plot.right - plot.left),
-    preventDefault() {},
-  });
-  panel.beginHistoryGesture(input(0.6), overview);
-  const gesture = panel.historyGesture;
-  panel.state.now = iso(400);
-  chart.domain = panel.historyDomain();
-  panel.updateHistoryGesture(input(0.8, 99));
-  panel.endHistoryGesture(input(0.8, 99));
-  assert.equal(
-    panel.historyGesture,
-    gesture,
-    "another pointer cannot complete the resize",
-  );
-  assert.deepEqual(Array.from(panel.window), [at(20), at(60)]);
-  panel.updateHistoryGesture(input(0.8));
+  const start = point(at(50));
+  panel.beginChartPointer(start, surface);
+  panel.state.now = iso(200);
+  panel.shown.measurement_window = {started_at: iso(0), ended_at: iso(200), complete: true};
+  refreshModel();
+  const moved = {...start, clientX: start.clientX - 10000};
+  panel.updateChartPointer({...moved, pointerId: 99});
   assert.deepEqual(Array.from(panel.window), [at(20), at(80)]);
-  panel.endHistoryGesture({ ...input(0.8), type: "pointercancel" });
-  assert.equal(panel.historyGesture, null);
+  panel.updateChartPointer(moved);
+  assert.equal(panel.window[1], at(100), "the active pan retains its original domain");
+  panel.endChartPointer({...moved, type: "pointerup"});
   assert.equal(panel.historyInputSnapshot, null);
   assert.equal(panel.historyValueSelection, null);
+  assert.deepEqual(Array.from(panel.historyChart.domain), [at(0), at(200)]);
 });
 
 test("foreign pointers, cancellation, scrolling, motion and pinch cannot become a tap selection", () => {
@@ -1080,7 +1072,7 @@ test("keyboard selection moves by its catalogue fraction, commits boundaries and
   definition.default += definition.step;
   const key = (name, shiftKey = false) => {
     let prevented = false;
-    panel.keyHistorySelection({
+    panel.keyHistorySelection({ target: surface,
       key: name,
       shiftKey,
       preventDefault: () => (prevented = true),
@@ -1128,7 +1120,8 @@ test("keyboard selection moves by its catalogue fraction, commits boundaries and
   );
   assert.equal(key("Escape"), true);
   assert.equal(panel.historyValueSelection, null);
-  assert.equal(tooltip.hidden, true);
+  assert.equal(tooltip.hidden, false);
+  assert.equal(tooltip.getAttribute("data-selection"), "overview");
   panel.selectHistoryTime(panel.window[0]);
   key("ArrowLeft", true);
   key("Enter");

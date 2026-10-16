@@ -64,15 +64,17 @@ class Node extends EventTarget {
   }
   replaceChildren(...nodes) {
     this.children = [];
+    this._textContent = "";
     this.append(...nodes);
   }
   get textContent() {
-    return this._textContent;
+    return this.children.length ? this.children.map((node) => node.textContent).join("") : this._textContent;
   }
   set textContent(value) {
     this.ownerDocument.trace?.push("write");
     this.writes.push(["text", value]);
     this._textContent = String(value);
+    this.children = [];
   }
   getBoundingClientRect() {
     this.ownerDocument.trace?.push("read");
@@ -83,6 +85,8 @@ class Node extends EventTarget {
     this.writes.push(["attribute", name, value]);
     this.attributes.set(name, value);
   }
+  getAttribute(name) { return this.attributes.get(name) ?? null; }
+  removeAttribute(name) { this.attributes.delete(name); }
   getRootNode() {
     let node = this;
     while (node.parentNode) node = node.parentNode;
@@ -134,6 +138,7 @@ const makeEnvironment = () => {
   const cursor = new Node(document);
   const overview = new Node(document, { left: 20, top: 400, width: 600, height: 23 });
   overview.parentNode = scroller;
+  overview.matches = (selector) => selector === "[data-history-time-axis]";
   return {
     window,
     document,
@@ -176,15 +181,17 @@ const load = () => {
   return context.HistoryInteraction;
 };
 
-const panel = (calls) =>
+const panel = (calls, environment) =>
   Object.assign(fixturePanel(Panel), {
+    $: (selector) => selector === "[data-history-time-axis]" ? environment?.overview : null,
     window: [0, 1000],
     positions: new Set(["upper", "lower"]),
     historyDetail: true,
     shown: {
-      session: { measurement_ttl_seconds: fixtureValues().sensor_timeout_seconds },
+      session: { measurement_ttl_seconds: fixtureValues().sensor_timeout_seconds, timeline: {session_id: "geometry", session_started_at: new Date(0).toISOString(), completed: [], processed: [], active: null} },
     },
     state: {
+      now: new Date(10000).toISOString(),
       measurement_ttl_seconds: fixtureValues().sensor_timeout_seconds,
       configuration: { parameters: fixtureValues() },
     },
@@ -207,7 +214,7 @@ test("coordinates use the cached rectangles and logical chart sizes", () => {
   const environment = makeEnvironment();
   const HistoryInteraction = load(environment);
   const interaction = HistoryInteraction(
-    panel([]),
+    panel([], environment),
     environment.surface,
     environment.wrap,
     environment.tooltip,
@@ -225,7 +232,7 @@ test("coordinates use the cached rectangles and logical chart sizes", () => {
   assert.equal(chartPoint.y, 240);
   const overviewPoint = interaction.coordinates(environment.overview, 320, 411.5);
   assert.equal(overviewPoint.x, 600);
-  assert.equal(overviewPoint.y, 23);
+  assert.equal(overviewPoint.y, fixturePanel(Panel).historyTimeAxisHeight() / 2);
   const reads = environment.surface.reads;
   interaction.coordinates(environment.surface, 350, 190);
   assert.equal(
@@ -239,7 +246,7 @@ test("hover uses the shared transform and does not read layout after root writes
   const environment = makeEnvironment();
   const HistoryInteraction = load(environment);
   const interaction = HistoryInteraction(
-    panel([]),
+    panel([], environment),
     environment.surface,
     environment.wrap,
     environment.tooltip,
@@ -262,7 +269,7 @@ test("hover uses the shared transform and does not read layout after root writes
   );
   const descendants = (node) => [node, ...node.children.flatMap(descendants)];
   const writes = descendants(environment.tooltip).flatMap((node) => node.writes);
-  assert.ok(writes.some(([kind, text]) => kind === "text" && text === "0 °C"));
+  assert.match(environment.tooltip.textContent, /0 °C/, "the composed readout retains its numeric value and unit");
   assert.ok(
     writes.every(
       ([kind, text]) =>
@@ -305,7 +312,7 @@ test("scroll across a shadow boundary, viewport resize, and DPR changes invalida
   const calls = [];
   const HistoryInteraction = load(environment);
   const interaction = HistoryInteraction(
-    panel(calls),
+    panel(calls, environment),
     environment.surface,
     environment.wrap,
     environment.tooltip,
@@ -335,7 +342,7 @@ test("dispose removes every listener, observer, and media subscription", () => {
   const calls = [];
   const HistoryInteraction = load(environment);
   const interaction = HistoryInteraction(
-    panel(calls),
+    panel(calls, environment),
     environment.surface,
     environment.wrap,
     environment.tooltip,
@@ -363,7 +370,7 @@ test("slotted content subscribes to scrolling ancestors within its assigned shad
   slottedScroller.parentNode = environment.shadow;
   environment.surface.assignedSlot = slot;
   const interaction = load()(
-    panel(calls),
+    panel(calls, environment),
     environment.surface,
     environment.wrap,
     environment.tooltip,

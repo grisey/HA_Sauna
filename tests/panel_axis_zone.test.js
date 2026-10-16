@@ -96,7 +96,8 @@ test("history axes use the fixed local zone and reuse unchanged layers", () => {
       },
       curves: { update() {} },
     });
-    const session = { ended_at: "2032-01-01T01:00:00Z" };
+    const session = { ended_at: new Date(end).toISOString(), timeline: {session_id: "zone", session_started_at: new Date(start).toISOString(), completed: [], processed: []} };
+    panel.shown.session = session;
     chart.render(new Set(["status"]), session, []);
     assert.match(node("[data-history-time-ticks]").innerHTML, new RegExp(clock));
     chart.render(new Set(["status"]), session, []);
@@ -293,6 +294,7 @@ test("tables, diagnostics, annotations and session labels use each fixed local z
       right: 100,
       top: 0,
       bottom: 100,
+      valueScale: {intervals: 4},
       x: (time) => (time - Date.parse(at)) / 6000,
     };
     assert.match(panel.historyAnnotations(model, session, [gang]), new RegExp(clock));

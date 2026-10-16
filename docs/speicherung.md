@@ -59,6 +59,27 @@ Anlagenmodell. Die Liveansicht verwendet die aktuelle Zuordnung, eine archiviert
 Sitzung ihren gespeicherten Aufbau. Fehlt dieser in älteren Daten, bleibt die
 Konfiguration unbekannt; vorhandene Messungen werden trotzdem angezeigt.
 
+Phasen und Ereignisse erscheinen in eigenen Bändern am Diagramm. Ein Klick auf
+einen Zeitpunkt markiert dessen Messwerte, ein zweiter einen Zeitraum. Ein
+weiterer Klick oder **Auswahl aufheben** stellt die Sitzungsübersicht wieder her.
+Phasen und Ereignisse wählen ihre belegten Zeitgrenzen aus. Die Markierung in
+der Zeitachse wechselt zwischen dem gewählten Ausschnitt und der gesamten Sitzung;
+ihre Griffe ändern die Zeitgrenzen.
+
+Strg-/Cmd-Mausrad oder eine Vergrößerungsgeste ändern den Maßstab. Ein vergrößerter
+Ausschnitt lässt sich horizontal im Diagramm verschieben. Bei fokussiertem
+Diagramm vergrößern **+** und **−** den Maßstab beziehungsweise den sichtbaren
+Zeitraum; die Pfeiltasten verschieben ihn, **Pos1** zeigt die gesamte Sitzung.
+Umschalt und Pfeiltasten bewegen die Zeitmarkierung, **Eingabe** übernimmt ihre
+Grenzen und **Escape** hebt die Auswahl auf.
+
+Jeder Aufguss verwendet seinen eigenen gespeicherten Endbeleg. Die zugeordnete
+Endzeit und die spätere Bestätigung bleiben getrennt sichtbar. Ohne Endbeleg
+erscheint der Startpunkt mit **Ende nicht belegt**; Gangende und spätere Aufgüsse
+ersetzen keinen fehlenden Beleg. Nachgelieferte oder korrigierte Endbelege
+aktualisieren eine ausdrücklich gewählte Ereignisauswahl. Freie Zeitbereiche
+und der sichtbare Ausschnitt bleiben erhalten.
+
 Die Auswahl bezeichnet Aufzeichnungen mit Datum und Zeitspanne. Der Betriebsverlauf
 ordnet Messungen, Regelentscheidungen, Bedienhandlungen und Geräteausgaben nach
 ihrer Herkunft. Heizanforderung, Schützrückmeldung und beobachtete Heizung bleiben
@@ -73,7 +94,7 @@ oder Entwarnungen.
 
 Laufende Aufzeichnungen werden im Hintergrund in größeren Abständen ergänzt.
 Zeitfenster, Zoom, Markierungen und offene Abschnitte bleiben dabei erhalten.
-**Gesamte Saunasitzung** übernimmt den inzwischen erweiterten Zeitraum.
+**Pos1** im Diagramm übernimmt den inzwischen erweiterten gesamten Zeitraum.
 **Wird geladen** kennzeichnet den ersten Datenabruf. Bei einer fehlgeschlagenen
 Aktualisierung bleibt der vorhandene Stand mit einem Fehlerhinweis sichtbar.
 

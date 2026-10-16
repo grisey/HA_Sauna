@@ -38,7 +38,7 @@ const state = (id = "live", ended = false) => ({
   permissions: { admin: true },
   frontend_defaults: frontendDefaults,
   session: {
-    timeline: { session_id: id },
+    timeline: { session_id: id, completed: [], active: null, processed: [], retracted: [] },
     ...(ended ? { ended_at: "2032-01-01T12:10:00Z" } : {}),
   },
   phase_projection: { intervals: [] },
@@ -59,7 +59,9 @@ function panel(api) {
     "#detection-plots": { innerHTML: "" },
     "#control-history": { innerHTML: "" },
     "#plots": { innerHTML: "" },
-    "#history-overview": { replaceChildren() {} },
+    "[data-history-session-summary]": { innerHTML: "", hidden: true },
+    "[data-history-context-gangs]": { innerHTML: "" },
+    "#history-event-inspection": { textContent: "", hidden: true },
   };
   const p = Object.assign(fixturePanel(new Panel()), {
     entry: "e",
@@ -78,6 +80,10 @@ function panel(api) {
     draws: 0,
     statusDraws: 0,
     errors: {},
+    // Both immediate and scheduled renders use the same transport-fixture sink.
+    renderHistory(reasons) {
+      this.drawHistory(reasons);
+    },
     drawHistory() {
       this.draws++;
     },
@@ -106,7 +112,6 @@ function historyUiPanel(api) {
         this.attributes[name] = value;
       },
     },
-    "#history-overview": { replaceChildren() {} },
   });
   p.shadowRoot.addEventListener = (kind, callback) => {
     listeners.set(kind, [...(listeners.get(kind) || []), callback]);
@@ -119,6 +124,20 @@ function historyUiPanel(api) {
   return {
     p,
     nodes,
+    key(key) {
+      const target = {
+        matches: () => false,
+        closest(selector) {
+          return selector === "svg.session-chart, svg.history-time-axis" ? this : null;
+        },
+      };
+      const event = {
+        key, target, defaultPrevented: false,
+        preventDefault() { this.defaultPrevented = true; },
+      };
+      for (const callback of listeners.get("keydown") || []) callback(event);
+      assert.equal(event.defaultPrevented, true, `chart key ${key} is handled`);
+    },
     select(id) {
       for (const callback of listeners.get("change") || [])
         callback({ target: { id: "session", value: id, matches: () => false } });
@@ -722,13 +741,16 @@ test("a stale admin page cannot write after role loss and return to admin", asyn
 
 test("fixed user and admin panels navigate an archive while its first page loads", async () => {
   const session = {
-    timeline: { session_id: "old", session_started_at: "2020-01-01T10:00:00Z" },
+    timeline: {
+      session_id: "old", session_started_at: "2020-01-01T10:00:00Z",
+      completed: [], active: null, processed: [], retracted: [],
+    },
     ended_at: "2020-01-01T12:00:00Z",
   };
   for (const admin of [false, true]) {
     const response = deferred(),
       entered = deferred();
-    const { p } = panel(async (request) => {
+    const { p, key } = historyUiPanel(async (request) => {
       if (request.endsWith("/archive"))
         return [
           {
@@ -764,25 +786,26 @@ test("fixed user and admin panels navigate an archive while its first page loads
     ]);
     p.setHistoryWindow(domain[0] + 30 * 60000, domain[0] + 60 * 60000);
 
-    await p.action("zoom-in");
-    assert.equal(p.zoom, 8);
+    key("+");
+    assert.equal(p.zoom, 4 * p.preference("history_zoom_factor"));
     const zoomed = Array.from(p.window);
-    p.setHistoryWindow(zoomed[0] + 60000, zoomed[1] + 60000);
+    key("ArrowRight");
     const shifted = Array.from(p.window);
-    p.overviewFraction = () => 0.5;
-    p.historyGesture = { kind: "move", fraction: 0.4, window: shifted, svg: {} };
-    p.updateHistoryGesture({ clientX: 0, preventDefault() {} });
-    assert.ok(p.window[0] > shifted[0]);
-    assert.ok(p.window[0] >= domain[0] && p.window[1] <= domain[1]);
-    await p.action("reset-zoom");
+    assert.ok(shifted[0] > zoomed[0]);
+    assert.equal(shifted[1] - shifted[0], zoomed[1] - zoomed[0]);
+    assert.ok(shifted[0] >= domain[0] && shifted[1] <= domain[1]);
+    key("ArrowLeft");
+    assert.deepEqual(Array.from(p.window), zoomed);
+    key("Home");
+    p.ensureHistoryWindow();
     assert.deepEqual(Array.from(p.window), domain);
-    await p.action("zoom-in");
+    key("+");
     const navigated = Array.from(p.window);
     response.resolve({ records: [], next_after: null, session });
     await pending;
     p.ensureHistoryWindow();
     assert.deepEqual(Array.from(p.window), navigated);
-    assert.equal(p.zoom, 2);
+    assert.equal(p.zoom, p.preference("history_zoom_factor"));
     p.selected = "missing";
     p.shown = null;
     assert.ok(p.historyDomain()[0] > Date.parse("2031-01-01"));

@@ -136,30 +136,34 @@ test("featured quantity colors precede advanced colors and legacy height values 
   );
 });
 
-test("history legend groups matching curve, phase and event symbols without height controls", () => {
+test("phase and event bands retain their labels and colors without height controls", () => {
   const p = panel();
   p.historyTitle = () => "Sitzung";
   p.historyDetail = true;
+  const at = (second) => new Date(Date.UTC(2032, 0, 1) + second * 1000).toISOString();
+  const session = {ended_at: at(40), timeline: {session_started_at: at(0), completed: [], active: null, processed: []}};
   p.shown = {
-    phase_projection: {
-      intervals: [
-        { phase: "aufheizen" },
-        { phase: "saunagang" },
-        { phase: "nachlauf" },
-        { phase: "saunagang" },
-      ],
-    },
+    session,
+    phase_projection: {intervals: [
+      {phase: "aufheizen", started_at: at(0), ended_at: at(10)},
+      {phase: "saunagang", started_at: at(10), ended_at: at(20)},
+      {phase: "nachlauf", started_at: at(20), ended_at: at(30)},
+      {phase: "saunagang", started_at: at(30), ended_at: at(40)},
+    ]},
   };
-  const markup = p.historyMarkup({}) + p.historyLegendMarkup();
+  const model = {...p.historyGeometry(), start: Date.parse(at(0)), end: Date.parse(at(40)), x: (time) => (time - Date.parse(at(0))) / 40};
+  const markup = p.historyMarkup();
   assert.doesNotMatch(markup, /history-detail|position-upper|position-lower|Messhöhen/);
-  for (const label of ["Phasen", "Ereignisse"])
-    assert.ok(markup.includes(`aria-label="${label}"`));
-  for (const kind of ["infusion"]) assert.ok(markup.includes(`<line class="${kind}"`));
-  for (const kind of ["heat", "after", "gang", "door"])
-    assert.ok(markup.includes(`<rect class="${kind}"`));
-  assert.doesNotMatch(markup, /Messkurven|<rect class="ready"/);
-  assert.equal((markup.match(/data-legend-phase="saunagang"/g) || []).length, 1);
-  assert.doesNotMatch(markup, /class="vent"|lüften|Lüftung/);
+  assert.match(markup, /aria-label="Phasen der Sitzung"/);
+  assert.match(markup, /aria-label="Türvorgänge und Aufgüsse"/);
+  const phases = p.historyPhaseBand(model, session);
+  for (const phase of ["aufheizen", "nachlauf", "saunagang"])
+    assert.ok(phases.includes(`data-history-phase="${phase}"`));
+  assert.equal((phases.match(/data-history-phase="saunagang"/g) || []).length, 2);
+  assert.equal((p.historyBandNames(model).match(/Saunagang/g) || []).length, 1);
+  const events = p.historyStripEvents(model);
+  for (const label of ["Türvorgänge", "Aufgüsse", "Ofen"]) assert.ok(events.includes(label));
+  assert.doesNotMatch(markup + phases + events, /class="vent"|lüften|Lüftung/);
   const styles = p.historyCurveStyles();
   assert.deepEqual(Array.from(styles["upper:temperature"].lineDash), []);
   assert.deepEqual(Array.from(styles["upper:humidity"].lineDash), []);

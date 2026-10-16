@@ -38,6 +38,7 @@ const annotationModel = () => {
     right,
     top,
     bottom,
+    valueScale: {intervals: 4},
     x: (time) => left + ((time - start) / (finish - start)) * (right - left),
   };
 };

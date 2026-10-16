@@ -606,6 +606,7 @@ const parameters = fixtureValues();
     };
     const p = Object.assign(fixturePanel(Panel), {
       entry: "entry",
+      historyEventVisibility: new Map([["door", true]]),
       state: { now: iso(90), permissions: { admin }, configuration: { parameters } },
       shown: {
         records,
