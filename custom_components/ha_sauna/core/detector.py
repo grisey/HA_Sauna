@@ -33,7 +33,7 @@ from .curve_change import (
 from .models import Measurement, Position, Quantity
 from .moisture import KELVIN_OFFSET_C, absolute_humidity
 from .parameters import BY_KEY
-from .timeline import Kind, utc
+from .timeline import InfusionEnd, Kind, utc
 
 
 @dataclass(frozen=True)
@@ -43,6 +43,14 @@ class Detection:
     detected_at: object
     channels: tuple[str, ...]
     trace_at: object | None = None
+
+
+@dataclass(frozen=True)
+class InfusionEpisodeUpdate:
+    """Endbeleg oder ausdrücklicher Widerruf zur ursprünglichen Bestätigung."""
+
+    confirmed_detection: Detection
+    end: InfusionEnd | None
 
 
 @dataclass(frozen=True)
@@ -263,6 +271,7 @@ class Detector:
         self._curve_ventilation_at = None
         self._curve_infusion_since = None
         self._infusion_episode = None
+        self._infusion_updates = deque()
         self._infusion_segment_start = {}
         self._original_prefixes = deque(maxlen=self.p["curve_max_points"] * 2 * len(self.positions))
         self._original_prefix_overflow = False
@@ -2335,6 +2344,7 @@ class Detector:
                             )
                             episode = self._infusion_episode
                         else:
+                            self._update_infusion_end(episode, None)
                             episode["phase"] = "active" if episode["confirmed_at"] is not None else "pending"
                             episode["level_end_at"] = None
                             episode["end_basis"] = None
@@ -2447,6 +2457,10 @@ class Detector:
                     episode["phase"] = "ended"
                     episode["level_end_at"] = now
                     episode["end_basis"] = "original_background"
+                    self._update_infusion_end(episode, InfusionEnd(
+                        episode["level_end_at"], decision_at, now,
+                        episode["end_basis"], "evidence_grid",
+                    ))
                     episode["original_background"] = None
                     episode["original_end_windows"] = contrasts.positions
                     self._infusion_segment_start = {
@@ -3624,6 +3638,14 @@ class Detector:
             episode["original_background"] = None
         self._clear_curve_route("infusion_decay", reason="admission_context")
 
+    def _update_infusion_end(self, episode, end):
+        """Jeden echten Übergang erhalten, auch vor dem Löschen des Owners."""
+        detection = episode.get("confirmed_detection")
+        if detection is None or episode.get("reported_end") == end:
+            return
+        episode["reported_end"] = end
+        self._infusion_updates.append(InfusionEpisodeUpdate(detection, end))
+
     def _finish_infusion_context(self, reason):
         """Eine tatsächliche neue Tür-/Betriebsfolge besitzt eigene Aufgüsse."""
         self._infusion_episode = None
@@ -3661,6 +3683,7 @@ class Detector:
             "water": water,
             "confirmed_at": None,
             "confirmed_detection": None,
+            "reported_end": None,
             "confirmation_basis": None,
             "original": onsets is not None,
             "original_component": None,
@@ -3804,6 +3827,7 @@ class Detector:
                     if episode["phase"] == "pending":
                         self._finish_infusion_context("water_original_corrected")
                     else:
+                        self._update_infusion_end(episode, None)
                         episode["phase"] = "active"
                         episode["interrupted"].update(episode["positions"])
                         episode["context"] = None
@@ -3881,6 +3905,7 @@ class Detector:
                 episode["decays"].clear()
                 self._clear_curve_route("infusion_decay", reason="decay_original_corrected")
                 return
+            self._update_infusion_end(episode, None)
             episode["phase"] = "active"
             episode["level_end_at"] = None
             episode["end_basis"] = None
@@ -4104,6 +4129,7 @@ class Detector:
         if episode["phase"] == "pending":
             self._finish_infusion_context("original_evidence_corrected")
             return
+        self._update_infusion_end(episode, None)
         episode["phase"] = "active"
         episode["level_end_at"] = None
         episode["end_basis"] = None
@@ -4433,6 +4459,10 @@ class Detector:
             episode["end_basis"] = (
                 "level_after_interruption" if episode["interrupted"] else "decay_and_level"
             ) if level_complete else "fixed_recovery_background"
+            self._update_infusion_end(episode, InfusionEnd(
+                episode["level_end_at"], decision_at, now,
+                episode["end_basis"], "evidence_grid",
+            ))
             self._infusion_segment_start = {
                 position: (
                     episode["levels"][position]["features"].start_at if level_complete else
@@ -4828,7 +4858,7 @@ class Detector:
         heating_intervals=None, heating_after=None, heating_gates=None,
         recognition_context=None, allowed_at=None,
         before_sample=None, after_sample=None, include_current=True, detected_at=None,
-        onset_allowed=None,
+        onset_allowed=None, on_infusion_update=None,
     ):
         """Laufzeitkontext vor jeder Prüfung lesen; Ereignisse sofort zurückmelden.
 
@@ -4845,6 +4875,8 @@ class Detector:
         detected_at kann die reale Erkennungsuhr liefern, getrennt vom Rasterende.
         onset_allowed prüft allein die frühere Zuordnung; die Bestätigung bleibt
         bei einer Ablehnung mit ihrem bisherigen Ereignisbeginn bestehen.
+        on_infusion_update erhält Endübergänge nach den Ereignissen und vor
+        after_sample; None in einem Update widerruft einen früheren Endbeleg.
         """
         at = utc(at)
         final = int((at - self.origin).total_seconds() // self.grid_seconds)
@@ -4934,6 +4966,10 @@ class Detector:
                 onset_allowed=onset_allowed,
                 operation_restarted=operation_restarted,
             ))
+            while self._infusion_updates:
+                if on_infusion_update is not None:
+                    on_infusion_update(self._infusion_updates[0])
+                self._infusion_updates.popleft()
             if after_sample is not None:
                 after_sample(now)
         return output
@@ -5398,6 +5434,20 @@ class Detector:
             self._curve_door_context += 1
             self._clear_curve_route("door_open", keep_status=True)
             self._clear_curve_route("door_open_heating", keep_status=True)
+            infusion = self._infusion_episode
+            infusion_detection = infusion.get("confirmed_detection") if infusion is not None else None
+            if (infusion is not None and infusion["phase"] == "active"
+                    and infusion_detection is not None):
+                if open_effective >= infusion_detection.effective_at:
+                    self._update_infusion_end(infusion, InfusionEnd(
+                        open_effective, decision_at, now, "door_open", "physical_effective",
+                    ))
+                else:
+                    trace["infusion_end_conflict"] = {
+                        "reason": "door_before_infusion_onset",
+                        "door_effective_at": open_effective,
+                        "infusion_effective_at": infusion_detection.effective_at,
+                    }
             self._finish_infusion_context("door_open")
             emit(Kind.DOOR_OPEN, open_effective, episode["positions"])
         elif not self.open and episode:

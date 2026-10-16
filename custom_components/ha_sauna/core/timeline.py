@@ -94,6 +94,43 @@ class Event:
 
 
 @dataclass(frozen=True)
+class InfusionEnd:
+    """Vom Detektor gelieferter Endbeleg eines einzelnen Aufgusses."""
+
+    effective_at: datetime
+    confirmed_at: datetime
+    trace_at: datetime
+    basis: str
+    time_basis: str
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.basis, str) or not self.basis.strip():
+            raise ValueError("Aufgussende benötigt eine nicht leere Beleggrundlage")
+        if self.time_basis not in ("physical_effective", "evidence_grid"):
+            raise ValueError("Ungültige Zeitbasis des Aufgussendes")
+        for name in ("effective_at", "confirmed_at", "trace_at"):
+            object.__setattr__(self, name, utc(getattr(self, name)))
+        if not self.effective_at <= self.trace_at <= self.confirmed_at:
+            raise ValueError(
+                "Ende, Auswertungsraster und Bestätigung müssen zeitlich geordnet sein"
+            )
+
+
+@dataclass(frozen=True)
+class Infusion:
+    """Zusätzliche Metadaten zum unveränderten führenden Aufgussereignis."""
+
+    source_event_id: str
+    end: InfusionEnd | None = None
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.source_event_id, str) or not self.source_event_id.strip():
+            raise ValueError("Aufguss benötigt eine nicht leere Quellereignis-ID")
+        if self.end is not None and not isinstance(self.end, InfusionEnd):
+            raise ValueError("Ungültiger Endbeleg des Aufgusses")
+
+
+@dataclass(frozen=True)
 class Gang:
     gang_id: str
     session_id: str
@@ -108,6 +145,7 @@ class Gang:
     ended_at: datetime | None = None
     end_event_id: str | None = None
     end_reason: str | None = None
+    infusions: tuple[Infusion, ...] = ()
 
     @property
     def confirmation(self) -> Confirmation:
@@ -214,6 +252,55 @@ class Timeline:
         if not self.session_id or not isinstance(self.door, Door):
             raise ValueError("Session-ID und gültiger Türzustand erforderlich")
         object.__setattr__(self, "session_started_at", utc(self.session_started_at))
+
+
+def update_infusion_end(
+    state: Timeline, source_event_id: str, end: InfusionEnd | None,
+) -> Timeline:
+    """Einen gelieferten Endbeleg allein an seiner zugeordneten Quelle ersetzen.
+
+    ``infusion_events`` führt weiterhin Gangzuordnung und Bestätigung. Nur eine
+    dort belegte Quelle erhält Metadaten, auch in älteren Gängen ohne bisherigen
+    ``Infusion``-Eintrag. ``None`` nimmt ausschließlich ihr vorhandenes Ende
+    zurück. Gangzeiten, Quellenereignisse und sämtliche Übergänge bleiben erhalten.
+    """
+    if end is not None and not isinstance(end, InfusionEnd):
+        raise ValueError("Ungültiger Endbeleg des Aufgusses")
+
+    def update(gang: Gang) -> Gang:
+        if gang.session_id != state.session_id:
+            return gang
+        source = next((
+            event for event in gang.infusion_events
+            if event.event_id == source_event_id and event.kind == Kind.INFUSION
+            and event.session_id == state.session_id
+        ), None)
+        if source is None:
+            return gang
+        if end is not None and end.effective_at < source.effective_at:
+            raise ValueError("Aufgussende liegt vor dem zugehörigen Aufgussbeginn")
+        for index, infusion in enumerate(gang.infusions):
+            if infusion.source_event_id != source_event_id:
+                continue
+            if infusion.end == end:
+                return gang
+            return replace(gang, infusions=(
+                *gang.infusions[:index], replace(infusion, end=end),
+                *gang.infusions[index + 1:],
+            ))
+        if end is None:
+            return gang
+        return replace(gang, infusions=(
+            *gang.infusions, Infusion(source_event_id, end),
+        ))
+
+    active = update(state.active) if state.active is not None else None
+    completed = tuple(update(gang) for gang in state.completed)
+    retracted = tuple(update(gang) for gang in state.retracted)
+    if (active is state.active and completed == state.completed
+            and retracted == state.retracted):
+        return state
+    return replace(state, active=active, completed=completed, retracted=retracted)
 
 
 def project_door_cycles(timeline: Timeline | Mapping) -> list[dict]:
@@ -537,7 +624,10 @@ def apply(
                 *state.rejected_start_sources, anchor.event_id,
             ))
         if event.kind == Kind.INFUSION:
-            gang = replace(gang, infusion_events=gang.infusion_events + (event,))
+            gang = replace(
+                gang, infusion_events=gang.infusion_events + (event,),
+                infusions=gang.infusions + (Infusion(event.event_id),),
+            )
         result = replace(result, active=gang)
         if event.kind == Kind.PRESENCE_CONFIRMED:
             result = replace(result, resolved_presence_close_id=state.anchor.event_id)

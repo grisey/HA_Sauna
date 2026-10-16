@@ -35,7 +35,7 @@ from .core.configuration_model import ConfigurationModel
 from .core.contracts import ConsumerEvent, PresenceReport
 from .core.controller import Controller, Result
 from .core.defaults import instance_default, preference_values
-from .core.detector import Detector
+from .core.detector import Detection, Detector
 from .core.input_handoff import (
     ControlModeInput,
     HeaterOverrideInput,
@@ -544,6 +544,7 @@ class SaunaRuntime:
         self.detector = None
         self._detector_session = None
         self._detector_heating_gates = []
+        self._detector_infusion_events: dict[int, tuple[Detection, str]] = {}
         self._archive_signature = None
         self._saved_decisions = 0
         self.presence = PresenceProjection()
@@ -597,6 +598,7 @@ class SaunaRuntime:
         self._publish_controller_events()
         self._detector_session = session_id
         self._detector_heating_gates = []
+        self._detector_infusion_events.clear()
         if session_id:
             now = self._clock()
             self._record_presence(PresenceReport(
@@ -745,6 +747,12 @@ class SaunaRuntime:
                     booking_at=booking_at,
                     trace_at=detection.trace_at,
                 )
+                if detection.kind == Kind.INFUSION:
+                    # Retain the exact confirmation across advance calls; the
+                    # per-call callback index is not an episode identity.
+                    self._detector_infusion_events[id(detection)] = (
+                        detection, event.event_id,
+                    )
                 self._process_event(
                     event, defer_confirmation=True, recognition_at=detection.trace_at,
                 )
@@ -764,6 +772,32 @@ class SaunaRuntime:
                             "trace_at": detection.trace_at,
                         },
                         self.session.session_id,
+                    )
+
+            def infusion_updated(update):
+                if (
+                    self.detector is not detector
+                    or self.session is None
+                    or self.session.session_id != session_id
+                    or self._detector_session != session_id
+                ):
+                    return
+                source = self._detector_infusion_events.get(
+                    id(update.confirmed_detection)
+                )
+                if source is None or source[0] is not update.confirmed_detection:
+                    return
+                received_at = self._clock()
+                source_event_id = source[1]
+                if not self.controller.record_infusion_end(
+                    session_id, source_event_id, update.end,
+                ):
+                    return
+                if self.archive:
+                    self.archive.append(
+                        "infusion_update", received_at,
+                        {"source_event_id": source_event_id, "end": update.end},
+                        session_id,
                     )
 
             def before_sample(at):
@@ -787,6 +821,7 @@ class SaunaRuntime:
                     kind, person_evidence_qualified=person_evidence_qualified,
                 ),
                 on_detection=detected,
+                on_infusion_update=infusion_updated,
                 heating_intervals=lambda: self.session.heating.intervals,
                 heating_gates=self._detector_heating_gates,
                 recognition_context=self.controller.recognition_context_at,
