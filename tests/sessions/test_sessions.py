@@ -1,18 +1,30 @@
 """Required, bound acceptance fixtures. Linux plus HA, no private input switch."""
 
 import asyncio
+import filecmp
 import gzip
+import io
 import json
 import os
 import platform
 import unittest
 from pathlib import Path
+from tempfile import TemporaryDirectory
 from unittest.mock import patch
 
 from custom_components.ha_sauna.core.controller import Controller
 from custom_components.ha_sauna.core.input_handoff import InputTiming, TemperatureInput
 
 from runner import ORIGIN, TRACE_CASES, SessionRun, load_manifest
+
+
+def _write_timeline(path, snapshots):
+    with path.open("wb") as output:
+        with gzip.GzipFile(filename="", mode="wb", fileobj=output, mtime=0) as compressed:
+            with io.TextIOWrapper(compressed, encoding="utf-8", newline="\n") as stream:
+                for row in snapshots:
+                    stream.write(json.dumps(row, ensure_ascii=False,
+                                            sort_keys=True, allow_nan=False) + "\n")
 
 
 class CompleteSessionTests(unittest.TestCase):
@@ -105,10 +117,37 @@ class CompleteSessionTests(unittest.TestCase):
                                if run.producer_controller_trace is not None else {}),
                         }, ensure_ascii=False, indent=2, sort_keys=True,
                             allow_nan=False) + "\n", encoding="utf-8")
-                        with gzip.open(folder / f"{case['id']}.timeline.jsonl.gz", "wt") as stream:
-                            for row in run.snapshots:
-                                stream.write(json.dumps(row, ensure_ascii=False,
-                                                        sort_keys=True, allow_nan=False) + "\n")
+                        timeline = folder / f"{case['id']}.timeline.jsonl.gz"
+                        _write_timeline(timeline, run.snapshots)
+                        if failure is None and case.get("base_id", case["id"]) == "G00":
+                            self.assertTrue(run.snapshots)
+                            with TemporaryDirectory() as temporary:
+                                repeated = Path(temporary) / "different-name.jsonl.gz"
+                                _write_timeline(repeated, run.snapshots)
+                                identical = filecmp.cmp(timeline, repeated, shallow=False)
+                                self.assertTrue(identical)
+                                headers, mtimes, filename_flags = [], [], []
+                                for written in (timeline, repeated):
+                                    with written.open("rb") as source:
+                                        header = source.read(10)
+                                    self.assertEqual(header[:3], b"\x1f\x8b\x08")
+                                    self.assertEqual(header[3] & 8, 0)
+                                    self.assertEqual(header[4:8], b"\x00" * 4)
+                                    headers.append(header.hex())
+                                    mtimes.append(int.from_bytes(header[4:8], "little"))
+                                    filename_flags.append(bool(header[3] & 8))
+                                    with gzip.open(written, "rt", encoding="utf-8") as source:
+                                        for expected, line in zip(run.snapshots, source, strict=True):
+                                            self.assertEqual(json.loads(line), expected)
+                                observation = {
+                                    "case": case["id"], "compressed_bytes_equal": identical,
+                                    "gzip_headers_hex": headers, "mtime": mtimes,
+                                    "filename_header_present": filename_flags,
+                                    "original_rows_equal_in_both_outputs": len(run.snapshots),
+                                }
+                            (folder / f"{case['id']}.timeline-serialization.json").write_text(
+                                json.dumps(observation, indent=2, sort_keys=True,
+                                           allow_nan=False) + "\n", encoding="utf-8")
                     print(f"SESSION {case['id']} END ({failure or 'evaluated'})", flush=True)
                 failures = [r for r in results if not r["passed"]]
                 self.assertFalse(failures, json.dumps(failures, ensure_ascii=False, indent=2))
