@@ -344,8 +344,31 @@ Python-Tests führen zu einem fehlgeschlagenen Core-Prozess. Das Artefakt
 `core-tests` enthält Commit, Tree, Prozessprotokoll, Exitcode und Abschlussstatus.
 
 Die manuelle Auslösung (`workflow_dispatch`) des Workflows `HA Sauna` mit
+`detector_replay=true` führt ausschließlich die gebundenen Messreplays aus
+[`replay_measurement_manifest.json`](replay_measurement_manifest.json) aus.
+`detector_recordings` begrenzt die Auswahl auf ganze Zeitgruppen.
+[`analysis/detector_replay.py`](analysis/detector_replay.py) übergibt sämtliche
+Originalmessungen an den produktiven `Detector.accept` und `Detector.advance`.
+Je Zeitgruppe bleibt eine Detektorinstanz erhalten; tatsächliche Lücken werden
+nicht mit Messungen aufgefüllt. Die aktuellen Katalogparameter bleiben während
+des Laufs unverändert. Historische Erkennungsausgaben und Bedienannahmen liefern
+keine Eingänge oder Sollereignisse.
+
+Der Messvergleich verwendet ausdrücklich `enabled=True` ohne Controllerfreigaben
+oder belegte Heizintervalle. Er prüft Kandidaten und Erkennungsbestätigungen,
+keine historischen Regelfolgen. Fehlende unabhängige Ereigniszuordnungen erlauben
+keine Treffer- oder Fehlalarmquote. Die Beobachtung protokolliert die
+Originalentscheidungen innerhalb eines Rasters, bevor spätere Präfixe sie
+überschreiben. Ein Paritätsvergleich prüft, dass diese Beobachtung die
+Detektorausgaben nicht ändert. Das Artefakt `detector-measurement-replay` enthält
+Eingangsbindungen, Parameter, Kandidatendiagnosen, Erkennungen sowie Commit,
+Trees, Exitcodes und Prozessabschlüsse. Dieser Auftrag hat Vorrang vor den
+anderen manuellen Analyse- und Prüfoptionen.
+
+Die manuelle Auslösung (`workflow_dispatch`) des Workflows `HA Sauna` mit
 `proxy_calibration_analysis=true` führt ausschließlich die Proxy-Kalibration
-aus. Diese Auswahl hat Vorrang vor allen anderen Analyseflags und Prüfbereichen.
+aus, sofern kein Detektor-Messreplay ausgewählt ist. Diese Auswahl hat Vorrang
+vor den übrigen Analyseflags und Prüfbereichen.
 [`analysis/proxy_calibration.py`](analysis/proxy_calibration.py) konsumiert die
 gebundenen Originalmessungen und die separat geführten
 [Kalibrationsvorgaben](analysis/proxy_calibration_policy.json) und

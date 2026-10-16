@@ -37,6 +37,8 @@ _PARAMETER_KEYS = frozenset(
         "curve_original_gap_humidity_upper_seconds",
         "curve_original_gap_temperature_lower_seconds",
         "curve_original_gap_temperature_upper_seconds",
+        "curve_original_kink_factor",
+        "curve_original_kink_history_windows",
         "curve_original_new_infusion_contrast",
         "curve_original_noise_humidity_lower",
         "curve_original_noise_humidity_upper",

@@ -27,6 +27,7 @@ class Kind(StrEnum):
     PERSON_WEAK = "person_weak"
     INFUSION = "infusion"
     VENTILATION = "ventilation_confirmed"
+    VENTILATION_COMPLETE = "ventilation_complete"
     OPERATION_OFF = "operation_off"
     CONFIRMATION_EXPIRED = "confirmation_expired"
     PRESENCE_CONFIRMED = "presence_confirmed"
@@ -224,6 +225,8 @@ def project_door_cycles(timeline: Timeline | Mapping) -> list[dict]:
     auch Austritt und nachfolgenden Eintritt derselben Türfolge. ``role`` und
     ``gang_id`` sind nur bei genau einem Bezug gesetzt. Archivierte Mappings
     werden ebenso gelesen wie Timeline-Objekte, ohne deren Inhalt zu verändern.
+    Die beiden Lüftungsstufen erhalten eigene Zeit- und Quellfelder; sie ändern
+    weder ``event_ids`` der Türpaarung noch die vorhandenen Gangbezüge.
     """
     def get(value, key, default=None):
         return (value.get(key, default) if isinstance(value, Mapping)
@@ -274,6 +277,10 @@ def project_door_cycles(timeline: Timeline | Mapping) -> list[dict]:
                 "role": None,
                 "gang_id": None,
                 "gang_links": [],
+                "ventilation_at": None,
+                "ventilation_event_id": None,
+                "ventilation_complete_at": None,
+                "ventilation_complete_event_id": None,
             })
             evidence.append({
                 "started_at": at, "ended_at": None,
@@ -302,6 +309,10 @@ def project_door_cycles(timeline: Timeline | Mapping) -> list[dict]:
                     "role": None,
                     "gang_id": None,
                     "gang_links": [],
+                    "ventilation_at": None,
+                    "ventilation_event_id": None,
+                    "ventilation_complete_at": None,
+                    "ventilation_complete_event_id": None,
                 })
                 evidence.append(None)
         elif current is not None and kind == Kind.VENTILATION:
@@ -312,6 +323,35 @@ def project_door_cycles(timeline: Timeline | Mapping) -> list[dict]:
                     episode["ventilation_event_id"] = event_id
                 if at >= episode["started_at"]:
                     exit_cycles[event_id] = current
+                    if episode["ventilation_event_id"] == event_id:
+                        cycles[current]["ventilation_at"] = at.isoformat()
+                        cycles[current]["ventilation_event_id"] = event_id
+        elif current is not None and kind == Kind.VENTILATION_COMPLETE:
+            cycle = cycles[current]
+            ventilation_id = cycle["ventilation_event_id"]
+            if (cycle["open"] and ventilation_id is not None
+                    and cycle["ventilation_complete_at"] is None):
+                ventilation, ventilation_index, ventilation_at = sources[ventilation_id]
+                confirmed_at = time(get(event, "trace_at") or at)
+                ventilation_confirmed_at = time(get(ventilation, "trace_at") or ventilation_at)
+                booked_at = time(get(event, "booking_at") or get(event, "detected_at") or at)
+                ventilation_booked_at = time(
+                    get(ventilation, "booking_at") or get(ventilation, "detected_at")
+                    or ventilation_at
+                )
+                detected_at = time(get(event, "detected_at") or booked_at)
+                ventilation_detected_at = time(
+                    get(ventilation, "detected_at") or ventilation_booked_at
+                )
+                if (ventilation_index < index and at >= ventilation_at
+                        and confirmed_at is not None and ventilation_confirmed_at is not None
+                        and confirmed_at >= ventilation_confirmed_at
+                        and booked_at is not None and ventilation_booked_at is not None
+                        and booked_at >= ventilation_booked_at
+                        and detected_at is not None and ventilation_detected_at is not None
+                        and detected_at >= ventilation_detected_at):
+                    cycle["ventilation_complete_at"] = at.isoformat()
+                    cycle["ventilation_complete_event_id"] = event_id
         elif current is not None and kind == Kind.PRESENCE_ENDED:
             episode = evidence[current]
             ventilation = episode["ventilation_at"]
@@ -322,6 +362,23 @@ def project_door_cycles(timeline: Timeline | Mapping) -> list[dict]:
                     and (episode["ended_at"] is None
                          or ventilation <= episode["ended_at"])):
                 exit_cycles[event_id] = current
+
+    for cycle, episode in zip(cycles, evidence, strict=True):
+        for prefix in ("ventilation", "ventilation_complete"):
+            source_id = cycle[f"{prefix}_event_id"]
+            if source_id is None:
+                continue
+            source_at = sources[source_id][2]
+            if (cycle["id"] in ambiguous_ids or source_id in ambiguous_ids
+                    # Stufe 2 gehört zur bei ihrer Verarbeitung offenen Episode;
+                    # ein später rückzugeordneter Schluss hebt den Beleg nicht auf.
+                    or (prefix == "ventilation" and episode["ended_at"] is not None
+                        and source_at > episode["ended_at"])):
+                cycle[f"{prefix}_at"] = None
+                cycle[f"{prefix}_event_id"] = None
+        if cycle["ventilation_event_id"] is None:
+            cycle["ventilation_complete_at"] = None
+            cycle["ventilation_complete_event_id"] = None
 
     roles = {}
     retracted = {get(gang, "gang_id")
@@ -385,6 +442,8 @@ def apply(
     ungenutzte vollständige Öffnungs- und Schließfolge.
     Ein bestehender Gang behält seine ursprüngliche Zuordnung bei Türbetätigung.
     Die Bestätigungsart des aktiven Gangs bestimmt den Austrittsbeleg.
+    Die vollständige Lüftung ergänzt allein ``processed``; ihr vorangehender
+    Lüftungsbeleg derselben Öffnung führt weiterhin das Gangende.
     """
     proxy_presence = (
         state.active is not None
@@ -513,6 +572,31 @@ def apply(
                                    end_event_id=event.event_id, end_reason="ventilation")
                 result = replace(result, active=None,
                                  completed=state.completed + (finished,))
+    elif event.kind == Kind.VENTILATION_COMPLETE:
+        if state.door != Door.OPEN:
+            raise ValueError("Vollständiges Lüften benötigt eine offene Episode")
+        if state.opening is None:
+            raise UnresolvedTransition("Vollständiges Lüften ohne zugeordnete Öffnung")
+        episode = []
+        for previous in reversed(state.processed):
+            if previous.kind in (Kind.DOOR_OPEN, Kind.DOOR_CLOSE):
+                if previous.kind != Kind.DOOR_OPEN or previous != state.opening:
+                    raise ValueError("Vollständiges Lüften gehört nicht zur aktuellen Öffnung")
+                break
+            episode.append(previous)
+        else:
+            raise ValueError("Vollständiges Lüften benötigt die verarbeitete Türöffnung")
+        ventilation = state.open_ventilation
+        if (ventilation is None or ventilation.kind != Kind.VENTILATION
+                or ventilation not in episode):
+            raise ValueError("Vollständiges Lüften benötigt den vorherigen Lüftungsbeleg")
+        if (ventilation.effective_at < state.opening.effective_at
+                or event.effective_at < ventilation.effective_at
+                or event.confirmation_at < ventilation.confirmation_at
+                or event.detected_at < ventilation.detected_at):
+            raise ValueError("Lüftungsstufen müssen in zeitlicher Reihenfolge liegen")
+        # Stufe 1 führt das Gangende. Stufe 2 bleibt ausschließlich Quellbeleg
+        # derselben Öffnung und wird unten nur an processed angehängt.
     elif event.kind == Kind.CONFIRMATION_EXPIRED:
         if state.active is not None and state.active.confirmation == Confirmation.PROVISIONAL:
             result = replace(

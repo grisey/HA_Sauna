@@ -28,7 +28,7 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from itertools import starmap
-from math import ceil, fsum, isfinite, log, sqrt, ulp
+from math import ceil, fsum, hypot, isfinite, log, sqrt, ulp
 from operator import mul
 from statistics import NormalDist, median
 
@@ -93,6 +93,82 @@ class OriginalWindowFeatures:
 
 
 @dataclass(frozen=True)
+class OriginalFollowupFeatures:
+    """Raw follow-up contrasts against one retained original reference.
+
+    Fresh counts include only originals strictly after reference.newest_at.
+    An overlapping window remains valid, but does not supply a complete new
+    K-original section until its corresponding fresh count reaches K.
+    The caller owns the fixed reference, source continuity and every decision.
+    current_change and previous_change use the reference's previous slope;
+    the *_from_reference_current changes use its current slope instead.
+    level_change compares only the two sections of the supplied window.
+    reference_level_loss is the dimensionless signed loss against the fixed
+    observed mean of the reference's previous section.
+    """
+
+    window: OriginalWindowFeatures
+    reference: OriginalWindowFeatures
+    fresh_previous: int
+    fresh_current: int
+    current_direction: float
+    previous_direction: float
+    current_change: float
+    previous_change: float
+    level_change: float
+    residual: float
+    reference_level_loss: float
+    current_change_from_reference_current: float
+    previous_change_from_reference_current: float
+
+
+@dataclass(frozen=True)
+class OriginalEdgeChange:
+    """Direction and change of the last two current originals' secant.
+
+    Both contrasts retain their sign. A slowdown can have a negative change
+    while direction remains positive or zero. The reference's current OLS
+    slope supplies the comparison; its identity and all decisions are owned
+    by the caller. window retains both timestamps and their original values.
+    """
+
+    window: OriginalWindowFeatures
+    reference: OriginalWindowFeatures
+    direction: float
+    change: float
+
+
+@dataclass(frozen=True)
+class OriginalKinkTolerance:
+    """Causal background scale and the remaining signed raw slope change.
+
+    The historical scale is the median absolute change between neighboring
+    K-original OLS slopes. It describes observed ordinary slope-change
+    strength in input units per second (pp/s for RH), not a measurement-error
+    guarantee or an event probability. Its windows may overlap.
+    history_count counts complete historical 2K supports; their combined
+    original support runs from history_start through history_end. With no
+    complete historical window those times and history_scale are None.
+    An exactly zero historical scale is valid. Insufficient history retains
+    its evidence, while used_scale falls back to the calibrated catalogue.
+    The detector owns direction requirements and all admission decisions.
+    """
+
+    window: OriginalWindowFeatures
+    factor: float
+    history_count: int
+    history_start: datetime | None
+    history_end: datetime | None
+    history_scale: float | None
+    status: str
+    catalog_scale: float
+    used_scale: float
+    tolerance: float
+    delta: float
+    effective_change: float
+
+
+@dataclass(frozen=True)
 class OriginalPositionWindows:
     """The temperature and RH original windows of one configured position."""
 
@@ -123,11 +199,17 @@ class OriginalThermalContrasts:
 class OriginalContrasts:
     """Raw min/max contrasts over exactly the caller's required positions.
 
-    The names correspond to O, B, W_min, W_max, R, F, Z, Z_r, U and C.
+    The names correspond to O, B, W_min, W_max, R, F, Z, Z_r, U, C and Q.
     U and C exist only when the caller supplies every group-relative RH
     minimum. A single position uses the same formulas over a smaller set;
     this does not transfer a four-channel physical or empirical proof.
     Retained position windows expose every original anchor to the caller.
+    humidity_rise_change (Q) is the minimum normalized RH slope change between
+    the previous and current disjoint OLS windows, not a second derivative or
+    a probability. The directed humidity onset properties require both the
+    current RH direction and its new slope change, independently of T.
+    opening_support requires only the continuing joint T/RH fall; opening
+    retains the historical contrast including the temperature slope kink.
     """
 
     positions: tuple[tuple[str, OriginalPositionWindows], ...]
@@ -141,6 +223,33 @@ class OriginalContrasts:
     background_residual: float
     humidity_recovery: float | None
     closing: float | None
+    humidity_rise_change: float
+
+    @property
+    def humidity_rise_onset(self) -> float:
+        """Joint RH rise and new upward slope change at every position."""
+        return min(min(
+            pair.humidity.v / pair.humidity.e,
+            (pair.humidity.v - pair.humidity.b)
+            / (pair.humidity.e + pair.humidity.e_minus),
+        ) for _, pair in self.positions)
+
+    @property
+    def humidity_fall_onset(self) -> float:
+        """Joint RH fall and new downward slope change at every position."""
+        return min(min(
+            -pair.humidity.v / pair.humidity.e,
+            -(pair.humidity.v - pair.humidity.b)
+            / (pair.humidity.e + pair.humidity.e_minus),
+        ) for _, pair in self.positions)
+
+    @property
+    def opening_support(self) -> float:
+        """Continuing joint T/RH fall, without requiring another slope kink."""
+        return min(min(
+            -pair.temperature.v / pair.temperature.e,
+            -pair.humidity.v / pair.humidity.e,
+        ) for _, pair in self.positions)
 
 
 @dataclass(frozen=True)
@@ -178,6 +287,8 @@ class OriginalWaterWindowFeatures:
     Pair identities retain the RH originals, both T partners and availability.
     The slope envelopes are algebraic consequences of those input envelopes,
     never statistical confidence intervals or independent water measurements.
+    Current level deviation uses their empirical widths as normalizers, not
+    guaranteed individual measurement errors.
     """
 
     previous: tuple[OriginalWaterPair, ...]
@@ -202,11 +313,66 @@ class OriginalWaterWindowFeatures:
         """Latest right T partner on the accepted input measurement axis."""
         return max(pair.available_at for pair in self.previous + self.current)
 
+    def normalized_level_deviation(self) -> float | None:
+        """RMS distance of every current middle to one freely fitted level.
+
+        For positive envelope half-widths a_i, the level minimizes the mean
+        squared residual (m_i-level)/a_i, so its weights are 1/a_i**2. Relative
+        weights avoid squaring reciprocal small widths. A zero width fixes
+        the level exactly; conflicting fixed levels or nonfinite arithmetic
+        leave the normalized shape unknown. No numerical noise floor is added.
+        The result describes observed dispersion, not physical constancy or a
+        statistical confidence bound.
+        """
+        try:
+            if not self.current or any(
+                not _original_water_pair_valid(pair) for pair in self.current
+            ):
+                return None
+            radii = tuple(
+                (pair.upper_density - pair.lower_density) / 2
+                for pair in self.current
+            )
+            middles = tuple(
+                pair.lower_density + radius
+                for pair, radius in zip(self.current, radii, strict=True)
+            )
+            fixed = tuple(
+                middle for middle, radius in zip(middles, radii, strict=True)
+                if radius == 0
+            )
+            if fixed:
+                level = fixed[0]
+                if any(middle != level for middle in fixed):
+                    return None
+            else:
+                smallest = min(radii)
+                weights = tuple((smallest / radius)**2 for radius in radii)
+                total = fsum(weights)
+                anchor = middles[radii.index(smallest)]
+                level = anchor + fsum(
+                    (weight / total) * (middle - anchor)
+                    for weight, middle in zip(weights, middles, strict=True)
+                )
+            if not _profile_number(level):
+                return None
+            root_count = sqrt(len(middles))
+            normalized = tuple(
+                0.0 if radius == 0 else ((middle - level) / root_count) / radius
+                for middle, radius in zip(middles, radii, strict=True)
+            )
+            if not all(_profile_number(value) for value in normalized):
+                return None
+            deviation = hypot(*normalized)
+            return deviation if _profile_number(deviation) else None
+        except (AttributeError, IndexError, OverflowError, TypeError, ValueError):
+            return None
+
     def constant_bounds(self, significance: float) -> tuple[float, float]:
-        """Intersect current point envelopes scaled by the caller's unit.
+        """Diagnose the intersection of scaled current point envelopes.
 
         A nonempty intersection is compatibility with one constant water
-        level. A zero OLS slope alone does not provide this shape evidence.
+        level under individual point bounds, rather than an RMS form score.
         """
         if not _original_positive(significance):
             raise ValueError("significance must be finite and positive")
@@ -227,7 +393,7 @@ class OriginalWaterWindowFeatures:
         return lower, upper
 
     def constant_compatible(self, significance: float) -> bool:
-        """Whether every current water envelope can share one level."""
+        """Diagnose whether every current envelope can share one level."""
         lower, upper = self.constant_bounds(significance)
         return lower <= upper
 
@@ -251,6 +417,48 @@ class OriginalWaterWindowSupport:
     reason: str | None = None
 
 
+@dataclass(frozen=True)
+class OriginalFlatteningContrast:
+    """One direct slope comparison, retaining both operands for diagnosis."""
+
+    value: float
+    operator: str
+    threshold: float
+    result: bool
+
+
+@dataclass(frozen=True)
+class OriginalFlattening:
+    """Fall-to-flat evidence in native RH or paired AH value units.
+
+    Humidity comparisons have the supplied humidity window's units per
+    second; temperature comparisons have degrees Celsius per second. The
+    retained windows expose the disjoint original supports and all raw slope
+    operands. These are mathematical forms, without event or stage identity.
+    """
+
+    humidity_window: OriginalWindowFeatures | OriginalWaterWindowFeatures
+    temperature_window: OriginalWindowFeatures
+    significance: float
+    previous_fall: OriginalFlatteningContrast
+    current_flat: OriginalFlatteningContrast
+    braking: OriginalFlatteningContrast
+    temperature_falling: OriginalFlatteningContrast
+    temperature_not_braking: OriginalFlatteningContrast
+
+    @property
+    def maintained(self) -> bool:
+        """Flat humidity while temperature still falls without braking."""
+        return (self.current_flat.result and self.temperature_falling.result
+                and self.temperature_not_braking.result)
+
+    @property
+    def initial(self) -> bool:
+        """Maintained form reached by braking a preceding humidity fall."""
+        return (self.maintained and self.previous_fall.result
+                and self.braking.result)
+
+
 def _original_positive(value: object) -> bool:
     return _profile_number(value) and value > 0
 
@@ -265,6 +473,33 @@ def _original_window_valid(window: object) -> bool:
                 window.scale, window.e, window.e_minus,
             ))
             and window.r >= 0 and window.r_minus >= 0)
+
+
+def _original_comparable_windows_valid(
+    window: OriginalWindowFeatures, reference: OriginalWindowFeatures,
+) -> bool:
+    if (not _original_window_valid(window)
+            or not _original_window_valid(reference)
+            or window.scale != reference.scale):
+        return False
+    count = len(reference.previous)
+    if count < 2:
+        return False
+    for features in (window, reference):
+        previous_at = None
+        for section in (features.previous, features.current):
+            if not isinstance(section, tuple) or len(section) != count:
+                return False
+            for point in section:
+                if not isinstance(point, tuple) or len(point) != 2:
+                    return False
+                stamp, value = point
+                if (not isinstance(stamp, datetime)
+                        or not _profile_number(value)
+                        or (previous_at is not None and stamp <= previous_at)):
+                    return False
+                previous_at = stamp
+    return True
 
 
 def _original_line(
@@ -353,6 +588,227 @@ def original_window(
         return None
 
 
+def original_followup(
+    window: OriginalWindowFeatures, reference: OriginalWindowFeatures,
+) -> OriginalFollowupFeatures | None:
+    """Compare immutable, ordered 2K support with a fixed earlier reference.
+
+    Both supports retain the same K and value scale. No refit or overlap-based
+    evidence accumulation takes place. Equal newest times are valid and have
+    no fresh originals; a window older than its reference is unknown (None).
+    Invalid support or nonfinite arithmetic is also unknown. Source identity,
+    gap limits and the amount of fresh support required belong to the caller.
+
+    current_change_from_reference_current compares window.v with reference.v,
+    divided by window.e + reference.e. previous_change_from_reference_current
+    compares window.b with reference.v, divided by window.e_minus + reference.e.
+    These use the retained current slope without selecting or updating it.
+
+    reference_level_loss = (reference.mean_minus - window.mean) / (2 * scale).
+    The common scale is the supplied value-deviation scale; 2 * scale
+    is the existing difference normalization, not a new parameter or
+    an event rule. The fixed reference's observed level is not extrapolated.
+    """
+    try:
+        if not _original_comparable_windows_valid(window, reference):
+            return None
+        reference_at = reference.newest_at
+        if window.newest_at < reference_at:
+            return None
+        current_error = window.e + reference.e_minus
+        previous_error = window.e_minus + reference.e_minus
+        current_reference_error = window.e + reference.e
+        previous_reference_error = window.e_minus + reference.e
+        level_scale = 2 * window.scale
+        if not all(_original_positive(value) for value in (
+            current_error, previous_error, current_reference_error,
+            previous_reference_error, level_scale,
+        )):
+            return None
+        current_direction = window.v / window.e
+        previous_direction = window.b / window.e_minus
+        current_change = (window.v - reference.b) / current_error
+        previous_change = (window.b - reference.b) / previous_error
+        current_change_from_reference_current = (
+            window.v - reference.v
+        ) / current_reference_error
+        previous_change_from_reference_current = (
+            window.b - reference.v
+        ) / previous_reference_error
+        level_change = (window.mean - window.mean_minus) / level_scale
+        residual = max(window.r, window.r_minus)
+        reference_level_loss = (reference.mean_minus - window.mean) / level_scale
+        if not all(_profile_number(value) for value in (
+            current_direction, previous_direction, current_change,
+            previous_change, level_change, residual,
+            reference_level_loss,
+            current_change_from_reference_current,
+            previous_change_from_reference_current,
+        )):
+            return None
+        return OriginalFollowupFeatures(
+            window=window, reference=reference,
+            fresh_previous=sum(stamp > reference_at for stamp, _ in window.previous),
+            fresh_current=sum(stamp > reference_at for stamp, _ in window.current),
+            current_direction=current_direction,
+            previous_direction=previous_direction,
+            current_change=current_change, previous_change=previous_change,
+            level_change=level_change, residual=residual,
+            reference_level_loss=reference_level_loss,
+            current_change_from_reference_current=(
+                current_change_from_reference_current
+            ),
+            previous_change_from_reference_current=(
+                previous_change_from_reference_current
+            ),
+        )
+    except (AttributeError, IndexError, OverflowError, TypeError, ValueError):
+        return None
+
+
+def original_edge_change(
+    window: OriginalWindowFeatures, reference: OriginalWindowFeatures,
+) -> OriginalEdgeChange | None:
+    """Compare the newest secant with a retained current OLS reference.
+
+    Only a strictly newer original than reference.newest_at can supply this
+    contrast. The secant uses the final two current originals and their actual
+    time difference. Its slope bound is exactly 2 * scale / time difference;
+    change compares with reference.v using that bound plus reference.e.
+    No fit, threshold or reference update takes place. Invalid support and
+    nonfinite or unresolved numerical bounds remain unknown (None).
+    """
+    try:
+        if (not _original_comparable_windows_valid(window, reference)
+                or window.newest_at <= reference.newest_at):
+            return None
+        previous, current = window.current[-2:]
+        duration = (current[0] - previous[0]).total_seconds()
+        if not _original_positive(duration):
+            return None
+        slope = (current[1] - previous[1]) / duration
+        error = 2 * window.scale / duration
+        change_error = error + reference.e
+        if (not _profile_number(slope)
+                or not _original_positive(error)
+                or not _original_positive(change_error)):
+            return None
+        direction = slope / error
+        change = (slope - reference.v) / change_error
+        if not all(_profile_number(value) for value in (direction, change)):
+            return None
+        return OriginalEdgeChange(
+            window=window, reference=reference, direction=direction, change=change,
+        )
+    except (AttributeError, IndexError, OverflowError, TypeError, ValueError):
+        return None
+
+
+def original_kink_tolerance(
+    samples: Sequence[tuple[datetime, float]], window: OriginalWindowFeatures, *,
+    factor: float, min_history_windows: int, max_gap_seconds: float,
+) -> OriginalKinkTolerance | None:
+    """Shrink one raw slope change by a caller-scaled causal background.
+
+    Only originals strictly before window.previous[0] supply history. Every
+    consecutive historical 2K block uses the same K and the actual original
+    times with _original_line. Its score is abs(v_j - b_j), so a smooth bend
+    may contribute a nonzero scale even without erratic variation.
+    A valid gap exceeding max_gap_seconds cuts off older history, including
+    at the connection to the current support. Malformed causal originals and
+    invalid current support remain unknown (None), never repaired.
+    Originals after window.newest_at do not affect this result. The caller
+    supplies bounded history from one source and epoch; its source identity
+    and the raw current values are not reconstructed or changed here.
+    Work is bounded by that supplied history and K. No numerical noise floor
+    is added. factor == 0 preserves the raw delta as a control case.
+    """
+    try:
+        if (not _original_window_valid(window)
+                or not _profile_number(factor) or factor < 0
+                or not isinstance(min_history_windows, int)
+                or isinstance(min_history_windows, bool)
+                or min_history_windows <= 0
+                or not _original_positive(max_gap_seconds)):
+            return None
+        count = len(window.previous)
+        if count < 2 or len(window.current) != count:
+            return None
+        previous_at = None
+        for stamp, value in window.previous + window.current:
+            if not isinstance(stamp, datetime) or not _profile_number(value):
+                return None
+            if previous_at is not None and not (
+                0 < (stamp - previous_at).total_seconds() <= max_gap_seconds
+            ):
+                return None
+            previous_at = stamp
+        start_at = window.start_at
+        newest_at = window.newest_at
+        history = []
+        previous_at = None
+        for stamp, value in samples:
+            if not isinstance(stamp, datetime):
+                return None
+            if stamp > newest_at:
+                continue
+            if previous_at is not None and stamp <= previous_at:
+                return None
+            previous_at = stamp
+            if stamp >= start_at:
+                continue
+            if not _profile_number(value):
+                return None
+            if history and (
+                stamp - history[-1][0]
+            ).total_seconds() > max_gap_seconds:
+                history.clear()
+            history.append((stamp, float(value)))
+        if history and (
+            start_at - history[-1][0]
+        ).total_seconds() > max_gap_seconds:
+            history.clear()
+        historical_changes = []
+        for end in range(2 * count, len(history) + 1):
+            old = _original_line(
+                tuple(history[end - 2 * count:end - count]), window.scale,
+            )
+            new = _original_line(tuple(history[end - count:end]), window.scale)
+            if old is None or new is None:
+                return None
+            difference = abs(new[0] - old[0])
+            if not _profile_number(difference):
+                return None
+            historical_changes.append(difference)
+        history_count = len(historical_changes)
+        history_scale = median(historical_changes) if history_count else None
+        catalog_scale = window.e + window.e_minus
+        if (not _original_positive(catalog_scale)
+                or (history_scale is not None and not _profile_number(history_scale))):
+            return None
+        enough_history = history_count >= min_history_windows
+        used_scale = catalog_scale
+        if enough_history:
+            used_scale = max(catalog_scale, history_scale)
+        tolerance = factor * used_scale
+        delta = window.v - window.b
+        if not all(_profile_number(value) for value in (tolerance, delta)):
+            return None
+        remaining = max(0.0, abs(delta) - tolerance)
+        effective_change = -remaining if delta < 0 else remaining
+        return OriginalKinkTolerance(
+            window=window, factor=float(factor), history_count=history_count,
+            history_start=history[0][0] if history_count else None,
+            history_end=history[-1][0] if history_count else None,
+            history_scale=history_scale,
+            status="history" if enough_history else "insufficient",
+            catalog_scale=catalog_scale, used_scale=used_scale,
+            tolerance=tolerance, delta=delta, effective_change=effective_change,
+        )
+    except (AttributeError, IndexError, OverflowError, TypeError, ValueError):
+        return None
+
+
 def original_thermal_contrasts(
     temperatures: Mapping[str, OriginalWindowFeatures], *,
     expected_positions: Sequence[str],
@@ -421,15 +877,25 @@ def original_contrasts(
             return None
         opening_terms = []
         humidity_terms = []
+        humidity_change_terms = []
         residual_terms = []
         recovery_terms = []
         for position, pair in positions:
             humidity = pair.humidity
             if not _original_window_valid(humidity):
                 return None
+            slope_difference = humidity.v - humidity.b
+            difference_error = humidity.e + humidity.e_minus
+            if (not _profile_number(slope_difference)
+                    or not _original_positive(difference_error)):
+                return None
+            humidity_change = slope_difference / difference_error
+            if not _profile_number(humidity_change):
+                return None
             humidity_rise = humidity.v / humidity.e
             opening_terms.append(-humidity_rise)
             humidity_terms.append(humidity_rise)
+            humidity_change_terms.append(humidity_change)
             residual_terms.extend((humidity.r, humidity.r_minus))
             if humidity_minima is not None:
                 minimum = humidity_minima[position]
@@ -445,13 +911,14 @@ def original_contrasts(
         braking = thermal.braking
         warming_min, warming_max = thermal.warming_min, thermal.warming_max
         rise, fall = min(humidity_terms), min(-value for value in humidity_terms)
+        humidity_rise_change = min(humidity_change_terms)
         background_slope = max(abs(value) for value in humidity_terms)
         background_residual = max(residual_terms)
         recovery = min(recovery_terms) if humidity_minima is not None else None
         closing = (max(min(braking, recovery), thermal.closing)
                    if recovery is not None else None)
         numbers = (opening, braking, warming_min, warming_max, rise, fall,
-                   background_slope, background_residual)
+                   background_slope, background_residual, humidity_rise_change)
         if not all(_profile_number(value) for value in numbers):
             return None
         if recovery is not None and (
@@ -463,6 +930,7 @@ def original_contrasts(
             warming_min=warming_min, warming_max=warming_max, rise=rise, fall=fall,
             background_slope=background_slope, background_residual=background_residual,
             humidity_recovery=recovery, closing=closing,
+            humidity_rise_change=humidity_rise_change,
         )
     except (AttributeError, IndexError, KeyError, OverflowError, TypeError, ValueError):
         return None
@@ -668,6 +1136,82 @@ def original_water_window(
         )
     except (AttributeError, IndexError, OverflowError, TypeError, ValueError):
         return OriginalWaterWindowSupport("invalid", reason="invalid_support")
+
+
+def original_flattening(
+    humidity_window: OriginalWindowFeatures | OriginalWaterWindowFeatures,
+    temperature_window: OriginalWindowFeatures, *, significance: float,
+) -> OriginalFlattening | None:
+    """Compare a humidity fall-to-flat transition with its temperature form.
+
+    The caller supplies significance and owns support continuity, causal
+    availability and stage identity. The same product comparisons accept
+    native RH bounds and paired AH envelopes, including exact zero-width
+    water envelopes. Invalid support or nonfinite arithmetic stays unknown.
+    """
+    try:
+        if (not _original_positive(significance)
+                or not _original_window_valid(temperature_window)):
+            return None
+        if isinstance(humidity_window, OriginalWindowFeatures):
+            if not _original_window_valid(humidity_window):
+                return None
+        elif isinstance(humidity_window, OriginalWaterWindowFeatures):
+            if (not humidity_window.previous or not humidity_window.current
+                    or any(not _original_water_pair_valid(pair) for pair in (
+                        humidity_window.previous + humidity_window.current
+                    ))
+                    or not all(_profile_number(value) for value in (
+                        humidity_window.v, humidity_window.b,
+                        humidity_window.e, humidity_window.e_minus,
+                    ))
+                    or humidity_window.e < 0 or humidity_window.e_minus < 0):
+                return None
+        else:
+            return None
+        humidity, temperature = humidity_window, temperature_window
+        humidity_change = humidity.v - humidity.b
+        humidity_change_error = humidity.e + humidity.e_minus
+        temperature_change = temperature.v - temperature.b
+        temperature_change_error = temperature.e + temperature.e_minus
+        humidity_previous_bound = significance * humidity.e_minus
+        humidity_current_bound = significance * humidity.e
+        humidity_change_bound = significance * humidity_change_error
+        temperature_current_bound = significance * temperature.e
+        temperature_change_bound = significance * temperature_change_error
+        if not all(_profile_number(value) for value in (
+            humidity_change, humidity_change_error,
+            temperature_change, temperature_change_error,
+            humidity_previous_bound, humidity_current_bound, humidity_change_bound,
+            temperature_current_bound, temperature_change_bound,
+        )):
+            return None
+        return OriginalFlattening(
+            humidity_window=humidity_window, temperature_window=temperature_window,
+            significance=significance,
+            previous_fall=OriginalFlatteningContrast(
+                -humidity.b, ">", humidity_previous_bound,
+                -humidity.b > humidity_previous_bound,
+            ),
+            current_flat=OriginalFlatteningContrast(
+                abs(humidity.v), "<=", humidity_current_bound,
+                abs(humidity.v) <= humidity_current_bound,
+            ),
+            braking=OriginalFlatteningContrast(
+                humidity_change, ">", humidity_change_bound,
+                humidity_change > humidity_change_bound,
+            ),
+            temperature_falling=OriginalFlatteningContrast(
+                -temperature.v, ">", temperature_current_bound,
+                -temperature.v > temperature_current_bound,
+            ),
+            temperature_not_braking=OriginalFlatteningContrast(
+                temperature_change, "<=", temperature_change_bound,
+                temperature_change <= temperature_change_bound,
+            ),
+        )
+    except (AttributeError, IndexError, OverflowError, TypeError, ValueError):
+        return None
 
 
 @dataclass(frozen=True)

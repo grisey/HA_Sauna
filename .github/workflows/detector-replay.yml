@@ -1,0 +1,148 @@
+name: Detector measurement replay
+
+on:
+  workflow_call:
+    inputs:
+      recordings:
+        description: 'Optional comma-separated recording IDs; only complete time groups'
+        type: string
+        default: ''
+      mode:
+        description: 'detector or original_windows'
+        type: string
+        default: detector
+
+permissions:
+  contents: read
+
+concurrency:
+  group: detector-replay-${{ github.ref }}-${{ inputs.mode }}-${{ inputs.recordings }}
+  cancel-in-progress: false
+
+jobs:
+  configuration:
+    runs-on: ubuntu-latest
+    outputs:
+      settings: ${{ steps.catalog.outputs.settings }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - id: catalog
+        run: python tests/ci_settings.py outputs
+        env:
+          SAUNA_TEST_CHECKS: core
+
+  detector_replay:
+    needs: configuration
+    runs-on: ${{ fromJSON(needs.configuration.outputs.settings).operating_system }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: ${{ fromJSON(needs.configuration.outputs.settings).python_core }}
+      - name: Check replay chronology and observation neutrality
+        env:
+          SAUNA_DETECTOR_EVIDENCE: ${{ runner.temp }}/ha-sauna-detector-replay
+          PYTHONDONTWRITEBYTECODE: '1'
+        run: |
+          evidence="$SAUNA_DETECTOR_EVIDENCE/checks"
+          mkdir -p "$evidence"
+          git rev-parse HEAD > "$evidence/commit.txt"
+          git rev-parse 'HEAD^{tree}' > "$evidence/tree.txt"
+          git rev-parse HEAD:custom_components/ha_sauna > "$evidence/product-tree.txt"
+          set +e
+          python -m unittest discover -s tests -p test_detector_replay.py -v > "$evidence/stdout.log" 2> "$evidence/stderr.log"
+          result=$?
+          echo "$result" > "$evidence/exit-code.txt"
+          echo completed > "$evidence/process-completed.txt"
+          cat "$evidence/stdout.log"
+          cat "$evidence/stderr.log" >&2
+          exit "$result"
+      - name: Evaluate original measurements with the selected owner
+        # Keep the mathematical audit available after replay checks fail.
+        if: ${{ !cancelled() && (inputs.mode == 'original_windows' || success()) }}
+        env:
+          SAUNA_DETECTOR_EVIDENCE: ${{ runner.temp }}/ha-sauna-detector-replay
+          SAUNA_DETECTOR_RECORDINGS: ${{ inputs.recordings }}
+          SAUNA_DETECTOR_MODE: ${{ inputs.mode }}
+          PYTHONDONTWRITEBYTECODE: '1'
+        run: |
+          evidence="$SAUNA_DETECTOR_EVIDENCE/replay"
+          mkdir -p "$evidence"
+          git rev-parse HEAD > "$evidence/commit.txt"
+          git rev-parse 'HEAD^{tree}' > "$evidence/tree.txt"
+          git rev-parse HEAD:custom_components/ha_sauna > "$evidence/product-tree.txt"
+          set +e
+          case "$SAUNA_DETECTOR_MODE" in
+            detector)
+              : > "$evidence/stdout.log"
+              manifest=$(python - <<'PY' 2> "$evidence/stderr.log"
+          import json
+          import os
+          import sys
+          from pathlib import Path
+
+          manifests = ("tests/replay_manifest.json", "tests/replay_measurement_manifest.json")
+          recordings = os.environ["SAUNA_DETECTOR_RECORDINGS"]
+          if not recordings.strip():
+              print(manifests[1])
+          else:
+              selected = {identity.strip() for identity in recordings.split(",")}
+              matches = [
+                  path for path in manifests
+                  if selected <= {
+                      entry["id"] for entry in json.loads(Path(path).read_bytes())["sessions"]
+                  }
+              ]
+              if len(matches) != 1:
+                  print("Recording selection must match exactly one replay manifest", file=sys.stderr)
+                  sys.exit(2)
+              print(matches[0])
+          PY
+              )
+              result=$?
+              if [ "$result" -eq 0 ]; then
+                python -u tests/analysis/detector_replay.py --manifest "$manifest" --recordings "$SAUNA_DETECTOR_RECORDINGS" --output "$evidence/output" > "$evidence/stdout.log" 2> "$evidence/stderr.log"
+                result=$?
+              fi
+              ;;
+            original_windows)
+              if [ -n "$SAUNA_DETECTOR_RECORDINGS" ]; then
+                echo 'The original-window audit evaluates both complete manifests; leave recordings empty' > "$evidence/stderr.log"
+                result=2
+              else
+                result=0
+                for manifest in tests/replay_manifest.json tests/replay_measurement_manifest.json; do
+                  case_name=$(basename "$manifest" .json)
+                  case_evidence="$evidence/output/$case_name"
+                  mkdir -p "$case_evidence"
+                  python -u tests/analysis/original_window_audit.py --manifest "$manifest" --output "$case_evidence" > "$case_evidence/stdout.log" 2> "$case_evidence/stderr.log"
+                  case_result=$?
+                  echo "$case_result" > "$case_evidence/exit-code.txt"
+                  echo completed > "$case_evidence/process-completed.txt"
+                  cat "$case_evidence/stdout.log" >> "$evidence/stdout.log"
+                  cat "$case_evidence/stderr.log" >> "$evidence/stderr.log"
+                  if [ "$case_result" -ne 0 ]; then
+                    result=$case_result
+                    break
+                  fi
+                done
+              fi
+              ;;
+            *)
+              echo 'Unknown detector analysis mode' > "$evidence/stderr.log"
+              result=2
+              ;;
+          esac
+          echo "$result" > "$evidence/exit-code.txt"
+          echo completed > "$evidence/process-completed.txt"
+          cat "$evidence/stdout.log"
+          cat "$evidence/stderr.log" >&2
+          exit "$result"
+      - name: Preserve process evidence and complete detector results
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: detector-measurement-replay
+          path: ${{ runner.temp }}/ha-sauna-detector-replay
+          if-no-files-found: error
+          retention-days: ${{ fromJSON(needs.configuration.outputs.settings).artifact_retention_days }}

@@ -22,9 +22,11 @@ gewählt, bleibt es wirksam.
 
 Ein laufender Gang behält beim Quellenwechsel seine Kennung, seinen Beginn,
 seinen Bestätigungsstand und seine Aufgüsse. Eine laufende Ofenkühlung und eine
-bestehende Türwärmeanforderung bleiben erhalten. Der Auswahlwechsel selbst beendet oder bestätigt keinen Gang und
-verwendet keinen zuvor abgeschlossenen Eintritt erneut. Maßgeblich bleiben die
-tatsächlich angenommenen Belege und ihre erste fachliche Nutzbarkeit.
+bestehende Türwärmeanforderung bleiben erhalten. Der Auswahlwechsel selbst
+beendet oder bestätigt keinen Gang und verwendet keinen zuvor abgeschlossenen
+Eintritt erneut. Maßgeblich bleiben die tatsächlich angenommenen Belege und ihre
+erste fachliche Nutzbarkeit. Im Verlauf gilt für jeden Zeitabschnitt die damals
+wirksame Präsenzquelle.
 
 ## Eintritt, Aufenthalt und Verlassen
 
@@ -39,7 +41,7 @@ Der initiale Türzustand ist geschlossen; er ersetzt keine beobachtete Öffnung.
 | Betrieb-AUS | Keine neuen Gänge |
 
 Beim Eintritt folgt auf die Öffnung der Türschluss. Beim Verlassen wird die Tür
-zum Durchlüften geöffnet und offengelassen. Die spätere Rückkehr durch diese
+zum Lüften geöffnet und offengelassen. Die spätere Rückkehr durch diese
 offene Tür kann mit dem anschließenden Türschluss einen neuen Eintritt belegen.
 Das Ende des alten Gangs verbraucht diesen späteren Türschluss nicht.
 
@@ -59,14 +61,14 @@ Liegt die Temperatur beim Eintritt noch unter der Mindesttemperatur, bleibt der
 belegte Eintritt bei anhaltender Präsenz erhalten. Der Gang beginnt beim Erreichen
 der Grenze, ohne erneute Türfolge und ohne Rückdatierung auf den kälteren Eintritt.
 Abwesenheit oder ein unbekannter Präsenzzustand unterbrechen diesen Nachweis.
-Ein Gang endet erst bei einer neuen Austrittsöffnung, bestätigtem Durchlüften
+Ein Gang endet erst bei einer neuen Austrittsöffnung, bestätigtem Lüften
 derselben Öffnung und anliegender Abwesenheit. Diese kann bereits vor dem
 thermischen Öffnungshinweis gemeldet sein. Die Nachweise können in beliebiger
 Reihenfolge eintreffen; Anwesenheit, `unknown` oder `unavailable`
 vor dem vollständigen Nachweis verhindern das Gangende.
 Ein anschließender Türschluss verwirft den belegten Austritt nicht. Die
 Abwesenheit kann auch erst danach gemeldet werden oder beginnen; maßgeblich
-bleiben dieselbe Austrittsöffnung, ihr bestätigtes Durchlüften und die weiterhin
+bleiben dieselbe Austrittsöffnung, ihr bestätigtes Lüften und die weiterhin
 gültige Abwesenheit. Erneute Anwesenheit überholt einen früheren
 Abwesenheitsnachweis. Eine ältere Austrittsfolge kann keinen später begonnenen
 Gang beenden.
@@ -74,9 +76,9 @@ Gang beenden.
 | Beleg | Wirkung |
 | --- | --- |
 | Eintritt mit Anwesenheit und erreichter Mindesttemperatur | Bestätigter Gang, ohne Wartefrist oder erforderlichen Aufguss |
-| Öffnen zum Verlassen mit zugehöriger Abwesenheit und bestätigtem Durchlüften | Gangende beim vollständigen Nachweis, auch nach dem anschließenden Türschluss |
+| Öffnen zum Verlassen mit zugehöriger Abwesenheit und bestätigtem Lüften | Gangende beim vollständigen Nachweis, auch nach dem anschließenden Türschluss |
 | Einzelne Präsenzmeldung, Türschluss ohne Öffnung oder bloßer Zeitablauf | Kein Übergang |
-| Durchlüften ohne zugehörige Abwesenheit | Kein Gangende |
+| Lüften ohne zugehörige Abwesenheit | Kein Gangende |
 | Betrieb-AUS | Ende des offenen Gangs |
 
 Aufgüsse werden dem Gang zugeordnet, bestätigen ihn aber nicht erneut.
@@ -98,8 +100,8 @@ aber keinen fortbestehenden Belegungszustand.
 | Zulässiges Personensignal nach vollständigem Eintritt | Vorläufiger Gang |
 | Erster gültiger Aufguss | Bestätigt den vorläufigen Gang mit gleichem Beginn oder eröffnet nach vollständigem Eintritt einen bestätigten Gang |
 | Weiterer Aufguss | Ergänzt den aktiven Gang |
-| Bestätigungsfrist abgelaufen oder Durchlüften nach Austrittsöffnung vor Bestätigung | Vorläufiger Gang zurückgenommen |
-| Bestätigtes Durchlüften nach Austrittsöffnung | Gangende zum Buchungszeitpunkt der Lüftungsbestätigung |
+| Bestätigungsfrist abgelaufen oder Lüften nach Austrittsöffnung vor Bestätigung | Vorläufiger Gang zurückgenommen |
+| Bestätigtes Lüften nach Austrittsöffnung | Gangende zum Buchungszeitpunkt der Lüftungsbestätigung |
 | Betrieb-AUS | Ende des offenen Gangs |
 
 Als Beginn gilt die passende Türschließung, frühestens jedoch der Beginn des
@@ -115,11 +117,11 @@ Endzeitpunkts. Auch ein Gangbeginn allein durch Aufguss muss innerhalb dieser
 Frist ab möglichem Gangbeginn liegen. Nach Ablauf oder Rücknahme benötigt ein neuer Gang
 einen neuen vollständigen Eintritt.
 
-Bestätigtes Durchlüften während der Austrittsöffnung beendet den Gang;
+Bestätigtes Lüften während der Austrittsöffnung beendet den Gang;
 er wird gezählt und löst in Automatik die Ofenkühlung aus, sofern diese nicht
 bereits läuft. Erkannte Personenbelege begrenzen eine laufende Kühlung auf ihre
 [Mindestgesamtdauer](ofenkuehlung.md#kühlung-abwarten-oder-vorzeitig-beenden), auch
-ohne bestätigten Gang. Eine kurze Türöffnung ohne bestätigtes Durchlüften beendet
+ohne bestätigten Gang. Eine kurze Türöffnung ohne bestätigtes Lüften beendet
 keinen Gang.
 
 ## Gang zählen und nächste Temperaturstufe beginnen

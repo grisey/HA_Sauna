@@ -20,7 +20,9 @@ from custom_components.ha_sauna.core.curve_change import (
     CurveTrendFeatures,
     OriginalPositionWindows,
     original_contrasts,
+    original_thermal_contrasts,
     original_water_pair,
+    original_window,
 )
 from custom_components.ha_sauna.core.detector import Detector
 from custom_components.ha_sauna.core.models import Measurement, Position, Quantity
@@ -53,10 +55,12 @@ def measurement(pos, quantity, value, second, source=None, measured=None):
         T0 + timedelta(seconds=second), measured)
 
 
-def sample(detector, second, temperature, humidity, positions=(Position.UPPER, Position.LOWER)):
+def sample(detector, second, temperature, humidity, positions=(Position.UPPER, Position.LOWER),
+           *, humidity_cadence=None):
     for pos in positions:
         detector.accept(measurement(pos, Quantity.TEMPERATURE, temperature, second))
-        detector.accept(measurement(pos, Quantity.HUMIDITY, humidity, second))
+        if humidity_cadence is None or second % humidity_cadence == 0:
+            detector.accept(measurement(pos, Quantity.HUMIDITY, humidity, second))
     return detector.advance(T0 + timedelta(seconds=second), enabled=True)
 
 
@@ -89,8 +93,15 @@ class DetectorTests(unittest.TestCase):
             return relative(value) if hasattr(value, "tzinfo") else value
 
         rows = []
+        previous_binding = None
         for row in traces:
-            if not any(kind in (Kind.DOOR_OPEN, Kind.DOOR_CLOSE) for kind in row["signals"]):
+            native = row.get("original_forms", {})
+            binding = native.get("candidate_received_at")
+            newly_bound = binding is not None and binding != previous_binding
+            previous_binding = binding
+            if not newly_bound and not any(
+                kind in (Kind.DOOR_OPEN, Kind.DOOR_CLOSE) for kind in row["signals"]
+            ):
                 continue
             candidates = []
             proposals = []
@@ -123,6 +134,7 @@ class DetectorTests(unittest.TestCase):
                     for position, metrics in row["metrics"].items()
                 },
                 "candidates": candidates, "proposals": proposals,
+                "original_forms": native,
             })
         event_rows = [
             (item.kind.value, relative(item.effective_at), relative(item.trace_at),
@@ -164,7 +176,7 @@ class DetectorTests(unittest.TestCase):
                 f"statistics:{detection.kind}:{detection.trace_at}", "statistics",
                 detection.kind, detection.effective_at, detection.detected_at, detection.trace_at,
             ))
-            if detection.kind == Kind.VENTILATION:
+            if detection.kind in (Kind.VENTILATION, Kind.VENTILATION_COMPLETE):
                 statistics_heat.append((before_heat, statistics.last_decision.heat))
 
         _, plateau, end, values = self._ventilation_curve(d)
@@ -181,8 +193,12 @@ class DetectorTests(unittest.TestCase):
 
         self.assertEqual(d.capacity, p.values["door_humidity_seconds"] + p.values["vent_baseline_seconds"] + 1)
         ventilation = [e for e in found if e.kind == Kind.VENTILATION]
+        complete = [e for e in found if e.kind == Kind.VENTILATION_COMPLETE]
         self.assertEqual(len(ventilation), 1)
-        self.assertGreater(ventilation[0].trace_at, T0 + timedelta(seconds=plateau))
+        self.assertEqual(len(complete), 1)
+        self.assertLess(ventilation[0].trace_at, T0 + timedelta(seconds=plateau))
+        self.assertGreater(complete[0].trace_at, T0 + timedelta(seconds=plateau))
+        self.assertLess(ventilation[0].trace_at, complete[0].trace_at)
         self.assertNotIn(Kind.DOOR_CLOSE, [e.kind for e in found])
         self.assertIsNone(c.session.timeline.active)
         self.assertEqual(c.session.timeline.gang_count, 1)
@@ -195,13 +211,15 @@ class DetectorTests(unittest.TestCase):
         self.assertFalse(c.last_decision.heat)
         self.assertEqual(sum(item.kind == Kind.VENTILATION
                              for item in statistics.session.timeline.processed), 1)
+        self.assertEqual(sum(item.kind == Kind.VENTILATION_COMPLETE
+                             for item in statistics.session.timeline.processed), 1)
         self.assertIsNone(statistics.session.timeline.active)
         self.assertEqual(statistics.session.timeline.gang_count, 0)
         self.assertEqual(statistics.session.timeline.completed, ())
         self.assertIsNone(statistics.session.after_run)
         self.assertEqual(statistics.session.after_run_history, ())
-        self.assertEqual(len(statistics_heat), 1)
-        self.assertEqual(statistics_heat[0][0], statistics_heat[0][1])
+        self.assertEqual(len(statistics_heat), 2)
+        self.assertTrue(all(before == after for before, after in statistics_heat))
         self.assertFalse(any(item.kind in ("gang_started", "gang_ended")
                              for item in statistics.consumer_events))
 
@@ -237,6 +255,7 @@ class DetectorTests(unittest.TestCase):
         self.assertEqual(len(openings), 1, msg=diagnostic)
         self.assertNotIn(Kind.DOOR_CLOSE, [item.kind for item in events], msg=diagnostic)
         opening = openings[0]
+        self.assertEqual(opening.channels, ("upper", "lower"), msg=diagnostic)
         # Resolve the declared input turn within the existing bounded knot search.
         resolution = max(detector.grid_seconds, ceil(
             detector.p["curve_window_seconds"]
@@ -246,36 +265,40 @@ class DetectorTests(unittest.TestCase):
             abs((opening.effective_at - T0).total_seconds() - 70), resolution,
             msg=diagnostic,
         )
-        self.assertLess(opening.effective_at, opening.detected_at, msg=diagnostic)
         self.assertEqual(opening.trace_at, opening.detected_at, msg=diagnostic)
-        consumed = [
-            proposal for row in traces if row["at"] == opening.trace_at
-            for proposal in row["curve_proposals"].get("door_open", ())
-            if proposal["status"] == "consumed"
-        ]
-        self.assertEqual(len(consumed), 1, msg=diagnostic)
-        proposal = consumed[0]
-        self.assertEqual(proposal["consumed_onset_at"], opening.effective_at, msg=diagnostic)
-        self.assertLess(proposal["first_observed_at"], opening.detected_at, msg=diagnostic)
-        self.assertEqual(proposal["confirmed_at"], opening.detected_at, msg=diagnostic)
-        self.assertEqual(
-            {(item["position"], item["quantity"]) for item in proposal["witnesses"]},
-            {(position.value, quantity.value) for position in detector.positions
-             for quantity in (Quantity.TEMPERATURE, Quantity.HUMIDITY)},
-            msg=diagnostic,
-        )
-        confirmations = {item["candidate_id"]: item for item in proposal["confirmation"]}
-        original_times = {T0 + timedelta(seconds=second) for second in range(280)}
-        for witness in proposal["witnesses"]:
-            confirmation = confirmations[witness["candidate_id"]]
-            self.assertIn(witness["onset_at"], original_times, msg=diagnostic)
-            self.assertLessEqual(witness["newest_at"], proposal["first_observed_at"],
+        native = detector.door_episode["original_open"]
+        self.assertEqual(native["confirmation_received_at"], opening.trace_at, msg=diagnostic)
+        self.assertLess(native["received_at"], native["confirmation_received_at"], msg=diagnostic)
+        self.assertLessEqual(opening.effective_at, opening.trace_at, msg=diagnostic)
+        row = next(row for row in traces if Kind.DOOR_OPEN in row["signals"])
+        self.assertEqual(row["door_open_onset_attribution"]["confirmation_basis"], "original_ols",
+                         msg=diagnostic)
+        self.assertTrue(row["original_forms"]["complete_fresh_original_block"]["result"],
+                        msg=diagnostic)
+        expected_positions = tuple(position.value for position in detector.positions)
+        bound = original_contrasts(dict(native["windows"]), expected_positions=expected_positions)
+        confirmed = original_contrasts(dict(native["confirmation_windows"]),
+                                       expected_positions=expected_positions)
+        self.assertGreater(bound.humidity_fall_onset, detector.p["curve_original_significance"],
+                           msg=diagnostic)
+        self.assertGreater(confirmed.opening_support, detector.p["curve_original_open_contrast"],
+                           msg=diagnostic)
+        self.assertEqual(tuple(name for name, _ in native["windows"]), expected_positions,
+                         msg=diagnostic)
+        for name, binding in native["windows"]:
+            confirmation = dict(native["confirmation_windows"])[name]
+            for quantity in (Quantity.TEMPERATURE, Quantity.HUMIDITY):
+                before, after = getattr(binding, quantity.value), getattr(confirmation, quantity.value)
+                self.assertEqual(len(after.current), detector.p["curve_original_samples"],
                                  msg=diagnostic)
-            self.assertTrue(confirmation["supported"], msg=diagnostic)
-            self.assertIn(confirmation["fresh_newest_at"], original_times, msg=diagnostic)
-            self.assertGreater(confirmation["fresh_newest_at"], witness["first_newest_at"],
-                               msg=diagnostic)
-            self.assertLessEqual(confirmation["newest_at"], opening.trace_at, msg=diagnostic)
+                self.assertGreater(after.current[0][0], before.newest_at, msg=diagnostic)
+                self.assertLessEqual(after.newest_at, opening.trace_at, msg=diagnostic)
+                for stamp, value in after.previous + after.current:
+                    second = (stamp - T0).total_seconds()
+                    fall = max(0, second - 70)
+                    expected = (80 - .04 * fall if quantity == Quantity.TEMPERATURE
+                                else 30 - min(.6, .12 * fall))
+                    self.assertAlmostEqual(value, expected, msg=diagnostic)
 
     def test_small_coherent_door_shapes_do_not_repeat_during_plateau(self):
         for thermal in (False, True):
@@ -284,6 +307,7 @@ class DetectorTests(unittest.TestCase):
                     traces = []
                     detector = Detector(detection_parameters(), T0, positions,
                                         observer=traces.append)
+                    cadence = self._thermal_humidity_cadence(detector) if thermal else None
                     events = []
                     for second in range(130):
                         detector.report_heating(thermal, T0 + timedelta(seconds=second))
@@ -292,7 +316,7 @@ class DetectorTests(unittest.TestCase):
                         fall = max(0, min(second - 30, 70 - second, 20))
                         events += sample(
                             detector, second, 80 - .04 * fall,
-                            30 if thermal else 30 - .08 * fall, positions,
+                            30 if thermal else 30 - .08 * fall, positions, humidity_cadence=cadence,
                         )
                     diagnostic = self._door_failure_message(
                         events, traces, thermal=thermal, positions=positions,
@@ -321,7 +345,7 @@ class DetectorTests(unittest.TestCase):
                         detector.report_heating(thermal, T0 + timedelta(seconds=second))
                         fall = min(20, second - 130)
                         events += sample(detector, second, 80 - .15 * fall,
-                                         30 if thermal else 30 - .1 * fall, positions)
+                                         30 if thermal else 30 - .1 * fall, positions, humidity_cadence=cadence)
                     diagnostic = self._door_failure_message(
                         events, traces, thermal=thermal, positions=positions,
                         input_turns_s=(30, 50, 70, 130, 150),
@@ -343,7 +367,7 @@ class DetectorTests(unittest.TestCase):
             with self.subTest(lower_falls=lower_falls):
                 traces = []
                 detector = Detector(detection_parameters(), T0, observer=traces.append)
-                events = []
+                events, native_openings = [], []
                 lower_rate = .03 if lower_falls else 0
                 for second in range(90):
                     detector.report_heating(True, T0 + timedelta(seconds=second))
@@ -353,7 +377,10 @@ class DetectorTests(unittest.TestCase):
                                                     80 - rate * fall, second))
                         detector.accept(measurement(position, Quantity.HUMIDITY,
                                                     30 - .08 * fall, second))
-                    events += detector.advance(T0 + timedelta(seconds=second), enabled=True)
+                    found = detector.advance(T0 + timedelta(seconds=second), enabled=True)
+                    events += found
+                    if any(item.kind == Kind.DOOR_OPEN for item in found):
+                        native_openings.append(detector.door_episode["original_open"])
                 diagnostic = self._door_failure_message(
                     events, traces, input_turns_s=(30, 50), temperature_rates=(.12, lower_rate),
                 )
@@ -373,34 +400,46 @@ class DetectorTests(unittest.TestCase):
                     abs((opening.effective_at - T0).total_seconds() - 30), resolution,
                     msg=diagnostic,
                 )
-                consumed = [
-                    proposal for row in traces if row["at"] == opening.trace_at
-                    for route in ("door_open", "door_open_heating")
-                    for proposal in row["curve_proposals"].get(route, ())
-                    if proposal["status"] == "consumed"
-                ]
-                self.assertEqual(len(consumed), 1, msg=diagnostic)
-                proposal = consumed[0]
-                self.assertEqual(proposal["positions"], ("upper", "lower"), msg=diagnostic)
-                self.assertEqual(proposal["consumed_onset_at"], opening.effective_at, msg=diagnostic)
-                self.assertLess(proposal["first_observed_at"], opening.detected_at, msg=diagnostic)
-                self.assertEqual(proposal["confirmed_at"], opening.detected_at, msg=diagnostic)
-                temperature_witnesses = [item for item in proposal["witnesses"]
-                                         if item["quantity"] == Quantity.TEMPERATURE.value]
-                self.assertEqual({item["position"] for item in temperature_witnesses},
-                                 {"upper", "lower"}, msg=diagnostic)
-                confirmations = {item["candidate_id"]: item for item in proposal["confirmation"]}
-                original_times = {T0 + timedelta(seconds=second) for second in range(90)}
-                for witness in temperature_witnesses:
-                    confirmation = confirmations[witness["candidate_id"]]
-                    self.assertEqual(witness["source"], f"sensor.{witness['position']}_temperature",
-                                     msg=diagnostic)
-                    self.assertIn(witness["onset_at"], original_times, msg=diagnostic)
-                    self.assertTrue(confirmation["supported"], msg=diagnostic)
-                    self.assertIn(confirmation["fresh_newest_at"], original_times, msg=diagnostic)
-                    self.assertGreater(confirmation["fresh_newest_at"], witness["first_newest_at"],
-                                       msg=diagnostic)
-                    self.assertLessEqual(confirmation["newest_at"], opening.trace_at, msg=diagnostic)
+                self.assertEqual(len(native_openings), 1, msg=diagnostic)
+                native = native_openings[0]
+                self.assertEqual(native["confirmation_received_at"], opening.trace_at,
+                                 msg=diagnostic)
+                self.assertLess(native["received_at"], native["confirmation_received_at"],
+                                msg=diagnostic)
+                self.assertLessEqual(opening.effective_at, opening.trace_at, msg=diagnostic)
+                self.assertEqual(opening.trace_at, opening.detected_at, msg=diagnostic)
+                row = next(row for row in traces if Kind.DOOR_OPEN in row["signals"])
+                self.assertEqual(row["door_open_onset_attribution"]["confirmation_basis"],
+                                 "original_ols", msg=diagnostic)
+                self.assertTrue(row["original_forms"]["complete_fresh_original_block"]["result"],
+                                msg=diagnostic)
+                expected_positions = ("upper", "lower")
+                bound = original_contrasts(dict(native["windows"]),
+                                           expected_positions=expected_positions)
+                confirmed = original_contrasts(dict(native["confirmation_windows"]),
+                                               expected_positions=expected_positions)
+                self.assertGreater(bound.humidity_fall_onset,
+                                   detector.p["curve_original_significance"], msg=diagnostic)
+                self.assertGreater(confirmed.opening_support,
+                                   detector.p["curve_original_open_contrast"], msg=diagnostic)
+                self.assertEqual(tuple(name for name, _ in native["windows"]), expected_positions,
+                                 msg=diagnostic)
+                for name, binding in native["windows"]:
+                    confirmation = dict(native["confirmation_windows"])[name]
+                    for quantity in (Quantity.TEMPERATURE, Quantity.HUMIDITY):
+                        before = getattr(binding, quantity.value)
+                        after = getattr(confirmation, quantity.value)
+                        self.assertEqual(len(after.current), detector.p["curve_original_samples"],
+                                         msg=diagnostic)
+                        self.assertGreater(after.current[0][0], before.newest_at, msg=diagnostic)
+                        self.assertLessEqual(after.newest_at, opening.trace_at, msg=diagnostic)
+                        for stamp, value in after.previous + after.current:
+                            second = (stamp - T0).total_seconds()
+                            fall = min(20, max(0, second - 30))
+                            rate = .12 if name == "upper" else lower_rate
+                            expected = (80 - rate * fall if quantity == Quantity.TEMPERATURE
+                                        else 30 - .08 * fall)
+                            self.assertAlmostEqual(value, expected, msg=diagnostic)
 
     def test_finite_temperature_outlier_keeps_archived_cycle_and_output_alive(self):
         async def exercise(path):
@@ -473,6 +512,14 @@ class DetectorTests(unittest.TestCase):
     def _ventilation_detector(self, *, positions=(Position.UPPER, Position.LOWER)):
         return Detector(detection_parameters(), T0, positions)
 
+    def _thermal_humidity_cadence(self, detector):
+        gap = max(detector.p[f"curve_original_gap_humidity_{position.value}_seconds"]
+                  for position in detector.positions)
+        cadence = (ceil(gap / detector.grid_seconds) + 1) * detector.grid_seconds
+        self.assertGreater(cadence, gap)
+        self.assertLess(cadence, detector.p["sensor_timeout_seconds"])
+        return cadence
+
 
     @staticmethod
     def _humidity_for_water(temperature, water):
@@ -480,10 +527,10 @@ class DetectorTests(unittest.TestCase):
             saturation_vapor_pressure(temperature) * 1000)
 
     def _ventilation_curve(self, detector, *, water_tail="plateau", temperature_tail="fall"):
-        """Existing opening endpoints, followed by water rather than RH forms."""
+        """Opening, RH flattening, then later water flattening while T falls."""
         count, step = detector.p["curve_original_samples"], detector.grid_seconds
         begin, width = (2 * count + 1) * step, (2 * count + 2) * step
-        plateau, end = begin + width, begin + 2 * width
+        humidity_plateau, plateau, end = begin + width, begin + 2 * width, begin + 3 * width
         initial_t, initial_h = 80, 40
         fallen_t, fallen_h = 78, 38
         initial_water = absolute_humidity(initial_t, initial_h)
@@ -495,10 +542,12 @@ class DetectorTests(unittest.TestCase):
             if elapsed > width and temperature_tail != "fall":
                 temperature = (fallen_t if temperature_tail == "plateau" else
                                fallen_t + (initial_t - fallen_t) * (elapsed - width) / width)
-            if elapsed > width and water_tail == "rh_plateau":
+            if second <= humidity_plateau or water_tail == "fall":
+                water = initial_water + (fallen_water - initial_water) * elapsed / width
+            elif second <= plateau or water_tail == "rh_plateau":
                 return temperature, fallen_h
-            water_elapsed = elapsed if water_tail == "fall" else min(elapsed, width)
-            water = initial_water + (fallen_water - initial_water) * water_elapsed / width
+            else:
+                water = absolute_humidity(values(plateau)[0], fallen_h)
             return temperature, self._humidity_for_water(temperature, water)
 
         return int(begin), int(plateau), int(end), values
@@ -522,8 +571,25 @@ class DetectorTests(unittest.TestCase):
             output += detector.advance(now, enabled=True)
         return output
 
+    def _feed_pending_completion(self, detector, through, values, *, positions=None):
+        """Stop at the bound Stage 2 prefix before supplying confirmation."""
+        output = []
+        final_index = int(through // detector.grid_seconds)
+        for index in range(detector.index + 1, final_index + 1):
+            second = index * detector.grid_seconds
+            output += self._feed_ventilation(detector, second, values, positions=positions)
+            self.assertNotIn(Kind.VENTILATION_COMPLETE, [item.kind for item in output])
+            opening = detector.door_episode
+            if opening is not None and "original_ventilation" in opening:
+                self.assertNotIn("original_ventilation_complete", opening)
+                stage = detector.diagnostic["original_ventilation"]["absolute_humidity"]
+                self.assertTrue(stage["initial_form"])
+                self.assertFalse(stage["confirmable"])
+                return second, output
+        self.fail("The ventilation fixture did not bind an unconfirmed Stage 2 candidate")
+
     def _segment(self, detector, duration, before, after=None, *, positions=None,
-                 missing=(), heating=False, source=None, stop_when=None):
+                 missing=(), heating=False, source=None, stop_when=None, humidity_cadence=None):
         """Continuous linear measurement inputs; detector windows stay configured."""
         after = before if after is None else after
         positions = detector.positions if positions is None else positions
@@ -537,6 +603,9 @@ class DetectorTests(unittest.TestCase):
                 for quantity, initial, final in zip(
                     (Quantity.TEMPERATURE, Quantity.HUMIDITY), before, after, strict=True
                 ):
+                    if (quantity == Quantity.HUMIDITY and humidity_cadence is not None
+                            and second % humidity_cadence != 0):
+                        continue
                     value = (None if (position, quantity) in missing or initial is None or final is None
                              else initial + (final - initial) * fraction)
                     detector.accept(measurement(position, quantity, value, second, source=source))
@@ -781,13 +850,26 @@ class DetectorTests(unittest.TestCase):
         events = self._segment(detector, duration, (80, 30))
         events += self._segment(detector, duration, (80, 30), (80, 30 + .02 * duration), heating=True)
         humidity = 30 + .02 * duration
-        # Added water continues throughout this opening; the thermal drop must
-        # not turn the earlier moisture rise into a new false→true evidence edge.
-        events += self._segment(detector, 30, (80, humidity), (76, humidity + 10), heating=True)
-        events += self._segment(detector, 30, (76, humidity + 10), (80, humidity + 10.6), heating=True)
-        events += self._segment(detector, duration, (80, humidity + 10.6),
-                                (80, humidity + 10.6 + .02 * duration), heating=True)
-        self.assertIn(Kind.DOOR_CLOSE, [item.kind for item in events])
+        moisture_onset = detector.moisture_states["weak"]["onset_at"]
+        self.assertIsNotNone(moisture_onset)
+        begin, water_plateau, _, values = self._ventilation_curve(detector)
+        width = (water_plateau - begin) // 2
+        initial_t, initial_h = values(begin)
+        fallen_t, fallen_h = values(begin + width)
+        temperature_loss, humidity_loss = (initial_t - fallen_t) / 4, (initial_h - fallen_h) / 4
+        # A real short RH-led opening retains the already positive long weak
+        # window; it must not create a new moisture onset after closure.
+        cold, dry = 80 - temperature_loss, humidity - humidity_loss
+        events += self._segment(detector, width, (80, humidity), (cold, dry), heating=True)
+        recovered_humidity = dry + .02 * width
+        events += self._segment(detector, width, (cold, dry),
+                                (80, recovered_humidity), heating=True)
+        events += self._segment(detector, duration, (80, recovered_humidity),
+                                (80, recovered_humidity + .02 * duration), heating=True)
+        doors = [item for item in events if item.kind in (Kind.DOOR_OPEN, Kind.DOOR_CLOSE)]
+        self.assertEqual([item.kind for item in doors], [Kind.DOOR_OPEN, Kind.DOOR_CLOSE])
+        self.assertLess(moisture_onset, doors[0].effective_at)
+        self.assertEqual(detector.moisture_states["weak"]["onset_at"], moisture_onset)
         self.assertNotIn(Kind.PERSON_WEAK, [item.kind for item in events])
 
 
@@ -843,28 +925,36 @@ class DetectorTests(unittest.TestCase):
         self.assertEqual([item.kind for item in events].count(Kind.PERSON_STRONG), 1)
 
 
-    def test_water_plateau_with_falling_temperature_confirms_for_original_positions(self):
+    def test_rh_then_water_plateau_confirm_in_order_for_original_positions(self):
         for positions in ((Position.UPPER,), (Position.UPPER, Position.LOWER)):
             with self.subTest(positions=positions):
                 detector = self._ventilation_detector(positions=positions)
                 _, plateau, end, values = self._ventilation_curve(detector)
                 events = self._feed_ventilation(detector, plateau, values)
                 self.assertTrue(detector.open)
-                self.assertNotIn(Kind.VENTILATION, [item.kind for item in events])
-                events += self._feed_ventilation(detector, end, values)
                 ventilation = [item for item in events if item.kind == Kind.VENTILATION]
                 self.assertEqual(len(ventilation), 1)
+                self.assertNotIn(Kind.VENTILATION_COMPLETE, [item.kind for item in events])
+                self.assertIn("original_ventilation_rh_confirmed", detector.door_episode)
+                events += self._feed_ventilation(detector, end, values)
+                complete = [item for item in events if item.kind == Kind.VENTILATION_COMPLETE]
+                self.assertEqual(len(ventilation), 1)
+                self.assertEqual(len(complete), 1)
                 self.assertEqual(ventilation[0].channels,
                                  tuple(position.value for position in positions))
-                self.assertGreater(ventilation[0].trace_at, T0 + timedelta(seconds=plateau))
+                self.assertEqual(complete[0].channels, ventilation[0].channels)
+                self.assertLess(ventilation[0].trace_at, T0 + timedelta(seconds=plateau))
+                self.assertGreater(complete[0].trace_at, T0 + timedelta(seconds=plateau))
                 self.assertEqual(ventilation[0].effective_at, ventilation[0].trace_at)
+                self.assertEqual(complete[0].effective_at, complete[0].trace_at)
                 self.assertTrue(detector.ventilated)
                 self.assertNotIn(Kind.DOOR_CLOSE, [item.kind for item in events])
 
-    def test_continued_water_loss_and_flat_rh_are_not_a_water_plateau(self):
+    def test_flat_rh_ends_ventilation_while_continued_water_loss_blocks_completion(self):
         prepared = self._ventilation_detector()
-        _, plateau, end, values = self._ventilation_curve(prepared)
-        events = self._feed_ventilation(prepared, plateau, values)
+        begin, plateau, end, values = self._ventilation_curve(prepared)
+        humidity_plateau = begin + (plateau - begin) // 2
+        events = self._feed_ventilation(prepared, humidity_plateau, values)
         self.assertTrue(prepared.open)
         self.assertNotIn(Kind.VENTILATION, [item.kind for item in events])
         for tail in ("fall", "rh_plateau"):
@@ -872,8 +962,10 @@ class DetectorTests(unittest.TestCase):
                 detector = deepcopy(prepared, {id(prepared.p): prepared.p})
                 _, _, _, continued = self._ventilation_curve(detector, water_tail=tail)
                 found = self._feed_ventilation(detector, end, continued)
-                self.assertNotIn(Kind.VENTILATION, [item.kind for item in found])
-                self.assertFalse(detector.ventilated)
+                self.assertNotIn(Kind.VENTILATION_COMPLETE, [item.kind for item in found])
+                ventilation = [item for item in found if item.kind == Kind.VENTILATION]
+                self.assertEqual(len(ventilation), int(tail == "rh_plateau"))
+                self.assertEqual(detector.ventilated, tail == "rh_plateau")
                 final_t, final_h = continued(end)
                 plateau_t, plateau_h = continued(plateau)
                 self.assertLess(final_t, plateau_t)
@@ -882,13 +974,141 @@ class DetectorTests(unittest.TestCase):
                 if tail == "rh_plateau":
                     self.assertEqual(final_h, plateau_h)
 
-
-    def test_gap_pauses_two_position_ventilation_and_same_sources_can_resume_it(self):
+    def test_rh_stage_needs_fresh_t_and_rh_but_no_right_hand_water_partner(self):
         detector = self._ventilation_detector()
-        _, plateau, end, values = self._ventilation_curve(detector)
-        pending_at = plateau + (detector.p["curve_original_samples"] - 1) * detector.grid_seconds
-        events = self._feed_ventilation(detector, pending_at, values)
-        self.assertIn("original_ventilation", detector.door_episode)
+        begin, plateau, _, values = self._ventilation_curve(detector)
+        count, step = detector.p["curve_original_samples"], detector.grid_seconds
+        humidity_plateau = begin + (plateau - begin) // 2
+        pending_at = humidity_plateau + (count - 1) * step
+        found = self._feed_ventilation(detector, pending_at, values)
+        candidate = detector.door_episode["original_ventilation_rh"]
+        self.assertNotIn(Kind.VENTILATION, [item.kind for item in found])
+
+        for received in (pending_at + step, pending_at + 2 * step):
+            if received == pending_at + 2 * step:
+                for position in detector.positions:
+                    for quantity, value in zip(
+                        (Quantity.TEMPERATURE, Quantity.HUMIDITY), values(pending_at), strict=True,
+                    ):
+                        detector.accept(measurement(
+                            position, quantity, value, received,
+                            measured=T0 + timedelta(seconds=pending_at),
+                        ))
+            found += detector.advance(T0 + timedelta(seconds=received), enabled=True)
+            self.assertIs(detector.door_episode["original_ventilation_rh"], candidate)
+            self.assertNotIn(Kind.VENTILATION, [item.kind for item in found])
+
+        temperature_at = pending_at + 3 * step
+        humidity_at = pending_at + 4 * step
+        for position in detector.positions:
+            detector.accept(measurement(
+                position, Quantity.TEMPERATURE, values(temperature_at)[0], temperature_at,
+                measured=T0 + timedelta(seconds=temperature_at),
+            ))
+        found += detector.advance(T0 + timedelta(seconds=temperature_at), enabled=True)
+        self.assertNotIn(Kind.VENTILATION, [item.kind for item in found])
+        for position in detector.positions:
+            detector.accept(measurement(
+                position, Quantity.HUMIDITY, values(humidity_at)[1], humidity_at,
+                measured=T0 + timedelta(seconds=humidity_at),
+            ))
+        found += detector.advance(T0 + timedelta(seconds=humidity_at), enabled=True)
+        ventilation = [item for item in found if item.kind == Kind.VENTILATION]
+        self.assertEqual(len(ventilation), 1)
+        self.assertEqual(ventilation[0].trace_at, T0 + timedelta(seconds=humidity_at))
+        self.assertNotIn(Kind.VENTILATION_COMPLETE, [item.kind for item in found])
+        proof = detector.door_episode["original_ventilation_rh_confirmed"]
+        for name, temperature, humidity in candidate["newest"]:
+            support = dict((item[0], item[1:]) for item in proof["confirmation_originals"])[name]
+            self.assertGreater(support[0], temperature)
+            self.assertGreater(support[1], humidity)
+            self.assertLess(support[0], support[1])
+
+    def test_close_on_same_prefix_prevents_pending_rh_stage_confirmation(self):
+        detector = self._ventilation_detector()
+        _, braking_at, _, falling = self._ventilation_curve(detector, water_tail="fall")
+        count, step = detector.p["curve_original_samples"], detector.grid_seconds
+        humidity_plateau = braking_at + count * step
+        pending_at = humidity_plateau + (count - 1) * step
+        braking_temperature = falling(braking_at)[0]
+        significance = detector.p["curve_original_significance"]
+
+        # Continue the existing fall through a public opening before adding
+        # the separate closing brake and the later RH flattening.
+        found = self._feed_ventilation(detector, braking_at, falling)
+        self.assertTrue(detector.open)
+        self.assertEqual([item.kind for item in found].count(Kind.DOOR_OPEN), 1)
+        opening = detector.door_episode["original_open"]
+        self.assertIn("lowering_witness", opening)
+        self.assertLessEqual(opening["confirmation_received_at"],
+                             T0 + timedelta(seconds=braking_at))
+        self.assertNotIn("original_close", detector.door_episode)
+
+        def values(second):
+            temperature, humidity = falling(second)
+            if second > braking_at:
+                temperature = braking_temperature + (temperature - braking_temperature) / 2
+            if second > humidity_plateau:
+                humidity = falling(humidity_plateau)[1]
+            return temperature, humidity
+
+        # Bind the close owner at a real brake, then retain the shallower fall
+        # until both T windows again support the pending RH flattening.
+        found += self._feed_ventilation(detector, pending_at, values)
+        self.assertIn("original_ventilation_rh", detector.door_episode)
+        closing = detector.door_episode["original_close"]
+        self.assertGreater(closing["received_at"], opening["confirmation_received_at"])
+        forms = detector.diagnostic["original_forms"]
+        self.assertTrue(forms["complete_fresh_original_block"]["result"])
+        self.assertGreater(forms["bound_temperature_braking"]["value"], significance)
+        relative = detector.diagnostic["original_ventilation"]["relative_humidity"]
+        self.assertTrue(relative["initial_form"])
+        self.assertFalse(relative["confirmable"])
+        self.assertNotIn(Kind.DOOR_CLOSE, [item.kind for item in found])
+        self.assertNotIn(Kind.VENTILATION, [item.kind for item in found])
+
+        second = pending_at + step
+        confirmation_at = T0 + timedelta(seconds=second)
+
+        def closing_form(temperatures, **kwargs):
+            form = original_thermal_contrasts(temperatures, **kwargs)
+            if form is None or any(window.newest_at < confirmation_at
+                                   for window in temperatures.values()):
+                return form
+            return replace(
+                form, braking=2 * significance, warming_min=2 * significance,
+                warming_max=2 * significance,
+            )
+
+        # Only the comparison establishing simultaneous closure is declared.
+        # The bound close owner, complete fresh T blocks and RH/T windows stay real.
+        # Earlier RH-only prefixes retain the real, still-falling T comparison.
+        with patch("custom_components.ha_sauna.core.detector.original_thermal_contrasts",
+                   side_effect=closing_form):
+            for quantity, value in ((Quantity.HUMIDITY, values(second)[1]),
+                                    (Quantity.TEMPERATURE, values(second)[0])):
+                for position in detector.positions:
+                    detector.accept(measurement(
+                        position, quantity, value, second,
+                        measured=T0 + timedelta(seconds=second),
+                    ))
+            found += detector.advance(T0 + timedelta(seconds=second), enabled=True)
+        self.assertEqual(closing["confirmation_received_at"], T0 + timedelta(seconds=second))
+        ventilation = detector.diagnostic["original_ventilation"]
+        self.assertTrue(ventilation["close_same_prefix"])
+        self.assertTrue(ventilation["relative_humidity"]["confirmable"])
+        self.assertFalse(ventilation["relative_humidity"]["proven"])
+        self.assertEqual([item.kind for item in found].count(Kind.DOOR_CLOSE), 1)
+        self.assertNotIn(Kind.VENTILATION, [item.kind for item in found])
+        self.assertNotIn(Kind.VENTILATION_COMPLETE, [item.kind for item in found])
+        self.assertFalse(detector.open)
+        self.assertIsNone(detector.door_episode)
+
+
+    def test_gap_pauses_two_position_completion_and_same_sources_can_resume_it(self):
+        detector = self._ventilation_detector()
+        _, _, end, values = self._ventilation_curve(detector)
+        pending_at, events = self._feed_pending_completion(detector, end, values)
         opening, old_epochs = detector.door_episode, detector._original_context()
         gap = pending_at + detector.grid_seconds
         events += self._feed_ventilation(detector, gap, values, missing=(
@@ -897,23 +1117,40 @@ class DetectorTests(unittest.TestCase):
         self.assertNotIn("original_ventilation", detector.door_episode)
         self.assertIs(detector.door_episode, opening)
         self.assertNotEqual(detector._original_context(), old_epochs)
-        events += self._feed_ventilation(detector, end, values)
-        self.assertNotIn(Kind.VENTILATION, [item.kind for item in events])
+        count, step = detector.p["curve_original_samples"], detector.grid_seconds
+        anchor = max(end, gap + (2 * count + 1) * step)
+        events += self._feed_ventilation(detector, anchor, values)
+        self.assertNotIn(Kind.VENTILATION_COMPLETE, [item.kind for item in events])
+        record = detector.diagnostic["original_ventilation"]
+        self.assertEqual(record["water_status"], "ready")
+        self.assertFalse(record["absolute_humidity"]["initial_form"])
+        for position in detector.positions:
+            support = record["paired_support"][position.value]
+            self.assertEqual(support["paired_count"], 2 * count)
+            self.assertGreater(support["rh_window_start_at"], T0 + timedelta(seconds=gap))
+            water = opening["original_ventilation_water"][position]["features"]
+            self.assertEqual(len(water.previous), count)
+            self.assertEqual(len(water.current), count)
+            self.assertLessEqual(abs(water.b), detector.p["curve_original_significance"] * water.e_minus)
+            self.assertFalse(detector.diagnostic["decisions"]["ventilation_complete"]["gates"][
+                f"{position.value}:previous_fall"
+            ]["result"])
         # A plateau after the gap cannot reuse the old falling window. Replay
         # only the new physical fall and plateau, shifted from the current pair.
         begin, _, new_end, fresh = self._ventilation_curve(detector)
-        anchor_t, anchor_h = values(end)
+        anchor_t, anchor_h = values(anchor)
         fresh_t, fresh_h = fresh(begin)
         water_scale = absolute_humidity(anchor_t, anchor_h) / absolute_humidity(fresh_t, fresh_h)
 
         def reacquired(second):
-            temperature, humidity = fresh(second - end + begin)
+            temperature, humidity = fresh(second - anchor + begin)
             shifted_t = temperature + anchor_t - fresh_t
             water = absolute_humidity(temperature, humidity) * water_scale
             return shifted_t, self._humidity_for_water(shifted_t, water)
 
-        events += self._feed_ventilation(detector, end + new_end - begin, reacquired)
+        events += self._feed_ventilation(detector, anchor + new_end - begin, reacquired)
         self.assertEqual([item.kind for item in events].count(Kind.VENTILATION), 1)
+        self.assertEqual([item.kind for item in events].count(Kind.VENTILATION_COMPLETE), 1)
         self.assertIs(detector.door_episode, opening)
         self.assertEqual(detector.door_episode["positions"], detector.positions)
 
@@ -952,7 +1189,7 @@ class DetectorTests(unittest.TestCase):
                         <= turns[-1] + 2 * detector.p["curve_original_samples"] * step
                     ],
                 )
-                self.assertNotIn(Kind.VENTILATION, [item.kind for item in events], msg=diagnostic)
+                self.assertNotIn(Kind.VENTILATION_COMPLETE, [item.kind for item in events], msg=diagnostic)
                 if delay == "one_original":
                     self.assertTrue(detector.open, msg=diagnostic)
                     self.assertEqual([item.kind for item in events].count(Kind.DOOR_OPEN), 1,
@@ -962,40 +1199,82 @@ class DetectorTests(unittest.TestCase):
                     self.assertNotIn(Kind.DOOR_CLOSE, [item.kind for item in events], msg=diagnostic)
 
 
-    def test_temperature_plateau_or_recovery_does_not_confirm_ventilation(self):
+    def test_temperature_plateau_or_recovery_does_not_confirm_either_ventilation_stage(self):
         prepared = self._ventilation_detector()
-        _, plateau, end, values = self._ventilation_curve(prepared)
-        self._feed_ventilation(prepared, plateau, values)
+        begin, plateau, end, values = self._ventilation_curve(prepared)
+        humidity_plateau = begin + (plateau - begin) // 2
+        events = self._feed_ventilation(prepared, humidity_plateau, values)
+        self.assertNotIn(Kind.VENTILATION, [item.kind for item in events])
         for tail in ("plateau", "recovery"):
             with self.subTest(temperature=tail):
                 detector = deepcopy(prepared, {id(prepared.p): prepared.p})
                 _, _, _, counterform = self._ventilation_curve(detector, temperature_tail=tail)
                 found = self._feed_ventilation(detector, end, counterform)
                 self.assertNotIn(Kind.VENTILATION, [item.kind for item in found])
+                self.assertNotIn(Kind.VENTILATION_COMPLETE, [item.kind for item in found])
                 if tail == "recovery":
                     self.assertIn(Kind.DOOR_CLOSE, [item.kind for item in found])
 
 
-    def test_oscillating_water_cannot_supply_a_constant_plateau(self):
+    def test_new_water_fall_cancels_pending_completion_after_rh_confirmation(self):
         detector = self._ventilation_detector(positions=(Position.UPPER,))
-        begin, plateau, end, values = self._ventilation_curve(detector)
-        events = self._feed_ventilation(detector, plateau, values)
-        initial_water = absolute_humidity(*values(begin))
-        settled_water = absolute_humidity(*values(plateau))
-        count = detector.p["curve_original_samples"]
+        begin, _, end, values = self._ventilation_curve(detector)
+        count, step = detector.p["curve_original_samples"], detector.grid_seconds
+        pending_at, events = self._feed_pending_completion(detector, end, values)
+        self.assertTrue(detector.open)
+        self.assertNotIn(Kind.VENTILATION_COMPLETE, [item.kind for item in events])
+        self.assertEqual([item.kind for item in events].count(Kind.VENTILATION), 1)
+        opening = detector.door_episode
+        self.assertIn("original_ventilation", opening)
+        candidate = opening["original_ventilation"]
+        self.assertEqual(opening["positions"], (Position.UPPER,))
+        self.assertTrue(detector.diagnostic["original_ventilation"]["absolute_humidity"]["initial_form"])
+        epochs = detector._original_context()
+        _, _, _, falling = self._ventilation_curve(detector, water_tail="fall")
+        anchor_water = absolute_humidity(*values(pending_at))
+        initial_water = absolute_humidity(*falling(begin))
 
-        def oscillating(second):
+        def renewed_fall(second):
+            # Restart the fixture's water fall continuously at the bound
+            # plateau while its original temperature fall continues.
             temperature, _ = values(second)
-            offset = ((second - plateau) // detector.grid_seconds - 1) % count
-            # A symmetric U-shaped window has zero fitted slope while its
-            # measured water values cannot share a constant uncertainty band.
-            water = settled_water + (initial_water - settled_water) * (
-                offset - (count - 1) / 2
-            ) ** 2 / count
+            water = anchor_water + absolute_humidity(*falling(begin + second - pending_at)) - initial_water
             return temperature, self._humidity_for_water(temperature, water)
 
-        events += self._feed_ventilation(detector, end, oscillating)
-        self.assertNotIn(Kind.VENTILATION, [item.kind for item in events])
+        for resumed, previous in zip(renewed_fall(pending_at), values(pending_at), strict=True):
+            self.assertAlmostEqual(resumed, previous)
+        counter_at = pending_at + step
+        events += self._feed_ventilation(detector, counter_at, renewed_fall)
+        self.assertNotIn(Kind.VENTILATION_COMPLETE, [item.kind for item in events])
+        self.assertNotIn(Kind.DOOR_CLOSE, [item.kind for item in events])
+        self.assertIs(detector.door_episode, opening)
+        self.assertTrue(detector.open)
+        self.assertTrue(detector.ventilated)
+        self.assertEqual(detector._original_context(), epochs)
+        self.assertNotIn("original_ventilation", opening)
+        record = detector.diagnostic["original_ventilation"]
+        self.assertEqual(record["water_status"], "ready")
+        self.assertFalse(record["close_same_prefix"])
+        absolute = record["absolute_humidity"]
+        self.assertFalse(absolute["maintained_form"])
+        self.assertFalse(absolute["confirmable"])
+        support = record["paired_support"]["upper"]
+        self.assertEqual(support["paired_count"], 2 * count)
+        self.assertEqual(support["pending_count"], 0)
+        self.assertTrue(support["paired_counterform_seen"])
+        for _, temperature, humidity in candidate["newest"]:
+            self.assertGreater(absolute["support"]["upper"]["temperature_newest_at"], temperature)
+            self.assertGreater(support["rh_newest_at"], humidity)
+        gates = detector.diagnostic["decisions"]["ventilation_complete"]["gates"]
+        self.assertTrue(gates["opening_sources_coherent"]["result"])
+        self.assertTrue(gates["same_prefix_close_has_priority"]["result"])
+        self.assertTrue(gates["upper:temperature_falling"]["result"])
+        self.assertFalse(gates["upper:current_flat"]["result"])
+        metrics = detector.diagnostic["metrics"]["upper"]
+        self.assertGreater(-metrics["ventilation_water_slope"],
+                           detector.p["curve_original_significance"]
+                           * metrics["ventilation_water_slope_error"])
+        self.assertEqual([item.kind for item in events].count(Kind.VENTILATION), 1)
 
 
     def test_runtime_positions_confirm_one_position_available_when_the_door_opens(self):
@@ -1007,7 +1286,6 @@ class DetectorTests(unittest.TestCase):
         self.assertTrue(prepared.open)
         self.assertEqual(prepared.door_episode["positions"], (Position.UPPER,))
         step = prepared.grid_seconds
-        pending_at = plateau + (prepared.p["curve_original_samples"] - 1) * step
         lower_stamp = T0 + timedelta(seconds=plateau + step)
         lower_temperature = values(plateau)[0]
         lower_noise = prepared.p["curve_original_noise_temperature_lower"]
@@ -1017,6 +1295,7 @@ class DetectorTests(unittest.TestCase):
                 detector = deepcopy(prepared, {id(prepared.p): prepared.p})
                 opening = detector.door_episode
                 events = list(initial)
+                observed_pending = False
 
                 def report_lower(target, second):
                     if interleave == "none":
@@ -1049,10 +1328,11 @@ class DetectorTests(unittest.TestCase):
                     # An unbound role arrives after both fresh Upper originals.
                     report_lower(detector, second)
                     events += detector.advance(now, enabled=True)
-                    if second != pending_at:
+                    if observed_pending or "original_ventilation" not in opening:
                         continue
+                    observed_pending = True
                     self.assertIn("original_ventilation", opening)
-                    self.assertNotIn(Kind.VENTILATION, [event.kind for event in events])
+                    self.assertNotIn(Kind.VENTILATION_COMPLETE, [event.kind for event in events])
                     if interleave == "none":
                         continue
                     isolated = deepcopy(detector, {id(detector.p): detector.p})
@@ -1061,7 +1341,7 @@ class DetectorTests(unittest.TestCase):
                     report_lower(isolated, received)
                     found = isolated.advance(T0 + timedelta(seconds=received), enabled=True)
                     self.assertIs(isolated.door_episode["original_ventilation"], candidate)
-                    self.assertNotIn(Kind.VENTILATION, [event.kind for event in found])
+                    self.assertNotIn(Kind.VENTILATION_COMPLETE, [event.kind for event in found])
                     # A correction of the bound Upper role still discards it.
                     received += step
                     self.assertTrue(isolated.accept(measurement(
@@ -1071,10 +1351,12 @@ class DetectorTests(unittest.TestCase):
                     )))
                     found += isolated.advance(T0 + timedelta(seconds=received), enabled=True)
                     self.assertNotIn("original_ventilation", isolated.door_episode)
-                    self.assertNotIn(Kind.VENTILATION, [event.kind for event in found])
+                    self.assertNotIn(Kind.VENTILATION_COMPLETE, [event.kind for event in found])
 
-                ventilation = [event for event in events if event.kind is Kind.VENTILATION]
+                ventilation = [event for event in events if event.kind is Kind.VENTILATION_COMPLETE]
+                self.assertTrue(observed_pending)
                 self.assertEqual([event.kind for event in events].count(Kind.DOOR_OPEN), 1)
+                self.assertEqual([event.kind for event in events].count(Kind.VENTILATION), 1)
                 self.assertEqual(len(ventilation), 1)
                 self.assertEqual(ventilation[0].channels, ("upper",))
                 self.assertIs(detector.door_episode, opening)
@@ -1088,7 +1370,7 @@ class DetectorTests(unittest.TestCase):
         events += self._feed_ventilation(detector, end, values, positions=(Position.UPPER,),
                                          source="sensor.upper_replaced")
         self.assertIn(Kind.DOOR_OPEN, [event.kind for event in events])
-        self.assertNotIn(Kind.VENTILATION, [event.kind for event in events])
+        self.assertNotIn(Kind.VENTILATION_COMPLETE, [event.kind for event in events])
         self.assertTrue(detector.ventilation_degraded)
 
     def test_lost_position_during_open_door_cannot_fall_back_to_single_sensor_proof(self):
@@ -1097,7 +1379,7 @@ class DetectorTests(unittest.TestCase):
         events = self._feed_ventilation(detector, plateau, values)
         events += self._feed_ventilation(detector, end + detector.p["sensor_timeout_seconds"],
                                          values, positions=(Position.UPPER,))
-        self.assertNotIn(Kind.VENTILATION, [item.kind for item in events])
+        self.assertNotIn(Kind.VENTILATION_COMPLETE, [item.kind for item in events])
         self.assertEqual(detector.door_episode["positions"], detector.positions)
 
 
@@ -1106,17 +1388,15 @@ class DetectorTests(unittest.TestCase):
         _, plateau, end, values = self._ventilation_curve(detector)
         events = self._feed_ventilation(detector, plateau, values)
         events += self._feed_ventilation(detector, end, values, source="sensor.replaced")
-        self.assertNotIn(Kind.VENTILATION, [item.kind for item in events])
+        self.assertNotIn(Kind.VENTILATION_COMPLETE, [item.kind for item in events])
         self.assertIn(Position.UPPER, detector.ventilation_invalid)
 
-    def test_ventilation_needs_new_paired_originals_not_ticks_or_same_stamp_corrections(self):
+    def test_completion_needs_new_paired_originals_not_ticks_or_same_stamp_corrections(self):
         detector = self._ventilation_detector()
-        _, plateau, _, values = self._ventilation_curve(detector)
+        _, _, end, values = self._ventilation_curve(detector)
         step = detector.grid_seconds
-        pending_at = plateau + (detector.p["curve_original_samples"] - 1) * step
-        found = self._feed_ventilation(detector, pending_at, values)
-        self.assertIn("original_ventilation", detector.door_episode)
-        self.assertNotIn(Kind.VENTILATION, [item.kind for item in found])
+        pending_at, found = self._feed_pending_completion(detector, end, values)
+        self.assertNotIn(Kind.VENTILATION_COMPLETE, [item.kind for item in found])
         for position in detector.positions:
             self.assertLessEqual(5 * step,
                                  detector.p[f"curve_original_gap_humidity_{position.value}_seconds"])
@@ -1140,25 +1420,129 @@ class DetectorTests(unittest.TestCase):
         report(pending_at + 2 * step, pending_at, (Quantity.TEMPERATURE, Quantity.HUMIDITY))
         report(pending_at + 3 * step, pending_at, (Quantity.TEMPERATURE, Quantity.HUMIDITY),
                correction=True)
-        self.assertNotIn(Kind.VENTILATION, [item.kind for item in found])
+        self.assertNotIn(Kind.VENTILATION_COMPLETE, [item.kind for item in found])
         report(pending_at + 4 * step, pending_at + 4 * step, (Quantity.TEMPERATURE,))
-        self.assertNotIn(Kind.VENTILATION, [item.kind for item in found])
+        self.assertNotIn(Kind.VENTILATION_COMPLETE, [item.kind for item in found])
         # New RH has no right-hand T partner yet. It must remain pending rather
         # than supply freshness by skipping to a previously paired RH original.
         report(pending_at + 5 * step, pending_at + 5 * step, (Quantity.HUMIDITY,))
-        self.assertNotIn(Kind.VENTILATION, [item.kind for item in found])
+        self.assertNotIn(Kind.VENTILATION_COMPLETE, [item.kind for item in found])
         report(pending_at + 6 * step, pending_at + 6 * step, (Quantity.TEMPERATURE,))
-        ventilation = [item for item in found if item.kind == Kind.VENTILATION]
+        ventilation = [item for item in found if item.kind == Kind.VENTILATION_COMPLETE]
         self.assertEqual(len(ventilation), 1)
         self.assertEqual(ventilation[0].trace_at, T0 + timedelta(seconds=pending_at + 6 * step))
 
-    def test_original_gap_discards_the_pending_water_plateau(self):
+    def test_complete_paired_completion_windows_bind_and_confirm_with_trailing_pending_rh(self):
         detector = self._ventilation_detector()
         _, plateau, _, values = self._ventilation_curve(detector)
-        step = detector.grid_seconds
-        pending_at = plateau + (detector.p["curve_original_samples"] - 1) * step
-        found = self._feed_ventilation(detector, pending_at, values)
+        count, step = detector.p["curve_original_samples"], detector.grid_seconds
+        found = self._feed_ventilation(detector, plateau, values)
+        self.assertTrue(detector.open)
+        self.assertEqual(detector.door_episode["positions"], detector.positions)
+        self.assertNotIn("original_ventilation", detector.door_episode)
+        interval = step / 4
+        schedule = (
+            (Position.UPPER, Quantity.TEMPERATURE, 1),
+            (Position.UPPER, Quantity.HUMIDITY, 2),
+            (Position.LOWER, Quantity.TEMPERATURE, 3),
+            (Position.LOWER, Quantity.HUMIDITY, 4),
+        )
+        for position in detector.positions:
+            for quantity in (Quantity.TEMPERATURE, Quantity.HUMIDITY):
+                self.assertLessEqual(
+                    2 * step,
+                    detector.p[f"curve_original_gap_{quantity.value}_{position.value}_seconds"],
+                )
+
+        def report(target, second, position, quantity):
+            temperature, humidity = values(second)
+            self.assertTrue(target.accept(measurement(
+                position, quantity, temperature if quantity == Quantity.TEMPERATURE else humidity,
+                second, measured=T0 + timedelta(seconds=second),
+            )))
+
+        # Alternating U-T/U-RH/L-T/L-RH receipts leave the other position's
+        # later RH pending whenever a T completes the preceding RH pair.
+        for index in range(1, count + 1):
+            second = plateau + index * step
+            for position, quantity, offset in schedule:
+                report(detector, second - step + offset * interval, position, quantity)
+            found += detector.advance(T0 + timedelta(seconds=second), enabled=True)
+            if "original_ventilation" in detector.door_episode:
+                break
         self.assertIn("original_ventilation", detector.door_episode)
+        self.assertNotIn(Kind.VENTILATION_COMPLETE, [item.kind for item in found])
+        candidate = detector.door_episode["original_ventilation"]
+        self.assertGreater(candidate["received_at"], T0 + timedelta(seconds=plateau + interval))
+        bound = detector.diagnostic["original_ventilation"]
+        self.assertEqual(bound["water_status"], "pending")
+        self.assertTrue(bound["absolute_humidity"]["initial_form"])
+        self.assertEqual(len(candidate["water_windows"]), len(detector.positions))
+        for _, water in candidate["water_windows"]:
+            self.assertEqual(len(water.previous), count)
+            self.assertEqual(len(water.current), count)
+        for support in bound["paired_support"].values():
+            self.assertEqual(support["paired_count"], 2 * count)
+            self.assertGreater(support["pending_count"], 0)
+            self.assertGreater(support["pending_rh_at"], support["rh_newest_at"])
+
+        next_second = second + step
+        humidity_only = deepcopy(detector, {id(detector.p): detector.p})
+        unchanged = humidity_only.door_episode["original_ventilation"]
+        for position, quantity, offset in schedule:
+            if quantity == Quantity.HUMIDITY:
+                report(humidity_only, second + offset * interval, position, quantity)
+        output = humidity_only.advance(T0 + timedelta(seconds=next_second), enabled=True)
+        self.assertNotIn(Kind.VENTILATION_COMPLETE, [item.kind for item in output])
+        self.assertIs(humidity_only.door_episode["original_ventilation"], unchanged)
+        unpaired = humidity_only.diagnostic["original_ventilation"]
+        self.assertFalse(unpaired["absolute_humidity"]["confirmable"])
+        for name, support in unpaired["paired_support"].items():
+            self.assertEqual(support["rh_newest_at"], bound["paired_support"][name]["rh_newest_at"])
+            self.assertEqual(
+                unpaired["absolute_humidity"]["support"][name]["temperature_newest_at"],
+                bound["absolute_humidity"]["support"][name]["temperature_newest_at"],
+            )
+
+        for positions in ((Position.UPPER,), detector.positions):
+            with self.subTest(new_pairs=positions):
+                continued = deepcopy(detector, {id(detector.p): detector.p})
+                for position, quantity, offset in schedule:
+                    if position in positions:
+                        report(continued, second + offset * interval, position, quantity)
+                output = continued.advance(T0 + timedelta(seconds=next_second), enabled=True)
+                record = continued.diagnostic["original_ventilation"]
+                if positions == (Position.UPPER,):
+                    self.assertEqual(record["water_status"], "pending")
+                    self.assertNotIn(Kind.VENTILATION_COMPLETE, [item.kind for item in output])
+                    self.assertFalse(record["absolute_humidity"]["confirmable"])
+                    self.assertEqual(record["paired_support"]["lower"]["rh_newest_at"],
+                                     bound["paired_support"]["lower"]["rh_newest_at"])
+                    continue
+                ventilation = [item for item in output if item.kind == Kind.VENTILATION_COMPLETE]
+                self.assertEqual(len(ventilation), 1)
+                self.assertEqual(ventilation[0].channels,
+                                 tuple(position.value for position in detector.positions))
+                self.assertEqual(ventilation[0].trace_at, T0 + timedelta(seconds=next_second))
+                self.assertTrue(record["absolute_humidity"]["confirmable"])
+                paired_support = record["absolute_humidity"]["paired_support"]
+                for name, temperature, humidity in candidate["newest"]:
+                    support = paired_support[name]
+                    self.assertEqual(support["paired_count"], 2 * count)
+                    self.assertGreater(
+                        record["absolute_humidity"]["support"][name]["temperature_newest_at"],
+                        temperature,
+                    )
+                    self.assertGreater(support["rh_newest_at"], humidity)
+                upper = paired_support["upper"]
+                self.assertGreater(upper["pending_count"], 0)
+                self.assertGreater(upper["pending_rh_at"], upper["rh_newest_at"])
+
+    def test_original_gap_discards_the_pending_water_plateau(self):
+        detector = self._ventilation_detector()
+        _, _, end, values = self._ventilation_curve(detector)
+        step = detector.grid_seconds
+        pending_at, found = self._feed_pending_completion(detector, end, values)
         gap = max(detector.p[f"curve_original_gap_humidity_{position.value}_seconds"]
                   for position in detector.positions)
         received = pending_at + (ceil(gap / step) + 1) * step
@@ -1173,21 +1557,21 @@ class DetectorTests(unittest.TestCase):
         found += self._feed_ventilation(detector, received, values)
         self.assertNotIn("original_ventilation", detector.door_episode)
         self.assertEqual(detector._original_context(), epochs)
-        self.assertNotIn(Kind.VENTILATION, [item.kind for item in found])
+        self.assertNotIn(Kind.VENTILATION_COMPLETE, [item.kind for item in found])
 
     def test_earlier_ventilation_precedes_later_close_within_one_original_batch(self):
         detector = self._ventilation_detector()
-        _, plateau, _, values = self._ventilation_curve(detector)
+        _, plateau, end, values = self._ventilation_curve(detector)
         count, step = detector.p["curve_original_samples"], detector.grid_seconds
-        pending_at = plateau + (count - 1) * step
-        found = self._feed_ventilation(detector, pending_at, values)
-        self.assertIn("original_ventilation", detector.door_episode)
-        self.assertNotIn(Kind.VENTILATION, [item.kind for item in found])
+        pending_at, found = self._feed_pending_completion(detector, end, values)
+        self.assertNotIn(Kind.VENTILATION_COMPLETE, [item.kind for item in found])
         interval = step / (2 * count + 4)
         first_at = pending_at + interval
         first_t, first_h = values(first_at)
         water = absolute_humidity(first_t, first_h)
         opening_temperature_loss = values(0)[0] - values(plateau)[0]
+        originals = []
+        epochs, rejected = detector._original_context(), detector.rejected
         for index in range(2 * count + 3):
             second = first_at + index * interval
             temperature = first_t + opening_temperature_loss * index / (2 * count + 2)
@@ -1195,76 +1579,267 @@ class DetectorTests(unittest.TestCase):
             for position in detector.positions:
                 for quantity, value in ((Quantity.TEMPERATURE, temperature),
                                         (Quantity.HUMIDITY, humidity)):
-                    self.assertTrue(detector.accept(measurement(
+                    original = measurement(
                         position, quantity, value, second,
                         measured=T0 + timedelta(seconds=second),
-                    )))
-        batch = detector.advance(T0 + timedelta(seconds=pending_at + step), enabled=True)
-        doors = [item for item in batch if item.kind in (Kind.VENTILATION, Kind.DOOR_CLOSE)]
-        self.assertEqual([item.kind for item in doors], [Kind.VENTILATION, Kind.DOOR_CLOSE])
-        self.assertLessEqual(doors[0].effective_at, doors[1].effective_at)
-        self.assertEqual(doors[0].trace_at, doors[1].trace_at)
+                    )
+                    originals.append(original)
+                    self.assertTrue(detector.accept(original))
+        self.assertEqual(tuple(detector.pending), tuple(originals))
+        completion_originals = []
+
+        def received(detection):
+            if detection.kind is Kind.VENTILATION_COMPLETE:
+                completion_originals.append(
+                    detector.door_episode["original_ventilation_complete"]["confirmation_received_at"],
+                )
+
+        raster_at = T0 + timedelta(seconds=pending_at + step)
+        batch = detector.advance(raster_at, enabled=True, on_detection=received)
+        doors = [item for item in batch if item.kind in (Kind.VENTILATION_COMPLETE, Kind.DOOR_CLOSE)]
+        self.assertEqual([item.kind for item in doors], [Kind.VENTILATION_COMPLETE, Kind.DOOR_CLOSE])
+        self.assertEqual(len(completion_originals), 1)
+        close_original = detector.diagnostic["original_forms"]["confirmation_received_at"]
+        original_times = {item.received_at for item in originals}
+        self.assertIn(completion_originals[0], original_times)
+        self.assertIn(close_original, original_times)
+        self.assertLess(completion_originals[0], close_original)
+        self.assertLess(close_original, raster_at)
+        # A later original confirms the close after COMPLETE, while its
+        # retrospectively attributed onset remains at 52 s, with COMPLETE at 53 s.
+        self.assertEqual(doors[0].effective_at, T0 + timedelta(seconds=53))
+        self.assertEqual(doors[1].effective_at, T0 + timedelta(seconds=52))
+        self.assertGreater(doors[0].effective_at, doors[1].effective_at)
+        self.assertEqual(tuple(item.trace_at for item in doors), (raster_at, raster_at))
+        self.assertEqual(tuple(item.detected_at for item in doors), (raster_at, raster_at))
+        self.assertFalse(detector.pending)
+        self.assertFalse(detector._original_prefixes)
+        self.assertEqual(detector._original_context(), epochs)
+        self.assertEqual(detector.rejected, rejected)
+        for position in detector.positions:
+            for quantity in (Quantity.TEMPERATURE, Quantity.HUMIDITY):
+                accepted = tuple((item.measured_at, item.value) for item in originals
+                                 if item.position is position and item.quantity is quantity)
+                points = tuple(detector._curve_series[position, quantity]["points"])
+                self.assertEqual(points[-len(accepted):], accepted)
+        self.assertEqual([item.kind for item in found + batch].count(Kind.VENTILATION_COMPLETE), 1)
+        self.assertEqual([item.kind for item in found + batch].count(Kind.DOOR_CLOSE), 1)
         self.assertFalse(detector.open)
         self.assertIsNone(detector.door_episode)
 
+    def test_fresh_rh_fall_binds_with_constant_t_and_waits_for_later_cooling(self):
+        detector = self._ventilation_detector()
+        begin, plateau, _, values = self._ventilation_curve(detector, water_tail="fall")
+        width = (plateau - begin) // 2
 
-    def test_door_with_delayed_humidity_drop_during_continuous_heating(self):
+        def delayed_cooling(second):
+            return values(max(begin, second - width))[0], values(second)[1]
+
+        events = self._feed_ventilation(detector, begin + width, delayed_cooling)
+        self.assertNotIn(Kind.DOOR_OPEN, [item.kind for item in events])
+        self.assertFalse(detector.open)
+        opening = detector.door_episode
+        candidate = opening["original_open"]
+        self.assertTrue(all(pair.temperature.v == 0 for _, pair in candidate["windows"]))
+        self.assertGreater(candidate["humidity_fall_onset"],
+                           detector.p["curve_original_significance"])
+        events += self._feed_ventilation(detector, plateau, delayed_cooling)
+        self.assertEqual([item.kind for item in events].count(Kind.DOOR_OPEN), 1)
+        self.assertIs(detector.door_episode, opening)
+        self.assertIs(opening["original_open"], candidate)
+        self.assertGreater(candidate["confirmation_received_at"], candidate["received_at"])
+
+    def test_temperature_hinge_with_valid_rh_does_not_start_an_opening_even_while_heating(self):
+        for heating in (False, True):
+            with self.subTest(heating=heating):
+                detector = self._ventilation_detector()
+                _, _, end, values = self._ventilation_curve(detector, water_tail="fall")
+                detector.report_heating(heating, T0)
+                events = self._feed_ventilation(
+                    detector, end, lambda second: (values(second)[0], values(0)[1]),
+                )
+                self.assertNotIn(Kind.DOOR_OPEN, [item.kind for item in events])
+                self.assertFalse(detector.open)
+                self.assertIsNone(detector.door_episode)
+
+    def test_rh_flat_tail_releases_pending_and_later_fall_binds_a_new_opening(self):
+        traces = []
+        detector = Detector(detection_parameters(), T0, observer=traces.append)
+        begin, plateau, end, values = self._ventilation_curve(detector)
+        width = (plateau - begin) // 2
+        humidity_plateau = begin + width
+
+        def first_fall(second):
+            return values(0)[0], values(min(second, humidity_plateau))[1]
+
+        events = self._feed_ventilation(detector, humidity_plateau, first_fall)
+        previous = detector.door_episode["original_open"]
+        self.assertFalse(detector.open)
+        events += self._feed_ventilation(detector, plateau, first_fall)
+        self.assertIsNone(detector.door_episode)
+        self.assertTrue(any(
+            row.get("original_forms", {}).get("opening_candidate_reset_reason") == "humidity_fall_ended"
+            for row in traces
+        ))
+        initial_h, fallen_h = values(0)[1], values(humidity_plateau)[1]
+
+        def next_fall(second):
+            return values(0)[0], fallen_h + (fallen_h - initial_h) * (second - plateau) / width
+
+        events += self._feed_ventilation(detector, end, next_fall)
+        current = detector.door_episode["original_open"]
+        self.assertGreater(current["received_at"], previous["received_at"])
+        self.assertGreater(current["received_at"], T0 + timedelta(seconds=plateau))
+        self.assertNotIn(Kind.DOOR_OPEN, [item.kind for item in events])
+
+
+    def test_rising_humidity_blocks_temperature_only_opening_during_continuous_heating(self):
         detector = Detector(detection_parameters(), T0)
         events = []
         for i in range(80):
             detector.report_heating(True, T0 + timedelta(seconds=i))
-            # Synthetische kurze Öffnung: beidseitig 4,8 °C/min, zunächst
-            # sogar steigende Feuchte. Die bisherige UND-Regel reicht nicht.
+            # A valid rising RH window prevents the temperature-only heating route.
             temperature = 50 if i < 20 else 50-.08*min(20,i-20)+max(0,i-40)*.03
             events += sample(detector, i, temperature, 30+i*.002)
-        self.assertEqual([e.kind for e in events], [Kind.DOOR_OPEN, Kind.DOOR_CLOSE])
-        self.assertGreaterEqual((events[0].detected_at-T0).total_seconds(), 25)
+        self.assertNotIn(Kind.DOOR_OPEN, [item.kind for item in events])
+        self.assertIsNone(detector.door_episode)
 
-    def test_fresh_opening_routes_reach_holds_longer_than_the_feature_window(self):
-        for route in ("mixed", "thermal"):
-            for hold in (parameters().values["door_open_hold_seconds"],
-                         max(parameters().values["door_window_seconds"], parameters().values["door_humidity_seconds"]) + 1,
-                         BY_KEY["door_open_hold_seconds"].maximum):
-                with self.subTest(route=route, hold=hold):
-                    detector = Detector(detection_parameters(**{
-                        "door_open_hold_seconds": hold,
-                        "door_heating_hold_seconds": hold,
-                    }), T0, (Position.UPPER,))
-                    events = []
-                    for second in range(ceil(hold) + 60):
-                        detector.report_heating(route == "thermal", T0 + timedelta(seconds=second))
-                        fall = max(0, second - 20)
-                        events += sample(detector, second, 90 - .04 * fall,
-                                         80 - .06 * fall if route == "mixed" else 30,
-                                         (Position.UPPER,))
-                    openings = [event for event in events if event.kind == Kind.DOOR_OPEN]
-                    self.assertEqual(len(openings), 1)
-                    self.assertGreaterEqual(
-                        (openings[0].detected_at - openings[0].effective_at).total_seconds(),
-                        hold,
-                    )
-
-    def test_stale_opening_hints_do_not_complete_a_long_hold(self):
+    def test_native_and_thermal_openings_need_a_later_original_after_first_binding(self):
         for route in ("mixed", "thermal"):
             with self.subTest(route=route):
-                detector = Detector(detection_parameters(
-                    door_open_hold_seconds=2 * max(parameters().values["door_window_seconds"], parameters().values["door_humidity_seconds"]),
-                    door_heating_hold_seconds=2 * max(parameters().values["door_window_seconds"], parameters().values["door_humidity_seconds"]),
-                ), T0, (Position.UPPER,))
-                events = []
-                for second in range(100):
-                    detector.report_heating(route == "thermal", T0 + timedelta(seconds=second))
-                    fall = min(8, max(0, second - 20))
-                    events += sample(detector, second, 90 - .04 * fall,
-                                     80 - .06 * fall if route == "mixed" else 30,
-                                     (Position.UPPER,))
-                self.assertNotIn(Kind.DOOR_OPEN, [event.kind for event in events])
-                self.assertIsNone(detector.door_episode)
+                detector = Detector(detection_parameters(), T0, (Position.UPPER,))
+                step = detector.grid_seconds
+                thermal = route == "thermal"
+                cadence = self._thermal_humidity_cadence(detector) if thermal else None
+                initial_h = 30 if thermal else 80
+                events = self._segment(detector, self._settling_time(detector), (90, initial_h),
+                                       heating=thermal, humidity_cadence=cadence)
+                key = ("door_open_heating", Position.UPPER, Quantity.TEMPERATURE)
+                proposal_key = ("door_open_heating", detector.positions, (Quantity.TEMPERATURE,))
+
+                def pending():
+                    return not detector.open and (
+                        proposal_key in detector._curve_proposals if thermal else
+                        bool(detector.door_episode and detector.door_episode.get("original_open"))
+                    )
+
+                duration = detector.p["curve_window_seconds"]
+                events += self._segment(
+                    detector, duration, (90, initial_h),
+                    (90 - .04 * duration, initial_h if thermal else initial_h - .06 * duration),
+                    heating=thermal, humidity_cadence=cadence, stop_when=pending,
+                )
+                self.assertTrue(pending())
+                self.assertNotIn(Kind.DOOR_OPEN, [item.kind for item in events])
+                bound_at = detector.index * step
+                temperature = detector.latest[Position.UPPER, Quantity.TEMPERATURE].value
+                humidity = detector.latest[Position.UPPER, Quantity.HUMIDITY].value
+                if thermal:
+                    witness = detector._curve_candidates[key]
+                    self.assertIsNone(witness.fresh_newest_at)
+                    self.assertIsNone(detector._curve_proposals[proposal_key].evidence_bound_at)
+                else:
+                    witness = detector.door_episode["original_open"]
+                    self.assertNotIn("confirmation_received_at", witness)
+                tick = detector.advance(T0 + timedelta(seconds=bound_at + step), enabled=True)
+                self.assertNotIn(Kind.DOOR_OPEN, [item.kind for item in tick])
+                received = bound_at + 2 * step
+                events += sample(
+                    detector, received, temperature - .04 * 2 * step,
+                    humidity if thermal else humidity - .06 * 2 * step,
+                    detector.positions, humidity_cadence=cadence,
+                )
+                openings = [item for item in events if item.kind == Kind.DOOR_OPEN]
+                self.assertEqual(len(openings), 1)
+                self.assertEqual(openings[0].trace_at, T0 + timedelta(seconds=received))
+                if thermal:
+                    consumed = detector._curve_proposal_status[proposal_key]
+                    self.assertEqual(consumed["status"], "consumed")
+                    self.assertIn(witness.candidate_id, consumed["candidate_ids"])
+                    confirmation = next(item for item in consumed["confirmation"]
+                                        if item["candidate_id"] == witness.candidate_id)
+                    self.assertGreater(confirmation["fresh_newest_at"], witness.first_newest_at)
+                else:
+                    self.assertIs(detector.door_episode["original_open"], witness)
+                    self.assertGreater(witness["confirmation_received_at"], witness["received_at"])
+                    original = {name: (temperature, humidity)
+                                for name, temperature, humidity in witness["newest"]}
+                    for name, pair in witness["confirmation_windows"]:
+                        self.assertGreater(pair.temperature.newest_at, original[name][0])
+                        self.assertGreater(pair.humidity.newest_at, original[name][1])
+                tail = self._segment(
+                    detector, 2 * detector.p["curve_original_samples"] * step,
+                    (temperature - .04 * 2 * step, humidity if thermal else humidity - .06 * 2 * step),
+                    (temperature - .04 * (2 + 2 * detector.p["curve_original_samples"]) * step,
+                     humidity if thermal else humidity - .06 * (2 + 2 * detector.p["curve_original_samples"]) * step),
+                    heating=thermal, humidity_cadence=cadence,
+                )
+                self.assertNotIn(Kind.DOOR_OPEN, [item.kind for item in tail])
+
+
+    def test_ticks_and_repeated_originals_cannot_confirm_a_stale_opening_candidate(self):
+        for route in ("mixed", "thermal"):
+            with self.subTest(route=route):
+                detector = Detector(detection_parameters(), T0, (Position.UPPER,))
+                step = detector.grid_seconds
+                thermal = route == "thermal"
+                cadence = self._thermal_humidity_cadence(detector) if thermal else None
+                initial_h = 30 if thermal else 80
+                events = self._segment(detector, self._settling_time(detector), (90, initial_h),
+                                       heating=thermal, humidity_cadence=cadence)
+                proposal_key = ("door_open_heating", detector.positions, (Quantity.TEMPERATURE,))
+
+                def pending():
+                    return not detector.open and (
+                        proposal_key in detector._curve_proposals if thermal else
+                        bool(detector.door_episode and detector.door_episode.get("original_open"))
+                    )
+
+                duration = detector.p["curve_window_seconds"]
+                events += self._segment(
+                    detector, duration, (90, initial_h),
+                    (90 - .04 * duration, initial_h if thermal else initial_h - .06 * duration),
+                    heating=thermal, humidity_cadence=cadence, stop_when=pending,
+                )
+                self.assertTrue(pending())
+                self.assertNotIn(Kind.DOOR_OPEN, [item.kind for item in events])
+                bound_at = detector.index * step
+                originals = {quantity: tuple(detector._curve_series[Position.UPPER, quantity]["points"])
+                             for quantity in (Quantity.TEMPERATURE, Quantity.HUMIDITY)}
+                # Equal receipt timestamps are accepted by the existing boundary
+                # contract; consuming them on the next tick adds no original.
+                for quantity in ((Quantity.TEMPERATURE,) if thermal else
+                                 (Quantity.TEMPERATURE, Quantity.HUMIDITY)):
+                    self.assertTrue(detector.accept(detector.latest[Position.UPPER, quantity]))
+                events += detector.advance(T0 + timedelta(seconds=bound_at + step), enabled=True)
+                gap = max(detector.p[f"curve_original_gap_{quantity.value}_upper_seconds"]
+                          for quantity in (Quantity.TEMPERATURE, Quantity.HUMIDITY))
+                stale_at = bound_at + (ceil(gap / step) + 1) * step
+                self.assertLess(stale_at - bound_at, detector.p["sensor_timeout_seconds"])
+                events += detector.advance(T0 + timedelta(seconds=stale_at), enabled=True)
+                self.assertFalse(detector.open)
+                self.assertNotIn(Kind.DOOR_OPEN, [item.kind for item in events])
+                for quantity, points in originals.items():
+                    self.assertEqual(tuple(detector._curve_series[Position.UPPER, quantity]["points"]),
+                                     points)
+                if thermal:
+                    witness = detector._curve_candidates["door_open_heating", Position.UPPER,
+                                                         Quantity.TEMPERATURE]
+                    self.assertIsNone(witness.fresh_newest_at)
+                    self.assertNotEqual(detector._curve_proposal_status[proposal_key]["status"],
+                                        "consumed")
+                else:
+                    self.assertFalse(detector._original_humidity_available(
+                        detector.positions, T0 + timedelta(seconds=stale_at),
+                    ))
+                    self.assertNotIn("confirmation_received_at", detector.door_episode["original_open"])
+
 
     def test_temperature_rule_does_not_treat_heater_off_as_door_opening(self):
         for heating, lower_falls, duration in ((False, True, 20), (None, True, 20), (True, False, 20), (True, True, 2)):
             with self.subTest(heating=heating, lower_falls=lower_falls, duration=duration):
                 d = Detector(detection_parameters(), T0)
+                cadence = self._thermal_humidity_cadence(d)
                 events = []
                 for i in range(70):
                     d.report_heating(heating if i >= 20 else True, T0+timedelta(seconds=i))
@@ -1272,18 +1847,20 @@ class DetectorTests(unittest.TestCase):
                     for position in (Position.UPPER, Position.LOWER):
                         temp = 50+delta if position == Position.UPPER or lower_falls else 50
                         d.accept(measurement(position,Quantity.TEMPERATURE,temp,i))
-                        d.accept(measurement(position,Quantity.HUMIDITY,30,i))
+                        if i % cadence == 0:
+                            d.accept(measurement(position,Quantity.HUMIDITY,30,i))
                     events += d.advance(T0+timedelta(seconds=i),enabled=True)
                 self.assertNotIn(Kind.DOOR_OPEN,[e.kind for e in events])
 
     def test_heater_change_restarts_additional_door_proof(self):
         for positions in ((Position.UPPER,), (Position.UPPER, Position.LOWER)):
             d=Detector(detection_parameters(),T0,positions)
+            cadence = self._thermal_humidity_cadence(d)
             events=[]
             for i in range(80):
                 # Wiederholtes Aus/Ein verhindert den durchgehenden Nachweis.
                 d.report_heating(False if i%8==0 else True,T0+timedelta(seconds=i))
-                events+=sample(d,i,50-.03*i,30,positions)
+                events+=sample(d,i,50-.03*i,30,positions, humidity_cadence=cadence)
             self.assertNotIn(Kind.DOOR_OPEN,[e.kind for e in events])
 
     def test_catchup_uses_booked_heating_intervals_at_each_sample_time(self):
@@ -1310,22 +1887,33 @@ class DetectorTests(unittest.TestCase):
         ])
 
     def test_catchup_keeps_earlier_heat_when_last_feedback_is_off(self):
+        detector = Detector(detection_parameters(), T0, (Position.UPPER,))
+        cadence = self._thermal_humidity_cadence(detector)
+        baseline = self._settling_time(detector)
+        off_second = baseline + 80
+        off_at = T0 + timedelta(seconds=off_second)
         controller = Controller(detection_parameters())
         controller.begin_session("heating", T0)
         controller.report_heating(True, T0)
-        controller.report_heating(False, T0 + timedelta(seconds=40))
-        detector = Detector(detection_parameters(), T0, (Position.UPPER,))
-        for second in range(61):
+        controller.report_heating(False, off_at)
+        # Queue the same warm baseline and falling hinge as the continuous
+        # heating fixture, then catch up while the latest feedback is OFF.
+        for second in range(off_second + 21):
+            fall = max(0, second - baseline + 1)
             detector.accept(measurement(
-                Position.UPPER, Quantity.TEMPERATURE, 50 - .06 * second, second
+                Position.UPPER, Quantity.TEMPERATURE, 50 - .03 * fall, second
             ))
-            detector.accept(measurement(Position.UPPER, Quantity.HUMIDITY, 30, second))
+            if second % cadence == 0:
+                detector.accept(measurement(Position.UPPER, Quantity.HUMIDITY, 30, second))
         events = detector.advance(
-            T0 + timedelta(seconds=60), enabled=True,
+            T0 + timedelta(seconds=off_second + 20), enabled=True,
             heating_intervals=controller.session.heating.intervals,
-            heating_gates=((T0, True), (T0 + timedelta(seconds=40), False)),
+            heating_gates=((T0, True), (off_at, False)),
         )
-        self.assertIn(Kind.DOOR_OPEN, [event.kind for event in events])
+        openings = [event for event in events if event.kind == Kind.DOOR_OPEN]
+        self.assertEqual(len(openings), 1)
+        self.assertLess(openings[0].trace_at, off_at)
+        self.assertIs(controller.feedback, False)
         self.assertIsNone(detector.heating_since)
 
     def test_logical_off_on_restarts_thermal_proof_during_physical_on(self):
@@ -1349,28 +1937,64 @@ class DetectorTests(unittest.TestCase):
         self.assertIsNone(observed[28])
         self.assertEqual(observed[29], T0 + timedelta(seconds=29))
 
-    def test_door_hold_starts_again_after_required_position_is_missing(self):
+    def test_temperature_loss_invalidates_an_unconfirmed_thermal_identity_before_recovery(self):
         detector = Detector(detection_parameters(), T0, (Position.UPPER,))
-        self._segment(detector, self._settling_time(detector), (80, 30), heating=True)
-        limit = ceil(detector.p["door_window_seconds"] + detector.p["median_seconds"]
-                     + detector.p["door_heating_hold_seconds"] + detector.p["door_open_drop_c"] / .1)
-        temperature = 80
-        for _ in range(limit):
-            second = detector.index + 1
-            temperature -= .1
-            detector.report_heating(True, T0 + timedelta(seconds=second))
-            sample(detector, second, temperature, 30, (Position.UPPER,))
-            if detector.diagnostic["holds"].get("door_heating", 0):
-                break
-        self.assertGreater(detector.diagnostic["holds"].get("door_heating", 0), 0)
+        step = detector.grid_seconds
+        cadence = self._thermal_humidity_cadence(detector)
+        events = self._segment(detector, self._settling_time(detector), (80, 30), heating=True,
+                               humidity_cadence=cadence)
+        key = ("door_open_heating", Position.UPPER, Quantity.TEMPERATURE)
+        proposal_key = ("door_open_heating", detector.positions, (Quantity.TEMPERATURE,))
+        duration = detector.p["curve_window_seconds"]
+
+        def pending():
+            return not detector.open and proposal_key in detector._curve_proposals
+
+        events += self._segment(detector, duration, (80, 30), (80 - .1 * duration, 30),
+                                heating=True, humidity_cadence=cadence, stop_when=pending)
+        self.assertTrue(pending())
+        original = detector._curve_candidates[key]
+        self.assertIsNone(original.fresh_newest_at)
+        self.assertIsNone(detector._curve_proposals[proposal_key].evidence_bound_at)
+        temperature = detector.latest[Position.UPPER, Quantity.TEMPERATURE].value
+        gap_at = (detector.index + 1) * step
+        self.assertTrue(detector.accept(measurement(
+            Position.UPPER, Quantity.TEMPERATURE, None, gap_at,
+        )))
+        events += detector.advance(T0 + timedelta(seconds=gap_at), enabled=True)
+        self.assertNotIn(key, detector._curve_candidates)
+        self.assertNotIn(proposal_key, detector._curve_proposals)
         self.assertFalse(detector.open)
-        gap_at = detector.index + 1
-        detector.accept(measurement(Position.UPPER, Quantity.TEMPERATURE, None, gap_at))
-        detector.advance(T0 + timedelta(seconds=gap_at), enabled=True)
-        self.assertEqual(detector.diagnostic["holds"].get("door_heating", 0), 0)
-        events = self._segment(detector, detector.p["door_heating_hold_seconds"] - 1,
-                               (temperature, 30), (temperature - .2, 30), heating=True)
         self.assertNotIn(Kind.DOOR_OPEN, [item.kind for item in events])
+        recovery = (2 * max(detector.p["curve_original_samples"],
+                            detector.curve_policy.min_side_samples) + 1) * step
+        events += self._segment(detector, recovery, (temperature, 30), heating=True,
+                                humidity_cadence=cadence)
+        self.assertNotIn(key, detector._curve_candidates)
+        self.assertNotIn(Kind.DOOR_OPEN, [item.kind for item in events])
+        events += self._segment(
+            detector, duration, (temperature, 30), (temperature - .1 * duration, 30),
+            heating=True, humidity_cadence=cadence,
+            stop_when=lambda: key in detector._curve_candidates,
+        )
+        self.assertIn(key, detector._curve_candidates)
+        self.assertFalse(detector.open)
+        self.assertNotIn(proposal_key, detector._curve_proposals)
+        fresh = detector._curve_candidates[key]
+        self.assertNotEqual(fresh.candidate_id, original.candidate_id)
+        self.assertNotEqual(fresh.context[1], original.context[1])
+        self.assertGreater(fresh.onset_at, T0 + timedelta(seconds=gap_at))
+        self.assertTrue(all(stamp > T0 + timedelta(seconds=gap_at)
+                            for stamp, _ in fresh.original_points))
+        self.assertIsNone(fresh.fresh_newest_at)
+        current = detector.latest[Position.UPPER, Quantity.TEMPERATURE].value
+        second = (detector.index + 1) * step
+        events += sample(detector, second, current - .1 * step, 30, detector.positions,
+                         humidity_cadence=cadence)
+        self.assertNotIn(Kind.DOOR_OPEN, [item.kind for item in events])
+        self.assertFalse(detector.open)
+        self.assertNotIn(proposal_key, detector._curve_proposals)
+        self.assertNotEqual(detector._curve_candidates[key].candidate_id, original.candidate_id)
 
     def test_additional_door_rule_uses_all_available_positions(self):
         cases = (
@@ -1384,13 +2008,19 @@ class DetectorTests(unittest.TestCase):
         for name, configured, reporting, falling, opens in cases:
             with self.subTest(name=name):
                 detector = Detector(detection_parameters(), T0, configured)
-                events = []
-                for second in range(80):
+                cadence = self._thermal_humidity_cadence(detector)
+                events = self._segment(detector, self._settling_time(detector),
+                                       (50, 30), positions=reporting, heating=True,
+                                       humidity_cadence=cadence)
+                self.assertNotIn(Kind.DOOR_OPEN, [event.kind for event in events])
+                for index in range(80):
+                    second = detector.index + 1
                     detector.report_heating(True, T0 + timedelta(seconds=second))
                     for position in reporting:
-                        temperature = 50 - .03 * second if position in falling else 50
+                        temperature = 50 - .03 * (index + 1) if position in falling else 50
                         detector.accept(measurement(position, Quantity.TEMPERATURE, temperature, second))
-                        detector.accept(measurement(position, Quantity.HUMIDITY, 30, second))
+                        if second % cadence == 0:
+                            detector.accept(measurement(position, Quantity.HUMIDITY, 30, second))
                     events += detector.advance(T0 + timedelta(seconds=second), enabled=True)
                 self.assertEqual(detector.active_positions, reporting)
                 self.assertEqual(Kind.DOOR_OPEN in [event.kind for event in events], opens)
@@ -1400,13 +2030,14 @@ class DetectorTests(unittest.TestCase):
         for base in (parameters().values["standard_temperature_c"], minimum + 5, minimum - 1):
             with self.subTest(base=base):
                 detector = Detector(detection_parameters(), T0)
+                cadence = self._thermal_humidity_cadence(detector)
                 events = self._segment(detector, self._settling_time(detector),
-                                       (base, 30), heating=True)
+                                       (base, 30), heating=True, humidity_cadence=cadence)
                 self.assertNotIn(Kind.DOOR_OPEN, [item.kind for item in events])
                 # The retained BIC route needs a measured warm baseline before
                 # the falling hinge; a line falling since origin has no turn.
                 events += self._segment(detector, 80, (base, 30),
-                                        (base - .03 * 80, 30), heating=True)
+                                        (base - .03 * 80, 30), heating=True, humidity_cadence=cadence)
                 self.assertEqual(detector.heating_since, T0)
                 self.assertIn(Kind.DOOR_OPEN, [item.kind for item in events])
 
@@ -1574,6 +2205,8 @@ class InfusionLifecycleTests(unittest.TestCase):
         The production helper still combines the required positions. A missing
         window remains unknown; varying tails without a declared form cannot
         supply background evidence. No water pair or event state is fabricated.
+        A declared RH rise supplies its fresh kink once. Continued equal
+        slopes retain R while Q becomes neutral, preserving the fall fallback.
         """
         strength = 2 * max(
             self.p[key] for key in (
@@ -1609,9 +2242,14 @@ class InfusionLifecycleTests(unittest.TestCase):
                         "rise": (0, 1), "decay": (1, -1),
                         "open": (0, -1), "close": (-1, 1),
                     }[shape["kind"]]
+                    slope = after * strength * window.e
+                    continued_rise = (
+                        quantity == Quantity.HUMIDITY and shape["kind"] == "rise"
+                        and window.newest_at > self._at(shape["onset"] + self.side * self.step)
+                    )
+                    previous_slope = slope if continued_rise else before * strength * window.e_minus
                     features.append(replace(
-                        window, v=after * strength * window.e,
-                        b=before * strength * window.e_minus, r=0.0,
+                        window, v=slope, b=previous_slope, r=0.0,
                     ))
                 else:
                     features.append(replace(
@@ -1735,6 +2373,372 @@ class InfusionLifecycleTests(unittest.TestCase):
         ]
         return points, shapes, rise_two, fall_two
 
+    def _kink_originals(self, *, rising, large, extra=0):
+        """A curved background, disjoint flat support and a declared linear turn."""
+        centered = tuple((index - (self.side - 1) / 2) * self.step
+                         for index in range(self.side))
+        slope_weight = sum(abs(value) for value in centered) / sum(
+            value * value for value in centered
+        )
+        catalog = 2 * max(self.p[f"curve_original_noise_humidity_{position.value}"]
+                          for position in Position) * slope_weight
+        history_change = 4 * catalog
+        quadratic = history_change / (2 * self.side * self.step)
+        history_count = 4 * self.side + 2 * self.p["curve_original_kink_history_windows"]
+        onset_index = history_count + 2 * self.side - 1
+        onset = onset_index * self.step
+        end = onset + (self.side + 2 + extra) * self.step
+        slope = (4 * self.p["curve_original_kink_factor"] * history_change if large
+                 else 2 * self.p["curve_original_significance"] * catalog)
+        cooling = (trace(70)[0] - trace(85)[0]) / self.width
+        rows = []
+        for second in range(0, end + self.step, self.step):
+            if second < history_count * self.step:
+                # The historical neighboring K-window slopes differ by the
+                # analytic constant 2*q*K*step. T stays flat, so this falling
+                # prehistory cannot confirm a door or bind a rising infusion.
+                humidity = self.baseline + quadratic * (
+                    second - (history_count - 1) * self.step
+                ) ** 2
+            else:
+                humidity = self.baseline + (1 if rising else -1) * slope * max(
+                    0, second - onset,
+                )
+            temperature = self.temperature - (0 if rising else cooling) * max(
+                0, second - onset,
+            )
+            rows.append((second, temperature, humidity))
+        return onset, end, rows
+
+    def _feed_kink_originals(self, detector, rows, events, *, batch=False, omit=(),
+                             humidity_sources=None, detected_at=None):
+        for second, temperature, humidity in rows:
+            for position in detector.positions:
+                position_humidity = humidity[position] if isinstance(humidity, dict) else humidity
+                for quantity, value in ((Quantity.TEMPERATURE, temperature),
+                                        (Quantity.HUMIDITY, position_humidity)):
+                    if (position, quantity) in omit:
+                        continue
+                    self.assertTrue(detector.accept(measurement(
+                        position, quantity, value, second, measured=self._at(second),
+                        source=(humidity_sources or {}).get(position)
+                        if quantity == Quantity.HUMIDITY else None,
+                    )))
+            if not batch:
+                events.extend(detector.advance(
+                    self._at(second), enabled=True, detected_at=detected_at,
+                ))
+        finished = ceil(rows[-1][0] / self.step) * self.step
+        if batch or rows[-1][0] < finished:
+            events.extend(detector.advance(
+                self._at(finished), enabled=True, detected_at=detected_at,
+            ))
+
+    def test_small_original_kinks_are_rejected_before_door_and_infusion_binding(self):
+        for rising in (False, True):
+            for control in (False, True):
+                with self.subTest(rising=rising, factor_zero=control):
+                    onset, _, rows = self._kink_originals(rising=rising, large=False)
+                    traces, events = [], []
+                    p = detection_parameters(curve_original_kink_factor=0) if control else self.parameters
+                    detector = Detector(p, T0, observer=traces.append)
+                    with self._patch_math([], forms=original_contrasts):
+                        self._feed_kink_originals(detector, rows, events)
+                    records = [row["original_infusion" if rising else "original_forms"]
+                               for row in traces if row["at"] > self._at(onset)
+                               and ("original_infusion" if rising else "original_forms") in row]
+                    raw_key = "rise_candidate" if rising else "binding_humidity_fall_onset"
+                    kink_key = "binding_humidity_rise_kink" if rising else "binding_humidity_fall_kink"
+                    raw_candidates = [record for record in records
+                                      if record.get(raw_key, {}).get("result") is True]
+                    self.assertTrue(raw_candidates)
+                    self.assertEqual(
+                        {record[kink_key]["result"] for record in raw_candidates}, {control},
+                    )
+                    for record in raw_candidates:
+                        for gate in record[kink_key]["positions"].values():
+                            self.assertEqual(gate["status"], "history")
+                            self.assertGreater(gate["history_scale"], gate["catalog_scale"])
+                            self.assertLess(gate["history_end"], gate["start_at"])
+                            if not control:
+                                self.assertLess(abs(gate["delta"]), gate["tolerance"])
+                    candidate = (detector._original_infusion_candidate if rising else
+                                 (detector.door_episode or {}).get("original_open"))
+                    self.assertEqual(candidate is not None, control)
+                    if control:
+                        self.assertGreater(candidate["received_at"], self._at(onset))
+                        self.assertTrue(all(kink.factor == 0
+                                            for _, kink in candidate["humidity_kinks"]))
+                    self.assertEqual([item.kind for item in events
+                                      if item.kind in (Kind.DOOR_OPEN, Kind.INFUSION)],
+                                     [Kind.DOOR_OPEN] if control and not rising else [])
+
+        for rising in (False, True):
+            for small_position in Position:
+                with self.subTest(rising=rising, only_small_role=small_position):
+                    onset, _, small = self._kink_originals(rising=rising, large=False)
+                    _, _, large = self._kink_originals(rising=rising, large=True)
+                    rows = [(second, temperature, {
+                        position: small_humidity if position == small_position else large_humidity
+                        for position in Position
+                    }) for (second, temperature, small_humidity), (_, _, large_humidity)
+                            in zip(small, large, strict=True)]
+                    traces, events = [], []
+                    detector = Detector(self.parameters, T0, observer=traces.append)
+                    with self._patch_math([], forms=original_contrasts):
+                        self._feed_kink_originals(detector, rows, events)
+                    key = "original_infusion" if rising else "original_forms"
+                    raw_key = "rise_candidate" if rising else "binding_humidity_fall_onset"
+                    kink_key = "binding_humidity_rise_kink" if rising else "binding_humidity_fall_kink"
+                    records = [row[key] for row in traces if row["at"] > self._at(onset)
+                               and key in row and row[key].get(raw_key, {}).get("result") is True]
+                    self.assertTrue(records)
+                    for record in records:
+                        gate = record[kink_key]
+                        self.assertFalse(gate["result"])
+                        self.assertFalse(gate["positions"][small_position.value]["result"])
+                    last = records[-1][kink_key]["positions"]
+                    other_position = next(position for position in Position if position != small_position)
+                    self.assertTrue(last[other_position.value]["result"])
+                    self.assertIsNone(detector._original_infusion_candidate if rising else
+                                      (detector.door_episode or {}).get("original_open"))
+                    self.assertEqual([item for item in events
+                                      if item.kind in (Kind.DOOR_OPEN, Kind.INFUSION)], [])
+
+    def test_synthetic_large_original_kinks_reach_binding_and_confirmation(self):
+        # The signal scales with the selected factor. This proves mathematical
+        # consumption by the owner; default suitability needs the real replay.
+        for rising in (False, True):
+            with self.subTest(rising=rising):
+                onset, _, rows = self._kink_originals(rising=rising, large=True)
+                detector, events = Detector(self.parameters, T0), []
+                with self._patch_math([], forms=original_contrasts):
+                    self._feed_kink_originals(detector, rows, events)
+                kind = Kind.INFUSION if rising else Kind.DOOR_OPEN
+                detected = [item for item in events if item.kind == kind]
+                self.assertEqual(len(detected), 1)
+                candidate = (detector._original_infusion_candidate if rising else
+                             detector.door_episode["original_open"])
+                self.assertIsNotNone(candidate)
+                self.assertGreater(candidate["received_at"], self._at(onset))
+                for _, kink in candidate["humidity_kinks"]:
+                    self.assertEqual(kink.factor, self.p["curve_original_kink_factor"])
+                    self.assertGreater(abs(kink.delta), kink.tolerance)
+                    self.assertEqual(kink.effective_change > 0, rising)
+                confirmation = (candidate["early_confirmation_windows"] if rising else
+                                candidate["confirmation_windows"])
+                bound = dict(candidate["binding_windows" if rising else "windows"])
+                for name, pair in confirmation:
+                    self.assertGreater(pair.temperature.newest_at, bound[name].temperature.newest_at)
+                    self.assertGreater(pair.humidity.newest_at, bound[name].humidity.newest_at)
+                    self.assertLessEqual(pair.humidity.newest_at, detected[0].trace_at)
+                if rising:
+                    self.assertIs(detector.infusion_episode.confirmed_detection, detected[0])
+                    self.assertEqual(detector._infusion_episode["confirmation_basis"], "early_rise")
+                else:
+                    self.assertTrue(detector.open)
+                    self.assertGreater(candidate["confirmation_received_at"], candidate["received_at"])
+
+    def test_bound_original_kink_background_is_frozen_while_new_originals_arrive(self):
+        for rising in (False, True):
+            with self.subTest(rising=rising):
+                _, end, rows = self._kink_originals(rising=rising, large=True)
+                detector, events = Detector(self.parameters, T0), []
+                with self._patch_math([], forms=original_contrasts):
+                    self._feed_kink_originals(detector, rows, events)
+                    candidate = (detector._original_infusion_candidate if rising else
+                                 detector.door_episode["original_open"])
+                    frozen = candidate["humidity_kinks"]
+                    frozen_values = tuple((name, kink.history_start, kink.history_end,
+                                           kink.history_scale, kink.used_scale, kink.tolerance)
+                                          for name, kink in frozen)
+                    kind = Kind.INFUSION if rising else Kind.DOOR_OPEN
+                    confirmed = tuple(item for item in events if item.kind == kind)
+                    _, _, continued = self._kink_originals(rising=rising, large=True, extra=self.side)
+                    self._feed_kink_originals(
+                        detector, [row for row in continued if row[0] > end], events,
+                    )
+                current = (detector._original_infusion_candidate if rising else
+                           detector.door_episode["original_open"])
+                self.assertIs(current, candidate)
+                self.assertIs(current["humidity_kinks"], frozen)
+                self.assertEqual(tuple((name, kink.history_start, kink.history_end,
+                                        kink.history_scale, kink.used_scale, kink.tolerance)
+                                       for name, kink in current["humidity_kinks"]), frozen_values)
+                self.assertEqual(tuple(item for item in events if item.kind == kind), confirmed)
+                for name, kink in frozen:
+                    latest = detector._original_kink_cache[Position(name)][1]
+                    self.assertGreater(latest.history_end, kink.history_end)
+                    self.assertGreater(latest.window.newest_at, kink.window.newest_at)
+
+    def test_original_kink_binding_and_confirmation_match_individual_and_batch_input(self):
+        for rising in (False, True):
+            for dense in (False, True):
+                with self.subTest(rising=rising, several_originals_per_tick=dense):
+                    _, _, rows = self._kink_originals(rising=rising, large=True)
+                    if dense:
+                        # Several distinct T/RH prefixes share one raster cell;
+                        # each must keep the background available on its receipt.
+                        rows = [(second / (self.side + 2), temperature, humidity)
+                                for second, temperature, humidity in rows]
+                    end = ceil(rows[-1][0] / self.step) * self.step
+                    results = []
+                    for batch in (False, True):
+                        detector, events = Detector(self.parameters, T0), []
+                        with self._patch_math([], forms=original_contrasts):
+                            self._feed_kink_originals(
+                                detector, rows, events, batch=batch, detected_at=self._at(end),
+                            )
+                        candidate = (detector._original_infusion_candidate if rising else
+                                     detector.door_episode["original_open"])
+                        binding_key = "binding_windows" if rising else "windows"
+                        confirmation_key = ("early_confirmation_windows" if rising else
+                                            "confirmation_windows")
+                        binding = dict(candidate[binding_key])
+                        for name, kink in candidate["humidity_kinks"]:
+                            self.assertEqual(kink.window, binding[name].humidity)
+                            self.assertLess(kink.history_end, binding[name].humidity.start_at)
+                        results.append((events, candidate["received_at"], candidate["newest"],
+                                        candidate[binding_key], candidate["humidity_kinks"],
+                                        candidate[confirmation_key]))
+                    self.assertEqual([item.kind for item in results[0][0]
+                                      if item.kind in (Kind.DOOR_OPEN, Kind.INFUSION)],
+                                     [Kind.INFUSION if rising else Kind.DOOR_OPEN])
+                    self.assertEqual(results[0], results[1])
+
+    def test_original_kink_corrections_invalidate_only_the_dependent_owner(self):
+        _, _, rows = self._kink_originals(rising=True, large=True)
+        prepared, events = Detector(self.parameters, T0), []
+        # The lower RH source exists, but without a lower T it contributes no
+        # position to the real upper-only binding or its confirmation.
+        omit = ((Position.LOWER, Quantity.TEMPERATURE),)
+        with self._patch_math([], forms=original_contrasts):
+            self._feed_kink_originals(prepared, rows, events, omit=omit)
+        self.assertEqual(len(self._infusions(events)), 1)
+        self.assertEqual(prepared._original_infusion_candidate["positions"], (Position.UPPER,))
+        for change in ("unrelated_source", "bound_source", "bound_source_before_confirmation",
+                       "unrelated_history", "bound_history", "bound_candidate"):
+            with self.subTest(change=change):
+                correction_events = []
+                if change in ("bound_candidate", "bound_source_before_confirmation"):
+                    detector = Detector(self.parameters, T0)
+                    with self._patch_math([], forms=original_contrasts):
+                        for row in rows:
+                            self._feed_kink_originals(detector, [row], correction_events, omit=omit)
+                            if detector._original_infusion_candidate is not None:
+                                break
+                    self.assertIsNone(detector.infusion_episode)
+                else:
+                    detector = deepcopy(prepared, {id(prepared.p): prepared.p})
+                candidate = detector._original_infusion_candidate
+                episode = detector._infusion_episode
+                detection = (detector.infusion_episode.confirmed_detection
+                             if episode is not None else None)
+                kink = dict(candidate["humidity_kinks"])["upper"]
+                if change in ("unrelated_source", "bound_source", "bound_source_before_confirmation"):
+                    before_confirmation = change == "bound_source_before_confirmation"
+                    if before_confirmation:
+                        second = (candidate["received_at"] - T0).total_seconds()
+                        temperature = detector.latest[Position.UPPER, Quantity.TEMPERATURE].value
+                        humidity = detector.latest[Position.UPPER, Quantity.HUMIDITY].value
+                    else:
+                        second, temperature, humidity = rows[-1]
+                    bound_originals = candidate["newest"]
+                    confirmation = candidate.get("early_confirmation_windows")
+                    # Let a complete new source build its own flat windows.
+                    # An old diagnostic object may survive the initial gap,
+                    # but cannot bind or confirm using the former source.
+                    count = 1 if change == "unrelated_source" else 2 * self.side + 1
+                    source_events = []
+                    with self._patch_math([], forms=original_contrasts):
+                        self._feed_kink_originals(
+                            detector, [(second + index * self.step, temperature, humidity)
+                                       for index in range(1, count + 1)], source_events, omit=omit,
+                            humidity_sources={
+                                Position.LOWER if change == "unrelated_source" else Position.UPPER:
+                                "sensor.replaced_humidity",
+                            },
+                        )
+                    self.assertEqual(self._infusions(source_events), [])
+                    self.assertEqual(candidate["newest"], bound_originals)
+                    self.assertEqual(candidate.get("early_confirmation_windows"), confirmation)
+                    if change != "unrelated_source":
+                        self.assertIsNone(detector._original_infusion_candidate)
+                        if episode is not None:
+                            self.assertIn(Position.UPPER, episode["interrupted"])
+                        else:
+                            self.assertIsNone(detector.infusion_episode)
+                            self.assertIsNone(confirmation)
+                elif change in ("unrelated_history", "bound_history"):
+                    # The stored-original correction API is the same explicit
+                    # interface special case as the existing Q-correction test;
+                    # old measured timestamps cannot enter through accept().
+                    history = dict(candidate["humidity_kink_originals"])["upper"]
+                    corrected_at, value = next(point for point in history
+                                               if point[0] == kink.history_end)
+                    detector._correct_original_infusion(
+                        Position.LOWER if change == "unrelated_history" else Position.UPPER,
+                        Quantity.HUMIDITY, corrected_at,
+                        value + self.p["curve_original_noise_humidity_upper"],
+                    )
+                else:
+                    pair = dict(candidate["binding_windows"])["upper"]
+                    window = pair.humidity
+                    points = window.previous + window.current
+                    corrected_at, value = window.current[-1]
+                    times = [(stamp - window.current[0][0]).total_seconds()
+                             for stamp, _ in window.current]
+                    mean = sum(times) / len(times)
+                    weight = (times[-1] - mean) / sum((time - mean) ** 2 for time in times)
+                    raw_limit = self.p["curve_original_significance"] * (window.e + window.e_minus)
+                    target = (raw_limit + kink.tolerance) / 2
+                    correction = value - ((window.v - window.b) - target) / weight
+                    corrected = original_window(
+                        tuple((stamp, correction if stamp == corrected_at else old)
+                              for stamp, old in points), count=self.side, scale=window.scale,
+                        max_gap_seconds=self.p["curve_original_gap_humidity_upper_seconds"],
+                        at=window.newest_at,
+                    )
+                    proof = original_contrasts({"upper": replace(pair, humidity=corrected)},
+                                               expected_positions=("upper",))
+                    self.assertGreater(proof.humidity_rise_onset,
+                                       self.p["curve_original_significance"])
+                    self.assertLess(corrected.v - corrected.b, kink.tolerance)
+                    # Correct the actual newest accepted RH original before a
+                    # later original can confirm the freshly bound candidate.
+                    received = (candidate["received_at"] - T0).total_seconds() + self.step
+                    originals = tuple(detector._curve_series[
+                        Position.UPPER, Quantity.HUMIDITY
+                    ]["points"])
+                    self.assertTrue(detector.accept(measurement(
+                        Position.UPPER, Quantity.HUMIDITY, correction, received,
+                        measured=corrected_at,
+                    )))
+                    with self._patch_math([], forms=original_contrasts):
+                        correction_events.extend(detector.advance(self._at(received), enabled=True))
+                    retained = tuple(detector._curve_series[
+                        Position.UPPER, Quantity.HUMIDITY
+                    ]["points"])
+                    self.assertEqual(retained[:-1], originals[:-1])
+                    self.assertEqual(retained[-1], (corrected_at, correction))
+                    self.assertEqual(self._infusions(correction_events), [])
+                dependent = change in ("bound_history", "bound_candidate")
+                if dependent:
+                    self.assertIsNone(detector._original_infusion_candidate)
+                    if episode is not None:
+                        self.assertIsNone(episode["original_component"])
+                        self.assertIn(Position.UPPER, episode["interrupted"])
+                    else:
+                        self.assertIsNone(detector.infusion_episode)
+                elif change not in ("bound_source", "bound_source_before_confirmation"):
+                    self.assertIs(detector._original_infusion_candidate, candidate)
+                    self.assertIs(episode["original_component"], candidate)
+                if detection is not None:
+                    self.assertIs(detector.infusion_episode.confirmed_detection, detection)
+                if change not in ("bound_source", "bound_source_before_confirmation", "bound_candidate"):
+                    self.assertEqual(detector.infusion_episode.phase, "active")
+                self.assertIs(candidate["humidity_kinks"][0][1], kink)
+
     def test_monotone_rise_has_no_infusion_and_keeps_person_detection_available(self):
         end = self.begin + ceil(
             self.p["strong_window_seconds"] + self.p["strong_hold_seconds"]
@@ -1745,18 +2749,21 @@ class InfusionLifecycleTests(unittest.TestCase):
         ) / 60
         points = [(0, self.baseline), (self.begin, self.baseline),
                   (end, self.baseline + rate * (end - self.begin))]
-        shapes = [self._shape("rise", self.begin, end)]
-        detector = Detector(self.parameters, T0)
+        traces = []
+        detector = Detector(self.parameters, T0, observer=traces.append)
         events = []
-        with self._patch_math(shapes):
-            self._feed(detector, self.begin + (self.side + 1) * self.step, points, events)
-            self.assertEqual(detector._infusion_episode["phase"], "pending")
-            self.assertIsNone(detector._infusion_episode["confirmed_at"])
-            self.assertTrue(all(
-                witness["change"] > 0 for witness in detector._infusion_episode["water"].values()
-            ))
-            self._feed(detector, end, points, events)
+        # This slow person-like ramp uses the real original mathematics and
+        # native water pairs; no declared strong R or Q is injected.
+        self._feed(detector, end, points, events)
+        native = [item["original_infusion"] for item in traces
+                  if "original_infusion" in item]
+        self.assertTrue(native)
+        self.assertTrue(all(
+            item["rise"] <= self.p["curve_original_new_infusion_contrast"]
+            for item in native
+        ))
         self.assertEqual(self._infusions(events), [])
+        self.assertIsNone(detector.infusion_episode)
         self.assertIn(Kind.PERSON_STRONG, [item.kind for item in events])
 
     def test_expired_pending_rise_cannot_own_a_later_decay_or_new_pulse(self):
@@ -1876,6 +2883,198 @@ class InfusionLifecycleTests(unittest.TestCase):
         self.assertIsNone(detector.infusion_episode)
         self.assertEqual(self._infusions(events), [])
 
+    def test_native_window_smaller_than_curve_flank_keeps_the_matching_early_onset(self):
+        minimum = int(BY_KEY["curve_original_samples"].minimum)
+        model_flank = int(BY_KEY["curve_min_side_samples"].minimum)
+        for count in range(minimum, model_flank):
+            with self.subTest(original_samples=count, curve_flank=model_flank):
+                self.parameters = detection_parameters(
+                    curve_original_samples=count, curve_min_side_samples=model_flank,
+                )
+                self.p, self.side = self.parameters.values, count
+                self.width = (2 * self.side + 2) * self.step
+                points, shapes, _, _ = self._scenario(merged=False)
+                detector = Detector(self.parameters, T0, (Position.UPPER,))
+                events = []
+                with self._patch_math(shapes):
+                    self._feed(detector, self.begin + self.width, points, events)
+                    component = detector._original_infusion_candidate
+                    witness = component["onset_witnesses"][Position.UPPER]
+                    self.assertEqual(witness.onset_at, self._at(self.begin))
+                    self.assertLess(count, detector.curve_policy.min_side_samples)
+                    branch = dict(component["rise_windows"])["upper"].humidity.current
+                    originals = dict(witness.original_points)
+                    self.assertTrue(all(originals.get(stamp) == value for stamp, value in branch))
+                    self._feed(detector, self.begin + 2 * self.width, points, events)
+                self.assertEqual(len(self._infusions(events)), 1)
+                self.assertEqual(self._infusions(events)[0].effective_at, self._at(self.begin))
+
+    def test_unqualified_rh_rise_cannot_gain_water_from_later_warming_on_its_flat_tail(self):
+        peak = self.begin + self.width
+        warm_start, warm_end = peak + self.width, peak + 2 * self.width
+        fall_end = warm_end + self.width
+        points = [(0, self.baseline), (self.begin, self.baseline),
+                  (peak, self.peak), (warm_end, self.peak), (fall_end, self.level)]
+        cold = trace(85)[0]
+        temperatures = [(0, self.temperature), (self.begin, self.temperature),
+                        (peak, cold), (warm_start, cold), (warm_end, self.temperature)]
+        self.assertLess(absolute_humidity(cold, self.peak),
+                        absolute_humidity(self.temperature, self.baseline))
+        observed = []
+        detector = Detector(self.parameters, T0, (Position.UPPER,), observer=observed.append)
+        events = []
+        self._feed(detector, warm_start, points, events, temperatures=temperatures)
+        component = detector._original_infusion_candidate
+        self.assertTrue(component["strong"])
+        self.assertTrue(component["rise_ended"])
+        self.assertFalse(component["qualified"])
+        frontier = component["water_end"][Position.UPPER]
+        self.assertLessEqual(frontier, self._at(warm_start))
+        self.assertEqual(self._infusions(events), [])
+        self._feed(detector, fall_end, points, events, temperatures=temperatures)
+        self.assertEqual(component["water_end"][Position.UPPER], frontier)
+        self.assertFalse(component["qualified"])
+        self.assertLessEqual(component["water"][Position.UPPER]["change"], 0)
+        self.assertIsNone(detector.infusion_episode)
+        self.assertEqual(self._infusions(events), [])
+        self.assertTrue(any(
+            row.get("original_infusion", {}).get("water_support_end", {}).get("upper") == frontier
+            for row in observed
+        ))
+
+    def test_late_t_partner_can_qualify_the_actual_rh_rise_after_its_plateau_begins(self):
+        self.side = int(BY_KEY["curve_original_samples"].minimum)
+        self.parameters = detection_parameters(curve_original_samples=self.side)
+        self.p = self.parameters.values
+        self.width = (2 * self.side + 2) * self.step
+        peak = self.begin + self.width
+        fall_start = peak + self.side * self.step
+        fall_end = fall_start + self.width
+        points = [(0, self.baseline), (self.begin, self.baseline),
+                  (peak, self.peak), (fall_start, self.peak), (fall_end, self.level)]
+        shapes = [self._shape("rise", self.begin, peak),
+                  self._shape("decay", fall_start, fall_end)]
+        detector = Detector(self.parameters, T0, (Position.UPPER,))
+        events = []
+        with self._patch_math(shapes):
+            self._feed(detector, self.begin, points, events)
+            detector.accept(measurement(
+                Position.UPPER, Quantity.TEMPERATURE, self.temperature,
+                self.begin + self.step / 2, measured=self._at(self.begin + self.step / 2),
+            ))
+            for index in range(1, self.width // self.step + self.side + 1):
+                second = self.begin + index * self.step
+                if index == self.side + 1:
+                    detector.accept(measurement(
+                        Position.UPPER, Quantity.TEMPERATURE, self.temperature, second,
+                        measured=self._at(self.begin + 3 * self.step / 4),
+                    ))
+                self._send(detector, second, self._value(points, second), events,
+                           omit=((Position.UPPER, Quantity.TEMPERATURE),))
+            component = detector._original_infusion_candidate
+            self.assertTrue(component["strong"])
+            self.assertTrue(component["rise_ended"])
+            self.assertFalse(component["qualified"])
+            self.assertTrue(component["water_state"][Position.UPPER]["pending"])
+            self.assertEqual(self._infusions(events), [])
+            # This new temperature sample brackets the already stored RH rise;
+            # no later plateau RH enters the frozen water support.
+            received = fall_start + self.step
+            partner = peak + self.step
+            self.assertLessEqual(
+                partner - (self.begin + 3 * self.step / 4),
+                self.p["curve_original_gap_temperature_upper_seconds"],
+            )
+            detector.accept(measurement(
+                Position.UPPER, Quantity.TEMPERATURE, self.temperature, received,
+                measured=self._at(partner),
+            ))
+            events.extend(detector.advance(self._at(received), enabled=True))
+            self.assertTrue(component["qualified"])
+            self.assertGreater(component["water"][Position.UPPER]["change"], 0)
+            self._feed(detector, fall_end, points, events)
+        self.assertEqual(len(self._infusions(events)), 1)
+        self.assertEqual(self._infusions(events)[0].effective_at, self._at(self.begin))
+
+    def test_corrected_rh_end_reopens_water_support_without_confirming_until_new_originals(self):
+        self.side = int(BY_KEY["curve_original_samples"].minimum)
+        self.parameters = detection_parameters(curve_original_samples=self.side)
+        self.p = self.parameters.values
+        self.width = (2 * self.side + 2) * self.step
+        peak = self.begin + self.width
+        end = peak + self.step
+        points = [(0, self.baseline), (self.begin, self.baseline),
+                  (peak, self.peak), (end, self.peak)]
+        shapes = [self._shape("rise", self.begin, peak)]
+        detector = Detector(self.parameters, T0, (Position.UPPER,))
+        events = []
+        with self._patch_math(shapes):
+            self._feed(detector, self.begin, points, events)
+            detector.accept(measurement(
+                Position.UPPER, Quantity.TEMPERATURE, self.temperature,
+                self.begin + self.step / 2, measured=self._at(self.begin + self.step / 2),
+            ))
+            for index in range(1, self.width // self.step + 2):
+                second = self.begin + index * self.step
+                if index == self.side + 1:
+                    detector.accept(measurement(
+                        Position.UPPER, Quantity.TEMPERATURE, self.temperature, second,
+                        measured=self._at(self.begin + 3 * self.step / 4),
+                    ))
+                self._send(detector, second, self._value(points, second), events,
+                           omit=((Position.UPPER, Quantity.TEMPERATURE),))
+            component = detector._original_infusion_candidate
+            self.assertTrue(component["strong"])
+            self.assertTrue(component["rise_ended"])
+            self.assertFalse(component["qualified"])
+            self.assertEqual(component["water_end"][Position.UPPER], self._at(end))
+            self.assertIn("upper", dict(component["rise_end_windows"]))
+            state = component["water_state"][Position.UPPER]
+            pending = dict(state["pending"])
+            seen_through = state["seen_through"]
+            self.assertTrue(pending)
+            self.assertIsNone(state["base"])
+            self.assertEqual(self._infusions(events), [])
+
+            continued_peak = end + 2 * self.step
+            fall_end = continued_peak + self.width
+            increase = (self.peak - self.baseline) * self.step / self.width
+            corrected = self.peak + increase
+            shapes[0]["until"] = continued_peak
+            shapes.append(self._shape("decay", continued_peak, fall_end))
+            self._send(detector, end + self.step / 4, corrected, events,
+                       measured_second=end, omit=((Position.UPPER, Quantity.TEMPERATURE),))
+            # The receipt is between raster steps. Consume its correction
+            # before supplying any fresh original or the missing T partner.
+            events.extend(detector.advance(self._at(end + self.step), enabled=True))
+            self.assertIs(detector._original_infusion_candidate, component)
+            self.assertFalse(component["rise_ended"])
+            self.assertNotIn(Position.UPPER, component["water_end"])
+            self.assertNotIn("upper", dict(component["rise_end_windows"]))
+            self.assertIs(component["water_state"][Position.UPPER], state)
+            self.assertEqual(state["seen_through"], seen_through)
+            self.assertEqual(state["pending"], {**pending, self._at(end): (self._at(end), corrected)})
+            self.assertFalse(component["qualified"])
+            self.assertIsNone(detector.infusion_episode)
+            self.assertEqual(self._infusions(events), [])
+
+            continued = [(end, corrected), (continued_peak, corrected + increase),
+                         (fall_end, self.level)]
+            self.assertLessEqual(
+                continued_peak - (self.begin + 3 * self.step / 4),
+                self.p["curve_original_gap_temperature_upper_seconds"],
+            )
+            self._feed(detector, continued_peak, continued, events)
+            self.assertIs(detector._original_infusion_candidate, component)
+            self.assertTrue(component["qualified"])
+            self.assertGreater(component["water"][Position.UPPER]["change"], 0)
+            self.assertGreater(state["seen_through"], self._at(end))
+            self.assertGreater(state["maximum"].humidity_sample[0], self._at(end))
+            self.assertEqual(state["base"].humidity_sample, component["bases"][Position.UPPER])
+            self.assertEqual(state["pending"], {})
+            self._feed(detector, fall_end, continued, events)
+        self.assertEqual(len(self._infusions(events)), 1)
+
     def test_original_gap_between_grid_ticks_restarts_background_support(self):
         count = int(BY_KEY["curve_original_samples"].minimum)
         self.parameters = detection_parameters(
@@ -1886,6 +3085,19 @@ class InfusionLifecycleTests(unittest.TestCase):
         self.side = count
         self.width = (2 * count + 2) * self.step
         points, shapes, _, _ = self._scenario(merged=False)
+        cadence = self.step / 4
+        binding_second = self.begin + count * self.step
+        turn_second = binding_second - count * cadence
+        turn_humidity = self.baseline + (self.peak - self.baseline) / 10
+        # Dense originals would put both K-windows on the same linear rise
+        # before the declared form becomes available. Keep the existing
+        # baseline, peak and fall, but supply a real positive slope turn at
+        # that boundary instead of relying on a declared RH direction alone.
+        points.insert(2, (turn_second, turn_humidity))
+        before_slope = (turn_humidity - self.baseline) / (turn_second - self.begin)
+        after_slope = (self.peak - turn_humidity) / (
+            self.begin + self.width - turn_second
+        )
         first_background = self.begin + 2 * self.width + count * self.step
 
         def forms(windows, **kwargs):
@@ -1900,11 +3112,43 @@ class InfusionLifecycleTests(unittest.TestCase):
         detector = Detector(self.parameters, T0)
         events = []
         with self._patch_math(shapes, forms=forms):
-            cadence = self.step / 4
             for tick in range(int(first_background / cadence) + 1):
                 second = tick * cadence
                 self._send(detector, second, self._value(points, second), events)
+            self.assertEqual(len(self._infusions(events)), 1)
             original = self._infusions(events)[0]
+            self.assertEqual(original.effective_at, self._at(self.begin))
+            component = detector._infusion_episode["original_component"]
+            self.assertEqual(component["received_at"], self._at(binding_second))
+            self.assertEqual({name for name, _ in component["humidity_kinks"]},
+                             {position.value for position in detector.positions})
+            for name, kink in component["humidity_kinks"]:
+                with self.subTest(position=name):
+                    self.assertEqual(kink.factor, self.p["curve_original_kink_factor"])
+                    self.assertEqual(
+                        tuple(stamp for stamp, _ in kink.window.previous),
+                        tuple(self._at(turn_second - (count - 1 - index) * cadence)
+                              for index in range(count)),
+                    )
+                    self.assertEqual(
+                        tuple(stamp for stamp, _ in kink.window.current),
+                        tuple(self._at(turn_second + (index + 1) * cadence)
+                              for index in range(count)),
+                    )
+                    self.assertAlmostEqual(kink.window.b, before_slope)
+                    self.assertAlmostEqual(kink.window.v, after_slope)
+                    self.assertGreater(kink.window.b,
+                                       self.p["curve_original_significance"] * kink.window.e_minus)
+                    self.assertGreater(kink.delta, kink.tolerance)
+                    self.assertGreater(kink.effective_change, 0)
+            self.assertEqual(detector._infusion_episode["confirmation_basis"], "after_fall")
+            self.assertTrue(component["strong"])
+            self.assertTrue(component["qualified"])
+            self.assertTrue(component["fall_confirmed"])
+            bound = dict(component["binding_windows"])
+            for name, pair in component["fall_windows"]:
+                self.assertGreater(pair.temperature.newest_at, bound[name].temperature.newest_at)
+                self.assertGreater(pair.humidity.newest_at, bound[name].humidity.newest_at)
             bound_at = detector.infusion_episode.bound_at
             reference = detector._infusion_episode["original_background"]
             self.assertIsNotNone(reference)
@@ -1922,6 +3166,7 @@ class InfusionLifecycleTests(unittest.TestCase):
                 self._send(detector, second, self.level, events)
             endpoint = detector._original_window_cache[Position.UPPER, Quantity.HUMIDITY][1]
             self.assertIsNotNone(endpoint)
+            self.assertEqual(endpoint.start_at, self._at(first_background + self.step / 2))
             self.assertEqual(endpoint.newest_at, self._at(first_background + self.step))
             self.assertEqual(detector.infusion_episode.phase, "active")
             self.assertIsNone(detector.infusion_episode.level_end_at)
@@ -1966,6 +3211,7 @@ class InfusionLifecycleTests(unittest.TestCase):
         self.assertEqual(infusion.effective_at, self._at(self.begin))
         self.assertGreater(infusion.trace_at, self._at(peak))
         self.assertEqual(infusion.detected_at, infusion.trace_at)
+        self.assertEqual(detector._infusion_episode["confirmation_basis"], "after_fall")
         self.assertEqual(detector._infusion_episode["confirmed_at"], infusion.trace_at)
         gang = controller.session.timeline.active
         self.assertIsNotNone(gang)
@@ -1980,6 +3226,180 @@ class InfusionLifecycleTests(unittest.TestCase):
         self.assertEqual(consumed[0].effective_at, infusion.effective_at)
         self.assertEqual(consumed[0].received_at, infusion.detected_at)
         self.assertTrue(controller.regulation_inputs.gang_heat_demand)
+
+    def test_native_fresh_rise_confirms_once_before_both_position_peaks(self):
+        points, _, _, _ = self._scenario(merged=False)
+        # Both positions deliberately use the same existing fixture curve.
+        # This is a causal lifecycle case, not an R07 sensor-specific replay.
+        peaks = {position: self._at(self.begin + self.width)
+                 for position in (Position.UPPER, Position.LOWER)}
+        detector = Detector(self.parameters, T0)
+        controller = Controller(self.parameters)
+        controller.set_temperature(self.temperature, T0)
+        controller.begin_session("s", T0)
+        controller.process(event("initial-open", Kind.DOOR_OPEN, 0))
+        controller.process(event("initial-close", Kind.DOOR_CLOSE, 0))
+        events = []
+        self._feed(detector, self.begin, points, events, controller=controller)
+        self.assertEqual(self._infusions(events), [])
+        second = self.begin + self.step
+        while second <= self.begin + self.width:
+            self._send(detector, second, self._value(points, second), events,
+                       controller=controller)
+            if self._infusions(events):
+                break
+            second += self.step
+        self.assertEqual(len(self._infusions(events)), 1)
+        infusion = self._infusions(events)[0]
+        self.assertEqual(infusion.detected_at, self._at(second))
+        self.assertEqual(infusion.trace_at, infusion.detected_at)
+        for position, peak in peaks.items():
+            with self.subTest(position=position):
+                self.assertLess(infusion.detected_at, peak)
+        self.assertLessEqual(infusion.effective_at, infusion.trace_at)
+        episode = detector._infusion_episode
+        self.assertEqual(episode["confirmation_basis"], "early_rise")
+        component = episode["original_component"]
+        self.assertFalse(component["fall_ready"])
+        self.assertFalse(component["fall_confirmed"])
+        native = original_contrasts(
+            dict(component["early_confirmation_windows"]),
+            expected_positions=tuple(position.value for position in detector.positions),
+        )
+        self.assertIsNotNone(native)
+        self.assertGreater(native.rise, self.p["curve_original_new_infusion_contrast"])
+        self.assertGreater(native.humidity_rise_change,
+                           self.p["curve_original_significance"])
+        bound = {name: (temperature, humidity)
+                 for name, temperature, humidity in component["newest"]}
+        for name, pair in native.positions:
+            self.assertGreater(pair.temperature.newest_at, bound[name][0])
+            self.assertGreater(pair.humidity.newest_at, bound[name][1])
+
+            for quantity in (pair.temperature, pair.humidity):
+                self.assertLessEqual(quantity.newest_at, infusion.trace_at)
+            state = component["water_state"][Position(name)]
+            self.assertGreater(state["maximum"].lower_density, state["base"].upper_density)
+            for witness in (state["base"], state["maximum"]):
+                self.assertLessEqual(witness.available_at, infusion.trace_at)
+        self._feed(detector, self.begin + 2 * self.width + (self.side + 1) * self.step,
+                   points, events, controller=controller)
+        self.assertEqual(self._infusions(events), [infusion])
+        self.assertIs(detector.infusion_episode.confirmed_detection, infusion)
+        gang = controller.session.timeline.active
+        self.assertIsNotNone(gang)
+        self.assertEqual(len(gang.infusion_events), 1)
+        self.assertEqual(gang.infusion_events[0].booking_at, infusion.trace_at)
+        consumed = [item for item in controller.consumer_events if item.kind == "infusion"]
+        self.assertEqual(len(consumed), 1)
+        self.assertEqual(consumed[0].received_at, infusion.detected_at)
+
+    def test_real_rh_negative_kink_can_open_a_door_inside_an_active_infusion(self):
+        points, _, _, _ = self._scenario(merged=False)
+        peak = self.begin + self.width
+        fall = peak + self.width
+        detector = Detector(self.parameters, T0)
+        events = []
+        self._feed(detector, peak, points, events)
+        self.assertEqual(len(self._infusions(events)), 1)
+        active = detector.infusion_episode
+        self.assertEqual(active.phase, "active")
+        temperatures = [(0, self.temperature), (peak, self.temperature),
+                        (fall, trace(85)[0])]
+        self._feed(detector, fall, points, events, temperatures=temperatures)
+        self.assertEqual([item.kind for item in events].count(Kind.DOOR_OPEN), 1)
+        self.assertTrue(detector.open)
+        self.assertIsNone(detector.infusion_episode)
+        candidate = detector.door_episode["original_open"]
+        self.assertGreater(candidate["humidity_fall_onset"],
+                           self.p["curve_original_significance"])
+        self.assertGreater(candidate["received_at"], self._at(peak))
+        self.assertGreater(candidate["confirmation_received_at"], candidate["received_at"])
+
+    def test_early_confirmation_q_correction_is_an_existing_interface_special_case(self):
+        """Historical correction contract; no observed HA sensor path is claimed."""
+        points, _, _, _ = self._scenario(merged=False)
+        detector = Detector(self.parameters, T0)
+        events = []
+        # Optional onset models are absent. R, Q and every water pair remain
+        # native; this isolates the stored original-evidence correction API.
+        with self._patch_math([], forms=original_contrasts):
+            self._feed(detector, self.begin + self.side * self.step, points, events)
+            self.assertEqual(len(self._infusions(events)), 1)
+            infusion = self._infusions(events)[0]
+            episode = detector._infusion_episode
+            self.assertEqual(episode["confirmation_basis"], "early_rise")
+            component = episode["original_component"]
+            confirming = dict(component["early_confirmation_windows"])
+            expected = tuple(position.value for position in detector.positions)
+            old = original_contrasts(confirming, expected_positions=expected)
+            self.assertIsNotNone(old)
+            self.assertGreater(old.humidity_rise_change,
+                               self.p["curve_original_significance"])
+            humidity = confirming["upper"].humidity
+            binding = dict(component["binding_windows"])
+            binding_humidity = binding["upper"].humidity
+            # Its zero OLS weight preserves the native binding slope, while
+            # its negative weight in the later previous window can remove Q.
+            corrected_at = binding_humidity.previous[len(binding_humidity.previous) // 2][0]
+            self.assertIn(corrected_at, {stamp for stamp, _ in humidity.previous})
+            correction = 2 * self.baseline - self.peak
+            self.assertNotIn(corrected_at, {
+                stamp for _, pair in component["rise_windows"]
+                for stamp, _ in pair.humidity.previous + pair.humidity.current
+            })
+            water = {position: (state["base"], state["maximum"])
+                     for position, state in component["water_state"].items()}
+            self.assertTrue(all(
+                corrected_at != witness.humidity_sample[0]
+                for witnesses in water.values() for witness in witnesses
+            ))
+            held_rise = component["rise_score"]
+            self.assertGreater(held_rise, component["threshold"])
+            corrected = original_window(
+                tuple((stamp, correction if stamp == corrected_at else value)
+                      for stamp, value in humidity.previous + humidity.current),
+                count=self.side, scale=humidity.scale, at=humidity.newest_at,
+                max_gap_seconds=self.p["curve_original_gap_humidity_upper_seconds"],
+            )
+            self.assertIsNotNone(corrected)
+            proof = original_contrasts({
+                **confirming, "upper": replace(confirming["upper"], humidity=corrected),
+            }, expected_positions=expected)
+            self.assertIsNotNone(proof)
+            self.assertEqual(proof.rise, old.rise)
+            self.assertGreater(proof.rise, self.p["curve_original_new_infusion_contrast"])
+            self.assertLessEqual(proof.humidity_rise_change,
+                                 self.p["curve_original_significance"])
+            corrected_binding = original_window(
+                tuple((stamp, correction if stamp == corrected_at else value)
+                      for stamp, value in binding_humidity.previous + binding_humidity.current),
+                count=self.side, scale=binding_humidity.scale, at=binding_humidity.newest_at,
+                max_gap_seconds=self.p["curve_original_gap_humidity_upper_seconds"],
+            )
+            self.assertIsNotNone(corrected_binding)
+            binding_proof = original_contrasts({
+                **binding, "upper": replace(binding["upper"], humidity=corrected_binding),
+            }, expected_positions=expected)
+            self.assertEqual(corrected_binding.v, binding_humidity.v)
+            self.assertAlmostEqual(corrected_binding.b, binding_humidity.b)
+            self.assertGreater(binding_proof.humidity_rise_onset,
+                               self.p["curve_original_significance"])
+            detector._correct_original_infusion(
+                Position.UPPER, Quantity.HUMIDITY, corrected_at, correction,
+            )
+            self.assertEqual(component["rise_score"], held_rise)
+            self.assertEqual(water, {
+                position: (state["base"], state["maximum"])
+                for position, state in component["water_state"].items()
+            })
+            self.assertTrue(all(witness["change"] > 0
+                                for witness in episode["water"].values()))
+            self.assertIsNone(detector._original_infusion_candidate)
+            self.assertIsNone(episode["original_component"])
+            self.assertIn(Position.UPPER, episode["interrupted"])
+            self.assertIs(detector.infusion_episode.confirmed_detection, infusion)
+            self.assertEqual(self._infusions(events), [infusion])
 
     def test_multiple_peaks_before_level_end_remain_one_infusion(self):
         points, shapes, rise_two, fall_two = self._scenario(merged=True)
@@ -2052,7 +3472,7 @@ class InfusionLifecycleTests(unittest.TestCase):
         self.assertIsNone(pending.confirmed_detection)
         self.assertIsNone(pending.confirmed_at)
 
-    def test_qualified_continuation_keeps_delayed_fall_beyond_historical_onset_window(self):
+    def test_qualified_continuation_accepts_late_historical_witness_and_keeps_delayed_fall(self):
         points, shapes, rise_two, _ = self._scenario(merged=True)
         historical_onset = rise_two
         second_peak = (
@@ -2062,7 +3482,9 @@ class InfusionLifecycleTests(unittest.TestCase):
         second_fall = second_peak + self.width
         points[-2:] = [(second_peak, self.peak), (second_fall, self.level)]
         shapes[2:] = [self._shape("decay", second_peak, second_fall)]
-        reveal_at = rise_two + (self.side + 2) * self.step
+        gap = max(self.p[f"curve_original_gap_humidity_{position.value}_seconds"]
+                  for position in (Position.UPPER, Position.LOWER))
+        reveal_at = rise_two + (self.side + ceil(gap / self.step) + 2) * self.step
         expired_at = historical_onset + self.p["curve_window_seconds"] + self.step
         fall_at = second_peak + self.side * self.step
         self.assertLess(reveal_at + self.step, expired_at)
@@ -2103,6 +3525,23 @@ class InfusionLifecycleTests(unittest.TestCase):
                     stamp for stamp, _ in
                     detector._curve_series[position, Quantity.HUMIDITY]["points"]
                 })
+                witness = component["onset_witnesses"][position]
+                first_right = tuple(point for point in witness.original_points
+                                    if point[0] > witness.onset_at)[:self.side]
+                self.assertEqual(len(first_right), self.side)
+                self.assertGreater(
+                    (self._at(reveal_at + self.step) - first_right[-1][0]).total_seconds(),
+                    self.p[f"curve_original_gap_humidity_{position.value}_seconds"],
+                )
+                self.assertTrue(all(
+                    (right[0] - left[0]).total_seconds()
+                    <= self.p[f"curve_original_gap_humidity_{position.value}_seconds"]
+                    for left, right in zip(witness.original_points, witness.original_points[1:])
+                ))
+                current = detector._original_window_cache[position, Quantity.HUMIDITY][1]
+                originals = dict(witness.original_points)
+                self.assertTrue(all(originals.get(stamp) == value
+                                    for stamp, value in current.current))
             self.assertLess(self._at(fall_at), native_at + timedelta(
                 seconds=self.p["curve_window_seconds"],
             ))
@@ -2291,6 +3730,53 @@ class InfusionLifecycleTests(unittest.TestCase):
                          [self._at(self.begin), self._at(rise_two)])
         self.assertTrue(all(item.effective_at < item.trace_at for item in infusions))
 
+    def test_native_rise_after_level_end_confirms_without_legacy_witness_only_when_separated(self):
+        for separated in (True, False):
+            with self.subTest(binding_support_after_level_end=separated):
+                points, native_shapes, next_rise, next_fall = self._scenario(merged=False)
+                ended = self.begin + 2 * self.width + self.side * self.step
+                if not separated:
+                    next_rise = ended + self.step
+                    next_peak = next_rise + self.width
+                    next_fall = next_peak + self.width
+                    points = points[:4] + [(next_rise, self.level), (next_peak, self.peak),
+                                          (next_fall, self.level)]
+                    native_shapes = native_shapes[:2] + [
+                        self._shape("rise", next_rise, next_peak),
+                        self._shape("decay", next_peak, next_fall),
+                    ]
+                detector = Detector(self.parameters, T0)
+                events = []
+
+                def forms(windows, **kwargs):
+                    return self._original_forms(native_shapes, windows, **kwargs)
+
+                # Native original forms carry both pulses. No optional curve
+                # witness supplies either episode's onset or assignment.
+                with self._patch_math([], forms=forms):
+                    self._feed(detector, next_rise - self.step, points, events)
+                    first = detector.infusion_episode
+                    self.assertEqual(first.phase, "ended")
+                    self.assertEqual(first.level_end_at, self._at(ended))
+                    self.assertEqual(len(self._infusions(events)), 1)
+                    self._feed(detector, next_rise + self.side * self.step, points, events)
+                    component = detector._original_infusion_candidate
+                    self.assertEqual(component["onset_witnesses"], {})
+                    self.assertEqual(component["assignment"], "new" if separated else "unknown")
+                    self.assertEqual(all(
+                        pair.humidity.start_at > first.level_end_at
+                        for _, pair in component["binding_windows"]
+                    ), separated)
+                    self._feed(detector, next_fall, points, events)
+                infusions = self._infusions(events)
+                self.assertEqual(len(infusions), 2 if separated else 1)
+                if separated:
+                    self.assertGreater(infusions[1].effective_at, first.level_end_at)
+                    self.assertNotEqual(detector.infusion_episode.bound_at, first.bound_at)
+                    self.assertIs(detector.infusion_episode.confirmed_detection, infusions[1])
+                else:
+                    self.assertEqual(detector.infusion_episode, first)
+
     def test_infusion_confirmation_needs_new_original_not_ticks_or_same_time_correction(self):
         points, shapes, _, _ = self._scenario(merged=False)
         detector = Detector(self.parameters, T0, (Position.UPPER,))
@@ -2437,16 +3923,36 @@ class InfusionLifecycleTests(unittest.TestCase):
         confirmed = ready + self.step
         recognized_at = self._at(confirmed + 5 * self.step)
         end = self.begin + self.width
-        initial_t, initial_h = trace(70)
-        falling_t, falling_h = trace(70 + self.step)
+        initial_t, falling_t = trace(70)[0], trace(70 + self.step)[0]
         # Spread the existing fixture's first loss over the configured local
         # model flank, leaving an observable onset before OLS confirmation.
         temperatures = [(0, self.temperature), (self.begin, self.temperature),
                         (end, self.temperature
                          + (falling_t - initial_t) * self.width / flank_seconds)]
+        # Consume the RH noise scales and this fixture's exact time geometry.
+        # The chosen rate first resolves the RH kink at ready, then the next
+        # fresh T/RH pair may confirm independently of optional onset models.
+        unit_fall = tuple((self._at(second), -max(0, second - self.begin))
+                          for second in range(0, ready + self.step, self.step))
+        rate_boundaries = {}
+        for at in (ready - self.step, ready):
+            rate_boundaries[at] = []
+            for position in (Position.UPPER, Position.LOWER):
+                window = original_window(
+                    unit_fall, count=self.side,
+                    scale=self.p[f"curve_original_noise_humidity_{position.value}"],
+                    max_gap_seconds=self.p[f"curve_original_gap_humidity_{position.value}_seconds"],
+                    at=self._at(at),
+                )
+                self.assertIsNotNone(window)
+                unit_onset = min(-window.v / window.e,
+                                 -(window.v - window.b) / (window.e + window.e_minus))
+                rate_boundaries[at].append(self.p["curve_original_significance"] / unit_onset)
+        lower, upper = max(rate_boundaries[ready]), min(rate_boundaries[ready - self.step])
+        self.assertLess(lower, upper)
+        humidity_rate = (lower + upper) / 2
         humidities = [(0, self.baseline), (self.begin, self.baseline),
-                      (end, self.baseline
-                       + (falling_h - initial_h) * self.width / flank_seconds)]
+                      (end, self.baseline - humidity_rate * self.width)]
         shapes = [
             self._shape("open", self.begin, end, Quantity.TEMPERATURE),
             self._shape("open", self.begin, end),
@@ -2464,6 +3970,9 @@ class InfusionLifecycleTests(unittest.TestCase):
             self._feed(prepared, ready, humidities, events, temperatures=temperatures)
             self.assertFalse(prepared.open)
             self.assertNotIn(Kind.DOOR_OPEN, [item.kind for item in events])
+            native = prepared.door_episode["original_open"]
+            self.assertEqual(native["received_at"], self._at(ready))
+            self.assertGreater(native["humidity_fall_onset"], self.p["curve_original_significance"])
             self.assertIn(thermal_key, prepared._curve_proposals)
             self.assertTrue(prepared._remember_curve_proposal(
                 "door_open", positions, quantities, floor=prepared._curve_closed_since,
@@ -2471,12 +3980,13 @@ class InfusionLifecycleTests(unittest.TestCase):
                 observed_at=self._at(ready),
             ))
             self.assertIn(mixed_key, prepared._curve_proposals)
-            # Reuse this single prefix for the routing guards. The next RH
-            # original has no local RH model and no new T confirmation.
+            # Reuse this single prefix for the routing guards. Its next fresh
+            # T/RH pair retains the native branch without a local RH model.
             shapes.pop()
             for case in ("complete_thermal", "incomplete_thermal",
                          "ambiguous_mixed", "controller_rejected_mixed"):
                 with self.subTest(case=case):
+                    shapes[0]["until"] = ready if case == "incomplete_thermal" else end
                     detector = deepcopy(prepared, {id(prepared.p): prepared.p})
                     if case == "ambiguous_mixed":
                         detector._curve_proposals[mixed_key] = replace(
@@ -2507,9 +4017,10 @@ class InfusionLifecycleTests(unittest.TestCase):
                         ))
                         detector._curve_proposals.pop(thermal_key)
                     found = []
+                    native = detector.door_episode["original_open"]
                     self._send(
                         detector, confirmed, self._value(humidities, confirmed), found,
-                        omit=tuple((position, Quantity.TEMPERATURE) for position in positions),
+                        temperature=self._value(temperatures, confirmed),
                         detected_at=recognized_at,
                     )
                     openings = [item for item in found if item.kind == Kind.DOOR_OPEN]
@@ -2523,11 +4034,20 @@ class InfusionLifecycleTests(unittest.TestCase):
                     self.assertEqual(opening.channels, tuple(position.value for position in positions))
                     self.assertTrue(detector.open)
                     self.assertTrue(detector.door_episode["opening_humidity"])
+                    self.assertIs(detector.door_episode["original_open"], native)
+                    self.assertEqual(native["confirmation_received_at"], self._at(confirmed))
+                    bound = dict(native["windows"])
+                    for name, pair in native["confirmation_windows"]:
+                        self.assertGreater(pair.temperature.newest_at, bound[name].temperature.newest_at)
+                        self.assertGreater(pair.humidity.newest_at, bound[name].humidity.newest_at)
+                        self.assertEqual(detector.door_episode["sources"][Position(name)],
+                                         (f"sensor.{name}_temperature", f"sensor.{name}_humidity"))
                     self.assertEqual(detector.opened_at, effective_at)
                     self.assertEqual(detector.door_episode["started_at"], effective_at)
                     diagnostic = detector.diagnostic
                     self.assertTrue(diagnostic["decisions"]["door_open"]["result"])
-                    self.assertFalse(diagnostic["decisions"]["door_open_heating"]["result"])
+                    self.assertEqual(diagnostic["decisions"]["door_open_heating"]["result"],
+                                     case != "incomplete_thermal")
                     self.assertEqual(diagnostic["door_open_onset_attribution"], {
                         "confirmation_basis": "original_ols",
                         "route": "door_open_heating" if uses_thermal else "door_open",
@@ -2547,7 +4067,8 @@ class InfusionLifecycleTests(unittest.TestCase):
         first_fall = first_peak + self.width
         door_start = first_fall + max(1, self.side - 2) * self.step
         door_bottom = door_start + self.width
-        close_start = door_bottom + max(
+        water_plateau = door_bottom + self.width
+        close_start = water_plateau + max(
             self.p["infusion_window_seconds"], self.p["median_seconds"],
         ) + self.side * self.step
         close_end = close_start + self.width
@@ -2556,20 +4077,21 @@ class InfusionLifecycleTests(unittest.TestCase):
         next_fall = next_peak + self.width
         # Reuse the same physical opening as the detector's water-form tests.
         fixture = DetectorTests()
-        _, fixture_plateau, _, fixture_values = fixture._ventilation_curve(
+        fixture_begin, fixture_plateau, _, fixture_values = fixture._ventilation_curve(
             Detector(self.parameters, T0),
         )
         initial_t, initial_h = fixture_values(0)
-        fallen_t, fallen_h = fixture_values(fixture_plateau)
+        fallen_t, fallen_h = fixture_values(fixture_begin + (fixture_plateau - fixture_begin) // 2)
         cold = self.temperature + fallen_t - initial_t
         dry = self.level + fallen_h - initial_h
         close_temperature = cold + (cold - self.temperature) * (close_start - door_bottom) / self.width
-        plateau_water = absolute_humidity(cold, dry)
+        plateau_temperature = cold + (cold - self.temperature) * (water_plateau - door_bottom) / self.width
+        plateau_water = absolute_humidity(plateau_temperature, dry)
         close_humidity = fixture._humidity_for_water(close_temperature, plateau_water)
         points = [
             (0, self.baseline), (self.begin, self.baseline), (first_peak, self.peak),
             (first_fall, self.level), (door_start, self.level),
-            (door_bottom, dry), (close_start, close_humidity),
+            (door_bottom, dry), (water_plateau, dry), (close_start, close_humidity),
             (close_end, self.level), (next_rise, self.level), (next_peak, self.peak),
             (next_fall, self.level),
         ]
@@ -2578,7 +4100,7 @@ class InfusionLifecycleTests(unittest.TestCase):
                         (close_end, self.temperature)]
         points = [(second, fixture._humidity_for_water(
             self._value(temperatures, second), plateau_water,
-        ) if door_bottom <= second <= close_start else self._value(points, second))
+        ) if water_plateau <= second <= close_start else self._value(points, second))
             for second in range(0, next_fall + self.step, self.step)]
         shapes = [self._shape("rise", self.begin, first_peak),
                   self._shape("decay", first_peak, first_fall),
@@ -2617,8 +4139,8 @@ class InfusionLifecycleTests(unittest.TestCase):
         self.assertIs(first_episode.confirmed_detection, self._infusions(events)[0])
         self.assertIs(next_episode.confirmed_detection, self._infusions(events)[1])
         self.assertEqual([item.kind for item in events if item.kind in (
-            Kind.DOOR_OPEN, Kind.VENTILATION, Kind.DOOR_CLOSE,
-        )], [Kind.DOOR_OPEN, Kind.VENTILATION, Kind.DOOR_CLOSE])
+            Kind.DOOR_OPEN, Kind.VENTILATION, Kind.VENTILATION_COMPLETE, Kind.DOOR_CLOSE,
+        )], [Kind.DOOR_OPEN, Kind.VENTILATION, Kind.VENTILATION_COMPLETE, Kind.DOOR_CLOSE])
         timeline = controller.session.timeline
         self.assertEqual(len(timeline.completed), 1)
         self.assertIsNotNone(timeline.active)
@@ -2665,18 +4187,22 @@ class InfusionLifecycleTests(unittest.TestCase):
         self.assertEqual(ended_episode.level_end_at, self._at(ended))
         self.assertEqual(ended_episode.end_basis, "original_background")
 
-    def test_late_rise_before_level_end_reopens_the_original_infusion(self):
-        points, shapes, _, _ = self._scenario(merged=False)
+    def test_old_legacy_rise_cannot_reassign_or_block_a_separated_native_infusion(self):
+        points, native_shapes, next_rise, next_fall = self._scenario(merged=False)
         first_peak = self.begin + self.width
         confirmed = first_peak + (self.side + 1) * self.step
         received_at = self._at(confirmed + self.step)
         ended = self.begin + 2 * self.width + self.side * self.step
         late_onset = ended - self.step
-        second_peak = shapes[2]["until"]
-        shapes = shapes[:2]
+        second_peak = native_shapes[2]["until"]
+        legacy_shapes = native_shapes[:2]
         detector = Detector(self.parameters, T0, (Position.UPPER,))
         events = []
-        with self._patch_math(shapes):
+
+        def forms(windows, **kwargs):
+            return self._original_forms(native_shapes, windows, **kwargs)
+
+        with self._patch_math(legacy_shapes, forms=forms):
             self._feed(detector, confirmed - self.step, points, events)
             self.assertEqual(self._infusions(events), [])
             self._send(detector, confirmed, self._value(points, confirmed), events,
@@ -2688,28 +4214,35 @@ class InfusionLifecycleTests(unittest.TestCase):
             ended_episode = detector.infusion_episode
             self.assertEqual(ended_episode.phase, "ended")
             self.assertEqual(ended_episode.level_end_at, self._at(ended))
-            self.assertEqual(ended_episode.confirmed_at, received_at)
             self.assertIs(ended_episode.confirmed_detection, original)
             self.assertLess(self._at(late_onset), ended_episode.level_end_at)
-            self.assertIn(self._at(late_onset), {
-                stamp for stamp, _ in
-                detector._curve_series[Position.UPPER, Quantity.HUMIDITY]["points"]
-            })
-            # Only the declared math witness arrives late. All further inputs
-            # are new originals; no correction invalidates the former level.
-            shapes.append(self._shape("rise", late_onset, second_peak))
-            self._feed(detector, second_peak, points, events)
-        continued = detector.infusion_episode
-        self.assertEqual(continued.phase, "active")
-        self.assertEqual(continued.bound_at, ended_episode.bound_at)
-        self.assertIs(continued.confirmed_detection, original)
-        self.assertEqual(continued.confirmed_at, received_at)
-        self.assertEqual(continued.last_rise_at, ((Position.UPPER, self._at(late_onset)),))
-        self.assertEqual(detector._infusion_episode["original_component"]["threshold"],
-                         self.p["curve_original_continuation_contrast"])
-        self.assertIsNone(continued.level_end_at)
-        self.assertIsNone(continued.end_basis)
-        self.assertEqual(self._infusions(events), [original])
+            # The supported old curve fit contains current originals, but its
+            # first right-hand originals still belong to the ended plateau.
+            legacy_shapes.append(self._shape("rise", late_onset, second_peak))
+            self._feed(detector, next_rise + (self.side + 1) * self.step, points, events)
+            candidate = detector._curve_candidates["infusion", Position.UPPER, Quantity.HUMIDITY]
+            self.assertEqual(candidate.onset_at, self._at(late_onset))
+            self.assertEqual(detector._curve_status[
+                "infusion", Position.UPPER, Quantity.HUMIDITY,
+            ]["status"], "supported")
+            component = detector._original_infusion_candidate
+            self.assertEqual(component["assignment"], "new")
+            self.assertFalse(component["continuing"])
+            self.assertEqual(component["onset_witnesses"], {})
+            self.assertTrue(all(pair.humidity.start_at > ended_episode.level_end_at
+                                for _, pair in component["binding_windows"]))
+            self.assertNotEqual(detector.infusion_episode.bound_at, ended_episode.bound_at)
+            self.assertIsNone(detector.infusion_episode.confirmed_detection)
+            self.assertEqual(self._infusions(events), [original])
+            # Its native support proves a separate event without replacing
+            # the invalid old witness with another optional onset model.
+            self._feed(detector, next_fall, points, events)
+        infusions = self._infusions(events)
+        self.assertEqual(len(infusions), 2)
+        self.assertGreater(infusions[1].effective_at, ended_episode.level_end_at)
+        self.assertEqual(infusions[1].effective_at, infusions[1].trace_at)
+        self.assertNotEqual(detector.infusion_episode.bound_at, ended_episode.bound_at)
+        self.assertIs(detector.infusion_episode.confirmed_detection, infusions[1])
         self.assertEqual(ended_episode.phase, "ended")
         self.assertEqual(ended_episode.level_end_at, self._at(ended))
         self.assertEqual(ended_episode.end_basis, "original_background")

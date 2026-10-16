@@ -120,7 +120,8 @@ def read_session(entry):
     fixture_path = TESTS / entry["file"]
     payload, fixture_provenance = bound_file(fixture_path, entry["sha256"])
     fixture = json.loads(payload)
-    if fixture["id"] != entry["id"] or fixture["kind"] != "real_session":
+    if (fixture["id"] != entry["id"]
+            or fixture["kind"] not in ("real_session", "measurement_recording")):
         raise ValueError(f"Not the declared real recording: {fixture_path}")
     samples_path = TESTS / entry["samples_file"]
     if fixture_path.parent / fixture["samples_file"] != samples_path:
