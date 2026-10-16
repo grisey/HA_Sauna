@@ -370,7 +370,9 @@ def project_door_cycles(timeline: Timeline | Mapping) -> list[dict]:
                 continue
             source_at = sources[source_id][2]
             if (cycle["id"] in ambiguous_ids or source_id in ambiguous_ids
-                    or (episode["ended_at"] is not None
+                    # Stufe 2 gehört zur bei ihrer Verarbeitung offenen Episode;
+                    # ein später rückzugeordneter Schluss hebt den Beleg nicht auf.
+                    or (prefix == "ventilation" and episode["ended_at"] is not None
                         and source_at > episode["ended_at"])):
                 cycle[f"{prefix}_at"] = None
                 cycle[f"{prefix}_event_id"] = None

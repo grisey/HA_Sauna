@@ -3,6 +3,7 @@ import asyncio
 from copy import deepcopy
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
+import json
 from pathlib import Path
 import tempfile
 import unittest
@@ -560,8 +561,11 @@ class DoorCycleProjectionTests(unittest.IsolatedAsyncioTestCase):
         before = deepcopy(payload)
         self.assert_fresh_projection(session.timeline, expected)
         self.assert_fresh_projection(payload["timeline"], expected)
+        restored = json.loads(json.dumps(payload))
+        self.assert_fresh_projection(restored["timeline"], expected)
         self.assertEqual(session, original)
         self.assertEqual(payload, before)
+        self.assertEqual(restored, before)
 
     async def test_proxy_cycle_keeps_exit_and_next_entry_with_original_times(self):
         c = controller()
@@ -604,19 +608,33 @@ class DoorCycleProjectionTests(unittest.IsolatedAsyncioTestCase):
             "vc2", "s", Kind.VENTILATION_COMPLETE,
             at(5.25), at(5.75), at(5.5), at(5.375),
         )
-        before_complete = c.session.timeline
+        c.advance(complete.booking_at)
+        before_complete = c.session
+        inputs_before_complete = c.regulation_inputs
+        decisions_before_complete = tuple(c.decisions)
         c.process(complete)
-        self.assertEqual(c.session.timeline, replace(
-            before_complete, processed=before_complete.processed + (complete,),
+        self.assertEqual(c.session, replace(
+            before_complete, timeline=replace(
+                before_complete.timeline,
+                processed=before_complete.timeline.processed + (complete,),
+            ),
         ))
-        c2 = event("c2", Kind.DOOR_CLOSE, 6)
+        self.assertEqual(c.regulation_inputs, inputs_before_complete)
+        self.assertEqual(tuple(c.decisions), decisions_before_complete)
+        # The equally booked closure backdates physical time past stage two.
+        c2 = Event(
+            "c2", "s", Kind.DOOR_CLOSE,
+            at(5.2), at(6), at(5.5), at(5.4),
+        )
+        self.assertLess(c2.effective_at, complete.effective_at)
+        self.assertEqual(c2.booking_at, complete.booking_at)
         w2 = event("w2", Kind.INFUSION, 7)
         c.process(c2)
         c.process(w2)
         timeline = c.session.timeline
         g2 = timeline.active
         self.assertNotEqual(g1.gang_id, g2.gang_id)
-        self.assertEqual(g2.started_at, at(6))
+        self.assertEqual(g2.started_at, at(5.2))
         self.assertEqual(g2.start_source_event_id, "c2")
         self.assertEqual(g2.infusion_events, (w2,))
         self.assertEqual(timeline.completed[0].infusion_events, (w1,))
@@ -625,11 +643,19 @@ class DoorCycleProjectionTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(timeline.gang_count, 1)
         self.assertEqual(timeline.processed, (o1, c1, w1, o2, v2, complete, c2, w2))
         expected = [entry, self.cycle(
-            "o2", "c2", 4, 6, links=(
+            "o2", "c2", 4, 5.2, links=(
                 {"gang_id": g1.gang_id, "role": "exit"},
                 {"gang_id": g2.gang_id, "role": "entry"},
             ), ventilation=(5, "v2"), ventilation_complete=(5.25, "vc2"),
         )]
+        self.assert_object_and_plain(c.session, expected)
+
+        o3 = event("o3", Kind.DOOR_OPEN, 8)
+        c.process(o3)
+        self.assertEqual(c.session.timeline.active, g2)
+        self.assertEqual(c.session.timeline.gang_count, 1)
+        self.assertEqual(c.session.timeline.processed, timeline.processed + (o3,))
+        expected.append(self.cycle("o3", None, 8, None))
         self.assert_object_and_plain(c.session, expected)
 
         # One queued archive roundtrip covers the same dual-role source sequence.
@@ -650,9 +676,9 @@ class DoorCycleProjectionTests(unittest.IsolatedAsyncioTestCase):
             archive = Archive(Path(directory) / "cycles.sqlite", "entry")
             await archive.start()
             try:
-                archive.save_session(c.session, at(7), configuration)
+                archive.save_session(c.session, at(8), configuration)
                 await archive.flush()
-                stored = await asyncio.to_thread(archive.read, "s", now=at(7))
+                stored = await asyncio.to_thread(archive.read, "s", now=at(8))
                 before = deepcopy(stored)
                 self.assertEqual(
                     [record["kind"] for record in stored["records"]], ["session"],
@@ -666,11 +692,67 @@ class DoorCycleProjectionTests(unittest.IsolatedAsyncioTestCase):
                         self.assert_fresh_projection(payload["timeline"], expected)
                 self.assertEqual(stored, before)
                 self.assertEqual(
-                    await asyncio.to_thread(archive.read, "s", now=at(7)), before,
+                    await asyncio.to_thread(archive.read, "s", now=at(8)), before,
                 )
                 self.assertEqual(c.session, original)
             finally:
                 await archive.close()
+
+    def test_complete_projection_requires_current_stage_one_and_unique_sources(self):
+        c = controller()
+        for source in (
+            event("open", Kind.DOOR_OPEN, 1),
+            event("vent", Kind.VENTILATION, 2),
+            # Scale the observed COMPLETE 53 / CLOSE 52 ordering to this fixture.
+            Event("complete", "s", Kind.VENTILATION_COMPLETE,
+                  at(5.3), at(5.4), at(5.3)),
+            Event("close", "s", Kind.DOOR_CLOSE, at(5.2), at(5.5), at(5.3)),
+            event("next-open", Kind.DOOR_OPEN, 6),
+        ):
+            c.process(source)
+        original = plain(c.session.timeline)
+        self.assert_object_and_plain(c.session, [
+            self.cycle(
+                "open", "close", 1, 5.2,
+                ventilation=(2, "vent"), ventilation_complete=(5.3, "complete"),
+            ),
+            self.cycle("next-open", None, 6, None),
+        ])
+        for label, missing, ambiguous in (
+            ("missing_stage_one", "vent", None),
+            ("new_opening_without_stage_one", "complete", None),
+            ("ambiguous_opening", None, "open"),
+            ("ambiguous_stage_one", None, "vent"),
+            ("ambiguous_stage_two", None, "complete"),
+        ):
+            with self.subTest(case=label):
+                payload = deepcopy(original)
+                expected = [
+                    self.cycle(
+                        "open", "close", 1, 5.2,
+                        ventilation=(2, "vent") if label in (
+                            "new_opening_without_stage_one", "ambiguous_stage_two",
+                        ) else None,
+                    ),
+                    self.cycle("next-open", None, 6, None),
+                ]
+                if missing is not None:
+                    source = next(
+                        item for item in payload["processed"]
+                        if item["event_id"] == missing
+                    )
+                    payload["processed"].remove(source)
+                    if missing == "complete":
+                        # A delayed record cannot borrow the preceding stage one.
+                        payload["processed"].append(source)
+                else:
+                    source = next(
+                        item for item in payload["processed"]
+                        if item["event_id"] == ambiguous
+                    )
+                    payload["processed"].append({**source, "kind": Kind.INFUSION.value})
+                self.assert_fresh_projection(payload, expected)
+        self.assertEqual(plain(c.session.timeline), original)
 
     async def test_delayed_direct_absence_links_exit_at_booking_after_door_close(self):
         c = controller(

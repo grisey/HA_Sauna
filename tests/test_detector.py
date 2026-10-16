@@ -1530,6 +1530,8 @@ class DetectorTests(unittest.TestCase):
         first_t, first_h = values(first_at)
         water = absolute_humidity(first_t, first_h)
         opening_temperature_loss = values(0)[0] - values(plateau)[0]
+        originals = []
+        epochs, rejected = detector._original_context(), detector.rejected
         for index in range(2 * count + 3):
             second = first_at + index * interval
             temperature = first_t + opening_temperature_loss * index / (2 * count + 2)
@@ -1537,15 +1539,51 @@ class DetectorTests(unittest.TestCase):
             for position in detector.positions:
                 for quantity, value in ((Quantity.TEMPERATURE, temperature),
                                         (Quantity.HUMIDITY, humidity)):
-                    self.assertTrue(detector.accept(measurement(
+                    original = measurement(
                         position, quantity, value, second,
                         measured=T0 + timedelta(seconds=second),
-                    )))
-        batch = detector.advance(T0 + timedelta(seconds=pending_at + step), enabled=True)
+                    )
+                    originals.append(original)
+                    self.assertTrue(detector.accept(original))
+        self.assertEqual(tuple(detector.pending), tuple(originals))
+        completion_originals = []
+
+        def received(detection):
+            if detection.kind is Kind.VENTILATION_COMPLETE:
+                completion_originals.append(
+                    detector.door_episode["original_ventilation_complete"]["confirmation_received_at"],
+                )
+
+        raster_at = T0 + timedelta(seconds=pending_at + step)
+        batch = detector.advance(raster_at, enabled=True, on_detection=received)
         doors = [item for item in batch if item.kind in (Kind.VENTILATION_COMPLETE, Kind.DOOR_CLOSE)]
         self.assertEqual([item.kind for item in doors], [Kind.VENTILATION_COMPLETE, Kind.DOOR_CLOSE])
-        self.assertLessEqual(doors[0].effective_at, doors[1].effective_at)
-        self.assertEqual(doors[0].trace_at, doors[1].trace_at)
+        self.assertEqual(len(completion_originals), 1)
+        close_original = detector.diagnostic["original_forms"]["confirmation_received_at"]
+        original_times = {item.received_at for item in originals}
+        self.assertIn(completion_originals[0], original_times)
+        self.assertIn(close_original, original_times)
+        self.assertLess(completion_originals[0], close_original)
+        self.assertLess(close_original, raster_at)
+        # A later original confirms the close after COMPLETE, while its
+        # retrospectively attributed onset remains at 52 s, with COMPLETE at 53 s.
+        self.assertEqual(doors[0].effective_at, T0 + timedelta(seconds=53))
+        self.assertEqual(doors[1].effective_at, T0 + timedelta(seconds=52))
+        self.assertGreater(doors[0].effective_at, doors[1].effective_at)
+        self.assertEqual(tuple(item.trace_at for item in doors), (raster_at, raster_at))
+        self.assertEqual(tuple(item.detected_at for item in doors), (raster_at, raster_at))
+        self.assertFalse(detector.pending)
+        self.assertFalse(detector._original_prefixes)
+        self.assertEqual(detector._original_context(), epochs)
+        self.assertEqual(detector.rejected, rejected)
+        for position in detector.positions:
+            for quantity in (Quantity.TEMPERATURE, Quantity.HUMIDITY):
+                accepted = tuple((item.measured_at, item.value) for item in originals
+                                 if item.position is position and item.quantity is quantity)
+                points = tuple(detector._curve_series[position, quantity]["points"])
+                self.assertEqual(points[-len(accepted):], accepted)
+        self.assertEqual([item.kind for item in found + batch].count(Kind.VENTILATION_COMPLETE), 1)
+        self.assertEqual([item.kind for item in found + batch].count(Kind.DOOR_CLOSE), 1)
         self.assertFalse(detector.open)
         self.assertIsNone(detector.door_episode)
 
