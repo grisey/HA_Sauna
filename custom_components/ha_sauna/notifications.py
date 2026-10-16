@@ -301,7 +301,9 @@ class HomeAssistantNotifications:
         ingress = prepared.ingress
         registration = prepared.registration
         if self._closed:
-            return TransportHandoff(notification, False, "Notification adapter is closed")
+            return TransportHandoff(
+                notification, False, "Notification adapter is closed"
+            )
         try:
             await self._send(notification)
         except BaseException as err:
