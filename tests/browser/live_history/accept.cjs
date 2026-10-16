@@ -560,14 +560,16 @@ fs.mkdirSync(output, { recursive: true });
       ];
     f.session.timeline.processed.push(...events);
     // Archive responses include the leading backend door-cycle projection.
-    f.session.door_cycles = [{
-      id: "door-cycle-proof",
-      started_at: boundary,
-      ended_at: null,
-      open: true,
-      event_ids: ["door-proof"],
-      gang_links: [],
-    }];
+    f.session.door_cycles = [
+      {
+        id: "door-cycle-proof",
+        started_at: boundary,
+        ended_at: null,
+        open: true,
+        event_ids: ["door-proof"],
+        gang_links: [],
+      },
+    ];
     for (const event of events)
       f.addRecord({
         kind: "detection",
@@ -756,9 +758,10 @@ fs.mkdirSync(output, { recursive: true });
     "the pinned point lies after the events inspected separately",
   );
   assert.match(
-    await selectionTooltip.innerText(),
-    /Saunagang.*Temperatur:.*°C.*Luftfeuchte:.*%/s,
+    await selectionPanel.locator(".history-tooltip-time").innerText(),
+    /Saunagang/,
   );
+  assert.match(await selectionTooltip.innerText(), /Temperatur:.*°C.*Luftfeuchte:.*%/s);
   assert.equal(
     await selectionPanel.locator("[data-history-selection]").getAttribute("visibility"),
     "visible",
@@ -817,7 +820,11 @@ fs.mkdirSync(output, { recursive: true });
   assert.equal(range.selection.kind, "range", "second mouse click completes the range");
   assert.equal(range.selection.start, pinned.selection.start);
   assert.ok(range.selection.end > range.selection.start);
-  assert.match(await selectionTooltip.innerText(), /Saunagang.*Anfang.*Ende/s);
+  assert.match(
+    await selectionPanel.locator(".history-tooltip-time").innerText(),
+    /Saunagang/,
+  );
+  assert.match(await readout.innerText(), /Anfang.*Ende/s);
 
   // Activating an event replaces the range with the same source-bound
   // selection used by its marker, values and event details.
@@ -831,7 +838,10 @@ fs.mkdirSync(output, { recursive: true });
     await selectionPanel.locator("#history-event-inspection").innerText(),
     /Aufguss/,
   );
-  assert.match(await selectionTooltip.innerText(), /Aufguss/);
+  assert.match(
+    await selectionPanel.locator(".history-tooltip-time").innerText(),
+    /Aufguss/,
+  );
   const eventSelection = await selectedValues(),
     infusionTime =
       Date.parse(settings.fixtures.history.origin) +
