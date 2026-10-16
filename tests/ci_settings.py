@@ -92,21 +92,12 @@ def outputs():
 
 
 def install_ha():
-    # requirements.txt is the sole version lock for every HA/browser job.
-    # The native mobile-app action fixture imports stream and camera image helpers.
-    names = {
-        "homeassistant", "securetar", "cronsim", "av", "numpy", "PyTurboJPEG",
-        "gazetteer-matcher", "hassil", "home-assistant-intents",
-    }
-    requirements = [
-        line.strip()
-        for line in (ROOT / "tests/browser/requirements.txt").read_text().splitlines()
-    ]
-    packages = [line for line in requirements if line.split("==")[0] in names]
-    if len(packages) != len(names):
-        raise ValueError("Incomplete or duplicate Home Assistant dependency pins")
+    # Reuse the complete shared environment used by the native HA/browser fixtures.
     subprocess.run(
-        [sys.executable, "-m", "pip", "install", *packages],
+        [
+            sys.executable, "-m", "pip", "install", "-r",
+            str(ROOT / "tests/browser/requirements.txt"),
+        ],
         check=True,
     )
 
