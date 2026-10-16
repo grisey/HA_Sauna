@@ -93,8 +93,15 @@ class DetectorTests(unittest.TestCase):
             return relative(value) if hasattr(value, "tzinfo") else value
 
         rows = []
+        previous_binding = None
         for row in traces:
-            if not any(kind in (Kind.DOOR_OPEN, Kind.DOOR_CLOSE) for kind in row["signals"]):
+            native = row.get("original_forms", {})
+            binding = native.get("candidate_received_at")
+            newly_bound = binding is not None and binding != previous_binding
+            previous_binding = binding
+            if not newly_bound and not any(
+                kind in (Kind.DOOR_OPEN, Kind.DOOR_CLOSE) for kind in row["signals"]
+            ):
                 continue
             candidates = []
             proposals = []
@@ -127,6 +134,7 @@ class DetectorTests(unittest.TestCase):
                     for position, metrics in row["metrics"].items()
                 },
                 "candidates": candidates, "proposals": proposals,
+                "original_forms": native,
             })
         event_rows = [
             (item.kind.value, relative(item.effective_at), relative(item.trace_at),

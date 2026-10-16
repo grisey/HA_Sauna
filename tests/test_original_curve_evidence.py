@@ -2130,6 +2130,13 @@ class OriginalCurveFollowupTests(unittest.TestCase):
                     ], [Kind.DOOR_OPEN, Kind.VENTILATION, Kind.DOOR_CLOSE])
                     # A formerly ventilated, now closed episode must not
                     # suppress the next pending RH stage before its OPEN.
+                    next_cycle_traces = []
+                    detector.observer = lambda row: next_cycle_traces.append({
+                        "at": row["at"],
+                        "signals": row["signals"],
+                        "original_forms": row.get("original_forms"),
+                        "original_ventilation": row.get("original_ventilation"),
+                    })
                     events += self._ramp(
                         detector, self.door_ticks, self.fall_step,
                         stop_when=lambda: bool(detector.door_episode
@@ -2143,7 +2150,9 @@ class OriginalCurveFollowupTests(unittest.TestCase):
                     self.assertEqual([item.kind for item in events].count(Kind.DOOR_OPEN), 1)
                     self.assertEqual([item.kind for item in events].count(Kind.VENTILATION), 1)
                     events += self._ramp(detector, 2 * self.count, cooling_delta)
-                    self.assertTrue(detector.open)
+                    self.assertTrue(detector.open, msg=json.dumps(
+                        next_cycle_traces, default=str, ensure_ascii=False,
+                    ))
                     self.assertEqual([
                         item.kind for item in events
                         if item.kind in (Kind.DOOR_OPEN, Kind.VENTILATION, Kind.DOOR_CLOSE)
