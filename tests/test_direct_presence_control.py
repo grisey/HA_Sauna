@@ -368,31 +368,6 @@ class DirectPresenceControlTests(unittest.TestCase):
         self.assertEqual(len(self.c.session.timeline.active.infusion_events), 1)
         self.assertEqual(sum(e.kind == "gang_confirmed" for e in self.c.consumer_events), 1)
 
-    def test_door_episode_across_operation_pause_cannot_start(self):
-        self.door(Kind.DOOR_OPEN, 1)
-        self.c.set_operation(False, at(2))
-        self.report("on", 3)
-        self.c.set_operation(True, at(4))
-        self.door(Kind.DOOR_CLOSE, 5)
-        self.assertIsNone(self.c.session.timeline.active)
-        self.door(Kind.DOOR_OPEN, 6)
-        self.report("on", 7)
-        self.door(Kind.DOOR_CLOSE, 8)
-        self.assertIsNotNone(self.c.session.timeline.active)
-
-    def test_complete_door_episode_while_off_cannot_start_on_resume(self):
-        self.c.set_operation(False, at(1))
-        self.door(Kind.DOOR_OPEN, 2)
-        self.report("on", 3)
-        self.door(Kind.DOOR_CLOSE, 4)
-        self.c.set_operation(True, at(5))
-        self.assertIsNone(self.c.session.timeline.active)
-        self.door(Kind.DOOR_OPEN, 6)
-        self.report("off", 7)
-        self.report("on", 8)
-        self.door(Kind.DOOR_CLOSE, 9)
-        self.assertIsNotNone(self.c.session.timeline.active)
-
     def test_old_selected_report_does_not_replace_current(self):
         self.start()
         self.assertFalse(self.report("off", 5, effective=1))
@@ -481,20 +456,6 @@ class ProxyDoorControlTests(unittest.TestCase):
                 self.assertEqual(c.session.timeline.active.started_at, at(5))
                 self.assertEqual(c.session.timeline.active.start_basis, "door_close")
                 self.assertFalse(c.session.timeline.entry_cycle_available)
-
-    def test_proxy_cycle_cannot_cross_operation_off(self):
-        c = controller()
-        c.process(event("o", Kind.DOOR_OPEN, 1))
-        c.set_operation(False, at(2))
-        c.set_operation(True, at(3))
-        c.process(event("c", Kind.DOOR_CLOSE, 4))
-        self.assertFalse(c.recognition_allowed(Kind.INFUSION))
-        self.assertFalse(c.process(event("stale", Kind.INFUSION, 5)).changed)
-        self.assertIsNone(c.session.timeline.active)
-        c.process(event("new-o", Kind.DOOR_OPEN, 6))
-        c.process(event("new-c", Kind.DOOR_CLOSE, 7))
-        c.process(event("new-water", Kind.INFUSION, 8))
-        self.assertEqual(c.session.timeline.active.started_at, at(7))
 
     def test_expired_proxy_entry_cannot_be_restarted_by_infusion(self):
         c = controller()

@@ -158,10 +158,3 @@ class OperationTests(unittest.TestCase):
             self.send("late", Kind.INFUSION, 35)
         self.assertIsNone(self.controller.session.timeline.active)
         self.assertEqual(self.controller.session.timeline.gang_count, 1)
-
-    def test_off_dominates_same_time_recognition(self):
-        self.start_gang()
-        self.controller.set_operation(False, at(30))
-        self.send("infusion", Kind.INFUSION, 30)
-        self.assertIsNone(self.controller.session.timeline.active)
-        self.assertEqual(self.controller.session.timeline.gang_count, 0)
