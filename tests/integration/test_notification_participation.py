@@ -91,7 +91,8 @@ class NotificationParticipationTests(unittest.IsolatedAsyncioTestCase):
             },
             "targets": (
                 sorted(target.endpoint for target in recipients.targets)
-                if recipients is not None else []
+                if recipients is not None
+                else []
             ),
         }
 
@@ -132,7 +133,9 @@ class NotificationParticipationTests(unittest.IsolatedAsyncioTestCase):
             + json.dumps({"selector": self.id(), **observed}, sort_keys=True)
         )
 
-    async def test_external_light_preserves_authenticated_actor_after_normalization(self):
+    async def test_external_light_preserves_authenticated_actor_after_normalization(
+        self,
+    ):
         await self.prepare_participants()
         session_id = self.runtime.session.session_id
         before = self.light_participation_snapshot()
@@ -151,7 +154,8 @@ class NotificationParticipationTests(unittest.IsolatedAsyncioTestCase):
         self.assertAlmostEqual(after["override"]["brightness"], 94 * 100 / 255)
         self.assertEqual(
             self.runtime.device.light_output.manual_ends_at,
-            self.now + timedelta(
+            self.now
+            + timedelta(
                 seconds=self.runtime.configuration.parameters.seconds(
                     "manual_override_minutes"
                 )
@@ -210,9 +214,7 @@ class NotificationParticipationTests(unittest.IsolatedAsyncioTestCase):
         self.assertIs(self.runtime.notification_recipients, recipients)
         guards["same_normalized_selection"] = self.light_participation_snapshot()
 
-        self.hass.states.async_set(
-            self.light.entity_id, "unavailable", context=context
-        )
+        self.hass.states.async_set(self.light.entity_id, "unavailable", context=context)
         self.assertEqual(
             self.hass.states.get(self.light.entity_id).context.user_id,
             self.users[1].id,
@@ -233,7 +235,8 @@ class NotificationParticipationTests(unittest.IsolatedAsyncioTestCase):
         )
         await self.hass.async_block_till_done()
         expected = [
-            item for item in self.runtime.device._expected_light_changes
+            item
+            for item in self.runtime.device._expected_light_changes
             if item["signature"] == ("on", 94)
         ]
         self.assertEqual(len(expected), 1)
