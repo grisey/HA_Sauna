@@ -79,11 +79,10 @@ class NotificationRecipientsTests(unittest.TestCase):
                     state,
                 )
 
-    def test_both_capabilities_require_evidence_and_resolution(self):
+    def test_send_capability_requires_evidence_and_resolution(self):
         assignment = (RecipientAssignment("user", {self.entity}),)
         for capability in (
             RecipientCapability(),
-            RecipientCapability(send=self.evidence),
             RecipientCapability(reply=self.evidence),
         ):
             with self.subTest(capability=capability):
@@ -99,6 +98,19 @@ class NotificationRecipientsTests(unittest.TestCase):
             (RecipientResolution(self.entity),),
         )
         self.assertFalse(result.targets)
+
+    def test_send_only_targets_can_be_selected_stored_and_accumulated(self):
+        capability = RecipientCapability(send=self.evidence)
+        resolutions = (self.resolve(self.entity, self.target, capability),)
+        assignment = RecipientAssignment("user", {self.entity})
+        self.assertTrue(capability.sendable)
+        self.assertFalse(capability.interactive)
+        self.assertEqual(eligible_recipients(resolutions), {self.entity})
+        self.assertIs(validate_assignment(assignment, resolutions), assignment)
+        result = SessionRecipients("instance", "session").accumulate(
+            ActorRef("user", "input"), (assignment,), resolutions,
+        )
+        self.assertEqual(result.targets, {self.target})
 
     def test_sessions_instances_and_transport_namespaces_are_distinct(self):
         first = SessionRecipients("instance", "session", {self.target})
@@ -166,17 +178,7 @@ class NotificationRecipientsTests(unittest.TestCase):
             ((RecipientResolution(self.entity),), "unresolved"),
             (
                 (self.resolve(self.entity, self.target, RecipientCapability()),),
-                "Send and reply capability evidence required",
-            ),
-            (
-                (
-                    self.resolve(
-                        self.entity,
-                        self.target,
-                        RecipientCapability(send=self.evidence),
-                    ),
-                ),
-                "Send and reply capability evidence required",
+                "Send capability evidence required",
             ),
             (
                 (
@@ -186,7 +188,7 @@ class NotificationRecipientsTests(unittest.TestCase):
                         RecipientCapability(reply=self.evidence),
                     ),
                 ),
-                "Send and reply capability evidence required",
+                "Send capability evidence required",
             ),
         ):
             with self.subTest(reason=reason):

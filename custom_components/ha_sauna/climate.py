@@ -9,6 +9,7 @@ from homeassistant.components.climate import (
 from homeassistant.const import UnitOfTemperature
 
 from .core.configuration_model import temperature_control
+from .core.notification_recipients import ActorRef
 from .core.parameters import BY_KEY
 from .entity import SaunaEntity
 from .settings import async_set_entity_parameter
@@ -93,9 +94,14 @@ class SaunaThermostat(SaunaEntity, ClimateEntity):
         if hvac_mode not in self.hvac_modes:
             raise ValueError("Unbekannter Betriebsmodus")
         if self.runtime.controller.control_mode == "manual":
-            await self.runtime.set_heater_override(hvac_mode == HVACMode.HEAT)
+            await self.runtime.set_heater_override(
+                hvac_mode == HVACMode.HEAT, actor=ActorRef(self._context.user_id, "ha_context"),
+            )
         else:
-            await self.runtime.set_operation(hvac_mode == HVACMode.HEAT)
+            await self.runtime.set_operation(
+                hvac_mode == HVACMode.HEAT,
+                actor=ActorRef(self._context.user_id, "ha_context"),
+            )
 
     async def async_turn_on(self):
         await self.async_set_hvac_mode(HVACMode.HEAT)
@@ -105,5 +111,6 @@ class SaunaThermostat(SaunaEntity, ClimateEntity):
 
     async def async_set_temperature(self, **kwargs):
         await async_set_entity_parameter(
-            self.hass, self.entry, "target_temperature_c", kwargs["temperature"]
+            self.hass, self.entry, "target_temperature_c", kwargs["temperature"],
+            actor=ActorRef(self._context.user_id, "ha_context"),
         )

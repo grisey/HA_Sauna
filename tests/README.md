@@ -38,8 +38,13 @@ node --test tests/panel_*.test.js
 Die Benachrichtigungsgrundformen werden durch `test_notification_recipients.py`
 und `test_notification_exchange.py` im Fachkernlauf erfasst. Die synthetischen
 Eingaben prüfen Identität, gemeinsame Eignungsvalidierung, Mengenbildung und
-Nachrichtenzuordnung. Diese Prüfungen enthalten keinen HA-Adapter und belegen
-weder Empfang noch Rückmeldungen eines tatsächlichen Companion-Clients.
+Nachrichtenzuordnung. `test_notification_runtime.py` prüft Konfigurationsrundlauf,
+private Archivprojektion und Sitzungsgrenzen einschließlich OFF-Pause.
+Die HA-Integrationstests `test_notification_service.py` und
+`test_notification_participation.py` prüfen den registrierten Sendedienst,
+einzelne Übergabeergebnisse und Benutzeridentität bei wirksamen Bedienänderungen.
+Diese synthetischen Prüfungen belegen weder Empfang noch Rückmeldungen eines
+tatsächlichen Companion-Clients.
 
 Die [Modellübergaben](../docs/modelluebergaben.md) werden durch
 `test_model_handoff.py`, `test_control_handoff.py`,

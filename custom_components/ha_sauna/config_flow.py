@@ -31,6 +31,7 @@ from .core.parameters import (
     Parameters,
 )
 from .maintenance_flow import MaintenanceOptionsMixin
+from .notification_options import NotificationOptionsMixin
 from .presentation import parameter_error
 from .runtime import Configuration
 from .settings import parameter_change
@@ -397,7 +398,7 @@ class SaunaConfigFlow(ConfigFlow, domain=DOMAIN):
         return SaunaOptionsFlow()
 
 
-class SaunaOptionsFlow(MaintenanceOptionsMixin, OptionsFlow):
+class SaunaOptionsFlow(NotificationOptionsMixin, MaintenanceOptionsMixin, OptionsFlow):
     """Anlagenwerte ändern und unabhängige Panel-Einstellungen erhalten."""
 
     def _has_session(self) -> bool:
@@ -428,7 +429,7 @@ class SaunaOptionsFlow(MaintenanceOptionsMixin, OptionsFlow):
         if area == "init":
             return self.async_show_menu(
                 step_id="init", menu_options=[
-                    "name", "bindings", *integration_groups(),
+                    "name", "bindings", "notification_user", *integration_groups(),
                     "rename_entity", "cleanup_entities",
                 ]
             )

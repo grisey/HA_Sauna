@@ -73,6 +73,38 @@ class _NativeButtonRuntime(SaunaRuntime):
 
 
 class ProgramConfigurationTests(unittest.TestCase):
+    def test_notification_actor_reports_effective_temperature_and_mode_changes(self):
+        from custom_components.ha_sauna.core.notification_recipients import ActorRef
+
+        async def exercise():
+            runtime = SaunaRuntime(Configuration.from_options(options()), clock=lambda: T0)
+            entry = SimpleNamespace(runtime_data=runtime,
+                                    options=runtime.configuration.as_options())
+            hass = _FakeHass()
+            await async_set_program(hass, entry, runtime.configuration.temperature_programs[0].id)
+            runtime._set_operation(True)
+            actor = ActorRef("user-a", "ha_authenticated_request")
+            runtime._record_notification_participant = Mock()
+            await async_set_parameters(hass, entry, {"target_temperature_c": 88.5},
+                                       partial=True, actor=actor)
+            runtime._record_notification_participant.assert_called_once_with(actor)
+            runtime._record_notification_participant.reset_mock()
+            await async_set_parameters(hass, entry, {"target_temperature_c": 88.5},
+                                       partial=True, actor=actor)
+            runtime._record_notification_participant.assert_not_called()
+            with self.assertRaises(ParameterError):
+                await async_set_parameters(hass, entry, {"target_temperature_c": "invalid"},
+                                           partial=True, actor=actor)
+            runtime._record_notification_participant.assert_not_called()
+            await async_set_control_mode(hass, entry, "manual", actor=actor)
+            runtime._record_notification_participant.assert_called_once_with(actor)
+            runtime._record_notification_participant.reset_mock()
+            await async_set_control_mode(hass, entry, "manual", actor=actor)
+            runtime._record_notification_participant.assert_not_called()
+            await runtime.close()
+
+        asyncio.run(exercise())
+
     def test_configuration_exposes_source_neutral_regulation(self):
         for mode, source, policy in (
             ("automatic", "ha_presence", "evidence_quality"),
@@ -1004,6 +1036,13 @@ class ProgramConfigurationTests(unittest.TestCase):
         self.assertEqual(runtime.configuration.temperature_programs[0].name, "Abendruhe")
 
     def test_reset_restores_all_software_options_but_not_hardware_inputs(self):
+        from custom_components.ha_sauna.core.notification_recipients import (
+            RecipientAssignment, RecipientRef,
+        )
+
+        assignments = (RecipientAssignment("user-a", frozenset({
+            RecipientRef("entity", "notify.test", "home_assistant"),
+        })),)
         configuration = Configuration(
             Bindings(bindings()),
             Parameters({"nominal_power_kw": 7, "session_gap_minutes": 17}),
@@ -1013,6 +1052,7 @@ class ProgramConfigurationTests(unittest.TestCase):
             button_program="genusszeit",
             selected_program_id="genusszeit",
             control_mode="manual",
+            notification_assignments=assignments,
         )
         runtime = SaunaRuntime(configuration)
         entry = SimpleNamespace(runtime_data=runtime, options=configuration.as_options())
@@ -1032,6 +1072,7 @@ class ProgramConfigurationTests(unittest.TestCase):
         self.assertEqual(reset.selected_program_id, None)
         self.assertEqual(reset.control_mode, "automatic")
         self.assertEqual(reset.bindings, configuration.bindings)
+        self.assertEqual(reset.notification_assignments, assignments)
         self.assertEqual(reset.control_input_mode, "button")
         self.assertEqual(reset.button_event_type, "press")
         self.assertTrue(runtime.reconfiguring)

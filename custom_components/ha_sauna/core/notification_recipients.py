@@ -88,6 +88,10 @@ class RecipientCapability:
                 raise ValueError("Capability requires explicit evidence")
 
     @property
+    def sendable(self) -> bool:
+        return self.send is not None
+
+    @property
     def interactive(self) -> bool:
         return self.send is not None and self.reply is not None
 
@@ -148,14 +152,14 @@ def _resolution_index(resolutions: Iterable[RecipientResolution]):
 
 def _eligible(resolution: RecipientResolution) -> bool:
     return (
-        resolution.recipient is not None and resolution.recipient.capability.interactive
+        resolution.recipient is not None and resolution.recipient.capability.sendable
     )
 
 
 def eligible_recipients(
     resolutions: Iterable[RecipientResolution],
 ) -> frozenset[RecipientRef]:
-    """Candidates supported by the explicit resolver snapshot."""
+    """Sendable candidates supported by the explicit resolver snapshot."""
     return frozenset(
         ref
         for ref, result in _resolution_index(resolutions).items()
@@ -185,7 +189,7 @@ def validate_assignment(
             raise ValueError(f"Recipient is unresolved: {ref.reference_id}")
         if not _eligible(result):
             raise ValueError(
-                f"Send and reply capability evidence required: {ref.reference_id}"
+                f"Send capability evidence required: {ref.reference_id}"
             )
     return assignment
 

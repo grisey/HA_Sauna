@@ -184,7 +184,7 @@ async def async_preview_field_standard_action(
 
 async def async_apply_field_standard_action(
     hass, entry, action, *, confirmation, field=None, group=None, all=False,
-    value=_NO_FIELD_VALUE,
+    value=_NO_FIELD_VALUE, actor=None,
 ):
     """Apply exactly the current confirmed proposal as one configuration write."""
     runtime = entry.runtime_data
@@ -301,6 +301,7 @@ async def async_set_parameters(
     explicit_target=None,
     program_mode=None,
     new_program=False,
+    actor=None,
 ):
     runtime = entry.runtime_data
     async with runtime.serialized():
@@ -312,6 +313,7 @@ async def async_set_parameters(
             explicit_target=explicit_target,
             program_mode=program_mode,
             new_program=new_program,
+            actor=actor,
         )
 
 
@@ -342,6 +344,7 @@ async def async_reset_parameters(hass, entry):
             presence_source=runtime.configuration.presence_source,
             appearance=runtime.configuration.appearance,
             field_standards=runtime.configuration.field_standards,
+            notification_assignments=runtime.configuration.notification_assignments,
         )
         # Ohne Änderung läuft kein Listener. Andernfalls hebt dieser die Sperre
         # nach direkter Übernahme oder durch das Neuladen der Laufzeit auf.
@@ -486,6 +489,7 @@ async def _async_set_parameters_locked(
     explicit_target=None,
     program_mode=None,
     new_program=False,
+    actor=None,
 ):
     """Shared parameter write path; the caller holds ``runtime._lock``."""
     runtime = entry.runtime_data
@@ -510,6 +514,7 @@ async def _async_set_parameters_locked(
         runtime.persist_completed_sessions()
         if runtime.session:
             before = runtime.controller.next_gang_temperature
+            program_before = _session_temperature_state(runtime)
             target = parameters.values["target_temperature_c"]
             runtime.controller.set_next_gang_temperature(target, now)
             runtime.log.info(
@@ -529,6 +534,8 @@ async def _async_set_parameters_locked(
                 )
             runtime._archive_signature = None
             await runtime._cycle()
+            if program_before != _session_temperature_state(runtime):
+                runtime._record_notification_participant(actor)
             return runtime.configuration.parameters.as_dict()
     change = parameter_change(
         runtime.configuration, values, partial=partial,
@@ -560,6 +567,7 @@ async def _async_set_parameters_locked(
                 else runtime.configuration.selected_program_id
             ),
             temperature_steps=selected_steps,
+            actor=actor,
         )
     else:
         runtime.reconfiguring = True
@@ -582,7 +590,7 @@ async def _async_set_parameters_locked(
     return parameters.as_dict()
 
 
-async def async_set_program(hass, entry, profile):
+async def async_set_program(hass, entry, profile, *, actor=None):
     """Select a constant, free progressive, or stored program without a reload.
 
     ``progressive`` uses the current start, end and distribution values; a
@@ -605,6 +613,7 @@ async def async_set_program(hass, entry, profile):
         await apply_temperature_parameters(
             runtime,
             parameters,
+            actor=actor,
             program_mode=mode,
             new_program=True,
             temperature_steps=(
@@ -641,6 +650,20 @@ async def async_set_program(hass, entry, profile):
         return parameters.as_dict()
 
 
+def _session_temperature_state(runtime):
+    """Only mutable program/override fields affected by temperature writes."""
+    session = runtime.session
+    if session is None:
+        return None
+    return tuple(getattr(session, key) for key in (
+        "temperature_base_c", "temperature_base_gang_count",
+        "temperature_program_mode", "temperature_program_gangs",
+        "temperature_program_steps", "temperature_program_start_gang_count",
+        "next_gang_temperature_c", "next_gang_temperature_blocked_by",
+        "active_gang_temperature_c", "active_gang_temperature_id",
+    ))
+
+
 async def apply_temperature_parameters(
     runtime,
     parameters,
@@ -650,9 +673,13 @@ async def apply_temperature_parameters(
     new_program=False,
     selected_program_id=...,
     temperature_steps=...,
+    actor=None,
 ):
     """Aufrufer hält runtime._lock; niemals Sitzung oder Regelzustände ersetzen."""
     before = runtime.configuration.parameters.as_dict()
+    program_before = _session_temperature_state(runtime)
+    selected_before = runtime.configuration.selected_program_id
+    steps_before = runtime.configuration.temperature_steps
     mode_before = runtime.configuration.program_mode
     target_before = runtime.controller.target_temperature
     runtime.controller.update_temperature_parameters(
@@ -716,6 +743,14 @@ async def apply_temperature_parameters(
             )
         runtime._archive_signature = None
     await runtime._cycle()
+    if (
+        changes or target_before != target_after
+        or mode_before != runtime.configuration.program_mode
+        or selected_before != runtime.configuration.selected_program_id
+        or steps_before != runtime.configuration.temperature_steps
+        or program_before != _session_temperature_state(runtime)
+    ):
+        runtime._record_notification_participant(actor)
 
 
 async def async_set_button_gesture(hass, entry, gesture):
@@ -856,7 +891,7 @@ async def async_set_program_catalog(hass, entry, stored):
         return [program.as_dict() for program in programs]
 
 
-async def async_set_temperature_steps(hass, entry, values):
+async def async_set_temperature_steps(hass, entry, values, *, actor=None):
     """Select explicitly entered stages through the same controller path."""
     runtime = entry.runtime_data
     async with runtime.serialized():
@@ -888,6 +923,7 @@ async def async_set_temperature_steps(hass, entry, values):
             new_program=True,
             selected_program_id=None,
             temperature_steps=steps,
+            actor=actor,
         )
         hass.config_entries.async_update_entry(
             entry, options=runtime.configuration.as_options()
@@ -895,7 +931,7 @@ async def async_set_temperature_steps(hass, entry, values):
         return parameters.as_dict()
 
 
-async def async_set_control_mode(hass, entry, mode):
+async def async_set_control_mode(hass, entry, mode, *, actor=None):
     """Switch controller mode and save the matching configuration atomically."""
     runtime = entry.runtime_data
     received_at = runtime._clock()
@@ -907,16 +943,19 @@ async def async_set_control_mode(hass, entry, mode):
             )
         if not isinstance(mode, str) or mode not in {"automatic", "manual"}:
             raise ValueError("Ungültiger Betriebsmodus")
+        mode_before = runtime.configuration.control_mode
         configuration = runtime._set_control_mode(mode, received_at=received_at)
         hass.config_entries.async_update_entry(
             entry, options=configuration.as_options()
         )
         await runtime._cycle()
+        if mode_before != runtime.configuration.control_mode:
+            runtime._record_notification_participant(actor)
         return configuration
 
 
-async def async_set_entity_parameter(hass, entry, key, value):
+async def async_set_entity_parameter(hass, entry, key, value, *, actor=None):
     try:
-        await async_set_parameters(hass, entry, {key: value}, partial=True)
+        await async_set_parameters(hass, entry, {key: value}, partial=True, actor=actor)
     except ParameterError as error:
         raise ValueError(parameter_error(error)) from None

@@ -12,6 +12,8 @@ from .appearance import APPEARANCE_CATALOG, frontend_preferences
 from .archive import energy_interval_delta, plain
 from .const import DOMAIN
 from .core.configuration_model import ConfigurationModel, temperature_control
+from .core.notification_recipients import ActorRef
+from .notification_options import CONF_NOTIFICATION_ASSIGNMENTS
 from .core.display import phase_timer, start_availability
 from .core.parameters import EDITABLE_DEFINITIONS, LIVE_TEMPERATURE_KEYS, ParameterError
 from .core.power import watts
@@ -46,6 +48,12 @@ from .settings import (
     async_set_program_catalog,
     async_set_temperature_steps,
 )
+
+
+
+def request_actor(request):
+    """Carry only the authenticated request user into an effective command."""
+    return ActorRef(request["hass_user"].id, "ha_authenticated_request")
 
 
 def can_control(request, entry_id):
@@ -181,7 +189,8 @@ class StateView(HomeAssistantView):
             )
             configuration_model = runtime.configuration_model
             configuration = {
-                **runtime.configuration.as_options(),
+                **{key: value for key, value in runtime.configuration.as_options().items()
+                   if key != CONF_NOTIFICATION_ASSIGNMENTS},
                 "parameters": runtime.configuration.parameters.as_dict(),
             }
             last_session = next(
@@ -343,7 +352,10 @@ class ControlView(HomeAssistantView):
         ):
             raise web.HTTPBadRequest(text="enabled muss wahr oder falsch sein")
         try:
-            await runtime.set_operation(body["enabled"])
+            await runtime.set_operation(
+                body["enabled"],
+                actor=request_actor(request),
+            )
         except ValueError as error:
             return self.json({"error": str(error)}, status_code=409)
         return self.json({"success": True})
@@ -374,7 +386,8 @@ class FinishPhaseView(HomeAssistantView):
             )
         try:
             await runtime.finish_phase(
-                body["purpose"], resolve_cooling_token(runtime.session, body["token"])
+                body["purpose"], resolve_cooling_token(runtime.session, body["token"]),
+                actor=request_actor(request),
             )
         except ValueError as error:
             return self.json({"error": str(error)}, status_code=409)
@@ -401,7 +414,7 @@ class FinishSessionView(HomeAssistantView):
                 status_code=400,
             )
         try:
-            await runtime.finish_session_gap(body["token"])
+            await runtime.finish_session_gap(body["token"], actor=request_actor(request))
         except ValueError as error:
             return self.json({"error": str(error)}, status_code=409)
         return self.json({"success": True})
@@ -432,7 +445,7 @@ class ParametersView(HomeAssistantView):
                 hass,
                 hass.config_entries.async_get_entry(entry_id),
                 body,
-                partial=self.partial,
+                partial=self.partial, actor=request_actor(request),
             )
         except ParameterError as error:
             return self.json({"error": parameter_error(error)}, status_code=400)
@@ -463,7 +476,7 @@ class ParametersView(HomeAssistantView):
                 hass,
                 hass.config_entries.async_get_entry(entry_id),
                 body,
-                partial=True,
+                partial=True, actor=request_actor(request),
             )
         except ParameterError as error:
             return self.json({"error": parameter_error(error)}, status_code=400)
@@ -588,7 +601,8 @@ class StandardsView(HomeAssistantView):
             if "confirmation" in body:
                 result = await async_apply_field_standard_action(
                     hass, entry, body["action"],
-                    confirmation=body["confirmation"], **arguments,
+                    confirmation=body["confirmation"],
+                    actor=request_actor(request), **arguments,
                 )
             else:
                 result = await async_preview_field_standard_action(
@@ -628,11 +642,11 @@ class ProgramView(HomeAssistantView):
             if isinstance(body, dict) and set(body) == {"profile"}:
                 if not isinstance(body["profile"], str):
                     raise ValueError("Ungültiges Temperaturprogramm")
-                parameters = await async_set_program(hass, entry, body["profile"])
+                parameters = await async_set_program(hass, entry, body["profile"], actor=request_actor(request))
             elif isinstance(body, dict) and set(body) == {"target_temperature_c"}:
                 parameters = await async_set_parameters(
                     hass, entry, body, partial=True, explicit_target=True,
-                    program_mode="constant", new_program=True,
+                    program_mode="constant", new_program=True, actor=request_actor(request),
                 )
             elif isinstance(body, dict) and set(body) == {
                 "target_temperature_c",
@@ -657,14 +671,14 @@ class ProgramView(HomeAssistantView):
                     hass,
                     entry,
                     body,
-                    partial=True,
+                    partial=True, actor=request_actor(request),
                     explicit_target=False,
                     program_mode="progressive",
                     new_program=True,
                 )
             elif isinstance(body, dict) and set(body) == {"temperature_steps"}:
                 parameters = await async_set_temperature_steps(
-                    hass, entry, body["temperature_steps"]
+                    hass, entry, body["temperature_steps"], actor=request_actor(request)
                 )
             else:
                 raise ParameterError("base", "invalid_parameters")
@@ -777,7 +791,7 @@ class ControlModeView(HomeAssistantView):
         if not isinstance(body, dict) or set(body) != {"mode"}:
             raise web.HTTPBadRequest(text="Betriebsmodus fehlt oder ist ungültig")
         try:
-            configuration = await async_set_control_mode(hass, entry, body["mode"])
+            configuration = await async_set_control_mode(hass, entry, body["mode"], actor=request_actor(request))
         except ValueError as error:
             return self.json({"error": str(error)}, status_code=409)
         return self.json(
@@ -802,7 +816,7 @@ class LightView(HomeAssistantView):
             raise web.HTTPBadRequest(text="Lichtwert fehlt oder ist ungültig")
         runtime = runtime_for(request.app[KEY_HASS], entry_id)
         try:
-            await runtime.set_light_override(value)
+            await runtime.set_light_override(value, actor=request_actor(request))
         except ValueError as error:
             return self.json({"error": str(error)}, status_code=400)
         return self.json({"success": True, "manual_controls": manual_controls(runtime)})
@@ -827,7 +841,7 @@ class HeaterView(HomeAssistantView):
                 text="Heizwert muss wahr, falsch oder automatisch sein"
             )
         try:
-            await runtime.set_heater_override(body["value"])
+            await runtime.set_heater_override(body["value"], actor=request_actor(request))
         except ValueError as error:
             return self.json({"error": str(error)}, status_code=409)
         return self.json({"success": True, "manual_controls": manual_controls(runtime)})

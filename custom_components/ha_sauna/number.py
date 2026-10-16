@@ -5,6 +5,7 @@ from homeassistant.helpers import entity_registry as er
 
 from .const import DOMAIN
 from .core.configuration_model import temperature_control
+from .core.notification_recipients import ActorRef
 from .core.parameters import BY_KEY, LIVE_TEMPERATURE_KEYS
 from .entity import SaunaEntity
 from .settings import async_set_entity_parameter
@@ -70,4 +71,7 @@ class SaunaNumber(SaunaEntity, NumberEntity):
         }
 
     async def async_set_native_value(self, value):
-        await async_set_entity_parameter(self.hass, self.entry, self.definition.key, value)
+        await async_set_entity_parameter(
+            self.hass, self.entry, self.definition.key, value,
+            actor=ActorRef(self._context.user_id, "ha_context"),
+        )

@@ -54,6 +54,16 @@ async def async_setup_entry(
             hass, runtime,
             hass.config.path("ha_sauna", f"{entry.entry_id}.sqlite"), entry.entry_id
         )
+        from .notification_services import register as register_notifications
+        from .notifications import HomeAssistantNotifications, async_resolve_recipients
+
+        runtime.notification_entry_id = entry.entry_id
+        runtime.notification_resolutions = await async_resolve_recipients(hass)
+        notifications = HomeAssistantNotifications(hass, entry.entry_id)
+        runtime.notification_transport = notifications
+        runtime.on_close(notifications.close)
+        await notifications.async_start()
+        register_notifications(hass)
         from .api import register
 
         register(hass)

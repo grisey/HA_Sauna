@@ -1002,6 +1002,79 @@ class AdapterTests(unittest.IsolatedAsyncioTestCase):
         with self.assertRaises(ConfigEntryError):
             await async_setup_entry(self.hass, self.entry)
 
+    async def test_notification_assignment_is_bounded_and_preserves_other_options(self):
+        from custom_components.ha_sauna.core.notification_recipients import (
+            CapabilityEvidence, RecipientCapability, RecipientRef,
+            RecipientResolution, ResolvedRecipient, TargetIdentity,
+        )
+        from custom_components.ha_sauna.notification_options import (
+            decode_notification_assignments,
+        )
+        from custom_components.ha_sauna import notifications
+
+        ref = RecipientRef("entity", "notify.test", "home_assistant")
+        resolution = RecipientResolution(ref, ResolvedRecipient(
+            ref, TargetIdentity("home_assistant", "notify.test"),
+            RecipientCapability(send=CapabilityEvidence("test", "message")),
+        ))
+        self.hass.auth = SimpleNamespace(async_get_users=AsyncMock(return_value=[
+            SimpleNamespace(id="user-a", name="User A", is_active=True,
+                            system_generated=False),
+        ]))
+        flow = self.module.SaunaOptionsFlow()
+        flow.hass = self.hass
+        original = dict(self.entry.options)
+        with (
+            patch.object(type(flow), "config_entry", new_callable=PropertyMock,
+                         return_value=self.entry),
+            patch.object(notifications, "async_resolve_recipients",
+                         AsyncMock(return_value=(resolution,))),
+            patch.object(self.module.dr, "async_get",
+                         return_value=SimpleNamespace(async_get=lambda key: None)),
+        ):
+            form = await flow.async_step_notification_user({"user_id": "user-a"})
+            self.assertEqual(form["step_id"], "notification_targets")
+            rejected = await flow.async_step_notification_targets({
+                "recipients": ["entity:notify.arbitrary"],
+            })
+            self.assertEqual(rejected["errors"]["base"], "invalid_notification_targets")
+            self.assertEqual(self.entry.options, original)
+            result = await flow.async_step_notification_targets({
+                "recipients": ["entity:notify.test"],
+            })
+            self.assertEqual(result["step_id"], "init")
+            assignment, = decode_notification_assignments(
+                self.entry.options["notification_assignments"]
+            )
+            self.assertEqual(assignment.user_id, "user-a")
+            self.assertEqual(assignment.recipients, frozenset({ref}))
+            self.assertEqual(self.entry.options["bindings"], original["bindings"])
+            await flow.async_step_notification_targets({"recipients": []})
+            self.assertEqual(self.entry.options["notification_assignments"], [])
+            notifications.async_resolve_recipients.return_value = ()
+            stale = await flow.async_step_notification_targets({
+                "recipients": ["entity:notify.test"],
+            })
+            self.assertEqual(stale["errors"]["base"], "invalid_notification_targets")
+            self.assertEqual(self.entry.options["notification_assignments"], [])
+
+    def test_notification_options_codec_rejects_malformed_and_duplicate_users(self):
+        from custom_components.ha_sauna.notification_options import (
+            decode_notification_assignments, encode_notification_assignments,
+        )
+        valid = [{"user_id": "user-a", "recipients": [{
+            "kind": "device", "reference_id": "device-a", "transport": "home_assistant",
+        }]}]
+        self.assertEqual(encode_notification_assignments(
+            decode_notification_assignments(valid)
+        ), valid)
+        self.assertEqual(decode_notification_assignments([]), ())
+        for invalid in ({}, [*valid, *valid], [{"user_id": "user-a", "recipients": [
+            {"kind": "service", "reference_id": "notify.fake", "transport": "home_assistant"},
+        ]}]):
+            with self.subTest(invalid=invalid), self.assertRaises(ValueError):
+                decode_notification_assignments(invalid)
+
 
 if __name__ == "__main__":
     unittest.main()

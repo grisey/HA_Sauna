@@ -70,3 +70,15 @@ Ofen- oder Lichtwahl werden in der Steuerungsansicht bedient.
 
 [Einstellungen und Rücksetzungen](parameter.md) ·
 [Sitzung starten und bedienen](bedienung.md)
+
+## Benachrichtigungsempfänger zuordnen
+
+**Benachrichtigungsempfänger** ordnet einem aktiven Home-Assistant-Benutzer
+explizit registrierte Benachrichtigungsziele zu. Mehrere Ziele sind möglich;
+eine leere Auswahl entfernt die Zuordnung dieses Benutzers. Andere
+Benutzerzuordnungen bleiben erhalten. Ohne Zuordnung gibt es keine abgeleiteten
+Empfänger. Eine Gerätebezeichnung oder Anwesenheit ersetzt keine Benutzeridentität.
+
+Die Auswahl unterscheidet einfache Nachrichten und die Companion-Anbindung mit
+offenen Daten und Antworten. Die [Benachrichtigungen](benachrichtigungen.md)
+beschreiben Versandgrenzen und Client-Voraussetzungen.

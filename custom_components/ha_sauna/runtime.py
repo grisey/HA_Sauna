@@ -45,6 +45,10 @@ from .core.input_handoff import (
     TemperatureInput,
 )
 from .core.models import Position, Session
+from .core.notification_recipients import ActorRef, RecipientAssignment, SessionRecipients
+from .notification_options import (
+    CONF_NOTIFICATION_ASSIGNMENTS, decode_notification_assignments, encode_notification_assignments,
+)
 from .core.parameters import (
     BY_KEY,
     CATALOG_PARAMETER_KEYS,
@@ -93,6 +97,8 @@ class Configuration:
     appearance: dict = field(default_factory=default_appearance)
     button_session_gesture: str = instance_default("button_session_gesture")
     field_standards: Mapping[str, object] = field(default_factory=dict)
+
+    notification_assignments: tuple[RecipientAssignment, ...] = ()
 
     def __post_init__(self) -> None:
         """Keep a direct legacy-button construction serializable as options."""
@@ -349,6 +355,7 @@ class Configuration:
                 "button_temperature_c",  # Obsolete saved option; ignored on load.
                 "appearance",
                 "field_standards",
+                CONF_NOTIFICATION_ASSIGNMENTS,
             }
         ):
             raise ValueError(
@@ -464,6 +471,7 @@ class Configuration:
             options.get("appearance", default_appearance()),
             options.get("button_session_gesture", instance_default("button_session_gesture")),
             options.get("field_standards", {}),
+            decode_notification_assignments(options.get(CONF_NOTIFICATION_ASSIGNMENTS, [])),
         )
 
     def as_options(self, *, snapshot=False) -> dict:
@@ -488,6 +496,8 @@ class Configuration:
                 else appearance_options(self.appearance)
             ),
             "field_standards": dict(self.field_standards),
+            **({CONF_NOTIFICATION_ASSIGNMENTS: encode_notification_assignments(self.notification_assignments)}
+               if not snapshot else {}),
         }
 
     def as_snapshot(self) -> dict:
@@ -546,6 +556,32 @@ class SaunaRuntime:
         self._saved_faults = None
         self.log = SaunaLog(id(self), configuration.log_level)
         self._logged_faults = {}
+        self.notification_entry_id = None
+        self.notification_transport = None
+        self.notification_resolutions = ()
+        self._notification_recipients = None
+
+    @property
+    def notification_recipients(self):
+        self._sync_notification_session()
+        return self._notification_recipients
+
+    def _sync_notification_session(self):
+        session_id = self.session.session_id if self.session and not self.closed else None
+        previous = self._notification_recipients
+        if previous is not None and previous.session_id != session_id:
+            if self.notification_transport is not None:
+                self.notification_transport.forget_session(previous.session_id)
+            self._notification_recipients = None
+        if session_id and self.notification_entry_id and self._notification_recipients is None:
+            self._notification_recipients = SessionRecipients(self.notification_entry_id, session_id)
+
+    def _record_notification_participant(self, actor):
+        self._sync_notification_session()
+        if actor is not None and self._notification_recipients is not None:
+            self._notification_recipients = self._notification_recipients.accumulate(
+                actor, self.configuration.notification_assignments, self.notification_resolutions,
+            )
 
     def set_log_level(self, level):
         self.log.set_level(level)
@@ -957,7 +993,7 @@ class SaunaRuntime:
                             else:
                                 raise
 
-    async def reset_protection(self):
+    async def reset_protection(self, *, actor: ActorRef | None = None):
         async with self.serialized():
             self._require_open()
             if self.session and self.session.operation_enabled:
@@ -968,7 +1004,10 @@ class SaunaRuntime:
                 or self.device.command_error
             ):
                 raise ValueError("Quittierung benötigt bestätigten Ofen-Aus-Zustand")
+            changed = bool(self.controller.protection)
             self.controller.protection.clear()
+            if changed:
+                self._record_notification_participant(actor)
             await self._cycle()
 
     async def start_archive(self, path, entry_id):
@@ -1268,6 +1307,7 @@ class SaunaRuntime:
         return lambda: self._subscribers.discard(callback)
 
     def notify(self):
+        self._sync_notification_session()
         phase = self.controller.phase
         self.log.change(
             "phase", phase, logging.INFO, "Betriebszustand: %s.", PHASES[phase]
@@ -1598,12 +1638,15 @@ class SaunaRuntime:
                     ),
                 ))
 
-    async def set_operation(self, enabled: bool):
+    async def set_operation(self, enabled: bool, *, actor: ActorRef | None = None):
         received_at = self._clock()
         async with self.serialized():
             self._require_open()
+            previous_operation = bool(self.session and self.session.operation_enabled)
             self._prepare_operation(enabled)
             result = self._set_operation(enabled, received_at=received_at)
+            if previous_operation != bool(self.session and self.session.operation_enabled):
+                self._record_notification_participant(actor)
             await self._cycle()
             return result
 
@@ -1681,7 +1724,7 @@ class SaunaRuntime:
             self._archive_signature = None
         return self.configuration
 
-    async def set_light_override(self, value):
+    async def set_light_override(self, value, *, actor: ActorRef | None = None):
         """Apply a manual light selection through the serialized runtime path."""
         async with self.serialized():
             self._require_open()
@@ -1709,7 +1752,11 @@ class SaunaRuntime:
             ):
                 return
             now = self._clock()
+            previous = (self.device.light_output.manual_brightness, self.device.light_output.manual_ends_at)
             self._set_light_override(value, now)
+            current = (self.device.light_output.manual_brightness, self.device.light_output.manual_ends_at)
+            if previous != current:
+                self._record_notification_participant(actor)
             await self._cycle()
 
     def _set_light_override(self, value, now):
@@ -1761,7 +1808,7 @@ class SaunaRuntime:
             return str(error)
         return None
 
-    async def set_heater_override(self, value: bool | None):
+    async def set_heater_override(self, value: bool | None, *, actor: ActorRef | None = None):
         """Apply a manual heater selection through the serialized runtime path."""
         received_at = self._clock()
         async with self.serialized():
@@ -1780,7 +1827,10 @@ class SaunaRuntime:
                 and self.controller.heater_override in (None, value)
             ):
                 return self.controller.last_decision
+            previous = self.controller.heater_override
             decision = self._set_heater_override(value, now, received_at=received_at)
+            if previous != self.controller.heater_override:
+                self._record_notification_participant(actor)
             await self._cycle()
             return decision
 
@@ -1828,11 +1878,12 @@ class SaunaRuntime:
         else:
             raise error
 
-    async def finish_phase(self, purpose, token):
+    async def finish_phase(self, purpose, token, *, actor: ActorRef | None = None):
         async with self.serialized():
             self._require_open()
             now = self._clock()
             deadline = self.controller.finish_phase(purpose, token, now)
+            self._record_notification_participant(actor)
             label = "Ofenkühlung"
             self.log.info(
                 "phase_finished_manually",
@@ -1853,18 +1904,23 @@ class SaunaRuntime:
                 )
             await self._cycle()
 
-    async def finish_session_gap(self, token):
+    async def finish_session_gap(self, token, *, actor: ActorRef | None = None):
         """End light after-run while preserving the shared recording interval."""
         async with self.serialized():
             self._require_open()
             now = self._clock()
+            previous_light = self.controller.light_after_run
+            previous_manual = (self.device.light_output.manual_brightness if self.device else None)
             deadline = self.controller.finish_session_gap(token, now)
+            changed = previous_light != self.controller.light_after_run or previous_manual is not None
             if self.device:
                 # A manual brightness must not be restored after the required
                 # session-light OFF.  The due LightAfterRun object keeps the
                 # adapter's normal OFF/retry path responsible for the output.
                 self.device.set_light_override(None, at=now)
                 self.device.light_output.finish_automatic()
+            if changed:
+                self._record_notification_participant(actor)
             self.log.info(
                 "session_light_finished_manually",
                 "Lichtnachlauf beendet; Wiederaufnahmefrist bleibt erhalten.",
@@ -2001,6 +2057,7 @@ class SaunaRuntime:
                         )
                     raise error
             self.closed = True
+            self._notification_recipients = None
             self._pending_device_inputs.clear()
             self.log.info("unload", "Sauna-Integration wird beendet; Ofen ausschalten.")
             callbacks, self._cleanup = self._cleanup, []

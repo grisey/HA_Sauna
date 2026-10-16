@@ -187,7 +187,9 @@
       "entity_id_in_use": "Diese Entitäts-ID ist bereits vergeben.",
       "preview_changed": "Die Liste hat sich geändert. Bitte die neue Vorschau prüfen und erneut bestätigen.",
       "reload_failed": "Eine betroffene Sauna konnte nicht neu geladen werden. Die aktuellen Entitäts-IDs und Zuordnungen bleiben gespeichert.",
-      "catalog_only": "Dieser Standardwert wird ausschließlich aus dem Parameterkatalog gelesen."
+      "catalog_only": "Dieser Standardwert wird ausschließlich aus dem Parameterkatalog gelesen.",
+      "invalid_notification_user": "Bitte einen angebotenen aktiven Home-Assistant-Benutzer auswählen.",
+      "invalid_notification_targets": "Die Empfänger sind nicht mehr auswählbar. Auswahl prüfen."
     },
     "abort": {
       "heater_already_used": "Dieser Heizaktor ist bereits einer anderen Sauna-Instanz zugeordnet.",
@@ -207,7 +209,8 @@
           "light": "Licht",
           "rename_entity": "Entität umbenennen",
           "cleanup_entities": "Entitäten bereinigen",
-          "runtime": "Daten und Laufzeit"
+          "runtime": "Daten und Laufzeit",
+          "notification_user": "Benachrichtigungsempfänger"
         }
       },
       "bindings": {
@@ -673,6 +676,22 @@
         },
         "data_description": {
           "history_context_seconds": "Zeitlicher Kontext der Sitzungsansicht. Die gespeicherte Vorgabe einer Sitzung bestimmt ihren Archivbereich."
+        },
+        "submit": "Speichern und zurück"
+      },
+      "notification_user": {
+        "title": "Benachrichtigungsempfänger",
+        "description": "Explizite Zuordnung zu einem Home-Assistant-Benutzer. Gerätebesitz wird nicht automatisch abgeleitet.",
+        "data": {
+          "user_id": "Home-Assistant-Benutzer"
+        },
+        "submit": "Empfänger auswählen"
+      },
+      "notification_targets": {
+        "title": "Empfänger zuordnen",
+        "description": "Nur Nachricht: einfacher Versand. Companion: offene Daten und Antworten über die vorhandene App-Anbindung; Funktionen hängen von Plattform, App-Version und Berechtigungen ab. Die Auswahl belegt keine Erreichbarkeit. Eine leere Auswahl entfernt die Zuordnung dieses Benutzers.",
+        "data": {
+          "recipients": "Registrierte Benachrichtigungsziele"
         },
         "submit": "Speichern und zurück"
       }
