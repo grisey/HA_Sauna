@@ -2333,6 +2333,372 @@ class InfusionLifecycleTests(unittest.TestCase):
         ]
         return points, shapes, rise_two, fall_two
 
+    def _kink_originals(self, *, rising, large, extra=0):
+        """A curved background, disjoint flat support and a declared linear turn."""
+        centered = tuple((index - (self.side - 1) / 2) * self.step
+                         for index in range(self.side))
+        slope_weight = sum(abs(value) for value in centered) / sum(
+            value * value for value in centered
+        )
+        catalog = 2 * max(self.p[f"curve_original_noise_humidity_{position.value}"]
+                          for position in Position) * slope_weight
+        history_change = 4 * catalog
+        quadratic = history_change / (2 * self.side * self.step)
+        history_count = 4 * self.side + 2 * self.p["curve_original_kink_history_windows"]
+        onset_index = history_count + 2 * self.side - 1
+        onset = onset_index * self.step
+        end = onset + (self.side + 2 + extra) * self.step
+        slope = (4 * self.p["curve_original_kink_factor"] * history_change if large
+                 else 2 * self.p["curve_original_significance"] * catalog)
+        cooling = (trace(70)[0] - trace(85)[0]) / self.width
+        rows = []
+        for second in range(0, end + self.step, self.step):
+            if second < history_count * self.step:
+                # The historical neighboring K-window slopes differ by the
+                # analytic constant 2*q*K*step. T stays flat, so this falling
+                # prehistory cannot confirm a door or bind a rising infusion.
+                humidity = self.baseline + quadratic * (
+                    second - (history_count - 1) * self.step
+                ) ** 2
+            else:
+                humidity = self.baseline + (1 if rising else -1) * slope * max(
+                    0, second - onset,
+                )
+            temperature = self.temperature - (0 if rising else cooling) * max(
+                0, second - onset,
+            )
+            rows.append((second, temperature, humidity))
+        return onset, end, rows
+
+    def _feed_kink_originals(self, detector, rows, events, *, batch=False, omit=(),
+                             humidity_sources=None, detected_at=None):
+        for second, temperature, humidity in rows:
+            for position in detector.positions:
+                position_humidity = humidity[position] if isinstance(humidity, dict) else humidity
+                for quantity, value in ((Quantity.TEMPERATURE, temperature),
+                                        (Quantity.HUMIDITY, position_humidity)):
+                    if (position, quantity) in omit:
+                        continue
+                    self.assertTrue(detector.accept(measurement(
+                        position, quantity, value, second, measured=self._at(second),
+                        source=(humidity_sources or {}).get(position)
+                        if quantity == Quantity.HUMIDITY else None,
+                    )))
+            if not batch:
+                events.extend(detector.advance(
+                    self._at(second), enabled=True, detected_at=detected_at,
+                ))
+        finished = ceil(rows[-1][0] / self.step) * self.step
+        if batch or rows[-1][0] < finished:
+            events.extend(detector.advance(
+                self._at(finished), enabled=True, detected_at=detected_at,
+            ))
+
+    def test_small_original_kinks_are_rejected_before_door_and_infusion_binding(self):
+        for rising in (False, True):
+            for control in (False, True):
+                with self.subTest(rising=rising, factor_zero=control):
+                    onset, _, rows = self._kink_originals(rising=rising, large=False)
+                    traces, events = [], []
+                    p = detection_parameters(curve_original_kink_factor=0) if control else self.parameters
+                    detector = Detector(p, T0, observer=traces.append)
+                    with self._patch_math([], forms=original_contrasts):
+                        self._feed_kink_originals(detector, rows, events)
+                    records = [row["original_infusion" if rising else "original_forms"]
+                               for row in traces if row["at"] > self._at(onset)
+                               and ("original_infusion" if rising else "original_forms") in row]
+                    raw_key = "rise_candidate" if rising else "binding_humidity_fall_onset"
+                    kink_key = "binding_humidity_rise_kink" if rising else "binding_humidity_fall_kink"
+                    raw_candidates = [record for record in records
+                                      if record.get(raw_key, {}).get("result") is True]
+                    self.assertTrue(raw_candidates)
+                    self.assertEqual(
+                        {record[kink_key]["result"] for record in raw_candidates}, {control},
+                    )
+                    for record in raw_candidates:
+                        for gate in record[kink_key]["positions"].values():
+                            self.assertEqual(gate["status"], "history")
+                            self.assertGreater(gate["history_scale"], gate["catalog_scale"])
+                            self.assertLess(gate["history_end"], gate["start_at"])
+                            if not control:
+                                self.assertLess(abs(gate["delta"]), gate["tolerance"])
+                    candidate = (detector._original_infusion_candidate if rising else
+                                 (detector.door_episode or {}).get("original_open"))
+                    self.assertEqual(candidate is not None, control)
+                    if control:
+                        self.assertGreater(candidate["received_at"], self._at(onset))
+                        self.assertTrue(all(kink.factor == 0
+                                            for _, kink in candidate["humidity_kinks"]))
+                    self.assertEqual([item.kind for item in events
+                                      if item.kind in (Kind.DOOR_OPEN, Kind.INFUSION)],
+                                     [Kind.DOOR_OPEN] if control and not rising else [])
+
+        for rising in (False, True):
+            for small_position in Position:
+                with self.subTest(rising=rising, only_small_role=small_position):
+                    onset, _, small = self._kink_originals(rising=rising, large=False)
+                    _, _, large = self._kink_originals(rising=rising, large=True)
+                    rows = [(second, temperature, {
+                        position: small_humidity if position == small_position else large_humidity
+                        for position in Position
+                    }) for (second, temperature, small_humidity), (_, _, large_humidity)
+                            in zip(small, large, strict=True)]
+                    traces, events = [], []
+                    detector = Detector(self.parameters, T0, observer=traces.append)
+                    with self._patch_math([], forms=original_contrasts):
+                        self._feed_kink_originals(detector, rows, events)
+                    key = "original_infusion" if rising else "original_forms"
+                    raw_key = "rise_candidate" if rising else "binding_humidity_fall_onset"
+                    kink_key = "binding_humidity_rise_kink" if rising else "binding_humidity_fall_kink"
+                    records = [row[key] for row in traces if row["at"] > self._at(onset)
+                               and key in row and row[key].get(raw_key, {}).get("result") is True]
+                    self.assertTrue(records)
+                    for record in records:
+                        gate = record[kink_key]
+                        self.assertFalse(gate["result"])
+                        self.assertFalse(gate["positions"][small_position.value]["result"])
+                    last = records[-1][kink_key]["positions"]
+                    other_position = next(position for position in Position if position != small_position)
+                    self.assertTrue(last[other_position.value]["result"])
+                    self.assertIsNone(detector._original_infusion_candidate if rising else
+                                      (detector.door_episode or {}).get("original_open"))
+                    self.assertEqual([item for item in events
+                                      if item.kind in (Kind.DOOR_OPEN, Kind.INFUSION)], [])
+
+    def test_synthetic_large_original_kinks_reach_binding_and_confirmation(self):
+        # The signal scales with the selected factor. This proves mathematical
+        # consumption by the owner; default suitability needs the real replay.
+        for rising in (False, True):
+            with self.subTest(rising=rising):
+                onset, _, rows = self._kink_originals(rising=rising, large=True)
+                detector, events = Detector(self.parameters, T0), []
+                with self._patch_math([], forms=original_contrasts):
+                    self._feed_kink_originals(detector, rows, events)
+                kind = Kind.INFUSION if rising else Kind.DOOR_OPEN
+                detected = [item for item in events if item.kind == kind]
+                self.assertEqual(len(detected), 1)
+                candidate = (detector._original_infusion_candidate if rising else
+                             detector.door_episode["original_open"])
+                self.assertIsNotNone(candidate)
+                self.assertGreater(candidate["received_at"], self._at(onset))
+                for _, kink in candidate["humidity_kinks"]:
+                    self.assertEqual(kink.factor, self.p["curve_original_kink_factor"])
+                    self.assertGreater(abs(kink.delta), kink.tolerance)
+                    self.assertEqual(kink.effective_change > 0, rising)
+                confirmation = (candidate["early_confirmation_windows"] if rising else
+                                candidate["confirmation_windows"])
+                bound = dict(candidate["binding_windows" if rising else "windows"])
+                for name, pair in confirmation:
+                    self.assertGreater(pair.temperature.newest_at, bound[name].temperature.newest_at)
+                    self.assertGreater(pair.humidity.newest_at, bound[name].humidity.newest_at)
+                    self.assertLessEqual(pair.humidity.newest_at, detected[0].trace_at)
+                if rising:
+                    self.assertIs(detector.infusion_episode.confirmed_detection, detected[0])
+                    self.assertEqual(detector._infusion_episode["confirmation_basis"], "early_rise")
+                else:
+                    self.assertTrue(detector.open)
+                    self.assertGreater(candidate["confirmation_received_at"], candidate["received_at"])
+
+    def test_bound_original_kink_background_is_frozen_while_new_originals_arrive(self):
+        for rising in (False, True):
+            with self.subTest(rising=rising):
+                _, end, rows = self._kink_originals(rising=rising, large=True)
+                detector, events = Detector(self.parameters, T0), []
+                with self._patch_math([], forms=original_contrasts):
+                    self._feed_kink_originals(detector, rows, events)
+                    candidate = (detector._original_infusion_candidate if rising else
+                                 detector.door_episode["original_open"])
+                    frozen = candidate["humidity_kinks"]
+                    frozen_values = tuple((name, kink.history_start, kink.history_end,
+                                           kink.history_scale, kink.used_scale, kink.tolerance)
+                                          for name, kink in frozen)
+                    kind = Kind.INFUSION if rising else Kind.DOOR_OPEN
+                    confirmed = tuple(item for item in events if item.kind == kind)
+                    _, _, continued = self._kink_originals(rising=rising, large=True, extra=self.side)
+                    self._feed_kink_originals(
+                        detector, [row for row in continued if row[0] > end], events,
+                    )
+                current = (detector._original_infusion_candidate if rising else
+                           detector.door_episode["original_open"])
+                self.assertIs(current, candidate)
+                self.assertIs(current["humidity_kinks"], frozen)
+                self.assertEqual(tuple((name, kink.history_start, kink.history_end,
+                                        kink.history_scale, kink.used_scale, kink.tolerance)
+                                       for name, kink in current["humidity_kinks"]), frozen_values)
+                self.assertEqual(tuple(item for item in events if item.kind == kind), confirmed)
+                for name, kink in frozen:
+                    latest = detector._original_kink_cache[Position(name)][1]
+                    self.assertGreater(latest.history_end, kink.history_end)
+                    self.assertGreater(latest.window.newest_at, kink.window.newest_at)
+
+    def test_original_kink_binding_and_confirmation_match_individual_and_batch_input(self):
+        for rising in (False, True):
+            for dense in (False, True):
+                with self.subTest(rising=rising, several_originals_per_tick=dense):
+                    _, _, rows = self._kink_originals(rising=rising, large=True)
+                    if dense:
+                        # Several distinct T/RH prefixes share one raster cell;
+                        # each must keep the background available on its receipt.
+                        rows = [(second / (self.side + 2), temperature, humidity)
+                                for second, temperature, humidity in rows]
+                    end = ceil(rows[-1][0] / self.step) * self.step
+                    results = []
+                    for batch in (False, True):
+                        detector, events = Detector(self.parameters, T0), []
+                        with self._patch_math([], forms=original_contrasts):
+                            self._feed_kink_originals(
+                                detector, rows, events, batch=batch, detected_at=self._at(end),
+                            )
+                        candidate = (detector._original_infusion_candidate if rising else
+                                     detector.door_episode["original_open"])
+                        binding_key = "binding_windows" if rising else "windows"
+                        confirmation_key = ("early_confirmation_windows" if rising else
+                                            "confirmation_windows")
+                        binding = dict(candidate[binding_key])
+                        for name, kink in candidate["humidity_kinks"]:
+                            self.assertEqual(kink.window, binding[name].humidity)
+                            self.assertLess(kink.history_end, binding[name].humidity.start_at)
+                        results.append((events, candidate["received_at"], candidate["newest"],
+                                        candidate[binding_key], candidate["humidity_kinks"],
+                                        candidate[confirmation_key]))
+                    self.assertEqual([item.kind for item in results[0][0]
+                                      if item.kind in (Kind.DOOR_OPEN, Kind.INFUSION)],
+                                     [Kind.INFUSION if rising else Kind.DOOR_OPEN])
+                    self.assertEqual(results[0], results[1])
+
+    def test_original_kink_corrections_invalidate_only_the_dependent_owner(self):
+        _, _, rows = self._kink_originals(rising=True, large=True)
+        prepared, events = Detector(self.parameters, T0), []
+        # The lower RH source exists, but without a lower T it contributes no
+        # position to the real upper-only binding or its confirmation.
+        omit = ((Position.LOWER, Quantity.TEMPERATURE),)
+        with self._patch_math([], forms=original_contrasts):
+            self._feed_kink_originals(prepared, rows, events, omit=omit)
+        self.assertEqual(len(self._infusions(events)), 1)
+        self.assertEqual(prepared._original_infusion_candidate["positions"], (Position.UPPER,))
+        for change in ("unrelated_source", "bound_source", "bound_source_before_confirmation",
+                       "unrelated_history", "bound_history", "bound_candidate"):
+            with self.subTest(change=change):
+                correction_events = []
+                if change in ("bound_candidate", "bound_source_before_confirmation"):
+                    detector = Detector(self.parameters, T0)
+                    with self._patch_math([], forms=original_contrasts):
+                        for row in rows:
+                            self._feed_kink_originals(detector, [row], correction_events, omit=omit)
+                            if detector._original_infusion_candidate is not None:
+                                break
+                    self.assertIsNone(detector.infusion_episode)
+                else:
+                    detector = deepcopy(prepared, {id(prepared.p): prepared.p})
+                candidate = detector._original_infusion_candidate
+                episode = detector._infusion_episode
+                detection = (detector.infusion_episode.confirmed_detection
+                             if episode is not None else None)
+                kink = dict(candidate["humidity_kinks"])["upper"]
+                if change in ("unrelated_source", "bound_source", "bound_source_before_confirmation"):
+                    before_confirmation = change == "bound_source_before_confirmation"
+                    if before_confirmation:
+                        second = (candidate["received_at"] - T0).total_seconds()
+                        temperature = detector.latest[Position.UPPER, Quantity.TEMPERATURE].value
+                        humidity = detector.latest[Position.UPPER, Quantity.HUMIDITY].value
+                    else:
+                        second, temperature, humidity = rows[-1]
+                    bound_originals = candidate["newest"]
+                    confirmation = candidate.get("early_confirmation_windows")
+                    # Let a complete new source build its own flat windows.
+                    # An old diagnostic object may survive the initial gap,
+                    # but cannot bind or confirm using the former source.
+                    count = 1 if change == "unrelated_source" else 2 * self.side + 1
+                    source_events = []
+                    with self._patch_math([], forms=original_contrasts):
+                        self._feed_kink_originals(
+                            detector, [(second + index * self.step, temperature, humidity)
+                                       for index in range(1, count + 1)], source_events, omit=omit,
+                            humidity_sources={
+                                Position.LOWER if change == "unrelated_source" else Position.UPPER:
+                                "sensor.replaced_humidity",
+                            },
+                        )
+                    self.assertEqual(self._infusions(source_events), [])
+                    self.assertEqual(candidate["newest"], bound_originals)
+                    self.assertEqual(candidate.get("early_confirmation_windows"), confirmation)
+                    if change != "unrelated_source":
+                        self.assertIsNone(detector._original_infusion_candidate)
+                        if episode is not None:
+                            self.assertIn(Position.UPPER, episode["interrupted"])
+                        else:
+                            self.assertIsNone(detector.infusion_episode)
+                            self.assertIsNone(confirmation)
+                elif change in ("unrelated_history", "bound_history"):
+                    # The stored-original correction API is the same explicit
+                    # interface special case as the existing Q-correction test;
+                    # old measured timestamps cannot enter through accept().
+                    history = dict(candidate["humidity_kink_originals"])["upper"]
+                    corrected_at, value = next(point for point in history
+                                               if point[0] == kink.history_end)
+                    detector._correct_original_infusion(
+                        Position.LOWER if change == "unrelated_history" else Position.UPPER,
+                        Quantity.HUMIDITY, corrected_at,
+                        value + self.p["curve_original_noise_humidity_upper"],
+                    )
+                else:
+                    pair = dict(candidate["binding_windows"])["upper"]
+                    window = pair.humidity
+                    points = window.previous + window.current
+                    corrected_at, value = window.current[-1]
+                    times = [(stamp - window.current[0][0]).total_seconds()
+                             for stamp, _ in window.current]
+                    mean = sum(times) / len(times)
+                    weight = (times[-1] - mean) / sum((time - mean) ** 2 for time in times)
+                    raw_limit = self.p["curve_original_significance"] * (window.e + window.e_minus)
+                    target = (raw_limit + kink.tolerance) / 2
+                    correction = value - ((window.v - window.b) - target) / weight
+                    corrected = original_window(
+                        tuple((stamp, correction if stamp == corrected_at else old)
+                              for stamp, old in points), count=self.side, scale=window.scale,
+                        max_gap_seconds=self.p["curve_original_gap_humidity_upper_seconds"],
+                        at=window.newest_at,
+                    )
+                    proof = original_contrasts({"upper": replace(pair, humidity=corrected)},
+                                               expected_positions=("upper",))
+                    self.assertGreater(proof.humidity_rise_onset,
+                                       self.p["curve_original_significance"])
+                    self.assertLess(corrected.v - corrected.b, kink.tolerance)
+                    # Correct the actual newest accepted RH original before a
+                    # later original can confirm the freshly bound candidate.
+                    received = (candidate["received_at"] - T0).total_seconds() + self.step
+                    originals = tuple(detector._curve_series[
+                        Position.UPPER, Quantity.HUMIDITY
+                    ]["points"])
+                    self.assertTrue(detector.accept(measurement(
+                        Position.UPPER, Quantity.HUMIDITY, correction, received,
+                        measured=corrected_at,
+                    )))
+                    with self._patch_math([], forms=original_contrasts):
+                        correction_events.extend(detector.advance(self._at(received), enabled=True))
+                    retained = tuple(detector._curve_series[
+                        Position.UPPER, Quantity.HUMIDITY
+                    ]["points"])
+                    self.assertEqual(retained[:-1], originals[:-1])
+                    self.assertEqual(retained[-1], (corrected_at, correction))
+                    self.assertEqual(self._infusions(correction_events), [])
+                dependent = change in ("bound_history", "bound_candidate")
+                if dependent:
+                    self.assertIsNone(detector._original_infusion_candidate)
+                    if episode is not None:
+                        self.assertIsNone(episode["original_component"])
+                        self.assertIn(Position.UPPER, episode["interrupted"])
+                    else:
+                        self.assertIsNone(detector.infusion_episode)
+                elif change not in ("bound_source", "bound_source_before_confirmation"):
+                    self.assertIs(detector._original_infusion_candidate, candidate)
+                    self.assertIs(episode["original_component"], candidate)
+                if detection is not None:
+                    self.assertIs(detector.infusion_episode.confirmed_detection, detection)
+                if change not in ("bound_source", "bound_source_before_confirmation", "bound_candidate"):
+                    self.assertEqual(detector.infusion_episode.phase, "active")
+                self.assertIs(candidate["humidity_kinks"][0][1], kink)
+
     def test_monotone_rise_has_no_infusion_and_keeps_person_detection_available(self):
         end = self.begin + ceil(
             self.p["strong_window_seconds"] + self.p["strong_hold_seconds"]

@@ -77,7 +77,7 @@ ist unter [Zeitangaben](speicherung.md#daten-und-zeitangaben) und
 [nachträgliche Zuordnung im Verlauf](speicherung.md#nachträgliche-zuordnung-im-verlauf)
 beschrieben.
 
-## Öffnen und Schließen der Tür
+### RH-Beginn und Knicktoleranz
 
 Unter den beschriebenen Gültigkeits- und Positionsregeln führt ein frischer
 Steigungswechsel der relativen Feuchte mit passender aktueller Richtung den
@@ -90,9 +90,56 @@ A↑   = min_p min(v_Hp/E_Hp, q_Hp)
 A↓   = min_p min(−v_Hp/E_Hp, −q_Hp)
 ```
 
-Ein neues Original mit `A↓ > s` bindet einen gemeinsamen Öffnungskandidaten.
-Ein Knick der Temperatur ist dafür nicht erforderlich. Die Bestätigung
-benötigt den fortgesetzten gemeinsamen Temperatur- und Feuchtefall:
+Zusätzlich wird die Steigungsdifferenz `δ_p = v_Hp − b_Hp` je Position gegen
+eine Knicktoleranz geprüft. Ihr historischer Maßstab stammt ausschließlich aus
+Originalen strikt vor dem Anfang des aktuellen `2K`-Blocks. Verwendet wird der
+jüngste zusammenhängende Abschnitt derselben Quelle und Zeitbasis innerhalb
+der gespeicherten Kurvenoriginale. Die zulässigen Originalabstände gelten
+innerhalb dieser Historie und an ihrem Anschluss an den aktuellen Block;
+eine größere Lücke schneidet ältere Historie ab.
+
+Aus diesem Abschnitt werden alle um jeweils ein Original verschobenen
+vollständigen `2K`-Blöcke gebildet. Jedes Paar aus zwei disjunkten
+`K`-Fenstern liefert mit denselben OLS-Regeln und den tatsächlichen
+Originalzeiten eine historische Steigungsdifferenz `v_j − b_j`. Der Median
+ihrer Beträge beschreibt die normale Kurvenänderungsstärke der relativen
+Feuchte in Prozentpunkten pro Sekunde. Auch ein glatter gekrümmter Verlauf
+kann dazu beitragen.
+
+Die Mindestzahl vollständiger historischer Blöcke steht in
+`curve_original_kink_history_windows`. Ab dieser Zahl gilt je Position der
+größere Wert aus dem historischen Median und der aktuellen Kataloggröße
+`E_Hp + E⁻_Hp`; bei kürzerer Historie gilt allein die Kataloggröße. Mit dem
+Faktor `f` aus `curve_original_kink_factor` werden Toleranz und
+vorzeichenbehaftete wirksame Steigungsänderung berechnet:
+
+```text
+S_p     = max(E_Hp + E⁻_Hp, median_j |v_j − b_j|)  bei ausreichender Historie
+S_p     = E_Hp + E⁻_Hp                           bei kürzerer Historie
+κ_p     = f · S_p
+δ_eff,p = sgn(δ_p) · max(0, |δ_p| − κ_p)
+```
+
+`S_p`, `κ_p` und `δ_eff,p` haben die Einheit Prozentpunkte pro Sekunde.
+Ein Anstiegsbeginn benötigt weiterhin `A↑ > s` und zusätzlich an jeder
+beteiligten Position `δ_eff,p > 0`; ein Fallbeginn benötigt `A↓ > s` und
+zusätzlich überall `δ_eff,p < 0`. Faktor `0` schaltet die zusätzliche
+Knickprüfung ab. Originalmesswerte und Rohkontraste bleiben erhalten;
+die nachfolgenden Bestätigungsbedingungen gelten weiterhin.
+
+Bei der Bindung werden die Originalfenster und die zugehörigen Knickbelege
+gespeichert: Faktor, Kataloggröße, Historienstatus, historischer Median,
+verwendeter Maßstab, Toleranz, rohe und wirksame Steigungsänderung sowie Anzahl
+und Zeitbereich der verfügbaren historischen Blöcke. Damit bleibt der Beginn
+an den damaligen Beleg gebunden.
+
+## Öffnen und Schließen der Tür
+
+Ein neues Original mit einem Fallbeginn gemäß
+[RH-Beginn und Knicktoleranz](#rh-beginn-und-knicktoleranz) bindet einen
+gemeinsamen Öffnungskandidaten. Ein Knick der Temperatur ist dafür nicht
+erforderlich. Die Bestätigung benötigt den fortgesetzten gemeinsamen
+Temperatur- und Feuchtefall:
 
 ```text
 O = min_p min(−v_Tp/E_Tp, −v_Hp/E_Hp)
@@ -183,9 +230,9 @@ F = min_p −v_Hp/E_Hp
 Q = min_p q_Hp
 ```
 
-Ein neues Original mit `A↑ > s` bindet eine Anstiegskomponente. Es benötigt
-damit sowohl einen aufgelösten RH-Anstieg als auch einen neuen positiven
-RH-Steigungswechsel. Ihre Basis ist je Position das früheste Minimum des
+Ein neues Original mit einem Anstiegsbeginn gemäß
+[RH-Beginn und Knicktoleranz](#rh-beginn-und-knicktoleranz) bindet eine
+Anstiegskomponente. Ihre Basis ist je Position das früheste Minimum des
 aktuellen `K`-Originalfensters bei der Bindung. Als Spitze wird das höchste
 danach beobachtete Feuchteoriginal geführt; bei gleichen Werten bleibt das
 frühere maßgeblich. Diese
