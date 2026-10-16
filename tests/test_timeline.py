@@ -585,12 +585,15 @@ class DoorCycleProjectionTests(unittest.IsolatedAsyncioTestCase):
         self.assert_object_and_plain(c.session, [entry])
 
         o2 = event("o2", Kind.DOOR_OPEN, 4)
-        v2 = event("v2", Kind.VENTILATION, 5)
+        v2 = Event(
+            "v2", "s", Kind.VENTILATION,
+            at(5), at(5.1875), at(5.125), at(5.0625),
+        )
         c.process(o2)
         c.process(v2)
         self.assertEqual(c.session.timeline.gang_count, 1)
         self.assertEqual(c.session.timeline.completed[0].ended_at, v2.booking_at)
-        self.assertEqual(c.session.after_run.requested_at, at(5))
+        self.assertEqual(c.session.after_run.requested_at, at(5.125))
         self.assert_object_and_plain(c.session, [entry, self.cycle(
             "o2", None, 4, None, role="exit", gang_id=g1.gang_id,
             links=({"gang_id": g1.gang_id, "role": "exit"},),
@@ -617,7 +620,7 @@ class DoorCycleProjectionTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(g2.start_source_event_id, "c2")
         self.assertEqual(g2.infusion_events, (w2,))
         self.assertEqual(timeline.completed[0].infusion_events, (w1,))
-        self.assertEqual(timeline.completed[0].ended_at, at(5))
+        self.assertEqual(timeline.completed[0].ended_at, at(5.125))
         self.assertEqual(timeline.completed[0].end_event_id, "v2")
         self.assertEqual(timeline.gang_count, 1)
         self.assertEqual(timeline.processed, (o1, c1, w1, o2, v2, complete, c2, w2))
@@ -634,6 +637,15 @@ class DoorCycleProjectionTests(unittest.IsolatedAsyncioTestCase):
         configuration = {
             "bindings": bindings().as_dict(), "parameters": c.parameters.as_dict(),
         }
+        expected_record = {**plain(original), "configuration": configuration}
+        expected_record["energy"]["interval_delta"] = {
+            "from": None, "to": original.energy.accounted_at.isoformat(),
+            "intervals": plain(original.energy.intervals),
+        }
+        # Original records carry the delta; the read snapshot also marks
+        # its availability.
+        expected_session = deepcopy(expected_record)
+        expected_session["energy"]["intervals_available"] = True
         with tempfile.TemporaryDirectory() as directory:
             archive = Archive(Path(directory) / "cycles.sqlite", "entry")
             await archive.start()
@@ -642,11 +654,16 @@ class DoorCycleProjectionTests(unittest.IsolatedAsyncioTestCase):
                 await archive.flush()
                 stored = await asyncio.to_thread(archive.read, "s", now=at(7))
                 before = deepcopy(stored)
-                self.assertEqual(stored["session"], {
-                    **plain(original), "configuration": configuration,
-                })
-                self.assertEqual(stored["records"][0]["payload"], stored["session"])
-                self.assert_fresh_projection(stored["session"]["timeline"], expected)
+                self.assertEqual(
+                    [record["kind"] for record in stored["records"]], ["session"],
+                )
+                for representation, payload, expected_payload in (
+                    ("session", stored["session"], expected_session),
+                    ("record", stored["records"][0]["payload"], expected_record),
+                ):
+                    with self.subTest(representation=representation):
+                        self.assertEqual(payload, expected_payload)
+                        self.assert_fresh_projection(payload["timeline"], expected)
                 self.assertEqual(stored, before)
                 self.assertEqual(
                     await asyncio.to_thread(archive.read, "s", now=at(7)), before,
