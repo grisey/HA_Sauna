@@ -262,13 +262,19 @@ class NotificationTransportTests(unittest.IsolatedAsyncioTestCase):
         self.assertIsInstance(observation, ReplyAssociation)
         self.assertIsInstance(observation.reply, ReplyEnvelope)
         self.assertIs(observation.disposition, ReplyDisposition.ACCEPTED)
-        self.assertEqual(observation.reply.reply_key, ReplyKey("home_assistant", "REPLY"))
+        self.assertEqual(
+            observation.reply.reply_key, ReplyKey("home_assistant", "REPLY")
+        )
         self.assertEqual(observation.reply.context_id, context.id)
         self.assertEqual(
             observation.reply.observed_at.isoformat(), self.wire[0]["time_fired"]
         )
         for field in (
-            "reply_id", "message_id", "correlation_id", "entry_id", "session_id"
+            "reply_id",
+            "message_id",
+            "correlation_id",
+            "entry_id",
+            "session_id",
         ):
             self.assertIsNone(getattr(observation.reply, field))
         self.assertEqual(dict(observation.reply.payload), native)

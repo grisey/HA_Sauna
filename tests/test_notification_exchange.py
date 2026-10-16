@@ -271,9 +271,7 @@ class NotificationExchangeTests(unittest.TestCase):
         self.assertEqual(later.disposition, ReplyDisposition.ACCEPTED)
         self.assertTrue(later.handoff_accepted)
         self.assertIsNone(early.handoff_accepted)
-        unknown = owner.receive(
-            replace(reply, reply_key=ReplyKey("other", "answer"))
-        )
+        unknown = owner.receive(replace(reply, reply_key=ReplyKey("other", "answer")))
         self.assertEqual(unknown.disposition, ReplyDisposition.UNKNOWN)
 
     def test_native_ambiguity_does_not_consume_independent_reply_identity(self):
@@ -347,7 +345,6 @@ class NotificationExchangeTests(unittest.TestCase):
         self.assertIs(
             owner.receive(replace(native, message_id="second")).notification, second
         )
-
 
     def test_native_key_preserves_all_existing_string_action_values(self):
         owner = ReplyCorrelator()
