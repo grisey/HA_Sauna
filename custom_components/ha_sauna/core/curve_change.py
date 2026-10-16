@@ -100,7 +100,8 @@ class OriginalFollowupFeatures:
     An overlapping window remains valid, but does not supply a complete new
     K-original section until its corresponding fresh count reaches K.
     The caller owns the fixed reference, source continuity and every decision.
-    Changes use the reference's previous slope as their common background;
+    current_change and previous_change use the reference's previous slope;
+    the *_from_reference_current changes use its current slope instead.
     level_change compares only the two sections of the supplied window.
     reference_level_loss is the dimensionless signed loss against the fixed
     observed mean of the reference's previous section.
@@ -117,6 +118,8 @@ class OriginalFollowupFeatures:
     level_change: float
     residual: float
     reference_level_loss: float
+    current_change_from_reference_current: float
+    previous_change_from_reference_current: float
 
 
 @dataclass(frozen=True)
@@ -596,6 +599,11 @@ def original_followup(
     Invalid support or nonfinite arithmetic is also unknown. Source identity,
     gap limits and the amount of fresh support required belong to the caller.
 
+    current_change_from_reference_current compares window.v with reference.v,
+    divided by window.e + reference.e. previous_change_from_reference_current
+    compares window.b with reference.v, divided by window.e_minus + reference.e.
+    These use the retained current slope without selecting or updating it.
+
     reference_level_loss = (reference.mean_minus - window.mean) / (2 * scale).
     The common scale is the supplied value-deviation scale; 2 * scale
     is the existing difference normalization, not a new parameter or
@@ -609,15 +617,24 @@ def original_followup(
             return None
         current_error = window.e + reference.e_minus
         previous_error = window.e_minus + reference.e_minus
+        current_reference_error = window.e + reference.e
+        previous_reference_error = window.e_minus + reference.e
         level_scale = 2 * window.scale
         if not all(_original_positive(value) for value in (
-            current_error, previous_error, level_scale,
+            current_error, previous_error, current_reference_error,
+            previous_reference_error, level_scale,
         )):
             return None
         current_direction = window.v / window.e
         previous_direction = window.b / window.e_minus
         current_change = (window.v - reference.b) / current_error
         previous_change = (window.b - reference.b) / previous_error
+        current_change_from_reference_current = (
+            window.v - reference.v
+        ) / current_reference_error
+        previous_change_from_reference_current = (
+            window.b - reference.v
+        ) / previous_reference_error
         level_change = (window.mean - window.mean_minus) / level_scale
         residual = max(window.r, window.r_minus)
         reference_level_loss = (reference.mean_minus - window.mean) / level_scale
@@ -625,6 +642,8 @@ def original_followup(
             current_direction, previous_direction, current_change,
             previous_change, level_change, residual,
             reference_level_loss,
+            current_change_from_reference_current,
+            previous_change_from_reference_current,
         )):
             return None
         return OriginalFollowupFeatures(
@@ -636,6 +655,12 @@ def original_followup(
             current_change=current_change, previous_change=previous_change,
             level_change=level_change, residual=residual,
             reference_level_loss=reference_level_loss,
+            current_change_from_reference_current=(
+                current_change_from_reference_current
+            ),
+            previous_change_from_reference_current=(
+                previous_change_from_reference_current
+            ),
         )
     except (AttributeError, IndexError, OverflowError, TypeError, ValueError):
         return None

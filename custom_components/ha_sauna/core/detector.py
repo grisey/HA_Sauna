@@ -310,6 +310,12 @@ class Detector:
         series["epoch"] += 1
         if self.door_episode is not None and position in self.door_episode["positions"]:
             self._reset_original_ventilation(self.door_episode, "original_epoch_changed")
+            if not self.open:
+                self.door_episode.pop("original_open", None)
+                self.door_episode.pop("original_ventilation_phase", None)
+            if quantity == Quantity.TEMPERATURE:
+                self.door_episode.get("original_temperature_falls", {}).pop(position, None)
+                self.door_episode.pop("original_close", None)
         self._curve_recovery_evidence.pop((position, quantity), None)
         episode = self._infusion_episode
         if (
@@ -413,6 +419,17 @@ class Detector:
             if self.door_episode is not None and position in self.door_episode["positions"]:
                 self.door_episode.pop("original_open", None)
                 self.door_episode.pop("original_close", None)
+                if not self.open:
+                    self.door_episode.pop("original_ventilation_phase", None)
+                if quantity == Quantity.TEMPERATURE:
+                    fall = self.door_episode.get("original_temperature_falls", {}).get(position)
+                    if fall is not None and any(
+                        stamp == point_at
+                        for window in (fall["window"], fall.get("recovery_window"))
+                        if window is not None
+                        for stamp, _ in window.previous + window.current
+                    ):
+                        self.door_episode["original_temperature_falls"].pop(position)
                 self._reset_original_ventilation(self.door_episode, "original_corrected")
                 if quantity == Quantity.HUMIDITY:
                     # Das laufende Mittelminimum hat ohne seine korrigierte
@@ -651,9 +668,115 @@ class Detector:
                     "fresh_previous", "fresh_current", "current_direction", "previous_direction",
                     "current_change", "previous_change", "level_change", "residual",
                     "reference_level_loss",
+                    "current_change_from_reference_current",
+                    "previous_change_from_reference_current",
                 )},
             }
         return result
+
+    def _original_temperature_level(self, followups):
+        """Zwei neue ruhige T-Blöcke belegen das Ende ihres echten Fallastes."""
+        count = self.p["curve_original_samples"]
+        significance = self.p["curve_original_significance"]
+        return bool(followups) and all(
+            form.fresh_previous == count and form.fresh_current == count
+            and abs(form.current_direction) <= significance
+            and abs(form.previous_direction) <= significance
+            and abs(form.level_change) <= significance
+            for form in followups.values()
+        )
+
+    def _original_temperature_fall_evidence(self, episode, prefix, trace):
+        """Früheste echte Fallfenster im einzigen Türbestand zusammenhalten."""
+        falls = episode.setdefault("original_temperature_falls", {})
+        temperatures, context = dict(prefix.temperatures), dict(prefix.context)
+        significance = self.p["curve_original_significance"]
+        records = {}
+        for position in episode["positions"]:
+            name = position.value
+            window = temperatures.get(name)
+            fall = falls.get(position)
+            reason = None
+            valid = window is not None and self._original_prefix_valid(
+                prefix, (position,), (Quantity.TEMPERATURE,),
+            )
+            if fall is not None and (
+                not valid or fall["epoch"] != context[position][0]
+                or not self._original_contiguous(
+                    prefix, ((name, Quantity.TEMPERATURE, fall["continuity_at"]),),
+                )
+            ):
+                reason = "temperature_support_disconnected"
+            recovery = fall.get("recovery_window") if fall is not None else None
+            # Ein fremdes RH-Präfix kann den letzten T-Gegenbeleg nicht lösen.
+            if (valid and fall is not None and recovery is not None and (
+                window.newest_at > fall["continuity_at"]
+                or window.current[-2:] != fall.get("edge_originals", window.current[-2:])
+            )):
+                edge = original_edge_change(window, recovery)
+                edge_counterform = bool(
+                    edge is not None and edge.direction < -significance
+                    and edge.change < -significance
+                )
+                fall["close_counterform"] = edge_counterform
+                if edge_counterform:
+                    episode.pop("original_close", None)
+                # Eine einzelne Endkante sperrt den Schluss, ersetzt aber
+                # ohne aufgelösten K-Fall nicht die historische Fallstütze.
+                renewed = bool(
+                    window.v < -significance * window.e and (
+                        edge_counterform
+                        or window.v - recovery.v < -significance * (window.e + recovery.e)
+                    )
+                )
+                if renewed and prefix.original:
+                    reason = "renewed_temperature_fall"
+            if reason is not None:
+                falls.pop(position)
+                episode.pop("original_close", None)
+                fall = None
+            if valid and prefix.original:
+                if fall is None and window.v < -significance * window.e:
+                    fall = {
+                        "window": window, "received_at": prefix.received_at,
+                        "epoch": context[position][0], "continuity_at": window.newest_at,
+                        "edge_originals": window.current[-2:],
+                    }
+                    falls[position] = fall
+                elif fall is not None:
+                    fall["continuity_at"] = window.newest_at
+                if (fall is not None and not fall.get("close_counterform", False)
+                        and window.v >= -significance * window.e):
+                    recovery = fall.get("recovery_window")
+                    if recovery is None or window.v > recovery.v:
+                        fall["recovery_window"] = window
+            if valid and fall is not None:
+                # Eine Wertkorrektur prüft die Kante erneut, liefert aber
+                # weder einen neuen Originalstempel noch einen neuen Fall.
+                fall["edge_originals"] = window.current[-2:]
+            records[name] = {
+                "received_at": fall["received_at"] if fall is not None else None,
+                "reference_newest_at": fall["window"].newest_at if fall is not None else None,
+                "continuity_at": fall["continuity_at"] if fall is not None else None,
+                "epoch": fall["epoch"] if fall is not None else None,
+                "close_counterform": fall.get("close_counterform", False) if fall is not None else False,
+                "reset_reason": reason,
+            }
+        trace["temperature_fall_support"] = records
+
+    def _original_temperature_fall_followups(self, episode, prefix, positions):
+        falls = episode.get("original_temperature_falls", {})
+        if not positions or any(
+            position not in falls or falls[position].get("close_counterform", False)
+            for position in positions
+        ):
+            return None
+        return self._original_followups(
+            prefix, tuple((position.value, Quantity.TEMPERATURE, falls[position]["window"])
+                          for position in positions),
+            continuity=tuple((position.value, Quantity.TEMPERATURE, falls[position]["continuity_at"])
+                             for position in positions),
+        )
 
     def _original_humidity_available(self, positions, now):
         """Gültige RH-Originalfenster begrenzen den vorhandenen Heiz-Sonderweg."""
@@ -671,18 +794,30 @@ class Detector:
         episode.pop("original_ventilation", None)
         if humidity:
             episode.pop("original_ventilation_rh", None)
+            relative = episode.get("original_ventilation_rh_confirmed")
+            if relative is not None and not relative.get("published", True):
+                episode.pop("original_ventilation_rh_confirmed")
         if water:
             episode.pop("original_ventilation_water", None)
+        complete = episode.get("original_ventilation_complete")
+        if complete is not None and not complete.get("published", True):
+            episode.pop("original_ventilation_complete")
         episode["original_ventilation_reset_reason"] = reason
 
     def _original_ventilation_windows(self, episode, prefix):
         """Nur neue RH-Originale kausal paaren; offene rechte Partner abwarten."""
         positions = episode["positions"]
         context = self._original_bound_context(prefix.context, positions)
-        if episode.get("original_ventilation_context") != context:
+        candidate = episode.get("original_open")
+        phase = candidate["received_at"] if not self.open and candidate is not None else episode.get(
+            "original_ventilation_phase",
+        )
+        if (episode.get("original_ventilation_context") != context
+                or episode.get("original_ventilation_phase") != phase):
             self._reset_original_ventilation(episode, "original_epoch_changed")
             episode["original_ventilation_context"] = context
-            opening_floor = self._curve_open_effective_at or self.opened_at or self.origin
+            episode["original_ventilation_phase"] = phase
+            opening_floor = phase or self._curve_open_effective_at or self.opened_at or self.origin
             episode["original_ventilation_floor"] = max(
                 opening_floor, *(self._curve_series[position, quantity]["started_at"] or opening_floor
                                  for position in positions
@@ -794,7 +929,10 @@ class Detector:
     ):
         """RH-Lüften und danach vollständiges AH-Lüften in derselben Tür."""
         episode = self.door_episode
-        if episode is None or not self.open:
+        candidate = episode.get("original_open") if episode is not None else None
+        if episode is None or not self.open and not (
+            candidate is not None and candidate.get("lowering_witness") is not None
+        ):
             return
         positions = episode["positions"]
         record = {
@@ -802,6 +940,7 @@ class Detector:
             "positions": tuple(position.value for position in positions),
             "candidate_at": None, "water_status": "unknown",
             "close_same_prefix": closing, "close_contrast": close_value,
+            "publication_allowed": self.open,
         }
         for name, key in (("relative_humidity", "original_ventilation_rh"),
                           ("absolute_humidity", "original_ventilation")):
@@ -822,9 +961,10 @@ class Detector:
                 record[name] = {
                     **{field: value for field, value in confirmed_stage.items()
                        if field not in ("windows", "temperature_windows")},
-                    "proven": True,
+                    "proven": confirmed_stage.get("published", True),
                 }
-        if episode.get("original_ventilation_complete") is not None:
+        complete = episode.get("original_ventilation_complete")
+        if complete is not None and complete.get("published", True):
             return
         sources_coherent = all(
             position in channels and position not in self.ventilation_invalid
@@ -925,6 +1065,16 @@ class Detector:
                     )
             if not maintained:
                 episode.pop(key, None)
+                confirmed_key = ("original_ventilation_complete" if paired
+                                 else "original_ventilation_rh_confirmed")
+                confirmed_stage = episode.get(confirmed_key)
+                if confirmed_stage is not None and not confirmed_stage.get("published", True):
+                    episode.pop(confirmed_key)
+                    if not paired:
+                        episode.pop("original_ventilation", None)
+                        complete = episode.get("original_ventilation_complete")
+                        if complete is not None and not complete.get("published", True):
+                            episode.pop("original_ventilation_complete")
             candidate = episode.get(key)
             confirmed = False
             if candidate is None and initial:
@@ -946,7 +1096,8 @@ class Detector:
                             for position, temperature, humidity in newest)
                 confirmed = maintained and fresh
                 gates["later_originals_for_all_roles"] = _gate(fresh)
-            proven = confirmed and not closing
+            evidence_confirmed = confirmed and not closing
+            proven = evidence_confirmed and self.open
             stage = {
                 "evaluated": True,
                 "initial_form": initial, "maintained_form": maintained,
@@ -954,20 +1105,22 @@ class Detector:
                 "candidate_originals": candidate["newest"] if candidate is not None else (),
                 "bound_support": candidate["support"] if candidate is not None else {},
                 "support": anchors, "confirmable": confirmed, "proven": proven,
+                "evidence_confirmed": evidence_confirmed,
                 "close_conflict": (close_value is not None and close_value > significance
                                    and (initial or confirmed)),
             }
             gates.update(
                 bound_initial_transition=_gate(candidate is not None),
                 same_prefix_close_has_priority=_gate(not closing),
+                confirmed_door_open=_gate(self.open),
             )
-            if proven:
+            if evidence_confirmed:
                 stage.update(confirmation_received_at=prefix.received_at,
                              confirmation_originals=tuple(newest))
             record[name] = stage
             return stage, gates
 
-        if not self.ventilated:
+        if not self.open or not self.ventilated:
             rh_windows = {position: windows[position.value].humidity for position in positions}
             if any(window.current[0][0] < episode["original_ventilation_floor"]
                    for window in rh_windows.values()):
@@ -984,11 +1137,13 @@ class Detector:
                     ventilation_proven=relative["proven"],
                     ventilation_close_conflict=relative["close_conflict"],
                 )
-                if relative["proven"]:
+                if relative["evidence_confirmed"]:
                     episode["original_ventilation_rh_confirmed"] = {
                         **relative, "windows": episode["original_ventilation_rh"]["humidity_windows"],
                         "temperature_windows": episode["original_ventilation_rh"]["temperature_windows"],
+                        "published": self.open,
                     }
+                if relative["proven"]:
                     episode.pop("original_ventilation_rh", None)
                     self.ventilated = True
                     self._curve_ventilation_at = now
@@ -1022,11 +1177,13 @@ class Detector:
         record.update(absolute)
         _decision(trace, "ventilation_complete", absolute["proven"], gates)
         trace["conditions"]["ventilation_complete_proven"] = absolute["proven"]
-        if absolute["proven"]:
+        if absolute["evidence_confirmed"]:
             episode["original_ventilation_complete"] = {
                 **absolute, "windows": episode["original_ventilation"]["humidity_windows"],
                 "temperature_windows": episode["original_ventilation"]["temperature_windows"],
+                "published": self.open,
             }
+        if absolute["proven"]:
             episode.pop("original_ventilation", None)
             emit(Kind.VENTILATION_COMPLETE, event_channels=positions)
 
@@ -1040,6 +1197,8 @@ class Detector:
         for index, prefix in enumerate(prefixes):
             episode = self.door_episode
             positions = episode["positions"] if episode is not None else channels
+            if episode is not None:
+                self._original_temperature_fall_evidence(episode, prefix, trace)
             context = self._original_bound_context(prefix.context, positions)
             complete_prefix = self._original_prefix_valid(prefix, positions)
             if self.open and episode is not None:
@@ -1107,6 +1266,8 @@ class Detector:
                 if contrasts is None or not all(position in channels for position in positions):
                     if episode is not None:
                         episode.pop("original_open", None)
+                        self._reset_original_ventilation(episode, "opening_originals_unavailable")
+                        episode.pop("original_ventilation_phase", None)
                     continue
                 humidity_kinks = self._original_humidity_kinks(prefix, positions)
                 kink_gate = self._original_humidity_kink_gate(humidity_kinks, rising=False)
@@ -1127,6 +1288,7 @@ class Detector:
                     episode = self.door_episode
                     episode["original_context"] = context
                     episode["original_evaluation_context"] = context
+                    self._original_temperature_fall_evidence(episode, prefix, trace)
                 candidate = episode.get("original_open") if episode is not None else None
                 if candidate is None and binding:
                     candidate = {
@@ -1175,16 +1337,64 @@ class Detector:
                         reference="bound_previous_original_mean",
                     ),
                 )
-                forms["opening_confirmation"] = forms["lower_level"]
+                forms["opening_confirmation"] = _gate(False, reason="temperature_followup_pending")
                 if candidate is not None and followups is None:
                     forms["opening_candidate_reset_reason"] = "original_support_disconnected"
                     episode.pop("original_open", None)
+                    self._reset_original_ventilation(episode, "opening_support_disconnected")
+                    episode.pop("original_ventilation_phase", None)
                     continue
                 if candidate is not None and prefix.original:
                     candidate["continuity"] = tuple(
                         (name, quantity, form.window.newest_at)
                         for (name, quantity), form in followups.items()
                     )
+                witness = candidate.get("lowering_witness") if candidate is not None else None
+                if (witness is None and candidate is not None and prefix.original
+                        and fresh_block and lower_level and all(
+                            form.current_direction < -self.p["curve_original_open_contrast"]
+                            for (_, quantity), form in followups.items()
+                            if quantity == Quantity.TEMPERATURE
+                        )):
+                    witness = {
+                        "received_at": prefix.received_at, "windows": contrasts.positions,
+                        "newest": self._original_newest(contrasts),
+                    }
+                    candidate["lowering_witness"] = witness
+                temperature_followups = (self._original_followups(
+                    prefix, self._original_role_windows(witness["windows"], (Quantity.TEMPERATURE,)),
+                    continuity=tuple((name, quantity, form.window.newest_at)
+                                     for (name, quantity), form in followups.items()
+                                     if quantity == Quantity.TEMPERATURE),
+                ) if witness is not None else None)
+                fresh_temperature_blocks = bool(temperature_followups) and all(
+                    form.fresh_previous == self.p["curve_original_samples"]
+                    and form.fresh_current == self.p["curve_original_samples"]
+                    for form in temperature_followups.values()
+                )
+                continued_temperature_fall = bool(temperature_followups) and all(
+                    form.current_direction < -self.p["curve_original_open_contrast"]
+                    and form.previous_direction < -self.p["curve_original_open_contrast"]
+                    for form in temperature_followups.values()
+                )
+                completed_temperature_step = self._original_temperature_level(temperature_followups)
+                temperature_lower_level = bool(followups) and all(
+                    form.reference_level_loss > self.p["curve_original_open_contrast"]
+                    for (_, quantity), form in followups.items()
+                    if quantity == Quantity.TEMPERATURE
+                )
+                preserved_lowering = lower_level or witness is not None
+                forms.update(
+                    lowering_witness_received_at=witness["received_at"] if witness is not None else None,
+                    lowering_witness_originals=witness["newest"] if witness is not None else (),
+                    lowering_witness_support=(self._original_support(witness["windows"])
+                                              if witness is not None else {}),
+                    temperature_followup=self._original_followup_trace(temperature_followups),
+                    complete_temperature_followup=_gate(fresh_temperature_blocks),
+                    continued_temperature_fall=_gate(continued_temperature_fall),
+                    completed_temperature_step=_gate(completed_temperature_step),
+                    retained_temperature_level=_gate(temperature_lower_level),
+                )
                 fall_ends = {
                     name: original_flattening(pair.humidity, pair.temperature,
                                               significance=significance)
@@ -1216,14 +1426,14 @@ class Detector:
                 humidity_recovery = any(pair.humidity.v > significance * pair.humidity.e
                                         for _, pair in contrasts.positions)
                 temperature_counterform = bool(
-                    temperature_recovery or temperature_fall_ended and not lower_level
+                    temperature_recovery or temperature_fall_ended and not preserved_lowering
                 )
                 forms["temperature_fall_counterform"] = _gate(temperature_counterform)
                 forms["temperature_recovery_counterform"] = _gate(temperature_recovery)
                 forms["temperature_fall_ended"] = _gate(temperature_fall_ended)
                 forms["humidity_recovery"] = _gate(humidity_recovery)
                 forms["ended_fall_retained_by_level"] = _gate(
-                    lower_level and (fall_ended or humidity_recovery or temperature_fall_ended),
+                    preserved_lowering and (fall_ended or humidity_recovery or temperature_fall_ended),
                 )
                 forms["humidity_fall_end_contrasts"] = {
                     name: {
@@ -1237,7 +1447,7 @@ class Detector:
                     for name, form in fall_ends.items() if form is not None
                 }
                 if (temperature_counterform
-                        or (fall_ended or humidity_recovery) and not lower_level):
+                        or (fall_ended or humidity_recovery) and not preserved_lowering):
                     forms["opening_candidate_reset_reason"] = (
                         "temperature_recovery" if temperature_recovery else
                         "temperature_fall_ended_without_level" if temperature_fall_ended else
@@ -1246,6 +1456,8 @@ class Detector:
                     )
                     if episode is not None and episode.get("retained_heating_only"):
                         episode.pop("original_open", None)
+                        self._reset_original_ventilation(episode, "opening_counterform")
+                        episode.pop("original_ventilation_phase", None)
                         continue
                     if episode is not None:
                         self.door_episode = None
@@ -1256,7 +1468,16 @@ class Detector:
                     continue
                 opening = bool(
                     candidate is not None and prefix.original
-                    and fresh_block and lower_level
+                    and witness is not None and fresh_temperature_blocks
+                    and temperature_lower_level
+                    and (continued_temperature_fall or completed_temperature_step)
+                )
+                forms["confirmation_branch"] = (
+                    "continued_temperature_fall" if opening and continued_temperature_fall else
+                    "completed_temperature_step" if opening else None
+                )
+                forms["opening_confirmation"] = _gate(
+                    opening, reason=forms["confirmation_branch"] or "temperature_followup_pending",
                 )
                 forms.update(
                     bound_humidity_fall_onset=(candidate["humidity_fall_onset"]
@@ -1277,6 +1498,10 @@ class Detector:
                     ),
                     later_original_confirmation=_gate(opening),
                 )
+                if witness is not None:
+                    self._original_ventilation_evidence(
+                        prefix, channels, now, decision_at, trace, emit, closing=False,
+                    )
                 if opening:
                     episode["original_humidity_minima"] = {
                         position: pair.humidity.mean for position, pair in contrasts.positions
@@ -1408,22 +1633,24 @@ class Detector:
                 if combined:
                     branches.append(min(bound_braking, contrasts.humidity_recovery))
                 closing_value = max(branches)
-            # Eine neue Ebene bestätigt das Ende des gebundenen Temperaturfalls
-            # selbst. Flache RH bei weiter fallendem T erfüllt diesen Zweig nie.
-            level_close = bool(followups) and all(
-                form.fresh_previous == count and form.fresh_current == count
-                and form.reference.b < -significance * form.reference.e_minus
-                and abs(form.current_direction) <= significance
-                and abs(form.previous_direction) <= significance
-                and abs(form.level_change) <= significance
-                and form.current_change > significance
-                and form.previous_change > significance
-                for form in followups.values()
+            # Derselbe echte Rollenfall trägt die verspätete Öffnung und den
+            # Abschluss. Zeitversetzte T-Bremsen benötigen keinen gemeinsamen
+            # momentanen Bremsknick; der normale C-Kandidat bleibt getrennt.
+            fall_followups = self._original_temperature_fall_followups(
+                episode, prefix, closing_positions,
             )
-            close_candidate = candidate is not None
+            level_close = self._original_temperature_level(fall_followups) and all(
+                form.reference.v < -significance * form.reference.e
+                and form.current_change_from_reference_current > significance
+                and form.previous_change_from_reference_current > significance
+                for form in fall_followups.values()
+            )
+            close_candidate = candidate is not None or level_close
             closing = bool(
-                candidate is not None and prefix.original and fresh_block
-                and (closing_value > significance or level_close)
+                prefix.original and (
+                    candidate is not None and fresh_block and closing_value > significance
+                    or level_close
+                )
             )
             forms.update(
                 thermal_evaluable=True,
@@ -1442,6 +1669,7 @@ class Detector:
                     value=bound_braking, operator=">", threshold=significance, unit="contrast",
                 ),
                 new_temperature_level=_gate(level_close),
+                temperature_level_followup=self._original_followup_trace(fall_followups),
                 candidate_received_at=candidate["received_at"] if candidate is not None else None,
                 candidate_originals=candidate["newest"] if candidate is not None else (),
                 later_original_confirmation=_gate(closing),
@@ -1449,11 +1677,12 @@ class Detector:
             if closing:
                 forms["confirmation_received_at"] = prefix.received_at
                 forms["confirmation_originals"] = newest
-                candidate["confirmation_windows"] = tuple(
-                    (position.value, dict(prefix.temperatures)[position.value])
-                    for position in closing_positions
-                )
-                candidate["confirmation_received_at"] = prefix.received_at
+                if candidate is not None:
+                    candidate["confirmation_windows"] = tuple(
+                        (position.value, dict(prefix.temperatures)[position.value])
+                        for position in closing_positions
+                    )
+                    candidate["confirmation_received_at"] = prefix.received_at
             self._original_ventilation_evidence(
                 prefix, channels, now, decision_at, trace, emit, closing=closing,
                 close_value=closing_value,
@@ -1486,13 +1715,13 @@ class Detector:
                 }
                 _decision(trace, "ventilation", None, {}, evaluated=False, reason="stale_original_roles")
         _decision(trace, "door_open", opening if not self.open else None, {
-            "original_window_contrast": _gate(
-                opening_value > self.p["curve_original_open_contrast"]
-                if opening_value is not None and not self.open else None,
-                value=opening_value, operator=">",
-                threshold=self.p["curve_original_open_contrast"], unit="contrast",
-                reference="bound_previous_original_mean",
-            ),
+            "fixed_lowering_witness": _gate(bool(
+                trace.get("original_forms", {}).get("lowering_witness_received_at") is not None
+            ) if not self.open else None),
+            **{name: trace.get("original_forms", {}).get(name, _gate(None)) for name in (
+                "complete_temperature_followup", "continued_temperature_fall",
+                "completed_temperature_step", "retained_temperature_level",
+            )},
             "later_original_confirmation": _gate(opening if not self.open else None),
         }, evaluated=not self.open)
         _decision(trace, "door_close_temperature", closing if self.open else None, {
@@ -4594,6 +4823,9 @@ class Detector:
             if self.door_episode is not None:
                 self.door_episode.pop("original_open", None)
                 self.door_episode.pop("original_close", None)
+                self.door_episode.pop("original_temperature_falls", None)
+                if not self.open:
+                    self.door_episode.pop("original_ventilation_phase", None)
                 self._reset_original_ventilation(self.door_episode, "original_prefix_overflow")
         self._curve_fit_cache = {}
         self._curve_proposal_checks = {}
