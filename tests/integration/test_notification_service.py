@@ -1,5 +1,6 @@
 """Explicit send uses saved mappings and the existing operation permission."""
 
+import asyncio
 import json
 import unittest
 from dataclasses import replace
@@ -7,7 +8,9 @@ from unittest.mock import AsyncMock, patch
 
 from homeassistant.auth.const import GROUP_ID_USER
 from homeassistant.core import Context
+from homeassistant.helpers import entity_registry as er
 
+import test_device_path as device_path
 from custom_components.ha_sauna.core.notification_exchange import (
     ReplyAssociation,
     ReplyDisposition,
@@ -25,6 +28,7 @@ from custom_components.ha_sauna.core.notification_recipients import (
     TargetIdentity,
 )
 from harness import create_sauna, start_hass
+from test_settings import async_timeout
 
 
 class NotificationServiceTests(unittest.IsolatedAsyncioTestCase):
@@ -278,3 +282,134 @@ class NotificationServiceTests(unittest.IsolatedAsyncioTestCase):
                     context=Context(user_id="unknown-synthetic-user"),
                 )
             forget.assert_not_called()
+
+
+class NotificationServiceLifecycleTests(unittest.IsolatedAsyncioTestCase):
+    """Real session controls stay usable while the terminal notify sink waits."""
+
+    asyncSetUp = device_path.DevicePathTests.asyncSetUp
+
+    async def prepare_session_recipient(self):
+        user = await self.hass.auth.async_create_user(
+            "Synthetic notification session starter", group_ids=[GROUP_ID_USER]
+        )
+        entity = er.async_get(self.hass).async_get_or_create(
+            "notify", "synthetic", "terminal", suggested_object_id="synthetic_terminal"
+        )
+        self.hass.states.async_set(entity.entity_id, "unknown", {})
+        # Use the actual options flow and production resolver before starting.
+        flow = await self.hass.config_entries.options.async_init(self.entry.entry_id)
+        flow = await self.hass.config_entries.options.async_configure(
+            flow["flow_id"], {"next_step_id": "notification_user"}
+        )
+        flow = await self.hass.config_entries.options.async_configure(
+            flow["flow_id"], {"user_id": user.id}
+        )
+        self.assertEqual(flow["step_id"], "notification_targets")
+        flow = await self.hass.config_entries.options.async_configure(
+            flow["flow_id"], {"recipients": [f"entity:{entity.entity_id}"]}
+        )
+        self.assertEqual((flow["type"], flow["step_id"]), ("menu", "init"))
+        await self.hass.async_block_till_done()
+        self.runtime = self.entry.runtime_data
+        self.runtime._clock = lambda: self.now
+        actor = Context(user_id=user.id)
+        await self.hass.services.async_call(
+            "switch", "turn_on", {"entity_id": self.operation},
+            blocking=True, context=actor,
+        )
+        await self.hass.async_block_till_done()
+        target = TargetIdentity("home_assistant", entity.entity_id)
+        self.assertEqual(
+            self.runtime.notification_recipients.targets, frozenset((target,))
+        )
+        self.assertTrue(self.runtime.session.operation_enabled)
+        self.assertEqual(self.hass.states.get(self.operation).state, "on")
+        self.assertTrue(self.heater.is_on)
+        return user, entity.entity_id, actor
+
+    async def test_pending_notify_handoff_does_not_block_authenticated_operation_off(self):
+        entered, release = asyncio.Event(), asyncio.Event()
+        trace, calls = [], []
+
+        async def terminal_sink(call):
+            calls.append(dict(call.data))
+            trace.append("synthetic_notify_entered")
+            entered.set()
+            await release.wait()
+            trace.append("synthetic_notify_returned")
+
+        self.hass.services.async_register("notify", "send_message", terminal_sink)
+        user, endpoint, actor = await self.prepare_session_recipient()
+        session_id = self.runtime.session.session_id
+        sending = asyncio.create_task(self.hass.services.async_call(
+            "ha_sauna", "send_notification",
+            {
+                "entry_id": self.entry.entry_id,
+                "message": "Synthetic held notification",
+                "audience": "session",
+            },
+            blocking=True, return_response=True, context=Context(user_id=user.id),
+        ))
+        stopping = None
+        try:
+            await asyncio.wait_for(entered.wait(), async_timeout("service"))
+            trace.append("authenticated_operation_off_requested")
+
+            async def stop_operation():
+                await self.hass.services.async_call(
+                    "switch", "turn_off", {"entity_id": self.operation},
+                    blocking=True, context=actor,
+                )
+                trace.append("authenticated_operation_off_returned")
+
+            stopping = asyncio.create_task(stop_operation())
+            done, _ = await asyncio.wait({stopping}, timeout=async_timeout("service"))
+            before_release = {
+                "operation_off_completed": stopping in done,
+                "operation_state": self.hass.states.get(self.operation).state,
+                "session_operation_enabled": self.runtime.session.operation_enabled,
+                "heater_state": self.hass.states.get(self.heater.entity_id).state,
+                "heater_is_on": self.heater.is_on,
+                "heater_calls": list(self.heater.calls),
+                "notify_still_pending": not sending.done(),
+                "sink_released": release.is_set(),
+            }
+        finally:
+            trace.append("synthetic_notify_released")
+            release.set()
+            tasks = [sending] + ([stopping] if stopping is not None else [])
+            await asyncio.wait_for(
+                asyncio.gather(*tasks, return_exceptions=True), async_timeout("service")
+            )
+        response = sending.result()
+        if stopping is not None:
+            stopping.result()
+        print("NOTIFICATION_EVIDENCE " + json.dumps({
+            "selector": self.id(),
+            "path": "options mapping -> authenticated session start -> session send -> real HA notify.send_message registry -> synthetic terminal sink",
+            "endpoint_receipt": "not observed; synthetic terminal sink only",
+            "actor_user_id": actor.user_id,
+            "session_id": session_id,
+            "recipient": endpoint,
+            "observed_service_calls": calls,
+            "before_sink_release": before_release,
+            "causal_order": trace,
+            "response": response,
+        }, sort_keys=True))
+        self.assertTrue(
+            before_release["operation_off_completed"],
+            "Authenticated operation OFF waited for the pending notify sink",
+        )
+        self.assertEqual(before_release["operation_state"], "off")
+        self.assertFalse(before_release["session_operation_enabled"])
+        self.assertEqual(before_release["heater_state"], "off")
+        self.assertFalse(before_release["heater_is_on"])
+        self.assertFalse(before_release["heater_calls"][-1])
+        self.assertTrue(before_release["notify_still_pending"])
+        self.assertFalse(before_release["sink_released"])
+        self.assertEqual(calls, [{
+            "entity_id": endpoint, "message": "Synthetic held notification"
+        }])
+        self.assertEqual(len(response["handoffs"]), 1)
+        self.assertTrue(response["handoffs"][0]["accepted"])
