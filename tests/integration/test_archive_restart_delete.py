@@ -16,6 +16,7 @@ class ArchiveRestartDeleteTests(unittest.IsolatedAsyncioTestCase):
 
     async def _assert_stop_restart(self, *, completed):
         hass, temp = await start_hass()
+        http_restarted = False
         try:
             entry = await create_sauna(hass)
             runtime = entry.runtime_data
@@ -95,11 +96,27 @@ class ArchiveRestartDeleteTests(unittest.IsolatedAsyncioTestCase):
                     "active_session_after_restart": new_runtime.session,
                     "automatic_operation_after_restart": new_runtime.controller.automatic_operation_enabled,
                 }, ensure_ascii=False, sort_keys=True), flush=True)
-                async with client.post(base + "/archive/erase", json={"session_id": identity}) as response:
-                    self.assertEqual(response.status, 200, await response.text())
-                    self.assertEqual((await response.json())["deleted_sessions"], 1)
+                # The global stop also closed HA's HTTP listener. Rebind and
+                # start the existing authenticated application before deletion.
+                await client.close()
+                await hass.http.async_bind()
+                http_restarted = True
+                await hass.http.start()
+                base = f"http://127.0.0.1:{hass.http.server_port}/api/ha_sauna/{entry.entry_id}"
+                async with ClientSession(headers={"Authorization": "Bearer " + token}) as restarted_client:
+                    async with restarted_client.post(base + "/archive/erase", json={"session_id": identity}) as response:
+                        self.assertEqual(response.status, 200, await response.text())
+                        self.assertEqual((await response.json())["deleted_sessions"], 1)
                 self.assertIsNone(new_runtime.archive.read(identity))
                 self.assertEqual(new_runtime.archive.read(), [])
         finally:
-            await hass.async_stop(force=True)
-            temp.cleanup()
+            try:
+                await hass.async_stop(force=True)
+            finally:
+                try:
+                    # HA's original HTTP stop listener was registered once and
+                    # consumed by the explicit stop event above.
+                    if http_restarted:
+                        await hass.http.stop()
+                finally:
+                    temp.cleanup()
