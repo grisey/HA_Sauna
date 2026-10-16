@@ -642,9 +642,7 @@ class NotificationTransportTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.calls[0]["data"], payload["data"])
         self.assertEqual(self.replies, [])
         self.assertEqual(self.wire, [])
-        self.hass.bus.async_fire(
-            "mobile_app_notification_action", {"action": "URI"}
-        )
+        self.hass.bus.async_fire("mobile_app_notification_action", {"action": "URI"})
         await self.hass.async_block_till_done()
         self.assertEqual(len(self.replies), 1)
         self.assertIs(self.replies[0].notification, notification)
@@ -726,9 +724,7 @@ class NotificationTransportTests(unittest.IsolatedAsyncioTestCase):
         notification = self.notification(device_id, payload)
         self.assertTrue((await self.adapter.handoff(notification)).accepted)
         self.assertEqual(self.calls[0]["data"], payload["data"])
-        self.hass.bus.async_fire(
-            "mobile_app_notification_action", {"action": "URI"}
-        )
+        self.hass.bus.async_fire("mobile_app_notification_action", {"action": "URI"})
         await self.hass.async_block_till_done()
         self.assertEqual(len(self.replies), 1)
         self.assertIs(self.replies[0].notification, notification)
@@ -773,9 +769,7 @@ class NotificationTransportTests(unittest.IsolatedAsyncioTestCase):
             try:
                 await asyncio.wait_for(discovered.wait(), async_timeout("service"))
                 self.adapter.close()
-                self.assertNotIn(
-                    "ha_sauna_notification_reply_ingress", self.hass.data
-                )
+                self.assertNotIn("ha_sauna_notification_reply_ingress", self.hass.data)
                 release.set()
                 handoff = await asyncio.wait_for(pending, async_timeout("service"))
                 self.assertFalse(handoff.accepted)
@@ -783,9 +777,7 @@ class NotificationTransportTests(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(self.calls, [])
                 await self.adapter.async_start()
                 self.assertIsNone(self.adapter._ingress)
-                self.assertNotIn(
-                    "ha_sauna_notification_reply_ingress", self.hass.data
-                )
+                self.assertNotIn("ha_sauna_notification_reply_ingress", self.hass.data)
                 self.hass.bus.async_fire(
                     "mobile_app_notification_action", {"action": "REPLY"}
                 )
@@ -818,9 +810,7 @@ class NotificationTransportTests(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn("ha_sauna_notification_reply_ingress", self.hass.data)
         self.assertFalse(ingress.correlator.mark_accepted(prepared.registration))
         self.assertEqual(self.calls, [])
-        self.hass.bus.async_fire(
-            "mobile_app_notification_action", {"action": "REPLY"}
-        )
+        self.hass.bus.async_fire("mobile_app_notification_action", {"action": "REPLY"})
         await self.hass.async_block_till_done()
         self.assertEqual(self.replies, [])
         self.assertEqual(self.wire, [])
