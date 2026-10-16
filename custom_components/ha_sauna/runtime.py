@@ -2028,7 +2028,7 @@ class SaunaRuntime:
                             self.session.session_id,
                         )
                         self.archive.save_session(
-                            replace(self.session, ended_at=now),
+                            self.session,
                             now,
                             self.configuration.as_snapshot(),
                         )

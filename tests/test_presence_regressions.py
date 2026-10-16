@@ -374,13 +374,17 @@ class PresenceRegressionTests(unittest.TestCase):
                     archived = asyncio.run(exercise(
                         Path(directory) / f"{seconds}.sqlite", seconds
                     ))
-                    ended_at = (START + timedelta(seconds=min(seconds, gap + 1))).isoformat()
+                    ended_at = (
+                        (START + timedelta(seconds=gap + 1)).isoformat()
+                        if seconds >= gap + 1 else None
+                    )
                     self.assertEqual(archived["session"]["ended_at"], ended_at)
                     finals = [record for record in archived["records"]
                               if record["kind"] == "session"
                               and record["payload"].get("ended_at")]
-                    self.assertEqual(len(finals), 1)
-                    self.assertEqual(finals[0]["payload"]["ended_at"], ended_at)
+                    self.assertEqual(len(finals), 1 if ended_at is not None else 0)
+                    if ended_at is not None:
+                        self.assertEqual(finals[0]["payload"]["ended_at"], ended_at)
 
     def test_close_publishes_gang_end_before_archive_close(self):
         tmp_path = Path(self.enterContext(TemporaryDirectory()))

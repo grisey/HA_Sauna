@@ -14,7 +14,9 @@ Aufzeichnung. Auch manuelles Vorheizen vor dem Wechsel auf Automatik bleibt
 Teil dieser Sitzung. Erst der Ablauf dieser Frist entscheidet über den
 Abschluss und die Speicherung; die Lichtbedienung verkürzt sie nicht.
 
-Das Archiv umfasst Messungen **15 Minuten vor und nach der Sitzung**.
+Das Archiv umfasst Messungen vor und nach der Sitzung. Die Zeiträume sind
+konfigurierbar; der Standard beträgt jeweils **15 Minuten**. Maßgeblich ist der
+bei der Sitzung gespeicherte [Messkontext](parameter.md#daten-und-laufzeit).
 Außerhalb dieser Fenster werden keine sitzungslosen Messreihen dauerhaft
 aufbewahrt. Der Nachlauf kann eine bereits beendete Sitzung noch ergänzen.
 
