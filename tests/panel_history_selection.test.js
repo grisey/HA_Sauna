@@ -158,12 +158,24 @@ const humidityReadouts = (tooltip) =>
   tooltip
     .querySelectorAll(".history-tooltip-values")
     .filter((container) => !container.hidden)
-    .flatMap((container) => container.children.filter((row) =>
-      !row.hidden && row.children[0]?.getAttribute("data-quantity") === "humidity"))
-    .flatMap((row) => row.children.filter((cell) =>
-      !cell.hidden && cell.className?.split(/\s+/).includes("history-tooltip-value"))
-      .map((cell) => `${row.children[0].textContent}${cell.querySelector(".history-tooltip-number").textContent}${cell.querySelector(".history-tooltip-unit").textContent ? ` ${cell.querySelector(".history-tooltip-unit").textContent}` : ""}`));
-
+    .flatMap((container) =>
+      container.children.filter(
+        (row) =>
+          !row.hidden && row.children[0]?.getAttribute("data-quantity") === "humidity",
+      ),
+    )
+    .flatMap((row) =>
+      row.children
+        .filter(
+          (cell) =>
+            !cell.hidden &&
+            cell.className?.split(/\s+/).includes("history-tooltip-value"),
+        )
+        .map(
+          (cell) =>
+            `${row.children[0].textContent}${cell.querySelector(".history-tooltip-number").textContent}${cell.querySelector(".history-tooltip-unit").textContent ? ` ${cell.querySelector(".history-tooltip-unit").textContent}` : ""}`,
+        ),
+    );
 
 const makeFixture = (catalogOverrides = {}, scale = 1) => {
   const panel = Object.assign(panelFixture(context.Panel), {
@@ -420,6 +432,7 @@ test("range phase names require containment in a single real projected interval"
 
 test("selection snippets include their beginning and exclude their end exactly once", () => {
   const { panel, tooltip } = makeFixture({ history_phase_snap_radius_px: 0 });
+  panel.historyEventVisibility.set("door", true);
   panel.shown.session.timeline.processed = [
     { event_id: "end", kind: "infusion", effective_at: iso(60) },
     { event_id: "middle", kind: "door_close", effective_at: iso(40) },
@@ -457,6 +470,7 @@ test("selection snippets include their beginning and exclude their end exactly o
     ["end"],
   );
   panel.clearHistorySelection();
+  panel.historyDetail = true;
   panel.selectHistoryTime(at(30));
   assert.deepEqual(
     Array.from(panel.historySelectionEvents(), (event) => event.event_id),
@@ -660,11 +674,11 @@ test("absolute humidity readouts use the latest projection through its inclusive
   );
   for (const [second, expected] of [
     [step / 2, "Luftfeuchte: –"],
-    [step, "Luftfeuchte: 40,13 g/m³"],
-    [timeout - step, "Luftfeuchte: 40,13 g/m³"],
-    [timeout, "Luftfeuchte: 40,13 g/m³"],
+    [step, "Luftfeuchte: 40,1 g/m³"],
+    [timeout - step, "Luftfeuchte: 40,1 g/m³"],
+    [timeout, "Luftfeuchte: 40,1 g/m³"],
     [timeout + 0.001, "Luftfeuchte: –"],
-    [timeout + step, "Luftfeuchte: 40,25 g/m³"],
+    [timeout + step, "Luftfeuchte: 40,3 g/m³"],
   ]) {
     interaction.previewTime(at(second), chart.model);
     assert.deepEqual(humidityReadouts(tooltip), [expected]);
@@ -683,13 +697,13 @@ test("absolute humidity readouts use the latest projection through its inclusive
     first.display.absolute_humidity,
     "a still-valid predecessor before the visible window remains readable",
   );
-  assert.deepEqual(humidityReadouts(tooltip), ["Luftfeuchte: 40,13 g/m³"]);
+  assert.deepEqual(humidityReadouts(tooltip), ["Luftfeuchte: 40,1 g/m³"]);
   panel.clearHistorySelection();
   panel.selectHistoryTime(at(timeout));
-  assert.deepEqual(humidityReadouts(tooltip), ["Luftfeuchte: 40,13 g/m³"]);
+  assert.deepEqual(humidityReadouts(tooltip), ["Luftfeuchte: 40,1 g/m³"]);
   panel.selectHistoryTime(at(timeout + 0.001));
   assert.deepEqual(humidityReadouts(tooltip), [
-    "Luftfeuchte: 40,13 g/m³",
+    "Luftfeuchte: 40,1 g/m³",
     "Luftfeuchte: –",
   ]);
 });
@@ -756,8 +770,8 @@ test("same-time humidity replacements refresh pinned values and legend toggles p
     panel.panel.config.appearance_catalog.preferences.value_precision.default,
   );
   assert.match(
-    nodes.get("#history-legends").innerHTML,
-    /data-action="history-humidity" aria-pressed="false">Relative Feuchte \(%\)/,
+    nodes.get("[data-history-axes]").innerHTML,
+    /data-action="history-humidity" aria-pressed="false" aria-label="Relative Feuchte \(%\), zu absoluter Feuchte wechseln"/,
   );
   await toggle();
   assert.equal(panel.historyHumidityMode, "absolute");
@@ -768,12 +782,12 @@ test("same-time humidity replacements refresh pinned values and legend toggles p
       .default,
   );
   assert.match(
-    nodes.get("#history-legends").innerHTML,
-    /data-action="history-humidity" aria-pressed="true">Absolute Feuchte \(g\/m³\)/,
+    nodes.get("[data-history-axes]").innerHTML,
+    /data-action="history-humidity" aria-pressed="true" aria-label="Absolute Feuchte \(g\/m³\), zu relativer Feuchte wechseln"/,
   );
   assert.deepEqual(humidityReadouts(tooltip), [
-    "Luftfeuchte: 40,13 g/m³",
-    "Luftfeuchte: 40,13 g/m³",
+    "Luftfeuchte: 40,1 g/m³",
+    "Luftfeuchte: 40,1 g/m³",
   ]);
   const prepared = chart.model.series.get("upper:humidity"),
     replacement = projectedRecord(
@@ -793,8 +807,8 @@ test("same-time humidity replacements refresh pinned values and legend toggles p
   );
   assert.notEqual(chart.model.series.get("upper:humidity"), prepared);
   assert.deepEqual(humidityReadouts(tooltip), [
-    "Luftfeuchte: 40,25 g/m³",
-    "Luftfeuchte: 40,13 g/m³",
+    "Luftfeuchte: 40,3 g/m³",
+    "Luftfeuchte: 40,1 g/m³",
   ]);
   await toggle();
   assert.equal(panel.historyHumidityMode, "relative");
@@ -805,8 +819,8 @@ test("same-time humidity replacements refresh pinned values and legend toggles p
   ]);
   await toggle();
   assert.deepEqual(humidityReadouts(tooltip), [
-    "Luftfeuchte: 40,25 g/m³",
-    "Luftfeuchte: 40,13 g/m³",
+    "Luftfeuchte: 40,3 g/m³",
+    "Luftfeuchte: 40,1 g/m³",
   ]);
   const unavailable = projectedRecord(record(step, null, "humidity"), null, null);
   panel.shown.records.push(unavailable);
@@ -825,7 +839,7 @@ test("same-time humidity replacements refresh pinned values and legend toggles p
   );
   assert.deepEqual(humidityReadouts(tooltip), [
     "Luftfeuchte: –",
-    "Luftfeuchte: 40,13 g/m³",
+    "Luftfeuchte: 40,1 g/m³",
   ]);
 });
 
@@ -862,7 +876,7 @@ test("hover and pinned boundaries retain absolute times through zoom, pan and sa
   panel.selectHistoryTime(at(60));
   const selected = panel.historyValueSelection;
   const text = visibleText(tooltip);
-  assert.match(text, /Beginn/);
+  assert.match(text, /Anfang/);
   assert.match(text, /Ende/);
   assert.match(text, /70,0°C/);
   assert.match(text, /80,0°C/);

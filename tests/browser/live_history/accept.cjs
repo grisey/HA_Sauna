@@ -347,9 +347,9 @@ fs.mkdirSync(output, { recursive: true });
   const selectedValues = () =>
     selectionPage.evaluate(() => ({
       selection: structuredClone(f.panel.historyValueSelection),
-      values: [
-        ...f.panel.$("#tooltip").querySelectorAll(".history-tooltip-values"),
-      ].map((node) => node.textContent),
+      values: [...f.panel.$("#tooltip").querySelectorAll(".history-tooltip-values:not([hidden]) > div:not([hidden])")]
+        .flatMap((row) => [...row.querySelectorAll(".history-tooltip-value")].filter((cell) => !cell.hidden))
+        .map((cell) => `${cell.querySelector(".history-tooltip-number").textContent} ${cell.querySelector(".history-tooltip-unit").textContent}`),
     }));
   const humidityState = () =>
     selectionPage.evaluate(() => {
@@ -362,10 +362,8 @@ fs.mkdirSync(output, { recursive: true });
         values = (quantity) =>
           labels
             .filter((node) => node.dataset.quantity === quantity)
-            .map((node) => {
-              const value = node.nextElementSibling;
-              return `${value.querySelector(".history-tooltip-number").textContent} ${value.querySelector(".history-tooltip-unit").textContent}`;
-            }),
+            .flatMap((node) => [...node.parentElement.querySelectorAll(".history-tooltip-value")].filter((cell) => !cell.hidden))
+            .map((cell) => `${cell.querySelector(".history-tooltip-number").textContent} ${cell.querySelector(".history-tooltip-unit").textContent}`),
         button = p.$('[data-action="history-humidity"]'),
         axis = [...p.$("[data-history-axes]").querySelectorAll(".axis-humidity")].at(
           -1,
@@ -406,7 +404,10 @@ fs.mkdirSync(output, { recursive: true });
       unit = absolute ? "g/m³" : "%";
     assert.equal(after.mode, mode);
     assert.equal(after.label, unit);
-    assert.equal(after.accessibleLabel, `${label}, ${absolute ? "zu relativer Feuchte wechseln" : "zu absoluter Feuchte wechseln"}`);
+    assert.equal(
+      after.accessibleLabel,
+      `${label}, ${absolute ? "zu relativer Feuchte wechseln" : "zu absoluter Feuchte wechseln"}`,
+    );
     assert.equal(after.pressed, String(absolute));
     assert.equal(after.axis, unit);
     assert.ok(after.humidity.length > 0, "the selected humidity readout is visible");
@@ -418,7 +419,7 @@ fs.mkdirSync(output, { recursive: true });
       assert.deepEqual(after.curveValues, [settings.fixtures.history.temperature]);
       assert.ok(
         after.humidity.every(
-          (value) => value === `${settings.fixtures.history.temperature} g/m³`,
+          (value) => value === `${settings.fixtures.history.temperature.toFixed(1).replace(".", ",")} g/m³`,
         ),
         "absolute readouts consume the opaque transport display value",
       );
@@ -564,44 +565,31 @@ fs.mkdirSync(output, { recursive: true });
   const initialHumidity = await humidityState();
   assert.equal(initialHumidity.mode, "relative");
   assert.equal(initialHumidity.label, "%");
-  assert.equal(initialHumidity.accessibleLabel, "Relative Feuchte (%), zu absoluter Feuchte wechseln");
+  assert.equal(
+    initialHumidity.accessibleLabel,
+    "Relative Feuchte (%), zu absoluter Feuchte wechseln",
+  );
   assert.equal(initialHumidity.pressed, "false");
   assert.equal(initialHumidity.axis, "%");
-  const legend = selectionPanel.locator("#history-legends");
-  assert.deepEqual(await legend.locator(".history-legend > strong").allTextContents(), [
-    "Phasen",
-    "Ereignisse",
-  ]);
-  assert.doesNotMatch(
-    await legend.innerText(),
-    /\b(?:Phasengrenze|Messwerte|Temperatur|oben|unten)\b/i,
-  );
+  const phaseBand = selectionPanel.locator("[data-history-phase-band]");
   for (const [phase, shape, label] of [
     ["bereit", "ready", "Bereit"],
     ["saunagang", "gang", "Saunagang"],
   ]) {
-    assert.equal(
-      await legend.locator(`[data-legend-phase="${phase}"]`).innerText(),
-      label,
-    );
-    assert.equal(
-      await legend.locator(`[data-legend-phase="${phase}"] svg rect.${shape}`).count(),
-      1,
-    );
-    assert.equal(
-      await selectionPanel.locator(`.history-background rect.${shape}`).count(),
-      1,
-    );
+    const segment = phaseBand.locator(`[data-history-phase="${phase}"]`);
+    assert.equal(await segment.isVisible(), true);
+    assert.equal(await segment.getAttribute("aria-label"), label);
+    assert.equal(await selectionPanel.locator(`.history-background rect.${shape}`).count(), 1);
   }
-  for (const [glyph, count] of [
-    ["line.history-event-guide", 1],
-    ["g.history-event-marker ellipse", 2],
-    ["rect.door", 1],
-    ["line.infusion", 1],
-  ]) {
-    assert.equal(await legend.locator(`svg ${glyph}`).count(), count);
-    assert.ok(await selectionPanel.locator(`.history-stack ${glyph}`).count());
-  }
+  const doorCategory = selectionPanel.locator('[data-action="history-event-category:door"]');
+  assert.equal(await doorCategory.getAttribute("aria-pressed"), "false");
+  await doorCategory.click();
+  await settleSelection();
+  assert.equal(await doorCategory.getAttribute("aria-pressed"), "true");
+  const lowerBand = selectionPanel.locator("[data-history-lower-band]");
+  assert.equal(await lowerBand.locator('[data-history-event-kind="door"]').count(), 1);
+  assert.equal(await lowerBand.locator('[data-history-event-kind="infusion"]').count(), 1);
+  assert.equal(await selectionPanel.locator(".history-background line.infusion").count(), 1);
   await selectionSurface.scrollIntoViewIfNeeded();
   const selectionTimes = await selectionPage.evaluate(() => {
     const p = f.panel,
@@ -704,7 +692,8 @@ fs.mkdirSync(output, { recursive: true });
   const outsideHover = await hoverState();
   assert.equal(outsideHover.time, hovered.time);
   assert.equal(outsideHover.visibility, "hidden");
-  assert.equal(outsideHover.tooltipHidden, true);
+  assert.equal(outsideHover.tooltipHidden, false);
+  assert.equal(outsideHover.readoutKind, "overview");
   await selectionSurface.press("Home");
   await settleSelection();
   const restoredHover = await hoverState();
@@ -726,7 +715,7 @@ fs.mkdirSync(output, { recursive: true });
   );
   assert.match(
     await selectionTooltip.innerText(),
-    /Punkt.*Temperatur:.*°C.*Luftfeuchte:.*%/s,
+    /Saunagang.*Temperatur:.*°C.*Luftfeuchte:.*%/s,
   );
   assert.equal(
     await selectionPanel.locator("[data-history-selection]").getAttribute("visibility"),
@@ -786,10 +775,10 @@ fs.mkdirSync(output, { recursive: true });
   assert.equal(range.selection.kind, "range", "second mouse click completes the range");
   assert.equal(range.selection.start, pinned.selection.start);
   assert.ok(range.selection.end > range.selection.start);
-  assert.match(await selectionTooltip.innerText(), /Saunagang.*Beginn.*Ende/s);
+  assert.match(await selectionTooltip.innerText(), /Saunagang.*Anfang.*Ende/s);
 
-  // Inspect an actual event outside the selected interval. Its facts are visible
-  // independently; marker activation must not become a third chart selection.
+  // Activating an event replaces the range with the same source-bound
+  // selection used by its marker, values and event details.
   const infusionMarker = selectionPanel.locator(
     '.history-event-marker[data-history-event-id="infusion-proof"]',
   );
@@ -801,11 +790,13 @@ fs.mkdirSync(output, { recursive: true });
     /Aufguss/,
   );
   assert.match(await selectionTooltip.innerText(), /Aufguss/);
-  assert.deepEqual(
-    await selectedValues(),
-    range,
-    "marker inspection preserves range and boundary values",
-  );
+  const eventSelection = await selectedValues(),
+    infusionTime = Date.parse(settings.fixtures.history.origin) + settings.fixtures.history.detail_selected_seconds * 1000;
+  assert.equal(eventSelection.selection.kind, "point");
+  assert.deepEqual(eventSelection.selection.eventIds, ["infusion-proof"]);
+  assert.equal(eventSelection.selection.start, infusionTime);
+  assert.equal(eventSelection.selection.end, infusionTime);
+  assert.equal(eventSelection.values.length, settings.fixtures.history.quantities.length);
   const rangeHumidity = await humidityState();
   await humidityButton.press("Enter");
   await settleSelection();
@@ -816,8 +807,8 @@ fs.mkdirSync(output, { recursive: true });
   await assertHumidity("relative", rangeHumidity);
   assert.deepEqual(
     await selectedValues(),
-    range,
-    "keyboard return restores range values",
+    eventSelection,
+    "keyboard return restores the selected event values",
   );
   await infusionMarker.focus();
   await selectionPage.evaluate(async () => {
@@ -848,7 +839,7 @@ fs.mkdirSync(output, { recursive: true });
     "a new event append retains focus on the same logical history marker",
   );
   assert.equal(await infusionMarker.getAttribute("aria-pressed"), "true");
-  assert.deepEqual(await selectedValues(), range);
+  assert.deepEqual(await selectedValues(), eventSelection);
   results.push({
     case: "history-marker-focus-with-new-event-append",
     marker: "infusion-proof",
@@ -858,6 +849,17 @@ fs.mkdirSync(output, { recursive: true });
   await settleSelection();
   assert.equal(await selectionTooltip.isVisible(), true);
 
+  // Restore a manual range through the plot before the independent range
+  // scroll, zoom, append and third-click checks.
+  await selectionPanel.locator('[data-action="clear-history-selection"]').click();
+  await settleSelection();
+  await selectionSurface.scrollIntoViewIfNeeded();
+  for (const time of [range.selection.start, range.selection.end]) {
+    const point = await chartPoint(null, time);
+    await selectionPage.mouse.click(point.x, point.y);
+    await settleSelection();
+  }
+  assert.deepEqual(await selectedValues(), range);
   await readout.scrollIntoViewIfNeeded();
   const readoutBox = await readout.boundingBox(),
     scrollBefore = await selectionPage.evaluate(() => {
@@ -1093,14 +1095,13 @@ fs.mkdirSync(output, { recursive: true });
     .innerText();
   const boundaryValues = () =>
     selectionTooltip
-      .locator(".history-tooltip-values > div > span[data-quantity]")
-      .evaluateAll((labels) => labels.map((label) => label.parentElement.textContent));
+      .locator(".history-tooltip-values:not([hidden]) > div:not([hidden]) > span[data-quantity]")
+      .evaluateAll((labels) => labels.map((label) => `${label.textContent}${[...label.parentElement.querySelectorAll(".history-tooltip-value")].filter((cell) => !cell.hidden).map((cell) => cell.textContent).join(" | ")}`));
   const valuesBeforeSnap = await boundaryValues();
   assert.equal(
     valuesBeforeSnap.length,
-    settings.fixtures.history.positions.length *
-      settings.fixtures.history.quantities.length,
-    "the comparison includes every measurement row",
+    settings.fixtures.history.quantities.length,
+    "the comparison includes each measurement row at the leading height",
   );
   await selectionPage.mouse.move(snapPoint.x, snapPoint.y);
   await settleSelection();

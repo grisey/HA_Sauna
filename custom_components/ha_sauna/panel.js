@@ -1286,7 +1286,8 @@ function HistoryInteraction(panel, surface, wrap, tooltip, cursor) {
         `${quantity === "temperature" ? "Temperatur" : "Luftfeuchte"}${panel.historyDetail ? ` ${position === "upper" ? "oben" : "unten"}` : ""}: `,
       );
       setValue(row, value, quantity);
-      if (value) row.value.setAttribute("title", panel.tooltipWhen(value.time, timeZone));
+      if (value)
+        row.value.setAttribute("title", panel.tooltipWhen(value.time, timeZone));
       else row.value.removeAttribute("title");
       if (row.row.hidden) row.row.hidden = false;
       visible.add(key);

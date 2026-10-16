@@ -198,10 +198,15 @@ const tooltipFor = (
 // Read the same separate number/unit cells as the current browser layout.
 const temperatureCell = (tooltip) => {
   const row = tooltip.children[1].children.find(
-    (item) => !item.hidden && item.children[0]?.getAttribute("data-quantity") === "temperature",
+    (item) =>
+      !item.hidden && item.children[0]?.getAttribute("data-quantity") === "temperature",
   );
   assert.ok(row, "the temperature row is displayed");
-  return { label: row.children[0], number: row.children[1].children[0], unit: row.children[1].children[1] };
+  return {
+    label: row.children[0],
+    number: row.children[1].children[0],
+    unit: row.children[1].children[1],
+  };
 };
 const assertTemperature = (tooltip, expected) => {
   const { label, number, unit } = temperatureCell(tooltip);
@@ -289,9 +294,24 @@ test("hover uses the archived phase projection and matching effective event mark
     panel.shown.session.timeline = {
       ...panel.shown.session.timeline,
       processed: [
-        { event_id: "infusion-later", kind: "infusion", effective_at: iso(100), detected_at: iso(20000) },
-        { event_id: "infusion-first", kind: "infusion", effective_at: iso(0), detected_at: iso(20000) },
-        { event_id: "door-close", kind: "door_close", effective_at: iso(-20000), detected_at: iso(0) },
+        {
+          event_id: "infusion-later",
+          kind: "infusion",
+          effective_at: iso(100),
+          detected_at: iso(20000),
+        },
+        {
+          event_id: "infusion-first",
+          kind: "infusion",
+          effective_at: iso(0),
+          detected_at: iso(20000),
+        },
+        {
+          event_id: "door-close",
+          kind: "door_close",
+          effective_at: iso(-20000),
+          detected_at: iso(0),
+        },
       ],
     };
     const original = JSON.stringify(panel.shown);

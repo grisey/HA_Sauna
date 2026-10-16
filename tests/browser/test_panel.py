@@ -3419,18 +3419,31 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
                 await expect(gang).to_contain_text("Bestätigt", timeout=browser_timeout("update"))
                 self.assertEqual(await gang.get_attribute("data-start"), start)
                 await expect(gang.locator("time")).to_have_attribute("datetime", start)
-                return await panel.evaluate("""p => ({
-                  gang: p.$('[data-history-selected-gang] time').textContent,
+                gang_time = await gang.locator("time").text_content()
+                # The selected gang excludes events on its end boundary. Read
+                # session event times in the overview, independently of that
+                # deliberate range filter, and wait for its rendered consumer.
+                await panel.locator('[data-action="clear-history-selection"]').click()
+                event_details = panel.locator("#event-list details").first
+                if await event_details.get_attribute("open") is None:
+                    await event_details.locator("summary").click()
+                await expect(panel.locator("#event-list .history-event-time").first).to_be_visible(
+                    timeout=browser_timeout("update")
+                )
+                snapshot = await panel.evaluate("""p => ({
                   events: [...p.shadowRoot.querySelectorAll('#event-list .history-event-time')].map(e=>e.textContent),
                   annotations: [...p.shadowRoot.querySelectorAll('[data-history-annotations] title')].filter(e=>/Aufguss|Heizzeit/.test(e.textContent)).map(e=>e.textContent),
                   session: p.$('#session').selectedOptions[0].textContent,
                 })""")
+                return {"gang": gang_time, **snapshot}
             finally:
                 await context.close()
 
         utc = await zone_snapshot("UTC")
         berlin = await zone_snapshot("Europe/Berlin")
         self.assertTrue(utc["annotations"])
+        self.assertTrue(utc["events"])
+        self.assertTrue(berlin["events"])
         for consumer in ("gang", "events", "annotations", "session"):
             self.assertNotEqual(utc[consumer], berlin[consumer], consumer)
         await self.page.set_viewport_size({"width": 390, "height": 844})

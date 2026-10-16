@@ -652,7 +652,10 @@ const parameters = fixtureValues();
     assert.equal(html.includes('data-action="event-row:tie-a"'), admin);
     assert.equal(html.includes('data-action="event-row:tie-b"'), false);
     assert.deepEqual(
-      Array.from(p.historyEventsAt(Date.parse(iso(10)), 10000), (event) => event.event_id),
+      Array.from(
+        p.historyEventsAt(Date.parse(iso(10)), 10000),
+        (event) => event.event_id,
+      ),
       ["early", "legacy-3", "tie-a", "tie-b"],
     );
     assert.equal(

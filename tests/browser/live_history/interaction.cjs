@@ -259,8 +259,15 @@ async function installInstrumentation(page) {
       const values = [...tooltip.querySelectorAll(".history-tooltip-values")]
         .filter((container) => !container.hidden)
         .flatMap((container) => [...container.children].filter((row) => !row.hidden))
-        .flatMap((row) => [...row.querySelectorAll(".history-tooltip-value")].filter((cell) => !cell.hidden))
-        .map((cell) => `${cell.querySelector(".history-tooltip-number").textContent} ${cell.querySelector(".history-tooltip-unit").textContent}`);
+        .flatMap((row) =>
+          [...row.querySelectorAll(".history-tooltip-value")].filter(
+            (cell) => !cell.hidden,
+          ),
+        )
+        .map(
+          (cell) =>
+            `${cell.querySelector(".history-tooltip-number").textContent} ${cell.querySelector(".history-tooltip-unit").textContent}`,
+        );
       const valueIn = (unit, minimum, maximum) =>
         values.some((text) => {
           const match = text.match(/^([0-9]+(?:[.,][0-9]+)?)\s*(°C|%)$/);
@@ -507,7 +514,11 @@ async function runCase(browser) {
       throw Error(
         `expected 8 retained measurement records per live tick; got ${raw.records}`,
       );
-    if (!raw.tooltip.visible || raw.tooltip.selection !== "" || !raw.tooltip.valuesCorrect)
+    if (
+      !raw.tooltip.visible ||
+      raw.tooltip.selection !== "" ||
+      !raw.tooltip.valuesCorrect
+    )
       throw Error(`tooltip values outside the synthetic series: ${raw.tooltip.text}`);
     if (!Object.values(raw.persistentNodes.fixtureIdentity).every(Boolean))
       throw Error(
