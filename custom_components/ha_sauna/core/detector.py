@@ -650,6 +650,7 @@ class Detector:
                 **{key: getattr(followup, key) for key in (
                     "fresh_previous", "fresh_current", "current_direction", "previous_direction",
                     "current_change", "previous_change", "level_change", "residual",
+                    "reference_level_loss",
                 )},
             }
         return result
@@ -1095,11 +1096,12 @@ class Detector:
                     background_residual=contrasts.background_residual,
                 )
             if not self.open:
-                opening_value = contrasts.opening_support if contrasts is not None else None
-                forms["opening_confirmation"] = _gate(
-                    opening_value > self.p["curve_original_open_contrast"]
-                    if opening_value is not None else None,
-                    value=opening_value, operator=">",
+                opening_value = None
+                current_opening = contrasts.opening_support if contrasts is not None else None
+                forms["current_opening_support"] = _gate(
+                    current_opening > self.p["curve_original_open_contrast"]
+                    if current_opening is not None else None,
+                    value=current_opening, operator=">",
                     threshold=self.p["curve_original_open_contrast"], unit="contrast",
                 )
                 if contrasts is None or not all(position in channels for position in positions):
@@ -1120,6 +1122,69 @@ class Detector:
                     binding_humidity_fall_kink=kink_gate,
                     binding_humidity_fall=_gate(binding),
                 )
+                if episode is None and binding:
+                    self._start_door_episode(positions, now, now)
+                    episode = self.door_episode
+                    episode["original_context"] = context
+                    episode["original_evaluation_context"] = context
+                candidate = episode.get("original_open") if episode is not None else None
+                if candidate is None and binding:
+                    candidate = {
+                        "received_at": prefix.received_at,
+                        "newest": self._original_newest(contrasts),
+                        "context": context, "windows": contrasts.positions,
+                        "continuity": tuple(
+                            (name, quantity, window.newest_at)
+                            for name, quantity, window in self._original_role_windows(
+                                contrasts.positions, (Quantity.TEMPERATURE, Quantity.HUMIDITY),
+                            )
+                        ),
+                        "humidity_fall_onset": contrasts.humidity_fall_onset,
+                        "humidity_kinks": humidity_kinks,
+                        "falling_temperatures": {
+                            name for name, pair in contrasts.positions
+                            if pair.temperature.v < -significance * pair.temperature.e
+                        },
+                    }
+                    episode["original_open"] = candidate
+                followups = (self._original_followups(
+                    prefix, self._original_role_windows(
+                        candidate["windows"], (Quantity.TEMPERATURE, Quantity.HUMIDITY),
+                    ),
+                    continuity=candidate["continuity"],
+                ) if candidate is not None else None)
+                fresh_block = bool(followups) and all(
+                    form.fresh_current == self.p["curve_original_samples"]
+                    for form in followups.values()
+                )
+                opening_value = (min(form.reference_level_loss for form in followups.values())
+                                 if followups else None)
+                lower_level = bool(followups) and all(
+                    form.reference_level_loss > self.p["curve_original_open_contrast"]
+                    for form in followups.values()
+                )
+                forms.update(
+                    followup=self._original_followup_trace(followups),
+                    complete_fresh_original_block=_gate(fresh_block),
+                    contiguous_candidate_support=_gate(
+                        followups is not None if candidate is not None else None,
+                    ),
+                    lower_level=_gate(
+                        lower_level, value=opening_value, operator=">",
+                        threshold=self.p["curve_original_open_contrast"], unit="contrast",
+                        reference="bound_previous_original_mean",
+                    ),
+                )
+                forms["opening_confirmation"] = forms["lower_level"]
+                if candidate is not None and followups is None:
+                    forms["opening_candidate_reset_reason"] = "original_support_disconnected"
+                    episode.pop("original_open", None)
+                    continue
+                if candidate is not None and prefix.original:
+                    candidate["continuity"] = tuple(
+                        (name, quantity, form.window.newest_at)
+                        for (name, quantity), form in followups.items()
+                    )
                 fall_ends = {
                     name: original_flattening(pair.humidity, pair.temperature,
                                               significance=significance)
@@ -1130,8 +1195,7 @@ class Detector:
                     and form.current_flat.result and form.braking.result
                     for form in fall_ends.values()
                 )
-                candidate = episode.get("original_open") if episode is not None else None
-                temperature_counterform = False
+                temperature_recovery = temperature_fall_ended = False
                 if candidate is not None and prefix.original:
                     falling = candidate["falling_temperatures"]
                     for name, pair in contrasts.positions:
@@ -1139,15 +1203,28 @@ class Detector:
                         ended = original_flattening(
                             temperature, pair.humidity, significance=significance,
                         )
-                        temperature_counterform |= bool(
+                        temperature_recovery |= bool(
                             name in falling and temperature.v > significance * temperature.e
-                            or ended is not None and ended.previous_fall.result
+                        )
+                        temperature_fall_ended |= bool(
+                            ended is not None and ended.previous_fall.result
                             and ended.current_flat.result and ended.braking.result
                         )
                         if temperature.v < -significance * temperature.e:
                             falling.add(name)
                 forms["humidity_fall_ended"] = _gate(fall_ended)
+                humidity_recovery = any(pair.humidity.v > significance * pair.humidity.e
+                                        for _, pair in contrasts.positions)
+                temperature_counterform = bool(
+                    temperature_recovery or temperature_fall_ended and not lower_level
+                )
                 forms["temperature_fall_counterform"] = _gate(temperature_counterform)
+                forms["temperature_recovery_counterform"] = _gate(temperature_recovery)
+                forms["temperature_fall_ended"] = _gate(temperature_fall_ended)
+                forms["humidity_recovery"] = _gate(humidity_recovery)
+                forms["ended_fall_retained_by_level"] = _gate(
+                    lower_level and (fall_ended or humidity_recovery or temperature_fall_ended),
+                )
                 forms["humidity_fall_end_contrasts"] = {
                     name: {
                         comparison: _gate(
@@ -1159,12 +1236,13 @@ class Detector:
                     }
                     for name, form in fall_ends.items() if form is not None
                 }
-                if (fall_ended or temperature_counterform
-                        or any(pair.humidity.v > significance * pair.humidity.e
-                               for _, pair in contrasts.positions)):
+                if (temperature_counterform
+                        or (fall_ended or humidity_recovery) and not lower_level):
                     forms["opening_candidate_reset_reason"] = (
-                        "humidity_fall_ended" if fall_ended else
-                        "temperature_counterform" if temperature_counterform else "humidity_counterform"
+                        "temperature_recovery" if temperature_recovery else
+                        "temperature_fall_ended_without_level" if temperature_fall_ended else
+                        "humidity_fall_ended_without_level" if fall_ended else
+                        "humidity_recovery_without_level"
                     )
                     if episode is not None and episode.get("retained_heating_only"):
                         episode.pop("original_open", None)
@@ -1174,64 +1252,11 @@ class Detector:
                         self.baseline = {}
                         self.ventilation_positions = ()
                     continue
-                if episode is None and binding:
-                    self._start_door_episode(positions, now, now)
-                    episode = self.door_episode
-                    episode["original_context"] = context
-                    episode["original_evaluation_context"] = context
                 if episode is None:
                     continue
-                candidate = episode.get("original_open")
-                if candidate is None:
-                    if binding:
-                        candidate = {
-                            "received_at": prefix.received_at,
-                            "newest": self._original_newest(contrasts),
-                            "context": context, "windows": contrasts.positions,
-                            "continuity": tuple(
-                                (name, quantity, window.newest_at)
-                                for name, quantity, window in self._original_role_windows(
-                                    contrasts.positions, (Quantity.TEMPERATURE, Quantity.HUMIDITY),
-                                )
-                            ),
-                            "humidity_fall_onset": contrasts.humidity_fall_onset,
-                            "humidity_kinks": humidity_kinks,
-                            "falling_temperatures": {
-                                name for name, pair in contrasts.positions
-                                if pair.temperature.v < -significance * pair.temperature.e
-                            },
-                        }
-                        episode["original_open"] = candidate
-                followups = (self._original_followups(
-                    prefix, self._original_role_windows(
-                        candidate["windows"], (Quantity.TEMPERATURE, Quantity.HUMIDITY),
-                    ),
-                    continuity=candidate["continuity"],
-                ) if candidate is not None else None)
-                fresh_block = bool(followups) and all(
-                    form.fresh_current == self.p["curve_original_samples"]
-                    for form in followups.values()
-                )
-                forms.update(
-                    followup=self._original_followup_trace(followups),
-                    complete_fresh_original_block=_gate(fresh_block),
-                    contiguous_candidate_support=_gate(
-                        followups is not None if candidate is not None else None,
-                    ),
-                )
-                if candidate is not None and followups is None:
-                    forms["opening_candidate_reset_reason"] = "original_support_disconnected"
-                    episode.pop("original_open", None)
-                    continue
-                if candidate is not None and prefix.original:
-                    candidate["continuity"] = tuple(
-                        (name, quantity, form.window.newest_at)
-                        for (name, quantity), form in followups.items()
-                    )
                 opening = bool(
                     candidate is not None and prefix.original
-                    and contrasts.opening_support > self.p["curve_original_open_contrast"]
-                    and fresh_block
+                    and fresh_block and lower_level
                 )
                 forms.update(
                     bound_humidity_fall_onset=(candidate["humidity_fall_onset"]
@@ -1250,7 +1275,6 @@ class Detector:
                         contrasts.fall > significance, value=contrasts.fall, operator=">",
                         threshold=significance, unit="contrast",
                     ),
-                    current_opening_support=forms["opening_confirmation"],
                     later_original_confirmation=_gate(opening),
                 )
                 if opening:
@@ -1467,6 +1491,7 @@ class Detector:
                 if opening_value is not None and not self.open else None,
                 value=opening_value, operator=">",
                 threshold=self.p["curve_original_open_contrast"], unit="contrast",
+                reference="bound_previous_original_mean",
             ),
             "later_original_confirmation": _gate(opening if not self.open else None),
         }, evaluated=not self.open)
@@ -1839,7 +1864,10 @@ class Detector:
                         form.fresh_current == self.p["curve_original_samples"]
                         for form in followups.values()
                     )
-                    if later_original and fresh_block:
+                    # Die beobachtete Aststärke ist noch keine Bestätigung.
+                    # Ein kurzer klarer Puls darf seinen starken Anstieg
+                    # behalten und später durch den ganzen Fallblock belegen.
+                    if later_original:
                         if component["rise_score"] is None or contrasts.rise > component["rise_score"]:
                             component["rise_score"] = contrasts.rise
                             component["rise_windows"] = contrasts.positions
@@ -1922,7 +1950,7 @@ class Detector:
                         "original_rise_contrast": _gate(
                             component["strong"], value=component["rise_score"],
                             operator=">", threshold=threshold, unit="contrast",
-                            reference="bound_fresh_original_rise_block",
+                            reference="bound_observed_original_rise_maximum",
                         ),
                         "current_original_rise": _gate(
                             contrasts.rise > early_threshold, value=contrasts.rise,

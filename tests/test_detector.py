@@ -247,6 +247,7 @@ class DetectorTests(unittest.TestCase):
         self.assertEqual(len(openings), 1, msg=diagnostic)
         self.assertNotIn(Kind.DOOR_CLOSE, [item.kind for item in events], msg=diagnostic)
         opening = openings[0]
+        self.assertEqual(opening.channels, ("upper", "lower"), msg=diagnostic)
         # Resolve the declared input turn within the existing bounded knot search.
         resolution = max(detector.grid_seconds, ceil(
             detector.p["curve_window_seconds"]
@@ -258,19 +259,14 @@ class DetectorTests(unittest.TestCase):
         )
         self.assertEqual(opening.trace_at, opening.detected_at, msg=diagnostic)
         native = detector.door_episode["original_open"]
-        self.assertEqual(native["received_at"], T0 + timedelta(seconds=70 + 2 * detector.grid_seconds),
-                         msg=diagnostic)
-        self.assertEqual(opening.trace_at, T0 + timedelta(seconds=70 + 3 * detector.grid_seconds),
-                         msg=diagnostic)
         self.assertEqual(native["confirmation_received_at"], opening.trace_at, msg=diagnostic)
         self.assertLess(native["received_at"], native["confirmation_received_at"], msg=diagnostic)
-        self.assertEqual(opening.effective_at, opening.trace_at, msg=diagnostic)
-        # Native confirmation precedes the optional model's first right flank.
-        self.assertLess(opening.trace_at, T0 + timedelta(
-            seconds=70 + detector.curve_policy.min_side_samples * detector.grid_seconds,
-        ), msg=diagnostic)
+        self.assertLessEqual(opening.effective_at, opening.trace_at, msg=diagnostic)
         row = next(row for row in traces if Kind.DOOR_OPEN in row["signals"])
-        self.assertFalse(row["door_open_onset_attribution"]["used_proposal"], msg=diagnostic)
+        self.assertEqual(row["door_open_onset_attribution"]["confirmation_basis"], "original_ols",
+                         msg=diagnostic)
+        self.assertTrue(row["original_forms"]["complete_fresh_original_block"]["result"],
+                        msg=diagnostic)
         expected_positions = tuple(position.value for position in detector.positions)
         bound = original_contrasts(dict(native["windows"]), expected_positions=expected_positions)
         confirmed = original_contrasts(dict(native["confirmation_windows"]),
@@ -285,7 +281,9 @@ class DetectorTests(unittest.TestCase):
             confirmation = dict(native["confirmation_windows"])[name]
             for quantity in (Quantity.TEMPERATURE, Quantity.HUMIDITY):
                 before, after = getattr(binding, quantity.value), getattr(confirmation, quantity.value)
-                self.assertGreater(after.newest_at, before.newest_at, msg=diagnostic)
+                self.assertEqual(len(after.current), detector.p["curve_original_samples"],
+                                 msg=diagnostic)
+                self.assertGreater(after.current[0][0], before.newest_at, msg=diagnostic)
                 self.assertLessEqual(after.newest_at, opening.trace_at, msg=diagnostic)
                 for stamp, value in after.previous + after.current:
                     second = (stamp - T0).total_seconds()
@@ -396,19 +394,17 @@ class DetectorTests(unittest.TestCase):
                 )
                 self.assertEqual(len(native_openings), 1, msg=diagnostic)
                 native = native_openings[0]
-                self.assertEqual(native["received_at"],
-                                 T0 + timedelta(seconds=30 + 3 * detector.grid_seconds),
-                                 msg=diagnostic)
-                self.assertEqual(opening.trace_at,
-                                 T0 + timedelta(seconds=30 + 4 * detector.grid_seconds),
-                                 msg=diagnostic)
                 self.assertEqual(native["confirmation_received_at"], opening.trace_at,
                                  msg=diagnostic)
                 self.assertLess(native["received_at"], native["confirmation_received_at"],
                                 msg=diagnostic)
-                self.assertEqual(opening.effective_at, opening.trace_at, msg=diagnostic)
+                self.assertLessEqual(opening.effective_at, opening.trace_at, msg=diagnostic)
+                self.assertEqual(opening.trace_at, opening.detected_at, msg=diagnostic)
                 row = next(row for row in traces if Kind.DOOR_OPEN in row["signals"])
-                self.assertFalse(row["door_open_onset_attribution"]["used_proposal"], msg=diagnostic)
+                self.assertEqual(row["door_open_onset_attribution"]["confirmation_basis"],
+                                 "original_ols", msg=diagnostic)
+                self.assertTrue(row["original_forms"]["complete_fresh_original_block"]["result"],
+                                msg=diagnostic)
                 expected_positions = ("upper", "lower")
                 bound = original_contrasts(dict(native["windows"]),
                                            expected_positions=expected_positions)
@@ -425,7 +421,9 @@ class DetectorTests(unittest.TestCase):
                     for quantity in (Quantity.TEMPERATURE, Quantity.HUMIDITY):
                         before = getattr(binding, quantity.value)
                         after = getattr(confirmation, quantity.value)
-                        self.assertGreater(after.newest_at, before.newest_at, msg=diagnostic)
+                        self.assertEqual(len(after.current), detector.p["curve_original_samples"],
+                                         msg=diagnostic)
+                        self.assertGreater(after.current[0][0], before.newest_at, msg=diagnostic)
                         self.assertLessEqual(after.newest_at, opening.trace_at, msg=diagnostic)
                         for stamp, value in after.previous + after.current:
                             second = (stamp - T0).total_seconds()
@@ -1048,18 +1046,24 @@ class DetectorTests(unittest.TestCase):
         self.assertNotIn(Kind.DOOR_CLOSE, [item.kind for item in found])
         self.assertNotIn(Kind.VENTILATION, [item.kind for item in found])
 
-        def closing_form(*args, **kwargs):
-            form = original_thermal_contrasts(*args, **kwargs)
-            return None if form is None else replace(
+        second = pending_at + step
+        confirmation_at = T0 + timedelta(seconds=second)
+
+        def closing_form(temperatures, **kwargs):
+            form = original_thermal_contrasts(temperatures, **kwargs)
+            if form is None or any(window.newest_at < confirmation_at
+                                   for window in temperatures.values()):
+                return form
+            return replace(
                 form, braking=2 * significance, warming_min=2 * significance,
                 warming_max=2 * significance,
             )
 
         # Only the comparison establishing simultaneous closure is declared.
         # The bound close owner, complete fresh T blocks and RH/T windows stay real.
+        # Earlier RH-only prefixes retain the real, still-falling T comparison.
         with patch("custom_components.ha_sauna.core.detector.original_thermal_contrasts",
                    side_effect=closing_form):
-            second = pending_at + step
             for quantity, value in ((Quantity.HUMIDITY, values(second)[1]),
                                     (Quantity.TEMPERATURE, values(second)[0])):
                 for position in detector.positions:

@@ -1662,6 +1662,10 @@ class OriginalFollowupArithmeticTests(unittest.TestCase):
                 self.assertIs(form.reference, reference)
                 self.assertEqual((form.fresh_previous, form.fresh_current),
                                  (previous, current))
+                # Fixed previous mean is 10; every current mean is 6.
+                # Their retained level loss is (10-6)/(2*1)=2, even
+                # when both moving sections have become the same plateau.
+                self.assertEqual(form.reference_level_loss, 2)
                 self.assertEqual(original_followup(window, reference), form)
                 if length in (6, 9, 12):
                     # OLS over three originals at 0,2,4 has e=1/2.
@@ -1693,6 +1697,11 @@ class OriginalFollowupArithmeticTests(unittest.TestCase):
                 sign = 1 if value_factor > 0 else -1
                 self.assertAlmostEqual(edge.direction, -2 * sign)
                 self.assertAlmostEqual(edge.change, -4 / 3 * sign)
+                followup = original_followup(window, reference)
+                self.assertIsNotNone(followup)
+                # Reference previous mean 10 versus current mean 4:
+                # L=(10-4)/(2*1)=3; reflection reverses this signed loss.
+                self.assertAlmostEqual(followup.reference_level_loss, 3 * sign)
 
     def test_edge_counterform_needs_resolved_fall_and_rejects_invalid_support(self):
         reference = self._window((12, 10, 8, 6, 10, 14))
@@ -1734,7 +1743,8 @@ class OriginalFollowupArithmeticTests(unittest.TestCase):
 class OriginalCurveFollowupTests(unittest.TestCase):
     """Functional robustness criteria on declared, catalogue-timed originals.
 
-    The bound scenario's ``exit`` endpoints supply all four climate values;
+    The bound scenario's ``exit`` endpoints supply door climate values and
+    ``occupied_infusion`` supplies the moisture pulse at its initial T values.
     ``construction.stay`` supplies door, recovery and settled-tail durations.
     Linear joins isolate continuation and counterforms without claiming an
     exact physical event time. No detector decision or fitted form is replaced.
@@ -1772,6 +1782,13 @@ class OriginalCurveFollowupTests(unittest.TestCase):
         columns = tuple(curve["roles"].index(role) + 1 for role in CLIMATE)
         self.initial = tuple(curve["rows"][0][column] for column in columns)
         self.exchanged = tuple(curve["rows"][-1][column] for column in columns)
+        infusion = source["curves"]["occupied_infusion"]
+        columns = tuple(infusion["roles"].index(role) + 1 for role in CLIMATE)
+        self.infusion_initial = tuple(infusion["rows"][0][column] for column in columns)
+        self.infusion_peak = tuple(
+            infusion["rows"][0 if role.endswith("temperature") else -1][column]
+            for role, column in zip(CLIMATE, columns, strict=True)
+        )
         self.fall_step = tuple(
             (after - before) / self.door_ticks
             for before, after in zip(self.initial, self.exchanged, strict=True)
@@ -1836,7 +1853,8 @@ class OriginalCurveFollowupTests(unittest.TestCase):
             for index in range(1, ticks + 1)
         ), stop_when=stop_when)
 
-    def _bind(self, route):
+    def _bind(self, route, *, fall_step=None):
+        fall_step = self.fall_step if fall_step is None else fall_step
         detector = self._detector()
         events = self._feed(detector, (self.initial for _ in range(self.baseline_ticks)))
 
@@ -1844,14 +1862,14 @@ class OriginalCurveFollowupTests(unittest.TestCase):
             return bool(detector.door_episode and detector.door_episode.get(key))
 
         events += self._ramp(
-            detector, self.door_ticks, self.fall_step,
+            detector, self.door_ticks, fall_step,
             stop_when=lambda: pending("original_open"),
         )
         self.assertTrue(pending("original_open"))
         self.assertNotIn(Kind.DOOR_OPEN, [item.kind for item in events])
         if route == "opening":
             return detector, events, detector.door_episode["original_open"]
-        events += self._ramp(detector, 4 * self.count, self.fall_step)
+        events += self._ramp(detector, 4 * self.count, fall_step)
         self.assertEqual([item.kind for item in events].count(Kind.DOOR_OPEN), 1)
         self.assertTrue(detector.open)
         events += self._ramp(
@@ -1886,19 +1904,27 @@ class OriginalCurveFollowupTests(unittest.TestCase):
                 self.assertIs(detector.door_episode[key], candidate)
 
     def test_clear_continued_original_shapes_confirm_once_after_binding(self):
-        for route, kind, delta in (
-            ("opening", Kind.DOOR_OPEN, self.fall_step),
-            ("closing", Kind.DOOR_CLOSE, self.recovery_step),
+        for route, kind, delta, lower_plateau in (
+            ("opening", Kind.DOOR_OPEN, self.fall_step, False),
+            ("closing", Kind.DOOR_CLOSE, self.recovery_step, False),
+            ("opening", Kind.DOOR_OPEN, (0,) * len(CLIMATE), True),
         ):
-            with self.subTest(route=route):
-                detector, events, candidate = self._bind(route)
+            with self.subTest(route=route, lower_plateau=lower_plateau):
+                short_fall = tuple(
+                    (after - before) / (self.count - 1)
+                    for before, after in zip(self.initial, self.exchanged, strict=True)
+                ) if lower_plateau else None
+                detector, events, candidate = self._bind(route, fall_step=short_fall)
                 bound_at = self._at(detector.index)
+                # The short joint loss stops at its actual first binding.
+                # All following originals stay at that lower observed level.
                 events += self._ramp(detector, 4 * self.count, delta)
                 confirmations = [item for item in events if item.kind is kind]
                 self.assertEqual(len(confirmations), 1)
                 self.assertGreater(confirmations[0].trace_at, bound_at)
                 if route == "opening":
-                    self.assertIs(detector.door_episode["original_open"], candidate)
+                    if not lower_plateau:
+                        self.assertIs(detector.door_episode["original_open"], candidate)
                     newest = {name: (temperature, humidity)
                               for name, temperature, humidity in candidate["newest"]}
                     for name, pair in candidate["confirmation_windows"]:
@@ -1907,6 +1933,48 @@ class OriginalCurveFollowupTests(unittest.TestCase):
                 else:
                     self.assertFalse(detector.open)
                     self.assertIsNone(detector.door_episode)
+                if lower_plateau:
+                    if not any(item.kind is Kind.DOOR_CLOSE for item in events):
+                        events += self._ramp(detector, self.tail_ticks, delta)
+                    self.assertEqual([
+                        item.kind for item in events
+                        if item.kind in (Kind.DOOR_OPEN, Kind.DOOR_CLOSE)
+                    ], [Kind.DOOR_OPEN, Kind.DOOR_CLOSE])
+                    self.assertFalse(detector.open)
+                    self.assertIsNone(detector.door_episode)
+
+    def test_short_rh_pulse_confirms_once_after_its_peak(self):
+        detector = self._detector()
+        events = self._feed(detector, (
+            self.infusion_initial for _ in range(self.baseline_ticks)
+        ))
+        rise_ticks = self.count - 1
+        rise_step = tuple(
+            (peak - initial) / rise_ticks
+            for initial, peak in zip(self.infusion_initial, self.infusion_peak, strict=True)
+        )
+        events += self._ramp(detector, rise_ticks, rise_step)
+        peak_at = self._at(detector.index)
+        self.assertNotIn(Kind.INFUSION, [item.kind for item in events])
+        candidate = detector._original_infusion_candidate
+        self.assertIsNotNone(candidate)
+        bound = {name: humidity for name, _, humidity in candidate["newest"]}
+        originals = self._originals(detector)
+        for position in detector.positions:
+            self.assertLess(sum(stamp > bound[position.value]
+                                for stamp, _ in originals[f"{position.value}_humidity"]),
+                            self.count)
+        fall_step = tuple(
+            (initial - peak) / self.count
+            for initial, peak in zip(self.infusion_initial, self.infusion_peak, strict=True)
+        )
+        events += self._ramp(detector, self.count, fall_step)
+        events += self._feed(detector, (
+            self.infusion_initial for _ in range(self.tail_ticks)
+        ))
+        infusions = [item for item in events if item.kind is Kind.INFUSION]
+        self.assertEqual(len(infusions), 1)
+        self.assertGreater(infusions[0].trace_at, peak_at)
 
     def test_renewed_fall_prevents_late_isolated_recovery_confirming_old_close(self):
         detector, events, previous = self._bind("closing")

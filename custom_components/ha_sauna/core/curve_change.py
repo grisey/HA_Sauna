@@ -102,6 +102,8 @@ class OriginalFollowupFeatures:
     The caller owns the fixed reference, source continuity and every decision.
     Changes use the reference's previous slope as their common background;
     level_change compares only the two sections of the supplied window.
+    reference_level_loss is the dimensionless signed loss against the fixed
+    observed mean of the reference's previous section.
     """
 
     window: OriginalWindowFeatures
@@ -114,6 +116,7 @@ class OriginalFollowupFeatures:
     previous_change: float
     level_change: float
     residual: float
+    reference_level_loss: float
 
 
 @dataclass(frozen=True)
@@ -592,6 +595,11 @@ def original_followup(
     no fresh originals; a window older than its reference is unknown (None).
     Invalid support or nonfinite arithmetic is also unknown. Source identity,
     gap limits and the amount of fresh support required belong to the caller.
+
+    reference_level_loss = (reference.mean_minus - window.mean) / (2 * scale).
+    The common scale is the supplied value-deviation scale; 2 * scale
+    is the existing difference normalization, not a new parameter or
+    an event rule. The fixed reference's observed level is not extrapolated.
     """
     try:
         if not _original_comparable_windows_valid(window, reference):
@@ -612,9 +620,11 @@ def original_followup(
         previous_change = (window.b - reference.b) / previous_error
         level_change = (window.mean - window.mean_minus) / level_scale
         residual = max(window.r, window.r_minus)
+        reference_level_loss = (reference.mean_minus - window.mean) / level_scale
         if not all(_profile_number(value) for value in (
             current_direction, previous_direction, current_change,
             previous_change, level_change, residual,
+            reference_level_loss,
         )):
             return None
         return OriginalFollowupFeatures(
@@ -625,6 +635,7 @@ def original_followup(
             previous_direction=previous_direction,
             current_change=current_change, previous_change=previous_change,
             level_change=level_change, residual=residual,
+            reference_level_loss=reference_level_loss,
         )
     except (AttributeError, IndexError, OverflowError, TypeError, ValueError):
         return None
