@@ -2227,6 +2227,9 @@ class SaunaPanel extends HTMLElement {
   constructor() {
     super();
     this.attachShadow({ mode: "open" });
+    this.initializePanelState();
+  }
+  initializePanelState() {
     this.view = "overview";
     this.navigation = { main: "overview", detail: "detail" };
     this.selected = "live";
@@ -11412,10 +11415,8 @@ class SaunaPanel extends HTMLElement {
         current?.eventIds?.length === ids.length &&
         ids.every((id) => current.eventIds.includes(id));
     const snapAt = (time) => {
-      const event = members.find((member) => stamp(member.effective_at) === time);
-      return event
-        ? this.historyCurrentSnap({ time, eventId: event.event_id, kind: event.kind })
-        : null;
+      return this.historyEventProjection().snapTargets.find((target) =>
+        target.time === time && ids.includes(target.eventId)) || null;
     };
     this.selectHistoryValueContext(
       {
@@ -11452,7 +11453,7 @@ class SaunaPanel extends HTMLElement {
         this.updateMarkup(
           "#history-event-inspection",
           event
-            ? `<div class="history-inspected-event-row"><time datetime="${esc(event.effective_at)}" title="${esc(this.tooltipWhen(event.effective_at))}">${esc(this.clock(event.effective_at))}</time><span>${esc(this.historyEventLabel(event))}</span></div>`
+            ? `<div class="history-inspected-event-row"><time datetime="${esc(event.effective_at)}" title="${esc(this.tooltipWhen(event.effective_at))}">${esc(this.clock(event.effective_at))}</time><span>${esc(this.historyEventLabel(event))}</span>${this.historyInfusionEndMarkup(event)}</div>`
             : "",
         );
       }
@@ -11472,6 +11473,14 @@ class SaunaPanel extends HTMLElement {
       marker.setAttribute("aria-pressed", String(selected));
     }
     this.syncHistorySnapTargets();
+  }
+  historyInfusionEndMarkup(event) {
+    if (event.kind !== "infusion") return "";
+    const end = event.infusion_ref?.end,
+      at = stamp(end?.effective_at);
+    if (!Number.isFinite(at) || at < stamp(event.effective_at))
+      return '<span>Ende nicht belegt</span>';
+    return `<span>Ende <time datetime="${esc(end.effective_at)}" title="${esc(this.tooltipWhen(end.effective_at))}">${esc(this.clock(end.effective_at))}</time></span><span>Bestätigt <time datetime="${esc(end.confirmed_at)}" title="${esc(this.tooltipWhen(end.confirmed_at))}">${esc(this.clock(end.confirmed_at))}</time></span>`;
   }
   syncHistorySnapTargets() {
     const selection = this.historyValueSelection,
@@ -12023,12 +12032,17 @@ class SaunaPanel extends HTMLElement {
       startY: event.clientY,
       movement: 0,
       tap: !this.chartPointers.size,
+      panAllowed: null,
       svg,
       model: model ? { ...model } : null,
       geometry,
+      window: this.window ? [...this.window] : null,
     });
     if (this.chartPointers.size > 1)
-      for (const point of this.chartPointers.values()) point.tap = false;
+      for (const point of this.chartPointers.values()) {
+        point.tap = false;
+        point.panAllowed = false;
+      }
     if (this.chartPointers.size > 1) {
       this.pendingHover = this.lastHistoryPointer = this.historyHoverPreview = null;
       this.historyChart?.interaction.hide?.();
@@ -12045,8 +12059,23 @@ class SaunaPanel extends HTMLElement {
       pointer.movement,
       Math.hypot(event.clientX - pointer.startX, event.clientY - pointer.startY),
     );
-    if (pointer.movement > this.preference("history_tap_movement_px"))
+    const dx = event.clientX - pointer.startX,
+      dy = event.clientY - pointer.startY,
+      rect = pointer.geometry?.rects?.[
+        pointer.svg.matches?.("[data-history-time-axis]") ? "timeAxis" : "surface"
+      ],
+      model = pointer.model,
+      plotWidth = model && rect ? (model.right - model.left) / model.width * rect.width : 0;
+    if (pointer.movement > this.preference("history_tap_movement_px")) {
       pointer.tap = false;
+      pointer.panAllowed ??= Math.abs(dx) > Math.abs(dy);
+    }
+    if (!pointer.tap && pointer.panAllowed && this.chartPointers.size === 1 && pointer.window && plotWidth > 0) {
+      const shift = -dx / plotWidth * (pointer.window[1] - pointer.window[0]);
+      this.setHistoryWindow(pointer.window[0] + shift, pointer.window[1] + shift);
+      this.scheduleHistoryRender("viewport");
+      event.preventDefault?.();
+    }
   }
   endChartPointer(event, cancelled = false) {
     const pointer = this.chartPointers?.get(event.pointerId);
@@ -12543,7 +12572,7 @@ class SaunaPanel extends HTMLElement {
         ),
       { low, high, humidityLow, humidityHigh } = valueScale,
       scaleX = geometry.width / Math.max(1, cssWidth),
-      labelGeometry = chart.interaction.cachedGeometry,
+      labelGeometry = chart.interaction?.cachedGeometry,
       labelInset = this.preference("layout_space_13_px"),
       labelGap = this.preference("control_group_gap_px"),
       temperatureLabelWidth = Math.max(
@@ -12849,6 +12878,14 @@ class SaunaPanel extends HTMLElement {
     const session = this.shown?.session;
     if (!session)
       return { allEvents: [], events: [], mainEvents: [], groups: [], snapTargets: [] };
+    const timeline = session.timeline,
+      gangs = [...(timeline.completed || []), ...(timeline.active ? [timeline.active] : [])],
+      infusionEvidence = new Map();
+    for (const gang of gangs) {
+      const owned = new Set((gang.infusion_events || []).map((event) => event.event_id));
+      for (const infusion of gang.infusions || [])
+        if (owned.has(infusion.source_event_id)) infusionEvidence.set(infusion.source_event_id, infusion);
+    }
     const allEvents = this.historyEventSources().map((event) => {
         const category = this.historyEventCategory(event),
           label = this.historyEventLabel(event),
@@ -12858,6 +12895,8 @@ class SaunaPanel extends HTMLElement {
           history_category: category,
           history_visible: this.historyEventVisible(event),
           display_label: label,
+          ...(event.kind === "infusion" && infusionEvidence.has(event.event_id)
+            ? {infusion_ref: infusionEvidence.get(event.event_id)} : {}),
           snap:
             category && Number.isFinite(at)
               ? { time: at, eventId: event.event_id, kind: event.kind, label }
@@ -12893,12 +12932,7 @@ class SaunaPanel extends HTMLElement {
         });
         return groups.at(-1);
       };
-    const timeline = session.timeline,
-      gangs = [
-        ...(timeline.completed || []),
-        ...(timeline.active ? [timeline.active] : []),
-      ],
-      doors = new Map(
+    const doors = new Map(
         source
           .filter((event) => event.history_category === "door")
           .map((event) => [event.event_id, event]),
@@ -12945,7 +12979,7 @@ class SaunaPanel extends HTMLElement {
           claimed.add(id);
           return infusions.get(id);
         });
-      append("infusion", `infusion:${gang.gang_id}`, members, false, gang);
+      for (const event of members) append("infusion", `event:${event.event_id}`, [event], false, gang);
     }
     for (const [id, event] of infusions)
       if (!claimed.has(id)) append("infusion", `event:${id}`, [event]);
@@ -12966,9 +13000,17 @@ class SaunaPanel extends HTMLElement {
       if (Number.isFinite(end)) group.end = end;
     }
     for (const group of groups) {
+      if (group.kind === "infusion") {
+        const evidence = group.first.event.infusion_ref?.end,
+          effective = stamp(evidence?.effective_at);
+        if (Number.isFinite(effective) && effective >= group.start) {
+          group.end = effective;
+          group.end_ref = evidence;
+        }
+      }
       group.label = this.historyEventBandLabel(group);
       group.selectionLabel =
-        group.roleLabel || (group.kind === "heater" ? group.label : undefined);
+        group.roleLabel || (["heater", "infusion"].includes(group.kind) ? group.label : undefined);
       group.visible = group.first.event.history_visible;
       group.annotation =
         group.kind === "heater"
@@ -12977,8 +13019,12 @@ class SaunaPanel extends HTMLElement {
             ? "door"
             : null;
       group.snapTargets = group.members.map(({ event }) => event.snap).filter(Boolean);
+      if (group.end_ref) group.snapTargets.push({
+        time: group.end, eventId: group.first.event.event_id,
+        kind: "infusion_end", boundary: "end", label: "Aufgussende",
+      });
       group.children =
-        group.kind === "infusion"
+        group.kind === "infusion" && group.members.length > 1
           ? group.members.map((member) => ({
               kind: group.kind,
               key: `event:${member.event.event_id}`,
@@ -13002,7 +13048,7 @@ class SaunaPanel extends HTMLElement {
       events,
       mainEvents,
       groups: groups.filter((group) => group.visible).sort((a, b) => a.start - b.start),
-      snapTargets: mainEvents.map((event) => event.snap).filter(Boolean),
+      snapTargets: groups.filter((group) => group.visible).flatMap((group) => group.snapTargets),
     };
   }
   historyEventGroups() {

@@ -32,6 +32,7 @@ class Node extends EventTarget {
     this.name = name;
     this.children = [];
     this.style = {};
+    this.classList = require("./catalog_fixture.cjs").elementClassList(this);
     this.hidden = true;
     this.rect = { left: 0, top: 0, width: 1200, height: 480, ...rect };
     this.attributes = new Map();
@@ -40,6 +41,14 @@ class Node extends EventTarget {
   append(...nodes) {
     this.children.push(...nodes);
     for (const node of nodes) node.parentNode = this;
+  }
+  prepend(...nodes) {
+    this.children.unshift(...nodes);
+    for (const node of nodes) node.parentNode = this;
+  }
+  remove() {
+    if (this.parentNode) this.parentNode.children = this.parentNode.children.filter((node) => node !== this);
+    this.parentNode = null;
   }
   replaceChildren(...nodes) {
     this.children = [];

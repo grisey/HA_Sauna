@@ -81,6 +81,8 @@ function panelFixture(panelOrClass) {
     typeof panelOrClass === "function"
       ? Object.create(panelOrClass.prototype)
       : panelOrClass;
+  if (typeof panelOrClass === "function") panel.initializePanelState?.();
+  panel.shadowRoot ||= { querySelector: () => null, querySelectorAll: () => [] };
   panel.panel = {
     config: {
       appearance_catalog: structuredClone(catalog.appearance),
@@ -90,12 +92,22 @@ function panelFixture(panelOrClass) {
   return panel;
 }
 
+function elementClassList(element) {
+  const values = () => new Set((element.className || "").split(/\s+/).filter(Boolean));
+  return {
+    add(...names) { element.className = [...new Set([...values(), ...names])].join(" "); },
+    remove(...names) { element.className = [...values()].filter((name) => !names.includes(name)).join(" "); },
+    contains(name) { return values().has(name); },
+  };
+}
+
 module.exports = {
   catalog,
   rawCatalog,
   resolve,
   preferences,
   panelFixture,
+  elementClassList,
   parameterValues,
   parameterDefinition,
   parameterDefinitions,

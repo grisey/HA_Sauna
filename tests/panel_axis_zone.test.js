@@ -60,6 +60,7 @@ test("history axes use the fixed local zone and reuse unchanged layers", () => {
       low: 20,
       high: 100,
       humidityHigh: 80,
+      valueScale: {intervals: 4, temperature: [20, 40, 60, 80, 100], humidity: [0, 20, 40, 60, 80]},
       x: (time) => ((time - model.start) / (model.end - model.start)) * model.right,
     };
     let axes = 0,
@@ -97,7 +98,7 @@ test("history axes use the fixed local zone and reuse unchanged layers", () => {
     });
     const session = { ended_at: "2032-01-01T01:00:00Z" };
     chart.render(new Set(["status"]), session, []);
-    assert.match(node("[data-history-axes]").innerHTML, new RegExp(clock));
+    assert.match(node("[data-history-time-ticks]").innerHTML, new RegExp(clock));
     chart.render(new Set(["status"]), session, []);
     assert.equal(axes, 1);
     assert.equal(annotations, 1);
@@ -110,14 +111,14 @@ test("history axes use the fixed local zone and reuse unchanged layers", () => {
     assert.equal(axes, 2, "viewport resize redraws labels at their CSS pixel size");
     assert.equal(annotations, 1, "text sizing does not alter annotation coordinates");
     assert.doesNotMatch(
-      node("[data-history-axes]").innerHTML,
+      node("[data-history-time-ticks]").innerHTML,
       />\d{2}:\d{2}:\d{2}<\/text>/,
       "distinct minute labels keep their compact format",
     );
     model.end = start + 30_000;
     chart.render(new Set(["status"]), session, []);
     const shortLabels = [
-      ...node("[data-history-axes]").innerHTML.matchAll(
+      ...node("[data-history-time-ticks]").innerHTML.matchAll(
         />(\d{2}:\d{2}(?::\d{2})?)<\/text>/g,
       ),
     ].map((match) => match[1]);
@@ -315,6 +316,7 @@ test("history axis labels cancel unequal SVG scaling and reduce narrow time tick
     low: 20,
     high: 100,
     humidityHigh: 80,
+    valueScale: {intervals: 4, temperature: [20, 40, 60, 80, 100], humidity: [0, 20, 40, 60, 80]},
     x: (time) =>
       plot.left + ((time - start) / (end - start)) * (plot.right - plot.left),
   };
@@ -329,9 +331,10 @@ test("history axis labels cancel unequal SVG scaling and reduce narrow time tick
       assert.ok(Math.abs((Number(match[1]) * width) / plot.width - 1) < 1e-12);
       assert.ok(Math.abs((Number(match[2]) * height) / plot.height - 1) < 1e-12);
     }
-    assert.match(html, />10:00<\/text>/);
-    assert.match(html, />11:00<\/text>/);
+    const timeLabels = panel.historyTimeAxis(model, {width});
+    assert.match(timeLabels, />10:00<\/text>/);
+    assert.match(timeLabels, />11:00<\/text>/);
   }
   const times = (html) => [...html.matchAll(/>\d{2}:\d{2}<\/text>/g)].length;
-  assert.ok(times(axes(300, 420)) < times(axes(plot.width, plot.height)));
+  assert.ok(times(panel.historyTimeAxis(model, {width: 300})) < times(panel.historyTimeAxis(model, {width: plot.width})));
 });

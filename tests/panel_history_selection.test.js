@@ -33,6 +33,7 @@ class Node extends EventTarget {
     this.rect = rect;
     this.children = [];
     this.style = {};
+    this.classList = require("./catalog_fixture.cjs").elementClassList(this);
     this.attributes = new Map();
     this.dataset = {};
     this.hidden = false;
