@@ -7,7 +7,7 @@ come from ``Alle_Praefixmerkmale.csv.gz``. Only the four selected prefixes are
 evaluated, without recalibrating or replaying the complete recordings.
 """
 
-from dataclasses import replace
+from dataclasses import FrozenInstanceError, replace
 from datetime import datetime, timedelta
 import gzip
 import hashlib
@@ -26,6 +26,7 @@ from custom_components.ha_sauna.core.curve_change import (
     OriginalPositionWindows,
     original_contrasts,
     original_flattening,
+    original_kink_tolerance,
     original_water_pair,
     original_water_pair_support,
     original_water_window,
@@ -172,6 +173,30 @@ def humidity_step_originals(values, previous_step, current_step):
     return originals, step
 
 
+def kink_history_originals(values, shape, *, history_windows=None):
+    """Extend the existing line fixture backwards; shape uses original ticks."""
+    originals, step = linear_originals(values)
+    active = originals["upper_humidity"]
+    count = values["curve_original_samples"]
+    if history_windows is None:
+        history_windows = values["curve_original_kink_history_windows"]
+    size = 2 * count + history_windows - 1
+    stamps = tuple(active[0][0] - (size - index) * step
+                   for index in range(size)) + tuple(stamp for stamp, _ in active)
+    return tuple(
+        (stamp, trace(0)[1] + shape(index - size))
+        for index, stamp in enumerate(stamps)
+    ), step
+
+
+def kink_arguments(values):
+    return {
+        "factor": values["curve_original_kink_factor"],
+        "min_history_windows": values["curve_original_kink_history_windows"],
+        "max_gap_seconds": values["curve_original_gap_humidity_upper_seconds"],
+    }
+
+
 def water_arguments(values):
     """Use the existing upper-position water support and error scales."""
     return {
@@ -205,6 +230,297 @@ def water_envelope_originals(values, envelopes, ticks=None):
 
 
 class OriginalCurveEvidenceTests(unittest.TestCase):
+    def test_kink_tolerance_preserves_units_offsets_and_direction(self):
+        values = Parameters({
+            "curve_original_kink_factor": 0.5,
+            "curve_original_kink_history_windows": 2,
+        }).values
+        curvature = values["curve_original_noise_humidity_upper"]
+        samples, _ = kink_history_originals(values, lambda index: curvature * index**2)
+        window = original_window(samples, at=samples[-1][0],
+                                 **channel_arguments(values, "upper", "humidity"))
+        baseline = original_kink_tolerance(samples, window, **kink_arguments(values))
+        self.assertIsNotNone(baseline)
+        self.assertGreater(baseline.effective_change, 0)
+        for time_factor, value_factor, offset, shift in (
+            (1, 1, 100, timedelta(days=1)),
+            (2, 3, -40, timedelta(days=2)),
+            (2, -2, 80, timedelta(days=-1)),
+        ):
+            with self.subTest(time_factor=time_factor, value_factor=value_factor):
+                transformed_values = Parameters({
+                    **values,
+                    "curve_original_noise_humidity_upper": (
+                        abs(value_factor)
+                        * values["curve_original_noise_humidity_upper"]
+                    ),
+                    "curve_original_gap_humidity_upper_seconds": (
+                        time_factor
+                        * values["curve_original_gap_humidity_upper_seconds"]
+                    ),
+                }).values
+                transformed = tuple(
+                    (ORIGIN + time_factor * (stamp - ORIGIN) + shift,
+                     value_factor * value + offset)
+                    for stamp, value in samples
+                )
+                changed_window = original_window(
+                    transformed, at=transformed[-1][0],
+                    **channel_arguments(transformed_values, "upper", "humidity"),
+                )
+                changed = original_kink_tolerance(
+                    transformed, changed_window, **kink_arguments(transformed_values),
+                )
+                self.assertIsNotNone(changed)
+                self.assertEqual(changed.history_count, baseline.history_count)
+                self.assertEqual(changed.status, baseline.status)
+                self.assertEqual(changed.factor, baseline.factor)
+                for field in ("delta", "effective_change"):
+                    self.assertAlmostEqual(getattr(changed, field),
+                                           value_factor / time_factor
+                                           * getattr(baseline, field))
+                for field in (
+                    "catalog_scale", "history_scale", "used_scale", "tolerance",
+                ):
+                    self.assertAlmostEqual(getattr(changed, field),
+                                           abs(value_factor) / time_factor
+                                           * getattr(baseline, field))
+                self.assertEqual(changed.history_start, ORIGIN + time_factor
+                                 * (baseline.history_start - ORIGIN) + shift)
+                self.assertEqual(changed.history_end, ORIGIN + time_factor
+                                 * (baseline.history_end - ORIGIN) + shift)
+
+    def test_kink_factor_zero_monotonic_shrinkage_and_exact_boundary(self):
+        count = Parameters({}).values["curve_original_samples"]
+        # At one-second fixture spacing, this value error gives e=e_minus=1/2:
+        # sum |i-mean(i)|=floor(K²/4), sum (i-mean(i))²=K(K²-1)/12.
+        values = Parameters({
+            **{f"curve_original_gap_{quantity}_{position}_seconds": 2
+               for quantity in ("temperature", "humidity")
+               for position in ("upper", "lower")},
+            "curve_original_noise_humidity_upper": (
+                count * (count * count - 1) / (24 * (count * count // 4))
+            ),
+            "curve_original_kink_history_windows": 2,
+        }).values
+        samples, step = kink_history_originals(
+            values, lambda index: max(0, index - count + 1),
+        )
+        self.assertEqual(step.total_seconds(), 1)
+        window = original_window(samples, at=samples[-1][0],
+                                 **channel_arguments(values, "upper", "humidity"))
+        previous_magnitude = None
+        for factor, expected in ((0, 1), (0.25, 0.75), (0.5, 0.5), (1, 0), (2, 0)):
+            with self.subTest(factor=factor):
+                configured = Parameters({
+                    **values, "curve_original_kink_factor": factor,
+                })
+                result = original_kink_tolerance(
+                    samples, window, **kink_arguments(configured.values),
+                )
+                self.assertIsNotNone(result)
+                self.assertEqual(result.delta, 1)
+                self.assertEqual(result.catalog_scale, 1)
+                self.assertEqual(result.tolerance, factor)
+                self.assertEqual(result.effective_change, expected)
+                if previous_magnitude is not None:
+                    self.assertLessEqual(abs(result.effective_change),
+                                         previous_magnitude)
+                previous_magnitude = abs(result.effective_change)
+
+    def test_kink_history_distinguishes_straight_line_from_smooth_quadratic(self):
+        values = Parameters({"curve_original_kink_history_windows": 2}).values
+        count = values["curve_original_samples"]
+        curvature = values["curve_original_noise_humidity_upper"]
+        for name, shape, expected in (
+            ("line", lambda index: -index, 0),
+            ("smooth quadratic", lambda index: curvature * index**2, None),
+        ):
+            with self.subTest(shape=name):
+                samples, step = kink_history_originals(values, shape)
+                window = original_window(
+                    samples, at=samples[-1][0],
+                    **channel_arguments(values, "upper", "humidity"),
+                )
+                result = original_kink_tolerance(samples, window,
+                                                 **kink_arguments(values))
+                self.assertIsNotNone(result)
+                self.assertEqual(result.status, "history")
+                self.assertEqual(result.history_count,
+                                 values["curve_original_kink_history_windows"])
+                self.assertEqual(result.history_start, samples[0][0])
+                self.assertEqual(result.history_end, samples[-2 * count - 1][0])
+                if expected == 0:
+                    self.assertEqual(result.history_scale, 0)
+                    self.assertEqual(result.used_scale, result.catalog_scale)
+                else:
+                    # OLS of c*i² on equally spaced symmetric K supports has
+                    # slope c*(first+last)/dt; neighboring centers differ by K.
+                    analytic = 2 * curvature * count / step.total_seconds()
+                    self.assertAlmostEqual(result.history_scale, analytic)
+                    self.assertAlmostEqual(result.delta, analytic)
+                    self.assertGreater(result.history_scale, result.catalog_scale)
+                    self.assertAlmostEqual(result.used_scale, analytic)
+
+    def test_kink_history_excludes_active_jump_support_and_future_values(self):
+        values = Parameters({"curve_original_kink_history_windows": 2}).values
+        samples, step = kink_history_originals(values, lambda index: -index)
+        count = values["curve_original_samples"]
+        window_arguments = channel_arguments(values, "upper", "humidity")
+        window = original_window(samples, at=samples[-1][0], **window_arguments)
+        baseline = original_kink_tolerance(samples, window, **kink_arguments(values))
+        self.assertIsNotNone(baseline)
+        jump = samples[:-2 * count] + tuple(
+            (stamp, value + 1000 + 2 * index + 1000 * max(0, index - count + 1))
+            for index, (stamp, value) in enumerate(samples[-2 * count:])
+        )
+        jumped_window = original_window(jump, at=jump[-1][0], **window_arguments)
+        jumped = original_kink_tolerance(jump, jumped_window, **kink_arguments(values))
+        self.assertIsNotNone(jumped)
+        self.assertGreater(jumped.effective_change, baseline.effective_change)
+        self.assertAlmostEqual(jumped.delta, 1000 / step.total_seconds())
+        for field in ("history_count", "history_start", "history_end", "history_scale",
+                      "status", "catalog_scale", "used_scale", "tolerance"):
+            self.assertEqual(getattr(jumped, field), getattr(baseline, field))
+        self.assertEqual(jumped.history_scale, 0)
+        future = jump + (
+            (jump[-1][0] + step, float("nan")),
+            (jump[-1][0] + 2 * step, -1e12),
+        )
+        self.assertEqual(original_kink_tolerance(
+            future, jumped_window, **kink_arguments(values),
+        ), jumped)
+
+    def test_kink_history_gap_and_configured_minimum_preserve_zero_evidence(self):
+        values = Parameters({"curve_original_kink_history_windows": 3}).values
+        count = values["curve_original_samples"]
+        curvature = values["curve_original_noise_humidity_upper"]
+        samples, step = kink_history_originals(
+            values, lambda index: curvature * index**2, history_windows=2,
+        )
+        window = original_window(samples, at=samples[-1][0],
+                                 **channel_arguments(values, "upper", "humidity"))
+        gap = timedelta(seconds=kink_arguments(values)["max_gap_seconds"]) + step
+        old = tuple((stamp - len(samples) * step - gap, value * 100)
+                    for stamp, value in samples[:-2 * count])
+        insufficient = original_kink_tolerance(old + samples, window,
+                                               **kink_arguments(values))
+        self.assertIsNotNone(insufficient)
+        self.assertEqual(insufficient.status, "insufficient")
+        self.assertEqual(insufficient.history_count, 2)
+        self.assertEqual(insufficient.history_start, samples[0][0])
+        self.assertEqual(insufficient.history_end, samples[-2 * count - 1][0])
+        self.assertGreater(insufficient.history_scale, insufficient.catalog_scale)
+        self.assertEqual(insufficient.used_scale, insufficient.catalog_scale)
+        lower_minimum = Parameters({**values, "curve_original_kink_history_windows": 2})
+        sufficient = original_kink_tolerance(
+            old + samples, window, **kink_arguments(lower_minimum.values),
+        )
+        self.assertEqual(sufficient.status, "history")
+        self.assertEqual(sufficient.history_scale, insufficient.history_scale)
+        self.assertEqual(sufficient.used_scale, sufficient.history_scale)
+        detached = tuple((stamp - gap, value) for stamp, value in samples[:-2 * count])
+        disconnected = original_kink_tolerance(
+            detached + samples[-2 * count:], window, **kink_arguments(values),
+        )
+        self.assertIsNotNone(disconnected)
+        self.assertEqual(disconnected.status, "insufficient")
+        self.assertEqual(disconnected.history_count, 0)
+        for field in ("history_start", "history_end", "history_scale"):
+            self.assertIsNone(getattr(disconnected, field))
+        self.assertEqual(disconnected.used_scale, disconnected.catalog_scale)
+        straight, _ = kink_history_originals(values, lambda index: -index)
+        straight_window = original_window(
+            straight, at=straight[-1][0],
+            **channel_arguments(values, "upper", "humidity"),
+        )
+        zero = original_kink_tolerance(straight, straight_window,
+                                      **kink_arguments(values))
+        self.assertEqual(zero.status, "history")
+        self.assertEqual(zero.history_count,
+                         values["curve_original_kink_history_windows"])
+        self.assertEqual(zero.history_scale, 0)
+
+    def test_kink_invalid_inputs_remain_unknown_without_raw_mutation(self):
+        values = Parameters({"curve_original_kink_history_windows": 2}).values
+        samples, step = kink_history_originals(values, lambda index: -index)
+        window = original_window(samples, at=samples[-1][0],
+                                 **channel_arguments(values, "upper", "humidity"))
+        snapshot = replace(window)
+        arguments = kink_arguments(values)
+        for invalid in (
+            {"factor": -1}, {"factor": True}, {"factor": float("nan")},
+            {"factor": float("inf")}, {"factor": "1"},
+            {"min_history_windows": 0}, {"min_history_windows": True},
+            {"min_history_windows": 1.5}, {"max_gap_seconds": 0},
+            {"max_gap_seconds": float("nan")}, {"max_gap_seconds": float("inf")},
+        ):
+            with self.subTest(arguments=invalid):
+                source = list(samples)
+                self.assertIsNone(original_kink_tolerance(
+                    source, window, **{**arguments, **invalid},
+                ))
+                self.assertEqual(source, list(samples))
+                self.assertEqual(window, snapshot)
+        for invalid in (
+            ((None, samples[0][1]),) + samples[1:],
+            (samples[1], samples[0]) + samples[2:],
+            (samples[0],) + samples,
+            *((((samples[0][0], value),) + samples[1:])
+              for value in (True, "40", None, float("nan"), float("inf"))),
+        ):
+            with self.subTest(samples=repr(invalid[:2])):
+                source = list(invalid)
+                before = list(source)
+                self.assertIsNone(original_kink_tolerance(source, window, **arguments))
+                self.assertEqual(source, before)
+                self.assertEqual(window, snapshot)
+        for invalid_window in (
+            replace(window, v=float("nan")), replace(window, e=0),
+            replace(window, current=(window.previous[-1],) + window.current[1:]),
+            replace(window, current=tuple(
+                (stamp + timedelta(seconds=arguments["max_gap_seconds"]) + step, value)
+                for stamp, value in window.current
+            )),
+            replace(window, current=window.current[:-1] + (
+                (window.current[-1][0], float("inf")),
+            )),
+        ):
+            with self.subTest(window=repr(invalid_window)):
+                self.assertIsNone(original_kink_tolerance(samples, invalid_window,
+                                                        **arguments))
+                self.assertEqual(window, snapshot)
+
+    def test_kink_results_freeze_shared_raw_windows_and_leave_contrasts_unchanged(self):
+        values = Parameters({"curve_original_kink_factor": 0.5}).values
+        originals, _ = humidity_step_originals(values, 0, 1)
+        at = originals["upper_humidity"][-1][0]
+        windows = position_windows(originals, at, values)
+        before = original_contrasts(windows, expected_positions=("upper", "lower"))
+        raw = windows["upper"].humidity
+        raw_snapshot = replace(raw)
+        source = list(originals["upper_humidity"])
+        result = original_kink_tolerance(source, raw, **kink_arguments(values))
+        disabled = Parameters({**values, "curve_original_kink_factor": 0})
+        control = original_kink_tolerance(source, raw,
+                                         **kink_arguments(disabled.values))
+        self.assertIsNotNone(result)
+        self.assertIsNotNone(control)
+        self.assertIs(result.window, raw)
+        self.assertIs(control.window, raw)
+        self.assertGreater(abs(control.effective_change), abs(result.effective_change))
+        control_snapshot = replace(control)
+        with self.assertRaises(FrozenInstanceError):
+            result.effective_change = 0
+        with self.assertRaises(FrozenInstanceError):
+            result.window.v = 0
+        source[-1] = (source[-1][0], source[-1][1] + 1000)
+        self.assertEqual(control, control_snapshot)
+        self.assertEqual(raw, raw_snapshot)
+        self.assertEqual(original_contrasts(
+            windows, expected_positions=("upper", "lower"),
+        ), before)
+
     def test_linear_cooling_has_analytic_windows_and_no_opening_contrast(self):
         values = Parameters({}).values
         count = values["curve_original_samples"]
