@@ -14,10 +14,17 @@ from test_foundation import T0, bindings, event
 
 from custom_components.ha_sauna.archive import plain
 from custom_components.ha_sauna.core.detector import (
-    Detection, Detector, InfusionEpisodeUpdate,
+    Detection,
+    Detector,
+    InfusionEpisodeUpdate,
 )
 from custom_components.ha_sauna.core.timeline import (
-    Infusion, InfusionEnd, Kind, Timeline, apply, update_infusion_end,
+    Infusion,
+    InfusionEnd,
+    Kind,
+    Timeline,
+    apply,
+    update_infusion_end,
 )
 from custom_components.ha_sauna.runtime import Configuration, SaunaRuntime
 
@@ -38,7 +45,9 @@ class InfusionEndOwnershipTests(unittest.TestCase):
         # Older stored gang structures have leading events without metadata.
         for legacy in (False, True):
             with self.subTest(legacy=legacy):
-                original = replace(state, active=replace(gang, infusions=()) if legacy else gang)
+                original = replace(
+                    state, active=replace(gang, infusions=()) if legacy else gang
+                )
                 self.assertIs(update_infusion_end(original, "first", None), original)
                 updated = update_infusion_end(original, "first", end)
                 self.assertEqual(updated.active.infusions[0], Infusion("first", end))
@@ -55,7 +64,11 @@ class InfusionEndOwnershipTests(unittest.TestCase):
                 self.assertIs(update_infusion_end(withdrawn, "first", None), withdrawn)
                 self.assertEqual(withdrawn.active.infusion_events, gang.infusion_events)
                 self.assertEqual(
-                    [item for item in updated.active.infusions if item.source_event_id == "second"],
+                    [
+                        item
+                        for item in updated.active.infusions
+                        if item.source_event_id == "second"
+                    ],
                     [] if legacy else [Infusion("second")],
                 )
 
@@ -65,12 +78,16 @@ class InfusionEndOwnershipTests(unittest.TestCase):
             replace(gang.infusion_events[0], kind=Kind.PERSON_WEAK),
         ):
             with self.subTest(invalid=invalid):
-                foreign = replace(state, active=replace(gang, infusion_events=(invalid,)))
+                foreign = replace(
+                    state, active=replace(gang, infusion_events=(invalid,))
+                )
                 self.assertIs(update_infusion_end(foreign, "first", end), foreign)
         with self.assertRaises(ValueError):
             update_infusion_end(state, "first", replace(end, effective_at=at(1)))
 
-    def test_controller_updates_current_and_completed_session_without_control_transition(self):
+    def test_controller_updates_current_and_completed_session_without_control_transition(
+        self,
+    ):
         c = controller()
         for source in (
             event("entry", Kind.DOOR_OPEN, 0),
@@ -88,17 +105,38 @@ class InfusionEndOwnershipTests(unittest.TestCase):
                 before = c.completed_sessions[0] if completed else c.session
                 current = c.session
                 decisions, consumers = tuple(c.decisions), tuple(c.consumer_events)
-                decision, inputs, clock = c.last_decision, c.regulation_inputs, c._last_at
-                self.assertTrue(c.record_infusion_end("s", "water", end if not completed else None))
+                decision, inputs, clock = (
+                    c.last_decision,
+                    c.regulation_inputs,
+                    c._last_at,
+                )
+                self.assertTrue(
+                    c.record_infusion_end("s", "water", end if not completed else None)
+                )
                 after = c.completed_sessions[0] if completed else c.session
                 self.assertEqual(replace(after, timeline=before.timeline), before)
-                old_gang = before.timeline.completed[0] if completed else before.timeline.active
-                new_gang = after.timeline.completed[0] if completed else after.timeline.active
-                self.assertEqual(replace(new_gang, infusions=old_gang.infusions), old_gang)
-                self.assertEqual(after.timeline, replace(
-                    before.timeline,
-                    **({"completed": (new_gang,)} if completed else {"active": new_gang}),
-                ))
+                old_gang = (
+                    before.timeline.completed[0]
+                    if completed
+                    else before.timeline.active
+                )
+                new_gang = (
+                    after.timeline.completed[0] if completed else after.timeline.active
+                )
+                self.assertEqual(
+                    replace(new_gang, infusions=old_gang.infusions), old_gang
+                )
+                self.assertEqual(
+                    after.timeline,
+                    replace(
+                        before.timeline,
+                        **(
+                            {"completed": (new_gang,)}
+                            if completed
+                            else {"active": new_gang}
+                        ),
+                    ),
+                )
                 self.assertEqual(new_gang.infusions[0].end, None if completed else end)
                 self.assertEqual(tuple(c.decisions), decisions)
                 self.assertEqual(tuple(c.consumer_events), consumers)
@@ -107,7 +145,9 @@ class InfusionEndOwnershipTests(unittest.TestCase):
                 self.assertEqual(c._last_at, clock)
                 self.assertFalse(c.record_infusion_end("missing", "water", end))
                 self.assertFalse(c.record_infusion_end("s", "close", end))
-                self.assertFalse(c.record_infusion_end("s", "water", None if completed else end))
+                self.assertFalse(
+                    c.record_infusion_end("s", "water", None if completed else end)
+                )
                 if completed:
                     self.assertIs(c.session, current)
                 else:
@@ -117,7 +157,9 @@ class InfusionEndOwnershipTests(unittest.TestCase):
 
 
 class InfusionEndRuntimeTests(unittest.IsolatedAsyncioTestCase):
-    async def test_transport_only_packets_keep_older_source_across_calls_and_archive_retraction(self):
+    async def test_transport_only_packets_keep_older_source_across_calls_and_archive_retraction(
+        self,
+    ):
         """Replace only detector transport; timeline, controller and SQLite are real."""
         c = controller()
         p = c.parameters
@@ -132,25 +174,36 @@ class InfusionEndRuntimeTests(unittest.IsolatedAsyncioTestCase):
         first = Detection(Kind.INFUSION, at(2 * grid), at(4 * grid), (), at(3 * grid))
         second = Detection(Kind.INFUSION, at(8 * grid), at(10 * grid), (), at(9 * grid))
         first_end = InfusionEnd(
-            at(6 * grid), at(7 * grid), at(6 * grid),
-            "original_background", "evidence_grid",
+            at(6 * grid),
+            at(7 * grid),
+            at(6 * grid),
+            "original_background",
+            "evidence_grid",
         )
         second_end = InfusionEnd(
-            at(11 * grid), at(13 * grid), at(12 * grid),
-            "door_open", "physical_effective",
+            at(11 * grid),
+            at(13 * grid),
+            at(12 * grid),
+            "door_open",
+            "physical_effective",
         )
-        packets = iter((
-            ((first,), ()),
-            ((), (InfusionEpisodeUpdate(first, first_end),)),
-            ((second,), ()),
-            ((), (
-                InfusionEpisodeUpdate(replace(first), second_end),
-                InfusionEpisodeUpdate(first, None),
-                InfusionEpisodeUpdate(first, first_end),
-                InfusionEpisodeUpdate(second, second_end),
-                InfusionEpisodeUpdate(second, second_end),
-            )),
-        ))
+        packets = iter(
+            (
+                ((first,), ()),
+                ((), (InfusionEpisodeUpdate(first, first_end),)),
+                ((second,), ()),
+                (
+                    (),
+                    (
+                        InfusionEpisodeUpdate(replace(first), second_end),
+                        InfusionEpisodeUpdate(first, None),
+                        InfusionEpisodeUpdate(first, first_end),
+                        InfusionEpisodeUpdate(second, second_end),
+                        InfusionEpisodeUpdate(second, second_end),
+                    ),
+                ),
+            )
+        )
 
         def transport_only_advance(through, **callbacks):
             detections, updates = next(packets)
@@ -166,7 +219,9 @@ class InfusionEndRuntimeTests(unittest.IsolatedAsyncioTestCase):
         with TemporaryDirectory() as directory:
             await runtime.start_archive(Path(directory) / "infusion.sqlite", "entry")
             try:
-                with patch.object(detector, "advance", side_effect=transport_only_advance):
+                with patch.object(
+                    detector, "advance", side_effect=transport_only_advance
+                ):
                     for second_at in (4, 7, 10, 14):
                         now[0] = at(second_at * grid)
                         runtime._deliver_detection(now[0])
@@ -176,41 +231,59 @@ class InfusionEndRuntimeTests(unittest.IsolatedAsyncioTestCase):
                 gang = runtime.session.timeline.active
                 first_id, second_id = (item.event_id for item in gang.infusion_events)
                 self.assertNotEqual(first_id, second_id)
-                self.assertEqual(gang.infusions, (
-                    Infusion(first_id, first_end), Infusion(second_id, second_end),
-                ))
+                self.assertEqual(
+                    gang.infusions,
+                    (
+                        Infusion(first_id, first_end),
+                        Infusion(second_id, second_end),
+                    ),
+                )
                 self.assertIsNone(gang.ended_at)
                 self.assertEqual(runtime.session.timeline.completed, ())
                 self.assertIsNone(runtime.session.after_run)
-                self.assertFalse(any(item.kind == "gang_ended" for item in runtime.consumer_events))
+                self.assertFalse(
+                    any(item.kind == "gang_ended" for item in runtime.consumer_events)
+                )
                 self.assertEqual(
                     stored["session"]["timeline"]["active"]["infusions"],
                     plain(gang.infusions),
                 )
-                updates = [row for row in stored["records"] if row["kind"] == "infusion_update"]
-                self.assertEqual([row["payload"] for row in updates], [
-                    {"source_event_id": first_id, "end": plain(first_end)},
-                    {"source_event_id": first_id, "end": None},
-                    {"source_event_id": first_id, "end": plain(first_end)},
-                    {"source_event_id": second_id, "end": plain(second_end)},
-                ])
+                updates = [
+                    row for row in stored["records"] if row["kind"] == "infusion_update"
+                ]
+                self.assertEqual(
+                    [row["payload"] for row in updates],
+                    [
+                        {"source_event_id": first_id, "end": plain(first_end)},
+                        {"source_event_id": first_id, "end": None},
+                        {"source_event_id": first_id, "end": plain(first_end)},
+                        {"source_event_id": second_id, "end": plain(second_end)},
+                    ],
+                )
                 self.assertEqual(updates[-1]["received_at"], at(14 * grid).isoformat())
-                self.assertEqual(updates[-1]["payload"]["end"]["confirmed_at"],
-                                 at(13 * grid).isoformat())
+                self.assertEqual(
+                    updates[-1]["payload"]["end"]["confirmed_at"],
+                    at(13 * grid).isoformat(),
+                )
             finally:
                 await runtime.archive.close()
 
 
 class InfusionEndDetectorTests(unittest.TestCase):
-    def test_native_door_proof_ends_active_infusion_before_plateau_with_original_times(self):
+    def test_native_door_proof_ends_active_infusion_before_plateau_with_original_times(
+        self,
+    ):
         """Native RH kink input; only the conflict case controls onset attribution."""
         fixture = detector_fixtures.InfusionLifecycleTests()
         fixture.setUp()
         points, _, _, _ = fixture._scenario(merged=False)
         peak = fixture.begin + fixture.width
         fall = peak + fixture.width
-        temperatures = [(0, fixture.temperature), (peak, fixture.temperature),
-                        (fall, detector_fixtures.trace(85)[0])]
+        temperatures = [
+            (0, fixture.temperature),
+            (peak, fixture.temperature),
+            (fall, detector_fixtures.trace(85)[0]),
+        ]
         detector = Detector(fixture.parameters, T0)
         events, updates = [], []
         snapshots_after_updates = {}
@@ -228,16 +301,30 @@ class InfusionEndDetectorTests(unittest.TestCase):
                     (detector_fixtures.Quantity.TEMPERATURE, temperature),
                     (detector_fixtures.Quantity.HUMIDITY, humidity),
                 ):
-                    self.assertTrue(detector.accept(detector_fixtures.measurement(
-                        position, quantity, value, second, measured=at(second),
-                    )))
+                    self.assertTrue(
+                        detector.accept(
+                            detector_fixtures.measurement(
+                                position,
+                                quantity,
+                                value,
+                                second,
+                                measured=at(second),
+                            )
+                        )
+                    )
             # Deliberately delayed receive time must not become the physical end.
             received_at = at(second + fixture.step)
-            events.extend(detector.advance(
-                at(second), enabled=True, detected_at=received_at,
-                on_infusion_update=collect,
-                after_sample=lambda stamp: snapshots_after_updates.update({stamp: tuple(updates)}),
-            ))
+            events.extend(
+                detector.advance(
+                    at(second),
+                    enabled=True,
+                    detected_at=received_at,
+                    on_infusion_update=collect,
+                    after_sample=lambda stamp: snapshots_after_updates.update(
+                        {stamp: tuple(updates)}
+                    ),
+                )
+            )
             if second == peak:
                 active = detector.infusion_episode
                 self.assertIsNotNone(active)
@@ -247,7 +334,8 @@ class InfusionEndDetectorTests(unittest.TestCase):
                 reset_detector = deepcopy(detector, {id(detector.p): detector.p})
                 reset_updates = []
                 reset_detector.advance(
-                    at(second + fixture.step), enabled=False,
+                    at(second + fixture.step),
+                    enabled=False,
                     on_infusion_update=reset_updates.append,
                 )
                 self.assertEqual(reset_updates, [])
@@ -263,9 +351,17 @@ class InfusionEndDetectorTests(unittest.TestCase):
                         (detector_fixtures.Quantity.TEMPERATURE, temperature),
                         (detector_fixtures.Quantity.HUMIDITY, humidity),
                     ):
-                        self.assertTrue(conflict_detector.accept(detector_fixtures.measurement(
-                            position, quantity, value, second, measured=at(second),
-                        )))
+                        self.assertTrue(
+                            conflict_detector.accept(
+                                detector_fixtures.measurement(
+                                    position,
+                                    quantity,
+                                    value,
+                                    second,
+                                    measured=at(second),
+                                )
+                            )
+                        )
 
                 def conflicting_attribution(route, *args, **kwargs):
                     # Only the optional earlier attribution is controlled here;
@@ -275,13 +371,18 @@ class InfusionEndDetectorTests(unittest.TestCase):
                     return original_beginning(route, *args, **kwargs)
 
                 with patch.object(
-                    conflict_detector, "_curve_beginning",
+                    conflict_detector,
+                    "_curve_beginning",
                     side_effect=conflicting_attribution,
                 ):
-                    conflict_events.extend(conflict_detector.advance(
-                        at(second), enabled=True, detected_at=received_at,
-                        on_infusion_update=conflict_updates.append,
-                    ))
+                    conflict_events.extend(
+                        conflict_detector.advance(
+                            at(second),
+                            enabled=True,
+                            detected_at=received_at,
+                            on_infusion_update=conflict_updates.append,
+                        )
+                    )
         infusions = [item for item in events if item.kind == Kind.INFUSION]
         openings = [item for item in events if item.kind == Kind.DOOR_OPEN]
         self.assertEqual(len(infusions), 1)
@@ -290,10 +391,16 @@ class InfusionEndDetectorTests(unittest.TestCase):
         self.assertEqual(len(ends), 1)
         self.assertIs(ends[0].confirmed_detection, infusions[0])
         end, opening = ends[0].end, openings[0]
-        self.assertEqual(end, InfusionEnd(
-            opening.effective_at, opening.detected_at, opening.trace_at,
-            "door_open", "physical_effective",
-        ))
+        self.assertEqual(
+            end,
+            InfusionEnd(
+                opening.effective_at,
+                opening.detected_at,
+                opening.trace_at,
+                "door_open",
+                "physical_effective",
+            ),
+        )
         self.assertLess(end.effective_at, end.confirmed_at)
         self.assertLess(end.trace_at, end.confirmed_at)
         self.assertLess(end.trace_at, at(fall))
@@ -303,14 +410,24 @@ class InfusionEndDetectorTests(unittest.TestCase):
             fixture._value(points, end_second),
         )
         self.assertIn(ends[0], snapshots_after_updates[end.trace_at])
-        conflicts = [row["infusion_end_conflict"] for row in conflict_traces
-                     if "infusion_end_conflict" in row]
-        self.assertEqual(conflicts, [{
-            "reason": "door_before_infusion_onset",
-            "door_effective_at": conflict_onset,
-            "infusion_effective_at": infusions[0].effective_at,
-        }])
-        conflict_openings = [item for item in conflict_events if item.kind == Kind.DOOR_OPEN]
+        conflicts = [
+            row["infusion_end_conflict"]
+            for row in conflict_traces
+            if "infusion_end_conflict" in row
+        ]
+        self.assertEqual(
+            conflicts,
+            [
+                {
+                    "reason": "door_before_infusion_onset",
+                    "door_effective_at": conflict_onset,
+                    "infusion_effective_at": infusions[0].effective_at,
+                }
+            ],
+        )
+        conflict_openings = [
+            item for item in conflict_events if item.kind == Kind.DOOR_OPEN
+        ]
         self.assertEqual(len(conflict_openings), 1)
         self.assertEqual(conflict_openings[0].effective_at, conflict_onset)
         self.assertEqual(conflict_openings[0].trace_at, opening.trace_at)
