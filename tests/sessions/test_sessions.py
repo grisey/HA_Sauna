@@ -119,7 +119,9 @@ class CompleteSessionTests(unittest.TestCase):
                             allow_nan=False) + "\n", encoding="utf-8")
                         timeline = folder / f"{case['id']}.timeline.jsonl.gz"
                         _write_timeline(timeline, run.snapshots)
-                        if failure is None and case.get("base_id", case["id"]) == "G00":
+                        if failure is None and case.get("base_id", case["id"]) in (
+                            "G00-automatic", "G00-manual",
+                        ):
                             self.assertTrue(run.snapshots)
                             with TemporaryDirectory() as temporary:
                                 repeated = Path(temporary) / "different-name.jsonl.gz"
