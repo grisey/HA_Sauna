@@ -599,10 +599,7 @@ test("control history follows source markers through repeated fallback and paged
     /data-record-id="legacy-person"/,
   );
   // Even an initial owner marker requires the person's original archive binding.
-  history.shown.records = [
-    sourceRecord(1, 0, "proxy", null),
-    presenceRecord(2, proxy),
-  ];
+  history.shown.records = [sourceRecord(1, 0, "proxy", null), presenceRecord(2, proxy)];
   history.renderControlHistory();
   assert.doesNotMatch(
     history.html.split('id="detail-records"')[0],
@@ -684,7 +681,8 @@ test("the final proxy evidence before a same-time recovery marker remains histor
   assert.match(ordinary, /data-record-id="last-person"/);
   assert.match(ordinary, /data-record-id="record-3"/);
   assert.ok(
-    history.historyPresenceReports(Date.parse(t), Date.parse(at(recovery + 1)))
+    history
+      .historyPresenceReports(Date.parse(t), Date.parse(at(recovery + 1)))
       .some((item) => item.report?.report_id === report.report_id),
   );
   assert.equal(

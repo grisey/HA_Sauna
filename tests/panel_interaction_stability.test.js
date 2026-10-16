@@ -358,9 +358,7 @@ test("person curves, thresholds, markers and selected evidence stay inside effec
   panel.$ = (selector) => (selector === "#detection-plots" ? plots : null);
   panel.drawDiagnostics();
   const chart = (metric) =>
-      plots.innerHTML
-        .split(`data-diagnostic-metric="${metric}"`)[1]
-        .split("</svg>")[0],
+      plots.innerHTML.split(`data-diagnostic-metric="${metric}"`)[1].split("</svg>")[0],
     path = (metric) =>
       chart(metric).match(
         new RegExp(`data-series="detector_${metric}_upper" d="([^"]*)"`),

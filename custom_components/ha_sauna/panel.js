@@ -260,9 +260,7 @@ const energyForHistoryRange = (energy, start, end, scope) => {
       value[`${source}_kwh`] += (power * seconds) / 3600;
       if (source === "measured")
         measuredPeakW =
-          measuredPeakW === null
-            ? power * 1000
-            : Math.max(measuredPeakW, power * 1000);
+          measuredPeakW === null ? power * 1000 : Math.max(measuredPeakW, power * 1000);
     }
     cursor = clippedEnd;
     if (compareEnergyIntervalTimes(cursor, ended) === 0) {
@@ -1038,12 +1036,17 @@ function HistoryInteraction(panel, surface, wrap, tooltip, cursor) {
     const timeAxisRect = rectFor(panel.$("[data-history-time-axis]"));
     const wrapRect = rectFor(wrap || surface);
     const labelFontFamily = view.getComputedStyle?.(surface)?.fontFamily;
-    const nameLineHeight = panel.preference("font_size_small_px") * panel.preference("body_line_height"),
+    const nameLineHeight =
+        panel.preference("font_size_small_px") * panel.preference("body_line_height"),
       bandNames = {
-        phase: rectFor(panel.$("[data-history-band-names]")).height ||
-          state.geometry?.bandNames?.phase || nameLineHeight,
-        event: rectFor(panel.$("[data-history-lower-band] > .history-band-names")).height ||
-          state.geometry?.bandNames?.event || nameLineHeight,
+        phase:
+          rectFor(panel.$("[data-history-band-names]")).height ||
+          state.geometry?.bandNames?.phase ||
+          nameLineHeight,
+        event:
+          rectFor(panel.$("[data-history-lower-band] > .history-band-names")).height ||
+          state.geometry?.bandNames?.event ||
+          nameLineHeight,
       };
     const dpr = pixelRatio();
     state.geometry = {
@@ -1064,12 +1067,20 @@ function HistoryInteraction(panel, surface, wrap, tooltip, cursor) {
     state.invalidationScheduled = false;
     return state.geometry;
   };
-  const coordinatesForGeometry = (geometry, target, clientX, clientY = 0, transform) => {
+  const coordinatesForGeometry = (
+    geometry,
+    target,
+    clientX,
+    clientY = 0,
+    transform,
+  ) => {
     const timeAxis = target?.matches?.("[data-history-time-axis]"),
       rect = timeAxis ? geometry.rects.timeAxis : geometry.rects.surface;
     const plot = panel.historyGeometry();
     const logicalWidth = transform?.width ?? plot.width;
-    const logicalHeight = timeAxis ? panel.historyTimeAxisHeight() : transform?.height ?? plot.height;
+    const logicalHeight = timeAxis
+      ? panel.historyTimeAxisHeight()
+      : (transform?.height ?? plot.height);
     return {
       x: ((clientX - rect.left) / (rect.width || 1)) * logicalWidth,
       y: ((clientY - rect.top) / (rect.height || 1)) * logicalHeight,
@@ -1113,13 +1124,20 @@ function HistoryInteraction(panel, surface, wrap, tooltip, cursor) {
           row.append(label, value);
           row.hidden = !new Set(panel.positions || ["upper"]).has(position);
           container.append(row);
-          series.set(`${position}:${quantity}`, { row, label, value, number: valueNumber, unit: valueUnit });
+          series.set(`${position}:${quantity}`, {
+            row,
+            label,
+            value,
+            number: valueNumber,
+            unit: valueUnit,
+          });
         }
       return series;
     };
     const series = makeSeries(rows),
       endSeries = makeSeries(endRows);
-    for (const row of endSeries.values()) row.value.setAttribute("data-boundary", "end");
+    for (const row of endSeries.values())
+      row.value.setAttribute("data-boundary", "end");
     const snap = document.createElement("div");
     snap.className = "history-tooltip-snap";
     snap.hidden = true;
@@ -1189,7 +1207,8 @@ function HistoryInteraction(panel, surface, wrap, tooltip, cursor) {
   };
   const showValueTimes = (start, end, timeZone, endLabel = "Ende") => {
     const nodes = tooltipNodes(),
-      exact = (time) => panel.tooltipWhen?.(time, timeZone) || dateLabel(time, timeZone);
+      exact = (time) =>
+        panel.tooltipWhen?.(time, timeZone) || dateLabel(time, timeZone);
     setText(nodes.startLabel, end == null ? "" : "Anfang");
     if (end != null) nodes.startLabel.setAttribute("title", exact(start));
     else nodes.startLabel.removeAttribute("title");
@@ -1241,19 +1260,16 @@ function HistoryInteraction(panel, surface, wrap, tooltip, cursor) {
     const left = snapshotTransform?.left ?? plot.left;
     const right = snapshotTransform?.right ?? plot.right;
     const timeAxis = event.svg?.matches?.("[data-history-time-axis]"),
-      top = timeAxis ? 0 : snapshotTransform?.top ?? plot.top,
-      bottom = timeAxis ? panel.historyTimeAxisHeight() : snapshotTransform?.bottom ?? plot.bottom;
+      top = timeAxis ? 0 : (snapshotTransform?.top ?? plot.top),
+      bottom = timeAxis
+        ? panel.historyTimeAxisHeight()
+        : (snapshotTransform?.bottom ?? plot.bottom);
     if (!Number.isFinite(start) || !Number.isFinite(end) || right <= left) return null;
     if (event.clampToPlot) {
       point.x = Math.max(left, Math.min(right, point.x));
       point.y = Math.max(top, Math.min(bottom, point.y));
     }
-    if (
-      point.x < left ||
-      point.x > right ||
-      point.y < top ||
-      point.y > bottom
-    )
+    if (point.x < left || point.x > right || point.y < top || point.y > bottom)
       return null;
     const time = start + ((point.x - left) / (right - left)) * (end - start);
     return { point, time, geometry, start, end, left, right };
@@ -1330,8 +1346,7 @@ function HistoryInteraction(panel, surface, wrap, tooltip, cursor) {
         );
       else maximum.value.removeAttribute("title");
     }
-    for (const [key, row] of nodes.series)
-      if (!visible.has(key)) row.row.hidden = true;
+    for (const [key, row] of nodes.series) if (!visible.has(key)) row.row.hidden = true;
   };
   const showSnap = (targets, timeZone) => {
     const nodes = tooltipNodes(),
@@ -1389,7 +1404,8 @@ function HistoryInteraction(panel, surface, wrap, tooltip, cursor) {
       timeZone = localTimeZone(),
       range = selection.kind === "range",
       eventLabel = eventContext
-        ? panel.historyEventSpan(panel.historyInspectedEventGroup()).roleLabel : null,
+        ? panel.historyEventSpan(panel.historyInspectedEventGroup()).roleLabel
+        : null,
       phase = panel.historySelectionPhase?.(selection),
       information = panel.historyInformationContent(selection, phase),
       content = information.measurements,
@@ -1422,21 +1438,26 @@ function HistoryInteraction(panel, surface, wrap, tooltip, cursor) {
     tooltip.setAttribute(
       "aria-label",
       eventContext
-        ? range ? "Messwerte an den Grenzen des Ereigniszeitraums" : "Messwerte am Ereigniszeitpunkt"
+        ? range
+          ? "Messwerte an den Grenzen des Ereigniszeitraums"
+          : "Messwerte am Ereigniszeitpunkt"
         : range
-        ? `Werte an den Grenzen des ausgewählten Zeitraums · ${exactLabel(selection.start)} bis ${exactLabel(selection.end)}`
-        : `Werte am ausgewählten Zeitpunkt · ${exactLabel(selection.start)}`,
+          ? `Werte an den Grenzen des ausgewählten Zeitraums · ${exactLabel(selection.start)} bis ${exactLabel(selection.end)}`
+          : `Werte am ausgewählten Zeitpunkt · ${exactLabel(selection.start)}`,
     );
     if (eventContext) nodes.eventList.hidden = true;
-    else showEvents(
+    else
+      showEvents(
         panel.historySelectionEvents?.() ||
           panel.historyEventsAt?.(selection.start) ||
           [],
         timeZone,
       );
-    const preview = eventContext ? null : panel.historyKeyboardPreview
-      ? panel.historyKeyboardTarget || { time: panel.historyKeyboardTime }
-      : panel.historyHoverPreview;
+    const preview = eventContext
+      ? null
+      : panel.historyKeyboardPreview
+        ? panel.historyKeyboardTarget || { time: panel.historyKeyboardTime }
+        : panel.historyHoverPreview;
     showSnap(
       [selection.startSnap, selection.endSnap, preview?.snap].map(
         (snap) => panel.historyCurrentSnap?.(snap) || null,
@@ -1466,7 +1487,10 @@ function HistoryInteraction(panel, surface, wrap, tooltip, cursor) {
       panel.historyInformationHeading(null, null, timeZone, information),
     );
     nodes.heading.hidden = false;
-    nodes.heading.setAttribute("title", `${panel.tooltipWhen(start, timeZone)} – ${panel.tooltipWhen(end, timeZone)}`);
+    nodes.heading.setAttribute(
+      "title",
+      `${panel.tooltipWhen(start, timeZone)} – ${panel.tooltipWhen(end, timeZone)}`,
+    );
     layoutValues(!completed);
     nodes.startLabel.hidden = false;
     setText(nodes.startLabel, completed ? "Maximum" : "Aktuell");
@@ -1479,8 +1503,12 @@ function HistoryInteraction(panel, surface, wrap, tooltip, cursor) {
     tooltip.setAttribute("data-phase", "");
     tooltip.setAttribute("data-selection", "overview");
     tooltip.setAttribute("data-session-ended", String(completed));
-    tooltip.setAttribute("aria-label", completed
-      ? "Höchsttemperatur der Sitzung" : "Aktuelle Messwerte und Höchsttemperatur der Sitzung");
+    tooltip.setAttribute(
+      "aria-label",
+      completed
+        ? "Höchsttemperatur der Sitzung"
+        : "Aktuelle Messwerte und Höchsttemperatur der Sitzung",
+    );
     showEvents([], timeZone);
     showSnap([], timeZone);
     tooltip.hidden = false;
@@ -1491,8 +1519,7 @@ function HistoryInteraction(panel, surface, wrap, tooltip, cursor) {
   };
   const previewTime = (time, model = panel.historyChart?.model) => {
     if (!model) return;
-    if (panel.historyValueSelection)
-      return refreshSelection(model);
+    if (panel.historyValueSelection) return refreshSelection(model);
     return hover(
       {
         hit: { time, geometry: state.geometry || readGeometry() },
@@ -1547,8 +1574,7 @@ function HistoryInteraction(panel, surface, wrap, tooltip, cursor) {
   };
   const refreshHover = (model = panel.historyChart?.model) => {
     if (state.disposed) return;
-    if (panel.historyValueSelection)
-      return refreshSelection(model);
+    if (panel.historyValueSelection) return refreshSelection(model);
     if (panel.historyHoverPreview?.eventId) panel.historyHoverPreview = null;
     return paintHover(panel.historyHoverPreview, model);
   };
@@ -1622,8 +1648,7 @@ function HistoryInteraction(panel, surface, wrap, tooltip, cursor) {
   const Resize = view.ResizeObserver || globalThis.ResizeObserver;
   if (Resize) {
     state.resizeObserver = new Resize(() => invalidateGeometry("resize"));
-    for (const node of [surface, wrap])
-      if (node) state.resizeObserver.observe(node);
+    for (const node of [surface, wrap]) if (node) state.resizeObserver.observe(node);
   }
   armPixelRatioListener();
   // Establish both persistent tooltip nodes and the initial rectangle before
@@ -1687,14 +1712,20 @@ class HistoryChart {
   }
   render(reasons, session, gangs) {
     // All client geometry is read before any tooltip, layer or canvas writes.
-    const geometry = this.panel.historySelectionDrag?.geometry || this.interaction.readGeometry();
+    const geometry =
+      this.panel.historySelectionDrag?.geometry || this.interaction.readGeometry();
     if (
       !this.panel.historyInputSnapshot &&
       [...reasons].some((reason) => ["initial", "archive", "viewport"].includes(reason))
     )
       this.domain = this.panel.historyDomain();
     const panel = this.panel,
-      model = panel.historyModel(this, session, geometry.canvas.cssWidth, geometry.canvas.cssHeight);
+      model = panel.historyModel(
+        this,
+        session,
+        geometry.canvas.cssWidth,
+        geometry.canvas.cssHeight,
+      );
     this.model = model;
     panel.syncHistoryGeometry(model, geometry);
     panel.historyDetail = false;
@@ -1763,8 +1794,11 @@ class HistoryChart {
       const focused = panel.shadowRoot?.activeElement,
         selectedIds = panel.historyValueSelection?.eventIds || [],
         focusedIds = focused?.dataset?.historyEventMembers
-          ? JSON.parse(decodeURIComponent(focused.dataset.historyEventMembers)) : [],
-        selectionFocused = selectedIds.length > 0 && focusedIds.length === selectedIds.length &&
+          ? JSON.parse(decodeURIComponent(focused.dataset.historyEventMembers))
+          : [],
+        selectionFocused =
+          selectedIds.length > 0 &&
+          focusedIds.length === selectedIds.length &&
           focusedIds.every((id) => selectedIds.includes(id));
       panel.updateMarkup(
         "[data-history-events]",
@@ -5541,7 +5575,11 @@ class SaunaPanel extends HTMLElement {
         this.runPanelAction(() => this.action(e.target.dataset.action));
         return;
       }
-      if (e.key === "Escape" && this.historySelectionDrag && e.target.closest("#history")) {
+      if (
+        e.key === "Escape" &&
+        this.historySelectionDrag &&
+        e.target.closest("#history")
+      ) {
         e.preventDefault();
         this.cancelHistorySelectionDrag();
         return;
@@ -5549,8 +5587,7 @@ class SaunaPanel extends HTMLElement {
       if (
         e.key === "Escape" &&
         e.target.closest("#history") &&
-        (this.historyValueSelection ||
-          this.historyHoverPreview)
+        (this.historyValueSelection || this.historyHoverPreview)
       ) {
         e.preventDefault();
         this.clearHistorySelection();
@@ -5617,7 +5654,10 @@ class SaunaPanel extends HTMLElement {
     this.shadowRoot.addEventListener("pointerup", (e) => this.finishProgramDrag(e));
     this.shadowRoot.addEventListener("pointercancel", () => this.cancelProgramDrag());
     this.shadowRoot.addEventListener("pointerdown", (e) => {
-      const handle = this.eventElement(e, "[data-history-selection-handle], [data-history-selection-boundary]");
+      const handle = this.eventElement(
+        e,
+        "[data-history-selection-handle], [data-history-selection-boundary]",
+      );
       if (handle) return this.beginHistorySelectionDrag(e, handle);
       const lightTarget = this.eventElement(e, "[data-light-arc]");
       if (lightTarget) return this.beginLightDrag(e, lightTarget.closest("svg"));
@@ -5680,7 +5720,12 @@ class SaunaPanel extends HTMLElement {
         return this.updateHistorySelectionDrag(e);
       const svg = this.eventElement(e, "svg.session-chart, svg.history-time-axis");
       if (!svg) return;
-      if (this.eventElement(e, '.session-chart [data-action="history-humidity"], [data-action="history-selection-window"]'))
+      if (
+        this.eventElement(
+          e,
+          '.session-chart [data-action="history-humidity"], [data-action="history-selection-window"]',
+        )
+      )
         return;
       this.updateChartPointer(e);
       if (this.chartPointers.size === 2 && this.chartPointers.has(e.pointerId)) {
@@ -8461,7 +8506,9 @@ class SaunaPanel extends HTMLElement {
     if (this.state?.permissions?.admin === false) return "";
     const faults = this.historyFaultEvents(records);
     if (!faults.events.length)
-      return showEmpty ? '<p class="muted" data-fault-count="0">Keine Fehler aufgezeichnet.</p>' : "";
+      return showEmpty
+        ? '<p class="muted" data-fault-count="0">Keine Fehler aufgezeichnet.</p>'
+        : "";
     return `<details id="${prefix}-faults"><summary>Fehler im Sitzungsverlauf · <span data-fault-count="${faults.count}">${faults.count}</span></summary><ol class="detail-event-list">${faults.events.map((event) => `<li data-record-id="${esc(event.id)}"><time>${this.clock(event.at)}</time> <strong>${esc(event.label)}</strong> · ${esc(event.detail)}${event.status ? ` <span class="muted">(${esc(this.detailValue(event.status))})</span>` : ""}</li>`).join("")}</ol></details>`;
   }
   historyLightValue(record) {
@@ -8504,9 +8551,7 @@ class SaunaPanel extends HTMLElement {
           "interruption",
         ].includes(record.kind)
       ) {
-        if (
-          record.kind === "manual_light" && record.payload?.change?.reason === "keep"
-        )
+        if (record.kind === "manual_light" && record.payload?.change?.reason === "keep")
           continue;
         boundary(
           record.kind === "phase" ? "Phasenwechsel" : "Bedienung oder Unterbrechung",
@@ -8530,10 +8575,7 @@ class SaunaPanel extends HTMLElement {
         payload.service === "turn_off" ||
         payload.phase === "light_reassignment";
       if (isolated || group?.key !== key)
-        boundary(
-          payload.service_error ? "Dienstfehler" : "Neuer Lichtabschnitt",
-          at,
-        );
+        boundary(payload.service_error ? "Dienstfehler" : "Neuer Lichtabschnitt", at);
       if (!group) {
         group = {
           id: `light-${record.id ?? index}`,
@@ -8548,7 +8590,8 @@ class SaunaPanel extends HTMLElement {
           error: !!payload.service_error,
           phaseInterval: phase,
           phaseEndedAt:
-            phase && phase.complete !== false &&
+            phase &&
+            phase.complete !== false &&
             (phaseIndex < intervals.length - 1 || this.shown?.session?.ended_at)
               ? stamp(phase.ended_at)
               : null,
@@ -8581,7 +8624,8 @@ class SaunaPanel extends HTMLElement {
     return result.map((item) => {
       const phase = item.phaseInterval,
         changes = item.records.filter(
-          (record, index) => index &&
+          (record, index) =>
+            index &&
             (record.payload.brightness_pct !==
               item.records[index - 1].payload.brightness_pct ||
               record.payload.ends_at !== item.records[index - 1].payload.ends_at),
@@ -8847,7 +8891,8 @@ class SaunaPanel extends HTMLElement {
           ),
         }))
         .filter(
-          ({ record, at }) => Number.isFinite(at) &&
+          ({ record, at }) =>
+            Number.isFinite(at) &&
             ["manual_light", "manual_heater", "decision"].includes(record.kind),
         )
         .sort((left, right) => left.at - right.at || left.index - right.index);
@@ -8857,9 +8902,7 @@ class SaunaPanel extends HTMLElement {
       if (kind === "decision") {
         // Only an original manual_override decision identifies the automatic
         // heater override. Thermostat changes in manual mode do not end a choice.
-        if (
-          active.manual_heater?.override && payload.reason !== "manual_override"
-        )
+        if (active.manual_heater?.override && payload.reason !== "manual_override")
           close("manual_heater", at, `Regelentscheidung: ${payload.reason}`);
         continue;
       }
@@ -8883,8 +8926,7 @@ class SaunaPanel extends HTMLElement {
         continue;
       }
       if (kind === "manual_light" && change) {
-        if (change.previous_value !== null)
-          close(kind, at, reasons[reason] || reason);
+        if (change.previous_value !== null) close(kind, at, reasons[reason] || reason);
         else active[kind] = null;
         if (payload.ends_previous_only === true) {
           item.label = "Lichtwahl beendet";
@@ -8913,9 +8955,12 @@ class SaunaPanel extends HTMLElement {
       active[kind] = item;
     }
     for (const item of projected.values()) {
-      item.detail = item.note || `${chosen(item.value)} · Beginn ${this.clock(item.at)} · ${Number.isFinite(item.endedAt) ? `Ende ${this.clock(item.endedAt)}: ${item.endReason}` : "kein Gültigkeitsende belegt"}${item.plannedEndsAt ? ` · Planfrist ${this.clock(item.plannedEndsAt)}` : ""}${item.adjustments.map((change) => ` · ${this.clock(change.at)}: ${change.text}`).join("")}`;
+      item.detail =
+        item.note ||
+        `${chosen(item.value)} · Beginn ${this.clock(item.at)} · ${Number.isFinite(item.endedAt) ? `Ende ${this.clock(item.endedAt)}: ${item.endReason}` : "kein Gültigkeitsende belegt"}${item.plannedEndsAt ? ` · Planfrist ${this.clock(item.plannedEndsAt)}` : ""}${item.adjustments.map((change) => ` · ${this.clock(change.at)}: ${change.text}`).join("")}`;
       if (
-        !item.endsPreviousOnly && item.change?.reason === "selection" &&
+        !item.endsPreviousOnly &&
+        item.change?.reason === "selection" &&
         item.rawValue !== item.value
       )
         item.detail += ` · Bedienwert ${chosen(item.rawValue)}`;
@@ -9211,7 +9256,8 @@ class SaunaPanel extends HTMLElement {
         const left = stamp(interval.started_at),
           right = stamp(interval.ended_at);
         return (
-          Number.isFinite(left) && left < end &&
+          Number.isFinite(left) &&
+          left < end &&
           (!Number.isFinite(right) || right > start || left >= start)
         );
       }),
@@ -9219,8 +9265,11 @@ class SaunaPanel extends HTMLElement {
         const left = stamp(interval.started_at),
           right = stamp(interval.ended_at);
         return (
-          left >= start && Number.isFinite(right) && right >= left &&
-          right <= end && interval.end_reason === "feedback_off"
+          left >= start &&
+          Number.isFinite(right) &&
+          right >= left &&
+          right <= end &&
+          interval.end_reason === "feedback_off"
         );
       }),
       excluded = intervals.filter((interval) => !complete.includes(interval)),
@@ -9234,7 +9283,9 @@ class SaunaPanel extends HTMLElement {
             (total, interval) =>
               total + stamp(interval.ended_at) - stamp(interval.started_at),
             0,
-          ) / complete.length / 60000
+          ) /
+          complete.length /
+          60000
         : null;
     return `<section id="detail-heating-cycles"><h3>Heizzyklen · ${selection ? "Ausgewählter Zeitraum" : "Sitzung"}</h3><p>${complete.length} vollständig belegte Ein-/Aus-Intervalle · Mittlere Länge: ${mean === null ? "Kein vollständig belegtes Intervall" : `${this.num(mean, this.preference("detail_value_precision"))} min`}</p><p class="muted">${this.clock(start)} – ${this.clock(end)} · Nicht im Mittel: ${open} offen, ${clipped} angeschnitten, ${unknown} ohne bestätigtes Aus beendet.</p></section>`;
   }
@@ -9277,7 +9328,8 @@ class SaunaPanel extends HTMLElement {
         Object.fromEntries(
           Object.entries(session).filter(
             ([key]) =>
-              key.includes("temperature") || key === "thermostat" ||
+              key.includes("temperature") ||
+              key === "thermostat" ||
               key === "target_history",
           ),
         ),
@@ -9579,15 +9631,19 @@ class SaunaPanel extends HTMLElement {
             e.kind,
           ref: e.event_id,
         })),
-      ...presenceReports.filter((item) => item.report).map(({ at, report }) => ({
-        id: `${report.report_id || "presence"}:${at}`,
-        at,
-        effective: report.effective_at,
-        label: occupancy(report),
-        source:
-          report.assertion === "direct_presence" ? "Präsenzsensor" : "Indirekte Präsenz",
-        detail: report.source,
-      })),
+      ...presenceReports
+        .filter((item) => item.report)
+        .map(({ at, report }) => ({
+          id: `${report.report_id || "presence"}:${at}`,
+          at,
+          effective: report.effective_at,
+          label: occupancy(report),
+          source:
+            report.assertion === "direct_presence"
+              ? "Präsenzsensor"
+              : "Indirekte Präsenz",
+          detail: report.source,
+        })),
       ...decisions.map((d, index) => ({
         id: `decision-${decisionRecords[index].id ?? index}`,
         at: stamp(d.at),
@@ -9666,24 +9722,49 @@ class SaunaPanel extends HTMLElement {
         originalEnded = stamp(gang.ended_at),
         horizon = stamp(gang.ended_at || session.ended_at || this.state.now),
         open = !gang.ended_at && !session.ended_at,
-        ongoing = open && gang === timeline.active && this.state?.operation_enabled &&
+        ongoing =
+          open &&
+          gang === timeline.active &&
+          this.state?.operation_enabled &&
           timeline.session_id === this.state?.session?.timeline?.session_id,
         range = selection?.kind === "range",
         started = range ? Math.max(originalStarted, selection.start) : originalStarted,
         ended = range ? Math.min(horizon, selection.end) : horizon;
-      if (selection?.kind === "point" && !(started <= selection.start &&
-        (selection.start < ended || (open && selection.start === ended)))) return [];
+      if (
+        selection?.kind === "point" &&
+        !(
+          started <= selection.start &&
+          (selection.start < ended || (open && selection.start === ended))
+        )
+      )
+        return [];
       if (range && !(ended > started)) return [];
-      const complete = Number.isFinite(originalEnded) &&
-          (!range || (selection.start <= originalStarted && selection.end >= originalEnded)),
-        coversObserved = !range ||
-          (selection.start <= originalStarted && selection.end >= horizon),
-        scope = complete ? "Vollständig" : ongoing && coversObserved ? "Laufend" : "Ausschnitt",
+      const complete =
+          Number.isFinite(originalEnded) &&
+          (!range ||
+            (selection.start <= originalStarted && selection.end >= originalEnded)),
+        coversObserved =
+          !range || (selection.start <= originalStarted && selection.end >= horizon),
+        scope = complete
+          ? "Vollständig"
+          : ongoing && coversObserved
+            ? "Laufend"
+            : "Ausschnitt",
         selectedDuration = duration((ended - started) / 1000);
-      return [{ gang, number: index + 1, originalStarted, originalEnded, started, ended,
-        label: `Saunagang ${index + 1} · ${scope}`,
-        confirmationText: gangConfirmed(gang) ? "Bestätigt" : "Vorläufig",
-        durationText: range && ongoing ? `${selectedDuration} ausgewählt` : selectedDuration }];
+      return [
+        {
+          gang,
+          number: index + 1,
+          originalStarted,
+          originalEnded,
+          started,
+          ended,
+          label: `Saunagang ${index + 1} · ${scope}`,
+          confirmationText: gangConfirmed(gang) ? "Bestätigt" : "Vorläufig",
+          durationText:
+            range && ongoing ? `${selectedDuration} ausgewählt` : selectedDuration,
+        },
+      ];
     });
   }
   historyInformationContent(selection = null, phase = null) {
@@ -9737,9 +9818,10 @@ class SaunaPanel extends HTMLElement {
     content = this.historyInformationContent(selection, phase),
   ) {
     if (!content) return "";
-    const times = selection?.kind === "point"
-        ? this.clock(content.start, timeZone)
-        : `${this.clock(content.start, timeZone)} – ${this.clock(content.end, timeZone)}`,
+    const times =
+        selection?.kind === "point"
+          ? this.clock(content.start, timeZone)
+          : `${this.clock(content.start, timeZone)} – ${this.clock(content.end, timeZone)}`,
       durationText = !selection
         ? duration(content.durationSeconds)
         : content.singleGang
@@ -9754,43 +9836,73 @@ class SaunaPanel extends HTMLElement {
     content = this.historyInformationContent(selection, phase),
   ) {
     if (!content) return;
-    const { rows, singleGang, gangCount, energy, measuredPower, measurements } = content,
+    const { rows, singleGang, gangCount, energy, measuredPower, measurements } =
+        content,
       range = selection?.kind === "range",
       summary = this.$("[data-history-session-summary]");
     if (summary) summary.hidden = !(overview || range);
     if (overview || range) {
-      const valueRow = (key, label, value, unit = "", reference = "", status = "Nicht verfügbar") =>
+      const valueRow = (
+          key,
+          label,
+          value,
+          unit = "",
+          reference = "",
+          status = "Nicht verfügbar",
+        ) =>
           `<div data-key="history-information-${esc(key)}"${key === "energy" ? " data-history-energy" : ""}><span data-history-label>${esc(label)}</span>${Number.isFinite(value) ? `<span class="history-tooltip-value"><span class="history-tooltip-number">${this.historyReadoutNumber(value)}</span><span class="history-tooltip-unit">${esc(unit)}</span></span>${reference ? `<span class="history-information-reference">${reference}</span>` : ""}` : `<span class="history-information-status">${esc(status)}</span>`}</div>`,
-        energyValue = energy && Number.isFinite(energy.measured_kwh) &&
-            Number.isFinite(energy.estimated_kwh) &&
-            !(energy.unknown_seconds > 0 &&
-              !(energy.measured_seconds > 0 || energy.estimated_seconds > 0))
-          ? energy.measured_kwh + energy.estimated_kwh : null,
+        energyValue =
+          energy &&
+          Number.isFinite(energy.measured_kwh) &&
+          Number.isFinite(energy.estimated_kwh) &&
+          !(
+            energy.unknown_seconds > 0 &&
+            !(energy.measured_seconds > 0 || energy.estimated_seconds > 0)
+          )
+            ? energy.measured_kwh + energy.estimated_kwh
+            : null,
         energyReference = overview
-          ? energy?.accounted_at ? `bis ${this.clock(energy.accounted_at)}` : "Zeitstand nicht aufgezeichnet"
+          ? energy?.accounted_at
+            ? `bis ${this.clock(energy.accounted_at)}`
+            : "Zeitstand nicht aufgezeichnet"
           : `${this.clock(content.start)} – ${this.clock(content.end)}`,
-        maximumRows = !range ? "" : [...measurements].filter(
-          ([, measurement]) => measurement.quantity === "temperature",
-        ).map(([key, measurement]) => valueRow(
-          `maximum-${key}`,
-          `Temperaturmaximum${this.historyDetail ? ` ${measurement.position === "upper" ? "oben" : "unten"}` : ""}`,
-          measurement.maximum?.value,
-          "°C",
-          measurement.maximum
-            ? `<time title="${esc(this.tooltipWhen(measurement.maximum.time))}">um ${this.clock(measurement.maximum.time)}</time>` : "",
-          "Keine gültige Temperatur im Zeitraum",
-        )).join(""),
+        maximumRows = !range
+          ? ""
+          : [...measurements]
+              .filter(([, measurement]) => measurement.quantity === "temperature")
+              .map(([key, measurement]) =>
+                valueRow(
+                  `maximum-${key}`,
+                  `Temperaturmaximum${this.historyDetail ? ` ${measurement.position === "upper" ? "oben" : "unten"}` : ""}`,
+                  measurement.maximum?.value,
+                  "°C",
+                  measurement.maximum
+                    ? `<time title="${esc(this.tooltipWhen(measurement.maximum.time))}">um ${this.clock(measurement.maximum.time)}</time>`
+                    : "",
+                  "Keine gültige Temperatur im Zeitraum",
+                ),
+              )
+              .join(""),
         powerEnd = overview ? content.session.energy?.accounted_at : content.end,
         powerDetails = measuredPower
           ? `<p>Gemessene Leistung · ${this.clock(content.start)} – ${powerEnd ? this.clock(powerEnd) : "Ende nicht aufgezeichnet"}${measuredPower.complete ? "" : " · Nur gemessene Abschnitte"}</p><div class="history-information-values">${valueRow("power-mean", "Mittlere gemessene Leistung", measuredPower.mean_w, "W")}${valueRow("power-peak", "Höchste gemessene Leistung", measuredPower.peak_w, "W")}</div>`
           : '<p class="muted">Gemessene Leistung: Nicht verfügbar</p>';
-      this.updateMarkup("[data-history-session-summary]",
-        `<div class="history-information-values">${overview ? `<div data-key="history-information-gang-count"><span data-history-label>Saunagänge</span><span class="history-tooltip-value"><span class="history-tooltip-number">${gangCount}</span><span class="history-tooltip-unit"></span></span></div>` : ""}${maximumRows}${valueRow("energy", "Energieverbrauch", energyValue, "kWh", energyReference, energy ? "Nicht verfügbar" : this.historyLoad ? "Nachladend" : "Für diesen Zeitraum nicht belegt")}</div><details id="history-information-details"><summary>Weitere Daten · ${overview ? "Sitzung" : "Ausgewählter Zeitraum"}</summary><p class="muted">${this.clock(content.start)} – ${this.clock(content.end)}${overview && energy?.accounted_at ? ` · Energie bis ${this.clock(energy.accounted_at)}` : ""}</p>${powerDetails}</details>`);
+      this.updateMarkup(
+        "[data-history-session-summary]",
+        `<div class="history-information-values">${overview ? `<div data-key="history-information-gang-count"><span data-history-label>Saunagänge</span><span class="history-tooltip-value"><span class="history-tooltip-number">${gangCount}</span><span class="history-tooltip-unit"></span></span></div>` : ""}${maximumRows}${valueRow("energy", "Energieverbrauch", energyValue, "kWh", energyReference, energy ? "Nicht verfügbar" : this.historyLoad ? "Nachladend" : "Für diesen Zeitraum nicht belegt")}</div><details id="history-information-details"><summary>Weitere Daten · ${overview ? "Sitzung" : "Ausgewählter Zeitraum"}</summary><p class="muted">${this.clock(content.start)} – ${this.clock(content.end)}${overview && energy?.accounted_at ? ` · Energie bis ${this.clock(energy.accounted_at)}` : ""}</p>${powerDetails}</details>`,
+      );
     }
-    this.updateMarkup("[data-history-context-gangs]", overview || !selection || singleGang ? "" :
-      rows.map(({ gang, label, started, ended, durationText, confirmationText }) =>
-        `<div class="history-context-gang" data-key="history-context-gang:${esc(gang.gang_id)}" data-gang-id="${esc(gang.gang_id)}"><strong>${esc(label)}</strong><span>${this.clock(started)} – ${this.clock(ended)}</span><span>${esc(durationText)}</span><span>${esc(confirmationText)}</span></div>`,
-      ).join(""));
+    this.updateMarkup(
+      "[data-history-context-gangs]",
+      overview || !selection || singleGang
+        ? ""
+        : rows
+            .map(
+              ({ gang, label, started, ended, durationText, confirmationText }) =>
+                `<div class="history-context-gang" data-key="history-context-gang:${esc(gang.gang_id)}" data-gang-id="${esc(gang.gang_id)}"><strong>${esc(label)}</strong><span>${this.clock(started)} – ${this.clock(ended)}</span><span>${esc(durationText)}</span><span>${esc(confirmationText)}</span></div>`,
+            )
+            .join(""),
+    );
   }
   renderHistory(reasons = new Set(["viewport"])) {
     if (!this.isConnected || this.$("#history")?.hidden) return;
@@ -9868,18 +9980,20 @@ class SaunaPanel extends HTMLElement {
       this.historyGangKey = gangKey;
       if (this.navigation?.main === "history") this.updateMarkup("#gangs", "");
       else {
-      const information = this.historyInformationContent(selection),
-        e = information.energy,
-        energySummary = e && !selection
-          ? `<p class="muted" data-history-energy>Energieverbrauch: ${this.num(e.measured_kwh + e.estimated_kwh, this.preference("energy_precision"))} kWh</p>`
-          : "",
-        point = selection?.kind === "point",
-        gangRows = information.rows.map((row) => point
-          ? { ...row, started: selection.start, ended: selection.start } : row);
-      this.updateMarkup(
-        "#gangs",
-        `<div class="card"><h2>Saunagänge${selection ? ` · ${esc(selectionLabel)}` : ""}</h2>${energySummary}${gangRows.length ? `<div class="scroll"><table><thead><tr><th>Gang</th><th>Status</th>${point ? "<th>Zeitpunkt</th>" : `<th>${selection ? "Von" : "Beginn"}</th><th>Dauer</th><th>${selection ? "Bis" : "Ende"}</th>`}</tr></thead><tbody>${gangRows.map(({ gang: g, number, started, ended, confirmationText }) => `<tr data-gang-id="${esc(g.gang_id)}" data-start="${esc(g.started_at)}"><td>${number}</td><td>${confirmationText}</td><td>${this.clock(started)}</td>${point ? "" : `<td>${duration((ended - started) / 1000)}</td><td>${selection || g.ended_at ? this.clock(ended) : "–"}</td>`}</tr>`).join("")}</tbody></table></div>` : '<p class="muted">Keine Saunagänge erkannt.</p>'}</div>`,
-      );
+        const information = this.historyInformationContent(selection),
+          e = information.energy,
+          energySummary =
+            e && !selection
+              ? `<p class="muted" data-history-energy>Energieverbrauch: ${this.num(e.measured_kwh + e.estimated_kwh, this.preference("energy_precision"))} kWh</p>`
+              : "",
+          point = selection?.kind === "point",
+          gangRows = information.rows.map((row) =>
+            point ? { ...row, started: selection.start, ended: selection.start } : row,
+          );
+        this.updateMarkup(
+          "#gangs",
+          `<div class="card"><h2>Saunagänge${selection ? ` · ${esc(selectionLabel)}` : ""}</h2>${energySummary}${gangRows.length ? `<div class="scroll"><table><thead><tr><th>Gang</th><th>Status</th>${point ? "<th>Zeitpunkt</th>" : `<th>${selection ? "Von" : "Beginn"}</th><th>Dauer</th><th>${selection ? "Bis" : "Ende"}</th>`}</tr></thead><tbody>${gangRows.map(({ gang: g, number, started, ended, confirmationText }) => `<tr data-gang-id="${esc(g.gang_id)}" data-start="${esc(g.started_at)}"><td>${number}</td><td>${confirmationText}</td><td>${this.clock(started)}</td>${point ? "" : `<td>${duration((ended - started) / 1000)}</td><td>${selection || g.ended_at ? this.clock(ended) : "–"}</td>`}</tr>`).join("")}</tbody></table></div>` : '<p class="muted">Keine Saunagänge erkannt.</p>'}</div>`,
+        );
       }
     }
     const eventKey = `${identity}:${this.historyProjection()}:${this.historyTimelineRevision}:${this.historyEventRevision || 0}:${timeZone}:${selectionKey}:${this.historyEventVisibilityKey()}`;
@@ -9889,9 +10003,10 @@ class SaunaPanel extends HTMLElement {
         ...this.shadowRoot.querySelectorAll("#event-list details"),
       ].map((d) => d.open);
       const traces = this.diagnosticData().traces;
-      const eventRows = this.navigation?.main === "history"
-        ? this.historyMainEvents(undefined, selection)
-        : orderedHistoryEvents(this.normalHistoryEvents());
+      const eventRows =
+        this.navigation?.main === "history"
+          ? this.historyMainEvents(undefined, selection)
+          : orderedHistoryEvents(this.normalHistoryEvents());
       const eventGroups = [];
       for (const event of eventRows) {
         const at = stamp(event.effective_at);
@@ -9916,7 +10031,9 @@ class SaunaPanel extends HTMLElement {
             (group) =>
               `<li class="history-event-group"><div class="history-event-time">${esc(group.label)}</div><ol class="history-event-items">${group.events
                 .map((e) => {
-                  const linked = e.display_only ? null : this.diagnosticTraceForEvent(traces, e),
+                  const linked = e.display_only
+                      ? null
+                      : this.diagnosticTraceForEvent(traces, e),
                     label = this.historyEventLabel(e);
                   return `<li class="event-row" data-event-id="${esc(e.event_id)}" data-selected="false"><span>${esc(label)}</span>${linked && this.state?.permissions?.admin ? `<button data-action="event-row:${esc(e.event_id)}" aria-label="${esc(label)} im Erkennungsverlauf zeigen">Zum Marker</button>` : ""}</li>`;
                 })
@@ -9998,7 +10115,9 @@ class SaunaPanel extends HTMLElement {
     }
     // A report can precede a source boundary with the same receipt time.
     // Preserve archive order and bind person events by their original IDs.
-    const changesByRecord = new Map(changes.map((change) => [records[change.order], change])),
+    const changesByRecord = new Map(
+        changes.map((change) => [records[change.order], change]),
+      ),
       recordOwners = new Map(),
       eventOwners = new Map();
     let owner = { source: initial, order: -1 };
@@ -10011,7 +10130,8 @@ class SaunaPanel extends HTMLElement {
         eventId = record.kind === "detection" ? payload.event?.event_id : null;
       if (eventId) eventOwners.set(eventId, owner.source);
       else if (
-        report?.assertion === "provisional_proxy" && report.source_ref &&
+        report?.assertion === "provisional_proxy" &&
+        report.source_ref &&
         !eventOwners.has(report.source_ref)
       )
         eventOwners.set(report.source_ref, owner.source);
@@ -10085,25 +10205,29 @@ class SaunaPanel extends HTMLElement {
           received: stamp(report.received_at || received),
         }))
         .filter(({ report, received }) => {
-          if (!Number.isFinite(received) || (report.report_id && seen.has(report.report_id)))
+          if (
+            !Number.isFinite(received) ||
+            (report.report_id && seen.has(report.report_id))
+          )
             return false;
           if (report.report_id) seen.add(report.report_id);
           return true;
         })
         .sort((a, b) => a.received - b.received);
     return projection.intervals(start, end).flatMap((interval) => {
-      const matching = reports.filter(
-        ({ report }) =>
-          interval.source === "ha_presence"
-            ? report.assertion === "direct_presence" && (!entity || report.source === entity)
-            : interval.source === "proxy" &&
-              ["provisional_proxy", "proxy_retraction"].includes(report.assertion),
+      const matching = reports.filter(({ report }) =>
+        interval.source === "ha_presence"
+          ? report.assertion === "direct_presence" &&
+            (!entity || report.source === entity)
+          : interval.source === "proxy" &&
+            ["provisional_proxy", "proxy_retraction"].includes(report.assertion),
       );
       // A direct sensor retains its report through fallback. Proxy evidence
       // belongs to its owner interval and cannot revive after a later return.
       const initial = matching
           .filter(
-            (item) => item.received <= interval.at &&
+            (item) =>
+              item.received <= interval.at &&
               (interval.source !== "proxy" ||
                 projection.intervalForRecord(item.record) === interval.order),
           )
@@ -10168,7 +10292,9 @@ class SaunaPanel extends HTMLElement {
     return Object.fromEntries(
       Object.entries(parameters).filter(
         ([key]) =>
-          /^(door_|strong_|weak_|infusion_|vent_|person_step_seconds$|grid_seconds$)/.test(key) &&
+          /^(door_|strong_|weak_|infusion_|vent_|person_step_seconds$|grid_seconds$)/.test(
+            key,
+          ) &&
           (personDataActive || !/^(strong_|weak_|person_step_seconds$)/.test(key)),
       ),
     );
@@ -10580,7 +10706,8 @@ class SaunaPanel extends HTMLElement {
             ? Math.max(start, started)
             : NaN
           : start,
-      right = scope === "session" && Number.isFinite(ended) ? Math.min(end, ended) : end,
+      right =
+        scope === "session" && Number.isFinite(ended) ? Math.min(end, ended) : end,
       valid = Number.isFinite(left) && Number.isFinite(right) && left <= right,
       first = valid ? lowerBoundHistory(values, left) : values.length,
       after = valid
@@ -10641,8 +10768,7 @@ class SaunaPanel extends HTMLElement {
     )
       this.historyIndex(this.shown.records);
     const values = this.series(position, quantity);
-    let point,
-      after;
+    let point, after;
     if (current) {
       after = upperBoundHistory(values, time);
       point = values[after - 1];
@@ -10694,7 +10820,12 @@ class SaunaPanel extends HTMLElement {
           position,
           quantity,
           value: selection
-            ? this.historyMeasurementAt(position, sourceQuantity, selection.start, pinned)
+            ? this.historyMeasurementAt(
+                position,
+                sourceQuantity,
+                selection.start,
+                pinned,
+              )
             : completed
               ? summary.maximum
               : summary.last,
@@ -10761,8 +10892,10 @@ class SaunaPanel extends HTMLElement {
     return `${this.entry}:${this.shown?.session?.timeline?.session_id}`;
   }
   syncHistoryValueIdentity() {
-    if (this.historyValueSelection &&
-      this.historyValueSelection.identity !== this.historyValueIdentity()) {
+    if (
+      this.historyValueSelection &&
+      this.historyValueSelection.identity !== this.historyValueIdentity()
+    ) {
       this.clearHistorySelection();
       this.cancelHistoryInput();
     }
@@ -10770,7 +10903,9 @@ class SaunaPanel extends HTMLElement {
   historyPhaseBoundaries() {
     const intervals = this.shown?.phase_projection?.intervals || [],
       boundaries = intervals
-        .filter((phase, index) => index === 0 || phase.phase !== intervals[index - 1].phase)
+        .filter(
+          (phase, index) => index === 0 || phase.phase !== intervals[index - 1].phase,
+        )
         .map((phase) => ({
           time: stamp(phase.started_at),
           phase: phase.phase,
@@ -10784,18 +10919,33 @@ class SaunaPanel extends HTMLElement {
     // The projection's final end in a live session is its read horizon.
     // Only an archived session end proves a terminal phase boundary.
     if (Number.isFinite(end) && end === sessionEnd)
-      boundaries.push({ time: end, phase: last.phase, phaseKey: this.historyPhaseKey(last), boundary: "end" });
+      boundaries.push({
+        time: end,
+        phase: last.phase,
+        phaseKey: this.historyPhaseKey(last),
+        boundary: "end",
+      });
     return boundaries;
   }
   historyCurrentSnap(snap) {
     if (!snap) return null;
     if (snap.eventId) {
-      return this.historyEventProjection().snapTargets.find((target) =>
-        target.eventId === snap.eventId && target.time === snap.time) || null;
+      return (
+        this.historyEventProjection().snapTargets.find(
+          (target) => target.eventId === snap.eventId && target.time === snap.time,
+        ) || null
+      );
     }
-    return this.historyPhaseBoundaries().find((item) => item.time === snap.time) || null;
+    return (
+      this.historyPhaseBoundaries().find((item) => item.time === snap.time) || null
+    );
   }
-  historySnapTarget(time, model = this.historyChart?.model, geometry, includeEvents = false) {
+  historySnapTarget(
+    time,
+    model = this.historyChart?.model,
+    geometry,
+    includeEvents = false,
+  ) {
     const radius = this.preference("history_phase_snap_radius_px");
     const target = { time, snap: null };
     if (!radius || !model) return target;
@@ -10810,8 +10960,7 @@ class SaunaPanel extends HTMLElement {
       radius;
     let distance = Infinity;
     const targets = this.historyPhaseBoundaries();
-    if (includeEvents)
-      targets.push(...this.historyEventProjection().snapTargets);
+    if (includeEvents) targets.push(...this.historyEventProjection().snapTargets);
     for (const boundary of targets) {
       const at = boundary.time,
         delta = Math.abs(at - time);
@@ -10832,7 +10981,11 @@ class SaunaPanel extends HTMLElement {
     return this.historySnapTarget(time, model, geometry).time;
   }
   historyPhaseKey(phase) {
-    return JSON.stringify([stamp(phase.started_at), phase.phase, phase.source_id ?? null]);
+    return JSON.stringify([
+      stamp(phase.started_at),
+      phase.phase,
+      phase.source_id ?? null,
+    ]);
   }
   selectHistoryPhase(key) {
     const phase = (this.shown?.phase_projection?.intervals || []).find(
@@ -10840,19 +10993,23 @@ class SaunaPanel extends HTMLElement {
     );
     if (!phase || !this.shown?.session) return;
     const current = this.historyValueSelection,
-      same = current?.identity === this.historyValueIdentity() && current.phaseKey === key;
+      same =
+        current?.identity === this.historyValueIdentity() && current.phaseKey === key;
     const start = stamp(phase.started_at),
       end = stamp(phase.ended_at || this.shown.session.ended_at || this.state.now);
     if (!Number.isFinite(start) || !Number.isFinite(end) || end < start) return;
-    this.selectHistoryValueContext({
-      identity: this.historyValueIdentity(),
-      kind: "range",
-      start,
-      end,
-      phaseKey: key,
-      startSnap: this.historyCurrentSnap({ time: start }),
-      endSnap: this.historyCurrentSnap({ time: end }),
-    }, same);
+    this.selectHistoryValueContext(
+      {
+        identity: this.historyValueIdentity(),
+        kind: "range",
+        start,
+        end,
+        phaseKey: key,
+        startSnap: this.historyCurrentSnap({ time: start }),
+        endSnap: this.historyCurrentSnap({ time: end }),
+      },
+      same,
+    );
   }
   selectHistoryValueContext(selection, same = false) {
     const domain = this.historyDomain(),
@@ -10868,22 +11025,25 @@ class SaunaPanel extends HTMLElement {
     this.historyKeyboardTime = this.historyValueSelection.start;
     if (same && !fullView) this.transitionHistoryWindow(...domain, true);
     else if (same || !fullView)
-      this.transitionHistoryWindow(...this.historySelectionWindow(this.historyValueSelection));
+      this.transitionHistoryWindow(
+        ...this.historySelectionWindow(this.historyValueSelection),
+      );
     this.syncHistorySelection();
     this.historyChart?.interaction.refreshSelection();
     this.scheduleHistoryRender("selection");
   }
   historySelectionWindow(selection) {
-    const span = selection.kind === "point" ? this.preference("history_marker_focus_span_ms")
-        : (selection.end - selection.start) *
-          (1 + 2 * this.preference("history_selection_context_fraction")),
+    const span =
+        selection.kind === "point"
+          ? this.preference("history_marker_focus_span_ms")
+          : (selection.end - selection.start) *
+            (1 + 2 * this.preference("history_selection_context_fraction")),
       middle = selection.start + (selection.end - selection.start) / 2;
     return this.historyWindowBounds(middle - span / 2, middle + span / 2);
   }
   toggleHistorySelectionWindow() {
     const selection = this.historyValueSelection;
-    if (!selection || selection.identity !== this.historyValueIdentity())
-      return;
+    if (!selection || selection.identity !== this.historyValueIdentity()) return;
     this.selectHistoryValueContext(selection, true);
   }
   historyTimeSelectionKind(time) {
@@ -10894,9 +11054,18 @@ class SaunaPanel extends HTMLElement {
   }
   historyTimeSnapTarget(time, model = this.historyChart?.model, geometry) {
     const current = this.historyValueSelection;
-    if (current?.identity === this.historyValueIdentity() && current.kind === "point" && current.start === time)
+    if (
+      current?.identity === this.historyValueIdentity() &&
+      current.kind === "point" &&
+      current.start === time
+    )
       return { time, snap: this.historyCurrentSnap(current.startSnap) };
-    return this.historySnapTarget(time, model, geometry, this.historyTimeSelectionKind(time) === "point");
+    return this.historySnapTarget(
+      time,
+      model,
+      geometry,
+      this.historyTimeSelectionKind(time) === "point",
+    );
   }
   selectHistoryTime(time, model = this.historyChart?.model, geometry, resolvedTarget) {
     if (!Number.isFinite(time) || !this.shown?.session) return;
@@ -10919,8 +11088,16 @@ class SaunaPanel extends HTMLElement {
             kind: "range",
             start: Math.min(current.start, time),
             end: Math.max(current.start, time),
-            startSnap: beginsBefore ? (current.startSnap?.eventId ? null : current.startSnap) : target.snap,
-            endSnap: beginsBefore ? target.snap : (current.startSnap?.eventId ? null : current.startSnap),
+            startSnap: beginsBefore
+              ? current.startSnap?.eventId
+                ? null
+                : current.startSnap
+              : target.snap,
+            endSnap: beginsBefore
+              ? target.snap
+              : current.startSnap?.eventId
+                ? null
+                : current.startSnap,
           }
         : {
             identity,
@@ -10987,10 +11164,14 @@ class SaunaPanel extends HTMLElement {
         tick: this.$(`[data-history-selection-${boundary}-tick]`),
         hit: this.$(`[data-history-selection-${boundary}-hit]`),
       })),
-      startSnap = selection?.kind === "range" && selection.startSnap?.eventId
-        ? null : this.historyCurrentSnap(selection?.startSnap),
-      endSnap = selection?.kind === "range" && selection.endSnap?.eventId
-        ? null : this.historyCurrentSnap(selection?.endSnap),
+      startSnap =
+        selection?.kind === "range" && selection.startSnap?.eventId
+          ? null
+          : this.historyCurrentSnap(selection?.startSnap),
+      endSnap =
+        selection?.kind === "range" && selection.endSnap?.eventId
+          ? null
+          : this.historyCurrentSnap(selection?.endSnap),
       inView = (time) => !!model && time >= model.start && time <= model.end,
       visible =
         !!selection &&
@@ -11001,19 +11182,31 @@ class SaunaPanel extends HTMLElement {
     context?.setAttribute("visibility", visible ? "visible" : "hidden");
     context?.setAttribute("aria-hidden", String(!visible));
     context?.setAttribute("tabindex", visible ? "0" : "-1");
-    const tickGeometry = this.historySelectionDrag?.geometry || this.historyChart?.interaction.cachedGeometry,
-      tickScaleX = (model?.width || 1) / Math.max(1, tickGeometry?.rects?.timeAxis?.width || model?.width || 1),
+    const tickGeometry =
+        this.historySelectionDrag?.geometry ||
+        this.historyChart?.interaction.cachedGeometry,
+      tickScaleX =
+        (model?.width || 1) /
+        Math.max(1, tickGeometry?.rects?.timeAxis?.width || model?.width || 1),
       tickGap = this.preference("control_group_gap_px") * tickScaleX,
-      boundaries = selection ? [selection.start, ...(selection.kind === "range" ? [selection.end] : [])]
-        .filter(inView).map((time) => model.x(time)) : [];
+      boundaries = selection
+        ? [selection.start, ...(selection.kind === "range" ? [selection.end] : [])]
+            .filter(inView)
+            .map((time) => model.x(time))
+        : [];
     let previousTickRight = -Infinity;
-    for (const tick of this.shadowRoot?.querySelectorAll?.("[data-history-time]") || []) {
+    for (const tick of this.shadowRoot?.querySelectorAll?.("[data-history-time]") ||
+      []) {
       const time = Number(tick.dataset.historyTime),
         center = model?.x(time),
-        halfWidth = this.historyLabelWidth(tick.textContent, tickGeometry) * tickScaleX / 2,
+        halfWidth =
+          (this.historyLabelWidth(tick.textContent, tickGeometry) * tickScaleX) / 2,
         left = center - halfWidth,
         right = center + halfWidth,
-        shown = !!model && left >= model.left + tickGap && right <= model.right - tickGap &&
+        shown =
+          !!model &&
+          left >= model.left + tickGap &&
+          right <= model.right - tickGap &&
           left >= previousTickRight + tickGap &&
           boundaries.every((at) => right + tickGap <= at || left - tickGap >= at),
         selected = !!selection && time >= selection.start && time <= selection.end;
@@ -11021,18 +11214,24 @@ class SaunaPanel extends HTMLElement {
       tick.setAttribute("aria-hidden", String(!shown));
       tick.setAttribute("data-selected", String(selected));
       if (shown) previousTickRight = right;
-      if (shown && selected) tick.setAttribute("data-action", "history-selection-window");
+      if (shown && selected)
+        tick.setAttribute("data-action", "history-selection-window");
       else tick.removeAttribute("data-action");
     }
     if (visible) {
       const phase = selection.phaseKey ? this.historySelectionPhase(selection) : null,
         label = selection.eventIds?.length
-          ? selection.eventLabel || this.historyEventGroupLabel(this.historyInspectedEventGroup())
-          : phase ? phases[phase.phase] || phase.phase
-            : selection.kind === "range" ? "Ausgewählter Zeitraum" : "Ausgewählter Zeitpunkt",
-        when = selection.kind === "range"
-          ? `${this.tooltipWhen(selection.start)} – ${this.tooltipWhen(selection.end)}`
-          : this.tooltipWhen(selection.start);
+          ? selection.eventLabel ||
+            this.historyEventGroupLabel(this.historyInspectedEventGroup())
+          : phase
+            ? phases[phase.phase] || phase.phase
+            : selection.kind === "range"
+              ? "Ausgewählter Zeitraum"
+              : "Ausgewählter Zeitpunkt",
+        when =
+          selection.kind === "range"
+            ? `${this.tooltipWhen(selection.start)} – ${this.tooltipWhen(selection.end)}`
+            : this.tooltipWhen(selection.start);
       context?.setAttribute("aria-label", `${label} · ${when} · Ansicht wechseln`);
     }
     band?.setAttribute(
@@ -11050,15 +11249,26 @@ class SaunaPanel extends HTMLElement {
     first?.setAttribute("data-snap", String(!!startSnap));
     last?.setAttribute("data-snap", String(!!endSnap));
     for (const { boundary, node } of handles) {
-      const shown = !!selection && inView(selection[boundary]) &&
+      const shown =
+        !!selection &&
+        inView(selection[boundary]) &&
         (boundary === "start" || selection.kind === "range");
       node?.setAttribute("visibility", shown ? "visible" : "hidden");
       node?.setAttribute("aria-hidden", String(!shown));
       node?.setAttribute("tabindex", shown ? "0" : "-1");
-      node?.setAttribute("data-snap", String(!!(boundary === "start" ? startSnap : endSnap)));
+      node?.setAttribute(
+        "data-snap",
+        String(!!(boundary === "start" ? startSnap : endSnap)),
+      );
       if (selection && model) {
-        node?.setAttribute("aria-label", selection.kind === "point" ? "Zeitpunkt" :
-          boundary === "start" ? "Beginn des ausgewählten Zeitraums" : "Ende des ausgewählten Zeitraums");
+        node?.setAttribute(
+          "aria-label",
+          selection.kind === "point"
+            ? "Zeitpunkt"
+            : boundary === "start"
+              ? "Beginn des ausgewählten Zeitraums"
+              : "Ende des ausgewählten Zeitraums",
+        );
         node?.setAttribute("aria-valuemin", String(model.start));
         node?.setAttribute("aria-valuemax", String(model.end));
         node?.setAttribute("aria-valuenow", String(selection[boundary]));
@@ -11086,23 +11296,34 @@ class SaunaPanel extends HTMLElement {
           y2: model.bottom,
         }))
           node?.setAttribute(name, String(value));
-      const geometry = this.historySelectionDrag?.geometry || this.historyChart?.interaction.cachedGeometry,
-        hitRadius = Math.max(this.preference("event_marker_size_px"), this.preference("size_22_0_px")) / 2;
+      const geometry =
+          this.historySelectionDrag?.geometry ||
+          this.historyChart?.interaction.cachedGeometry,
+        hitRadius =
+          Math.max(
+            this.preference("event_marker_size_px"),
+            this.preference("size_22_0_px"),
+          ) / 2;
       const axisHeight = this.historyTimeAxisHeight(),
         axisWidth = geometry?.rects?.timeAxis?.width || model.width,
         tickTop = this.preference("layout_space_09_px") / 2,
         tickBottom = axisHeight,
-        contextLeft = selection.kind === "point" ? left - hitRadius * model.width / axisWidth
-          : Math.max(model.left, left),
-        contextRight = selection.kind === "point" ? left + hitRadius * model.width / axisWidth
-          : Math.min(model.right, right);
+        contextLeft =
+          selection.kind === "point"
+            ? left - (hitRadius * model.width) / axisWidth
+            : Math.max(model.left, left),
+        contextRight =
+          selection.kind === "point"
+            ? left + (hitRadius * model.width) / axisWidth
+            : Math.min(model.right, right);
       for (const line of context?.querySelectorAll?.("line") || [])
         for (const [name, value] of Object.entries({
           x1: Math.max(model.left, contextLeft),
           x2: Math.min(model.right, contextRight),
           y1: 0,
           y2: 0,
-        })) line.setAttribute(name, String(value));
+        }))
+          line.setAttribute(name, String(value));
       for (const { boundary, hit, tick } of handles) {
         const at = model.x(selection[boundary]);
         for (const [name, value] of Object.entries({
@@ -11110,18 +11331,26 @@ class SaunaPanel extends HTMLElement {
           x2: at,
           y1: tickTop,
           y2: tickBottom,
-        })) tick?.setAttribute(name, String(value));
+        }))
+          tick?.setAttribute(name, String(value));
         for (const [name, value] of Object.entries({
           cx: at,
           cy: (tickTop + tickBottom) / 2,
-          rx: hitRadius * model.width / axisWidth,
+          rx: (hitRadius * model.width) / axisWidth,
           ry: (tickBottom - tickTop) / 2,
-        })) hit?.setAttribute(name, String(value));
+        }))
+          hit?.setAttribute(name, String(value));
       }
     }
-    for (const phase of this.shadowRoot?.querySelectorAll?.("[data-history-phase-key]") || [])
-      phase.setAttribute("aria-pressed", String(!!selection?.phaseKey &&
-        selection.phaseKey === phase.dataset.historyPhaseKey));
+    for (const phase of this.shadowRoot?.querySelectorAll?.(
+      "[data-history-phase-key]",
+    ) || [])
+      phase.setAttribute(
+        "aria-pressed",
+        String(
+          !!selection?.phaseKey && selection.phaseKey === phase.dataset.historyPhaseKey,
+        ),
+      );
     const clear = this.$('[data-action="clear-history-selection"]');
     if (clear) {
       clear.hidden = !selection;
@@ -11138,7 +11367,8 @@ class SaunaPanel extends HTMLElement {
   }
   historyInspectedEventGroup() {
     const selection = this.historyValueSelection;
-    if (!selection?.eventIds || selection.identity !== this.historyValueIdentity()) return [];
+    if (!selection?.eventIds || selection.identity !== this.historyValueIdentity())
+      return [];
     const ids = new Set(selection.eventIds),
       source = this.historyDetail
         ? orderedHistoryEvents(this.historyVisibleEvents())
@@ -11148,7 +11378,9 @@ class SaunaPanel extends HTMLElement {
   historyEventSpan(members) {
     const ids = new Set(members.map((event) => event.event_id)),
       displayGroup = this.historyEventGroups().find((group) =>
-        [...ids].every((id) => group.members.some(({ event }) => event.event_id === id)),
+        [...ids].every((id) =>
+          group.members.some(({ event }) => event.event_id === id),
+        ),
       ),
       ordered = orderedHistoryEvents(members),
       complete = displayGroup?.members.length === ids.size;
@@ -11175,24 +11407,30 @@ class SaunaPanel extends HTMLElement {
       return;
     const spanContext = this.historyEventSpan(members),
       current = this.historyValueSelection,
-      selected = current?.identity === identity &&
+      selected =
+        current?.identity === identity &&
         current?.eventIds?.length === ids.length &&
         ids.every((id) => current.eventIds.includes(id));
     const snapAt = (time) => {
       const event = members.find((member) => stamp(member.effective_at) === time);
-      return event ? this.historyCurrentSnap({ time, eventId: event.event_id, kind: event.kind }) : null;
+      return event
+        ? this.historyCurrentSnap({ time, eventId: event.event_id, kind: event.kind })
+        : null;
     };
-    this.selectHistoryValueContext({
-      identity,
-      kind: spanContext.start === spanContext.end ? "point" : "range",
-      start: spanContext.start,
-      end: spanContext.end,
-      eventIds: ids,
-      sourceGroupKey: spanContext.sourceGroupKey,
-      eventLabel: spanContext.roleLabel,
-      startSnap: snapAt(spanContext.start),
-      endSnap: snapAt(spanContext.end),
-    }, selected);
+    this.selectHistoryValueContext(
+      {
+        identity,
+        kind: spanContext.start === spanContext.end ? "point" : "range",
+        start: spanContext.start,
+        end: spanContext.end,
+        eventIds: ids,
+        sourceGroupKey: spanContext.sourceGroupKey,
+        eventLabel: spanContext.roleLabel,
+        startSnap: snapAt(spanContext.start),
+        endSnap: snapAt(spanContext.end),
+      },
+      selected,
+    );
   }
   syncHistoryEventInspection() {
     const event = this.historyInspectedEvent(),
@@ -11237,19 +11475,34 @@ class SaunaPanel extends HTMLElement {
   }
   syncHistorySnapTargets() {
     const selection = this.historyValueSelection,
-      preview = this.historyKeyboardPreview ? this.historyKeyboardTarget : this.historyHoverPreview,
-      boundary = this.historySelectionDrag?.activeBoundary || this.historyKeyboardTarget?.boundary,
+      preview = this.historyKeyboardPreview
+        ? this.historyKeyboardTarget
+        : this.historyHoverPreview,
+      boundary =
+        this.historySelectionDrag?.activeBoundary ||
+        this.historyKeyboardTarget?.boundary,
       snaps = [boundary ? selection?.[`${boundary}Snap`] : null, preview?.snap]
         .map((snap) => this.historyCurrentSnap(snap))
         .filter((snap) => snap && !(selection?.kind === "range" && snap.eventId)),
       phaseKeys = new Set(snaps.map((snap) => snap.phaseKey).filter(Boolean)),
       eventIds = new Set(snaps.map((snap) => snap.eventId).filter(Boolean));
-    for (const phase of this.shadowRoot?.querySelectorAll?.("[data-history-phase-key]") || [])
-      phase.setAttribute("data-snap-target", String(phaseKeys.has(phase.dataset.historyPhaseKey)));
-    for (const marker of this.shadowRoot?.querySelectorAll?.("[data-history-event-id], [data-history-event-members]") || []) {
+    for (const phase of this.shadowRoot?.querySelectorAll?.(
+      "[data-history-phase-key]",
+    ) || [])
+      phase.setAttribute(
+        "data-snap-target",
+        String(phaseKeys.has(phase.dataset.historyPhaseKey)),
+      );
+    for (const marker of this.shadowRoot?.querySelectorAll?.(
+      "[data-history-event-id], [data-history-event-members]",
+    ) || []) {
       const ids = marker.dataset.historyEventMembers
-        ? JSON.parse(decodeURIComponent(marker.dataset.historyEventMembers)) : [marker.dataset.historyEventId];
-      marker.setAttribute("data-snap-target", String(ids.some((id) => eventIds.has(id))));
+        ? JSON.parse(decodeURIComponent(marker.dataset.historyEventMembers))
+        : [marker.dataset.historyEventId];
+      marker.setAttribute(
+        "data-snap-target",
+        String(ids.some((id) => eventIds.has(id))),
+      );
     }
   }
   keyHistorySelection(event) {
@@ -11277,13 +11530,19 @@ class SaunaPanel extends HTMLElement {
       if (["Enter", " "].includes(event.key)) return;
       const selection = this.historyValueSelection,
         boundary = handle.dataset.historySelectionHandle,
-        at = this.historyKeyboardTarget?.boundary === boundary
-          ? this.historyKeyboardTarget.inputTime : selection[boundary],
-        time = event.key === "Home" ? this.window[0]
-          : event.key === "End" ? this.window[1]
-          : at + (this.window[1] - this.window[0]) *
-            this.preference("history_keyboard_selection_fraction") *
-            (event.key === "ArrowLeft" ? -1 : 1),
+        at =
+          this.historyKeyboardTarget?.boundary === boundary
+            ? this.historyKeyboardTarget.inputTime
+            : selection[boundary],
+        time =
+          event.key === "Home"
+            ? this.window[0]
+            : event.key === "End"
+              ? this.window[1]
+              : at +
+                (this.window[1] - this.window[0]) *
+                  this.preference("history_keyboard_selection_fraction") *
+                  (event.key === "ArrowLeft" ? -1 : 1),
         inputTime = Math.max(this.window[0], Math.min(this.window[1], time)),
         target = this.historySnapTarget(
           inputTime,
@@ -11294,7 +11553,9 @@ class SaunaPanel extends HTMLElement {
         moved = this.moveHistorySelectionBoundary(boundary, target, selection);
       this.historyKeyboardTime = inputTime;
       this.historyKeyboardTarget = { ...target, boundary: moved, inputTime };
-      this.$(`[data-history-selection-handle="${moved}"]`)?.focus?.({ preventScroll: true });
+      this.$(`[data-history-selection-handle="${moved}"]`)?.focus?.({
+        preventScroll: true,
+      });
       return;
     }
     if (!["Enter", " ", "ArrowLeft", "ArrowRight"].includes(event.key)) return;
@@ -11355,7 +11616,9 @@ class SaunaPanel extends HTMLElement {
       const other = boundary === "start" ? "end" : "start",
         fixed = selection[other],
         before = target.time <= fixed,
-        fixedSnap = selection[`${other}Snap`]?.eventId ? null : selection[`${other}Snap`];
+        fixedSnap = selection[`${other}Snap`]?.eventId
+          ? null
+          : selection[`${other}Snap`];
       moved = before ? "start" : "end";
       this.historyValueSelection = {
         identity: selection.identity,
@@ -11387,8 +11650,12 @@ class SaunaPanel extends HTMLElement {
     const svg = handle.closest?.("svg") || this.historyChart.surface,
       geometry = this.historyChart.interaction.readGeometry(),
       model = { ...this.historyChart.model },
-      boundary = handle.dataset.historySelectionHandle || handle.dataset.historySelectionBoundary,
-      rect = svg.matches?.("[data-history-time-axis]") ? geometry.rects.timeAxis : geometry.rects.surface;
+      boundary =
+        handle.dataset.historySelectionHandle ||
+        handle.dataset.historySelectionBoundary,
+      rect = svg.matches?.("[data-history-time-axis]")
+        ? geometry.rects.timeAxis
+        : geometry.rects.surface;
     this.historySelectionDrag = {
       pointerId: event.pointerId,
       svg,
@@ -11400,7 +11667,9 @@ class SaunaPanel extends HTMLElement {
       startY: event.clientY,
       movement: 0,
       tap: true,
-      offsetX: event.clientX - rect.left -
+      offsetX:
+        event.clientX -
+        rect.left -
         (model.x(this.historyValueSelection[boundary]) / model.width) * rect.width,
       selection: { ...this.historyValueSelection },
     };
@@ -11427,20 +11696,30 @@ class SaunaPanel extends HTMLElement {
     if (drag.movement > this.preference("history_tap_movement_px")) drag.tap = false;
     if (drag.tap) return;
     const { model, geometry, svg } = drag,
-      rect = svg.matches?.("[data-history-time-axis]") ? geometry.rects.timeAxis : geometry.rects.surface,
-      hit = this.historyChart?.interaction.timeAt({
-        svg,
-        clientX: event.clientX - drag.offsetX,
-        clientY: rect.top + rect.height / 2,
-        clampToPlot: true,
-      }, model, geometry);
+      rect = svg.matches?.("[data-history-time-axis]")
+        ? geometry.rects.timeAxis
+        : geometry.rects.surface,
+      hit = this.historyChart?.interaction.timeAt(
+        {
+          svg,
+          clientX: event.clientX - drag.offsetX,
+          clientY: rect.top + rect.height / 2,
+          clampToPlot: true,
+        },
+        model,
+        geometry,
+      );
     if (!hit) return;
     const target = this.historySnapTarget(
-      Math.max(model.start, Math.min(model.end, hit.time)), model, geometry,
+      Math.max(model.start, Math.min(model.end, hit.time)),
+      model,
+      geometry,
       drag.selection.kind === "point",
     );
     drag.activeBoundary = this.moveHistorySelectionBoundary(
-      drag.boundary, target, drag.selection,
+      drag.boundary,
+      target,
+      drag.selection,
     );
   }
   endHistorySelectionDrag(event, cancelled = false) {
@@ -11454,14 +11733,17 @@ class SaunaPanel extends HTMLElement {
         other = drag.boundary === "start" ? "end" : "start",
         time = selection[other],
         snap = selection[`${other}Snap`];
-      this.historyValueSelection = selection.kind === "point" ? null : {
-        identity: selection.identity,
-        kind: "point",
-        start: time,
-        end: time,
-        startSnap: snap,
-        endSnap: snap,
-      };
+      this.historyValueSelection =
+        selection.kind === "point"
+          ? null
+          : {
+              identity: selection.identity,
+              kind: "point",
+              start: time,
+              end: time,
+              startSnap: snap,
+              endSnap: snap,
+            };
       this.historyKeyboardTime = this.historyValueSelection?.start ?? null;
     }
     this.cancelHistorySelectionDrag(cancelled);
@@ -11651,7 +11933,11 @@ class SaunaPanel extends HTMLElement {
     this.zoom = 1;
     this.historyWindowRevision = (this.historyWindowRevision || 0) + 1;
   }
-  historyWindowBounds(left, right, domain = this.historyInputSnapshot?.domain || this.historyDomain()) {
+  historyWindowBounds(
+    left,
+    right,
+    domain = this.historyInputSnapshot?.domain || this.historyDomain(),
+  ) {
     const [start, end] = domain,
       span = end - start,
       minimum = Math.min(
@@ -11694,9 +11980,10 @@ class SaunaPanel extends HTMLElement {
       return;
     }
     const transition = { from, target, fullView, started: null, frame: null },
-      request = globalThis.requestAnimationFrame || ((callback) => setTimeout(
-        () => callback(globalThis.performance?.now?.() ?? Date.now()), 0,
-      )),
+      request =
+        globalThis.requestAnimationFrame ||
+        ((callback) =>
+          setTimeout(() => callback(globalThis.performance?.now?.() ?? Date.now()), 0)),
       frame = (at) => {
         if (this.historyViewTransition !== transition || !this.isConnected) return;
         transition.started ??= at;
@@ -11797,14 +12084,14 @@ class SaunaPanel extends HTMLElement {
     if (!items.length) return "";
     const dotRadius = this.historyEventDotSize() / 2,
       stroke = this.preference("stroke_1_0_ratio"),
-      swatchSize = Math.max(
-        this.preference("size_22_0_px"),
-        (dotRadius + stroke) * 2,
-      ),
+      swatchSize = Math.max(this.preference("size_22_0_px"), (dotRadius + stroke) * 2),
       center = swatchSize / 2,
       top = Math.max(
         dotRadius + stroke,
-        Math.min(swatchSize - dotRadius - stroke, this.preference("event_marker_size_px") / 2),
+        Math.min(
+          swatchSize - dotRadius - stroke,
+          this.preference("event_marker_size_px") / 2,
+        ),
       );
     return `<div class="history-legend" aria-label="${esc(label)}"><strong>${esc(label)}</strong><div class="legend">${items
       .map(([kind, text]) => {
@@ -11820,9 +12107,12 @@ class SaunaPanel extends HTMLElement {
       .join("")}</div></div>`;
   }
   historyMarkup() {
-    const handles = ["start", "end"].map((boundary) =>
-      `<g class="history-selection-handle" data-history-selection-handle="${boundary}" role="slider" tabindex="-1" visibility="hidden" aria-hidden="true"><line class="history-selection-guide" vector-effect="non-scaling-stroke" data-history-selection-${boundary}-tick/><ellipse class="history-selection-hit" data-history-selection-${boundary}-hit/></g>`,
-    ).join("");
+    const handles = ["start", "end"]
+      .map(
+        (boundary) =>
+          `<g class="history-selection-handle" data-history-selection-handle="${boundary}" role="slider" tabindex="-1" visibility="hidden" aria-hidden="true"><line class="history-selection-guide" vector-effect="non-scaling-stroke" data-history-selection-${boundary}-tick/><ellipse class="history-selection-hit" data-history-selection-${boundary}-hit/></g>`,
+      )
+      .join("");
     return `<div class="history-timeline-strip" data-history-timeline-strip role="group" aria-label="Phasen der Sitzung"><div class="history-band-names" data-history-band-names></div><div class="history-phase-band" data-history-phase-band></div></div><div class="plot-wrap history-stack"><svg class="chart history-background" preserveAspectRatio="none" aria-hidden="true"><defs><clipPath id="history-layer-clip"><rect data-history-clip/></clipPath></defs><g data-history-annotations clip-path="url(#history-layer-clip)"></g></svg><canvas class="chart history-curves" role="img" aria-label="Temperatur- und Feuchteverlauf; Ereignisse und Zeiten stehen in den nachfolgenden Tabellen." aria-describedby="gangs event-list">Temperatur und Feuchte der Sitzung. Ereignisse und Saunagänge sind in den Tabellen unter dem Diagramm zugänglich.</canvas><svg class="chart session-chart" preserveAspectRatio="none" role="group" tabindex="0" aria-label="Sitzungsverlauf"><g data-history-axes></g><g data-history-selection clip-path="url(#history-layer-clip)" visibility="hidden" aria-hidden="true"><rect class="history-selection-band" data-history-selection-band/></g><g data-history-events clip-path="url(#history-layer-clip)"></g><line class="history-selection-guide" vector-effect="non-scaling-stroke" data-history-selection-start visibility="hidden"/><line class="history-selection-guide" vector-effect="non-scaling-stroke" data-history-selection-end visibility="hidden"/><line id="cursor" stroke="var(--sauna-color-chart-text)" visibility="hidden"/></svg></div><div class="history-lower-band" data-history-lower-band data-history-strip-events role="group" aria-label="Türvorgänge und Aufgüsse"></div><svg class="chart history-time-axis" data-history-time-axis preserveAspectRatio="none" role="group" tabindex="0" aria-label="Zeitachse der Sitzung"><g data-history-time-ticks></g><g data-history-selection-context data-action="history-selection-window" role="button" tabindex="-1" visibility="hidden" aria-hidden="true"><line class="history-selection-context-hit" vector-effect="non-scaling-stroke"/></g>${handles}</svg>`;
   }
   syncHistoryGeometry(plot = this.historyGeometry(), geometry) {
@@ -11849,7 +12139,10 @@ class SaunaPanel extends HTMLElement {
       viewBox: `0 0 ${plot.width} ${timeAxisHeight}`,
       style: `height: ${timeAxisHeight}px`,
     });
-    for (const [kind, selector] of [["phase", "[data-history-timeline-strip]"], ["event", "[data-history-lower-band]"]]) {
+    for (const [kind, selector] of [
+      ["phase", "[data-history-timeline-strip]"],
+      ["event", "[data-history-lower-band]"],
+    ]) {
       const dimensions = this.historyBandDimensions(kind, geometry);
       attributes(this.$(selector), {
         style: `margin-inline: ${(plot.left / plot.width) * 100}% ${((plot.width - plot.right) / plot.width) * 100}%; --history-band-gap: ${this.historyBandGap()}px; --history-plot-gap: ${plotGap}px; --history-band-height: ${dimensions.height}px; --history-band-compact-height: ${dimensions.compactHeight}px`,
@@ -11857,12 +12150,20 @@ class SaunaPanel extends HTMLElement {
     }
   }
   historyTimeAxisHeight() {
-    return this.preference("font_size_small_px") * this.preference("body_line_height") +
-      this.preference("layout_space_09_px");
+    return (
+      this.preference("font_size_small_px") * this.preference("body_line_height") +
+      this.preference("layout_space_09_px")
+    );
   }
   historyBandDimensions(kind, geometry) {
-    const lineHeight = this.preference("font_size_small_px") * this.preference("body_line_height"),
-      height = lineHeight + this.preference(kind === "phase" ? "layout_space_09_px" : "layout_space_07_px") * 2;
+    const lineHeight =
+        this.preference("font_size_small_px") * this.preference("body_line_height"),
+      height =
+        lineHeight +
+        this.preference(
+          kind === "phase" ? "layout_space_09_px" : "layout_space_07_px",
+        ) *
+          2;
     return {
       height,
       compactHeight: this.preference("history_compact_band_height_px"),
@@ -11896,13 +12197,23 @@ class SaunaPanel extends HTMLElement {
   }
   historyBandNames(model) {
     const [start, end] = this.historyViewTransition?.target || [model.start, model.end];
-    return [...new Set((this.shown?.phase_projection?.intervals || [])
-      .filter((phase) => stamp(phase.started_at) < end &&
-        stamp(phase.ended_at || this.shown.session.ended_at || this.state.now) > start)
-      .map((phase) => phase.phase))].map((phase) => {
+    return [
+      ...new Set(
+        (this.shown?.phase_projection?.intervals || [])
+          .filter(
+            (phase) =>
+              stamp(phase.started_at) < end &&
+              stamp(phase.ended_at || this.shown.session.ended_at || this.state.now) >
+                start,
+          )
+          .map((phase) => phase.phase),
+      ),
+    ]
+      .map((phase) => {
         const color = phaseAppearance[phase]?.color || "phase_idle";
         return `<span style="color: var(--sauna-color-${color.replaceAll("_", "-")})">${esc(phases[phase] || phase)}</span>`;
-      }).join("");
+      })
+      .join("");
   }
   syncHistoryBandDetail(model, geometry) {
     const identity = this.historyValueIdentity();
@@ -11921,42 +12232,82 @@ class SaunaPanel extends HTMLElement {
         state.targetDetail = detailFor(transition.target);
       }
     } else {
-      state.detail = state.transition &&
-          model.start === state.transition.target[0] && model.end === state.transition.target[1]
-        ? state.targetDetail : detailFor([model.start, model.end]);
+      state.detail =
+        state.transition &&
+        model.start === state.transition.target[0] &&
+        model.end === state.transition.target[1]
+          ? state.targetDetail
+          : detailFor([model.start, model.end]);
       state.transition = null;
     }
-    for (const selector of ["[data-history-timeline-strip]", "[data-history-lower-band]"])
+    for (const selector of [
+      "[data-history-timeline-strip]",
+      "[data-history-lower-band]",
+    ])
       this.$(selector)?.setAttribute("data-history-band-detail", String(state.detail));
-    const plotWidth = ((model.right - model.left) * geometry.canvas.cssWidth) / model.width,
+    const plotWidth =
+        ((model.right - model.left) * geometry.canvas.cssWidth) / model.width,
       scale = plotWidth / (model.end - model.start),
       padding = this.preference("control_group_gap_px") * 2,
-      intervals = new Map((this.shown?.phase_projection?.intervals || [])
-        .map((phase) => [this.historyPhaseKey(phase), phase]));
-    for (const node of this.shadowRoot?.querySelectorAll?.("[data-history-phase-key]") || []) {
+      intervals = new Map(
+        (this.shown?.phase_projection?.intervals || []).map((phase) => [
+          this.historyPhaseKey(phase),
+          phase,
+        ]),
+      );
+    for (const node of this.shadowRoot?.querySelectorAll?.(
+      "[data-history-phase-key]",
+    ) || []) {
       const phase = intervals.get(node.dataset.historyPhaseKey),
         first = Math.max(model.start, stamp(phase?.started_at)),
-        last = Math.min(model.end, stamp(phase?.ended_at || this.shown.session.ended_at || this.state.now)),
+        last = Math.min(
+          model.end,
+          stamp(phase?.ended_at || this.shown.session.ended_at || this.state.now),
+        ),
         available = Math.max(0, last - first) * scale,
         label = phases[phase?.phase] || phase?.phase || "";
-      node.setAttribute("data-history-label-visible", String(available >= this.historyLabelWidth(label, geometry) + padding));
+      node.setAttribute(
+        "data-history-label-visible",
+        String(available >= this.historyLabelWidth(label, geometry) + padding),
+      );
     }
-    const lane = this.historyStripEventGroups(model, geometry).sort((a, b) => a.at - b.at),
-      labels = new Map(lane.map((group, index) => {
-        const first = Math.max(model.start, group.start),
-          last = Math.min(model.end, group.end),
-          center = ((first + (last - first) / 2) - model.start) * scale,
-          previous = lane[index - 1],
-          next = lane[index + 1],
-          left = previous ? Math.max(0, ((previous.at - model.start) * scale + center) / 2) : 0,
-          right = next ? Math.min(plotWidth, ((next.at - model.start) * scale + center) / 2) : plotWidth,
-          cellWidth = Math.max(0, Math.min(center - left, right - center) * 2),
-          available = group.start === group.end ? cellWidth : Math.min((last - first) * scale, cellWidth),
-          key = encodeURIComponent(JSON.stringify(group.members.map(({ event }) => event.event_id)));
-        return [key, available >= this.historyLabelWidth(group.label, geometry) + padding];
-      }));
-    for (const node of this.shadowRoot?.querySelectorAll?.(".history-event-band-segment") || [])
-      node.setAttribute("data-history-label-visible", String(!!labels.get(node.dataset.historyEventMembers)));
+    const lane = this.historyStripEventGroups(model, geometry).sort(
+        (a, b) => a.at - b.at,
+      ),
+      labels = new Map(
+        lane.map((group, index) => {
+          const first = Math.max(model.start, group.start),
+            last = Math.min(model.end, group.end),
+            center = (first + (last - first) / 2 - model.start) * scale,
+            previous = lane[index - 1],
+            next = lane[index + 1],
+            left = previous
+              ? Math.max(0, ((previous.at - model.start) * scale + center) / 2)
+              : 0,
+            right = next
+              ? Math.min(plotWidth, ((next.at - model.start) * scale + center) / 2)
+              : plotWidth,
+            cellWidth = Math.max(0, Math.min(center - left, right - center) * 2),
+            available =
+              group.start === group.end
+                ? cellWidth
+                : Math.min((last - first) * scale, cellWidth),
+            key = encodeURIComponent(
+              JSON.stringify(group.members.map(({ event }) => event.event_id)),
+            );
+          return [
+            key,
+            available >= this.historyLabelWidth(group.label, geometry) + padding,
+          ];
+        }),
+      );
+    for (const node of this.shadowRoot?.querySelectorAll?.(
+      ".history-event-band-segment",
+    ) || [])
+      node.setAttribute(
+        "data-history-label-visible",
+        String(!!labels.get(node.dataset.historyEventMembers)),
+      );
     if (previousDetail !== state.detail)
       this.historyChart?.interaction.invalidateGeometry("layout");
   }
@@ -11991,25 +12342,34 @@ class SaunaPanel extends HTMLElement {
         include(point.value);
     // Outside neighbours shape the curve, but only its visible intersections
     // with the window contribute to the scale. Reuse the renderer's controls.
-    let previousTime,
-      previousValue;
-    monotoneHistoryCommands(prepared, (time) => time - start, (value) => value, {
-      moveTo(time, value) {
-        previousTime = time;
-        previousValue = value;
+    let previousTime, previousValue;
+    monotoneHistoryCommands(
+      prepared,
+      (time) => time - start,
+      (value) => value,
+      {
+        moveTo(time, value) {
+          previousTime = time;
+          previousValue = value;
+        },
+        bezierCurveTo(_left, leftValue, _right, rightValue, time, value) {
+          for (const boundary of [0, end - start])
+            if (previousTime < boundary && boundary < time) {
+              const fraction = (boundary - previousTime) / (time - previousTime),
+                rest = 1 - fraction;
+              include(
+                rest ** 3 * previousValue +
+                  3 * rest ** 2 * fraction * leftValue +
+                  3 * rest * fraction ** 2 * rightValue +
+                  fraction ** 3 * value,
+              );
+            }
+          previousTime = time;
+          previousValue = value;
+        },
       },
-      bezierCurveTo(_left, leftValue, _right, rightValue, time, value) {
-        for (const boundary of [0, end - start])
-          if (previousTime < boundary && boundary < time) {
-            const fraction = (boundary - previousTime) / (time - previousTime),
-              rest = 1 - fraction;
-            include(rest ** 3 * previousValue + 3 * rest ** 2 * fraction * leftValue +
-              3 * rest * fraction ** 2 * rightValue + fraction ** 3 * value);
-          }
-        previousTime = time;
-        previousValue = value;
-      },
-    }, this.preference("tick_precision"));
+      this.preference("tick_precision"),
+    );
     const result = {
       source: values,
       values: prepared,
@@ -12021,41 +12381,78 @@ class SaunaPanel extends HTMLElement {
     cache.set(name, result);
     return result;
   }
-  historyValueScale(low, high, humidityLow, humidityHigh, cssHeight, humidityPrecision) {
+  historyValueScale(
+    low,
+    high,
+    humidityLow,
+    humidityHigh,
+    cssHeight,
+    humidityPrecision,
+  ) {
     const geometry = this.historyGeometry(),
       epsilon = this.preference("tick_epsilon"),
       precision = this.preference("tick_precision"),
       round = (value) => Number(value.toPrecision(precision)),
       minimumTicks = Math.max(this.preference("history_axis_min_ticks"), 1),
-      intervals = Math.max(minimumTicks, Math.min(
-        this.preference("history_axis_max_ticks"),
-        Math.floor((geometry.bottom - geometry.top) * cssHeight / geometry.height /
-          this.preference("history_value_tick_spacing_px")),
-      )),
+      intervals = Math.max(
+        minimumTicks,
+        Math.min(
+          this.preference("history_axis_max_ticks"),
+          Math.floor(
+            ((geometry.bottom - geometry.top) * cssHeight) /
+              geometry.height /
+              this.preference("history_value_tick_spacing_px"),
+          ),
+        ),
+      ),
       axis = (minimum, maximum, intervals, resolution, alignTop = false) => {
         const rough = Math.max((maximum - minimum) / intervals, resolution);
         let unit = rough >= 1 ? Math.max(1, resolution) : resolution;
         for (;;) {
           const lower = round(Math.floor(minimum / unit) * unit),
             upper = round(Math.ceil(maximum / unit) * unit),
-            step = round(Math.ceil((upper - lower) / intervals / unit - epsilon) * unit);
+            step = round(
+              Math.ceil((upper - lower) / intervals / unit - epsilon) * unit,
+            );
           if (step >= 1 && unit < 1) {
             unit = 1;
             continue;
           }
           const first = alignTop ? round(upper - intervals * step) : lower,
             last = alignTop ? upper : round(first + intervals * step);
-          return { first, last, values: Array.from({ length: intervals + 1 },
-            (_, index) => round(first + index * step)) };
+          return {
+            first,
+            last,
+            values: Array.from({ length: intervals + 1 }, (_, index) =>
+              round(first + index * step),
+            ),
+          };
         }
       },
-      temperature = axis(low, high, intervals, 10 ** -this.preference("value_precision"), true),
+      temperature = axis(
+        low,
+        high,
+        intervals,
+        10 ** -this.preference("value_precision"),
+        true,
+      ),
       humidity = axis(humidityLow, humidityHigh, intervals, 10 ** -humidityPrecision);
-    return { intervals, low: temperature.first, high: temperature.last,
-      humidityLow: humidity.first, humidityHigh: humidity.last,
-      temperature: temperature.values, humidity: humidity.values };
+    return {
+      intervals,
+      low: temperature.first,
+      high: temperature.last,
+      humidityLow: humidity.first,
+      humidityHigh: humidity.last,
+      temperature: temperature.values,
+      humidity: humidity.values,
+    };
   }
-  historyModel(chart, session, cssWidth = this.historyGeometry().width, cssHeight = this.historyGeometry().height) {
+  historyModel(
+    chart,
+    session,
+    cssWidth = this.historyGeometry().width,
+    cssHeight = this.historyGeometry().height,
+  ) {
     const [start, end] = this.window,
       geometry = this.historyGeometry(),
       top = geometry.top,
@@ -12091,40 +12488,59 @@ class SaunaPanel extends HTMLElement {
         }
       }
     const temperaturePadding = this.preference("history_temperature_padding_c"),
-      temperatureStep = zoomed ? 10 ** -this.preference("value_precision")
+      temperatureStep = zoomed
+        ? 10 ** -this.preference("value_precision")
         : this.preference("history_temperature_scale_step_c"),
       humidityPadding = this.preference("history_humidity_padding_percent"),
-      humidityStep = zoomed ? 10 ** -humidityDisplay.precision
+      humidityStep = zoomed
+        ? 10 ** -humidityDisplay.precision
         : this.preference("history_humidity_scale_step_percent"),
       absoluteStep = 10 ** -humidityDisplay.precision,
       fallback = this.appearanceScale("temperature"),
       frozen = this.historyInputSnapshot?.model,
-      dataLow =
-        (Number.isFinite(lo)
-          ? Math.floor((lo - temperaturePadding) / temperatureStep) * temperatureStep
-          : fallback.minimum),
-      dataHigh =
-        (Number.isFinite(hi)
-          ? Math.max(
-              dataLow + temperatureStep,
-              Math.ceil((hi + temperaturePadding) / temperatureStep) * temperatureStep,
-            )
-          : fallback.maximum),
+      dataLow = Number.isFinite(lo)
+        ? Math.floor((lo - temperaturePadding) / temperatureStep) * temperatureStep
+        : fallback.minimum,
+      dataHigh = Number.isFinite(hi)
+        ? Math.max(
+            dataLow + temperatureStep,
+            Math.ceil((hi + temperaturePadding) / temperatureStep) * temperatureStep,
+          )
+        : fallback.maximum,
       humidity = Number.isFinite(humidityMaximum) ? humidityMaximum : 0,
-      humidityMargin = humidityDisplay.mode === "absolute" ? absoluteStep : humidityPadding,
-      dataHumidityLow = zoomed && Number.isFinite(humidityMinimum)
-        ? Math.max(0, Math.floor((humidityMinimum - humidityMargin) / humidityStep) * humidityStep) : 0,
+      humidityMargin =
+        humidityDisplay.mode === "absolute" ? absoluteStep : humidityPadding,
+      dataHumidityLow =
+        zoomed && Number.isFinite(humidityMinimum)
+          ? Math.max(
+              0,
+              Math.floor((humidityMinimum - humidityMargin) / humidityStep) *
+                humidityStep,
+            )
+          : 0,
       dataHumidityHigh =
-        (humidityDisplay.mode === "absolute"
-          ? Math.max(dataHumidityLow + absoluteStep,
-              Math.ceil((humidity + (zoomed ? absoluteStep : 0)) / absoluteStep) * absoluteStep)
+        humidityDisplay.mode === "absolute"
+          ? Math.max(
+              dataHumidityLow + absoluteStep,
+              Math.ceil((humidity + (zoomed ? absoluteStep : 0)) / absoluteStep) *
+                absoluteStep,
+            )
           : Math.max(
-              zoomed ? dataHumidityLow + humidityStep
+              zoomed
+                ? dataHumidityLow + humidityStep
                 : this.preference("history_humidity_minimum_maximum_percent"),
               Math.ceil((humidity + humidityPadding) / humidityStep) * humidityStep,
-            )),
-      valueScale = (frozen?.humidityMode === humidityDisplay.mode ? frozen.valueScale : null) ||
-        this.historyValueScale(dataLow, dataHigh, dataHumidityLow, dataHumidityHigh, cssHeight, humidityDisplay.precision),
+            ),
+      valueScale =
+        (frozen?.humidityMode === humidityDisplay.mode ? frozen.valueScale : null) ||
+        this.historyValueScale(
+          dataLow,
+          dataHigh,
+          dataHumidityLow,
+          dataHumidityHigh,
+          cssHeight,
+          humidityDisplay.precision,
+        ),
       { low, high, humidityLow, humidityHigh } = valueScale,
       scaleX = geometry.width / Math.max(1, cssWidth),
       labelGeometry = chart.interaction.cachedGeometry,
@@ -12132,26 +12548,50 @@ class SaunaPanel extends HTMLElement {
       labelGap = this.preference("control_group_gap_px"),
       temperatureLabelWidth = Math.max(
         this.historyLabelWidth("°C", labelGeometry),
-        ...valueScale.temperature.map((value) => this.historyLabelWidth(
-          this.num(value, this.preference("value_precision")), labelGeometry,
-        )),
+        ...valueScale.temperature.map((value) =>
+          this.historyLabelWidth(
+            this.num(value, this.preference("value_precision")),
+            labelGeometry,
+          ),
+        ),
       ),
       humidityLabelWidth = Math.max(
         this.historyLabelWidth(humidityDisplay.unit, labelGeometry),
-        ...valueScale.humidity.map((value) => this.historyLabelWidth(
-          this.num(value, humidityDisplay.precision), labelGeometry,
-        )),
+        ...valueScale.humidity.map((value) =>
+          this.historyLabelWidth(
+            this.num(value, humidityDisplay.precision),
+            labelGeometry,
+          ),
+        ),
       ),
-      maximumGutter = Math.max(0, (geometry.width - this.preference("size_32_0_px") * scaleX) / 2),
-      left = frozen?.left ?? Math.min(maximumGutter, Math.max(
-        geometry.left, (labelInset + temperatureLabelWidth + labelGap) * scaleX,
-      )),
-      right = frozen?.right ?? geometry.width - Math.min(maximumGutter, Math.max(
-        geometry.width - geometry.right, (labelInset + humidityLabelWidth + labelGap) * scaleX,
-      )),
+      maximumGutter = Math.max(
+        0,
+        (geometry.width - this.preference("size_32_0_px") * scaleX) / 2,
+      ),
+      left =
+        frozen?.left ??
+        Math.min(
+          maximumGutter,
+          Math.max(
+            geometry.left,
+            (labelInset + temperatureLabelWidth + labelGap) * scaleX,
+          ),
+        ),
+      right =
+        frozen?.right ??
+        geometry.width -
+          Math.min(
+            maximumGutter,
+            Math.max(
+              geometry.width - geometry.right,
+              (labelInset + humidityLabelWidth + labelGap) * scaleX,
+            ),
+          ),
       x = (time) => left + ((time - start) / (end - start)) * (right - left),
       yT = (value) => bottom - ((value - low) / (high - low)) * (bottom - top),
-      yH = (value) => bottom - ((value - humidityLow) / (humidityHigh - humidityLow)) * (bottom - top);
+      yH = (value) =>
+        bottom -
+        ((value - humidityLow) / (humidityHigh - humidityLow)) * (bottom - top);
 
     return {
       start,
@@ -12184,8 +12624,10 @@ class SaunaPanel extends HTMLElement {
       started = stamp(session?.timeline?.session_started_at),
       ended = stamp(session?.ended_at),
       intervals = this.shown?.phase_projection?.intervals || [];
-    if ((Number.isFinite(started) && time < started) ||
-      (Number.isFinite(ended) && time >= ended))
+    if (
+      (Number.isFinite(started) && time < started) ||
+      (Number.isFinite(ended) && time >= ended)
+    )
       return { phase: "aus" };
     return intervals.find((item, index) => {
       const start = stamp(item.started_at),
@@ -12203,7 +12645,9 @@ class SaunaPanel extends HTMLElement {
       .map((event, index) => ({
         ...event,
         event_id: event.event_id || `legacy-${index}`,
-        ...(references ? { source_ref: event, display_source: "session.timeline.processed" } : {}),
+        ...(references
+          ? { source_ref: event, display_source: "session.timeline.processed" }
+          : {}),
       }))
       .filter(
         (event) =>
@@ -12217,8 +12661,11 @@ class SaunaPanel extends HTMLElement {
     return (this.shown?.session?.heating?.intervals || []).flatMap((interval) => {
       const start = stamp(interval.started_at),
         end = stamp(interval.ended_at);
-      if (!Number.isFinite(start) ||
-        (interval.ended_at && (!Number.isFinite(end) || end < start))) return [];
+      if (
+        !Number.isFinite(start) ||
+        (interval.ended_at && (!Number.isFinite(end) || end < start))
+      )
+        return [];
       const occurrence = starts.get(start) || 0;
       starts.set(start, occurrence + 1);
       const key = `history-heater:${encodeURIComponent(JSON.stringify([identity, source, start, occurrence]))}`,
@@ -12234,9 +12681,12 @@ class SaunaPanel extends HTMLElement {
           source_ref: interval,
           source_boundary: kind,
         });
-      return [boundary("on", interval.started_at, "Ofen ein"),
+      return [
+        boundary("on", interval.started_at, "Ofen ein"),
         ...(interval.ended_at && interval.end_reason === "feedback_off"
-          ? [boundary("off", interval.ended_at, "Ofen aus")] : [])];
+          ? [boundary("off", interval.ended_at, "Ofen aus")]
+          : []),
+      ];
     });
   }
   historyEventSources() {
@@ -12266,8 +12716,15 @@ class SaunaPanel extends HTMLElement {
     return events.filter((event) => ids.has(event.event_id));
   }
   historyEventVisibilityKey() {
-    return JSON.stringify(Object.entries(this.appearanceCatalog().history_events || {})
-      .map(([kind, definition]) => [kind, this.historyEventCategoryVisible(kind), definition]));
+    return JSON.stringify(
+      Object.entries(this.appearanceCatalog().history_events || {}).map(
+        ([kind, definition]) => [
+          kind,
+          this.historyEventCategoryVisible(kind),
+          definition,
+        ],
+      ),
+    );
   }
   historyEventLabel(event) {
     return event.display_label || events[event.kind] || event.kind;
@@ -12275,11 +12732,13 @@ class SaunaPanel extends HTMLElement {
   toggleHistoryEventCategory(kind) {
     if (!this.appearanceCatalog().history_events?.[kind]) return;
     this.historyEventVisibility.set(kind, !this.historyEventCategoryVisible(kind));
-    const source = new Map(this.historyEventProjection().allEvents.map((event) => [event.event_id, event])),
+    const source = new Map(
+        this.historyEventProjection().allEvents.map((event) => [event.event_id, event]),
+      ),
       hiddenId = (id) => {
-      const event = source.get(id);
-      return event && !event.history_visible;
-    },
+        const event = source.get(id);
+        return event && !event.history_visible;
+      },
       selectionWithoutHiddenEvents = (selection) => {
         if (!selection) return selection;
         const next = { ...selection };
@@ -12289,7 +12748,8 @@ class SaunaPanel extends HTMLElement {
           delete next.eventLabel;
         }
         for (const boundary of ["startSnap", "endSnap"])
-          if (next[boundary]?.eventId && hiddenId(next[boundary].eventId)) next[boundary] = null;
+          if (next[boundary]?.eventId && hiddenId(next[boundary].eventId))
+            next[boundary] = null;
         return next;
       },
       previewWithoutHiddenEvents = (preview) => {
@@ -12301,13 +12761,18 @@ class SaunaPanel extends HTMLElement {
           delete next.label;
           next.snap = null;
         }
-        if (next.historyEventId && hiddenId(next.historyEventId)) delete next.historyEventId;
+        if (next.historyEventId && hiddenId(next.historyEventId))
+          delete next.historyEventId;
         if (next.snap?.eventId && hiddenId(next.snap.eventId)) next.snap = null;
         return next;
       };
-    this.historyValueSelection = selectionWithoutHiddenEvents(this.historyValueSelection);
+    this.historyValueSelection = selectionWithoutHiddenEvents(
+      this.historyValueSelection,
+    );
     if (this.historySelectionDrag)
-      this.historySelectionDrag.selection = selectionWithoutHiddenEvents(this.historySelectionDrag.selection);
+      this.historySelectionDrag.selection = selectionWithoutHiddenEvents(
+        this.historySelectionDrag.selection,
+      );
     this.historyHoverPreview = previewWithoutHiddenEvents(this.historyHoverPreview);
     this.historyKeyboardTarget = previewWithoutHiddenEvents(this.historyKeyboardTarget);
     this.lastHistoryPointer = previewWithoutHiddenEvents(this.lastHistoryPointer);
@@ -12333,25 +12798,24 @@ class SaunaPanel extends HTMLElement {
       if (ids && !ids.has(event.event_id)) return false;
       if (!selection) return true;
       const at = stamp(event.effective_at);
-      return Number.isFinite(at) &&
+      return (
+        Number.isFinite(at) &&
         (selection.kind === "range"
           ? at >= selection.start && at < selection.end
-          : at === selection.start);
+          : at === selection.start)
+      );
     });
   }
   historySelectionEvents() {
     const selection = this.historyValueSelection;
     if (!selection) return [];
-    if (!this.historyDetail)
-      return this.historyMainEvents(undefined, selection);
+    if (!this.historyDetail) return this.historyMainEvents(undefined, selection);
     return orderedHistoryEvents(this.historyVisibleEvents()).filter((event) => {
       const at = stamp(event.effective_at);
       return (
         Number.isFinite(at) &&
         (selection.kind === "range"
-          ? event.history_category &&
-            at >= selection.start &&
-            at < selection.end
+          ? event.history_category && at >= selection.start && at < selection.end
           : at === selection.start)
       );
     });
@@ -12364,19 +12828,27 @@ class SaunaPanel extends HTMLElement {
   }
   historyBandGap() {
     return Math.min(
-      Math.max(this.preference("event_marker_gap_px"), this.preference("stroke_1_0_ratio")),
+      Math.max(
+        this.preference("event_marker_gap_px"),
+        this.preference("stroke_1_0_ratio"),
+      ),
       this.historyEventDotSize() / 2,
     );
   }
   historyEventColor(event) {
-    const color = this.appearanceCatalog().history_events?.[this.historyEventCategory(event)]?.color;
-    return color ? `var(--sauna-color-${color.replaceAll("_", "-")})` : "var(--sauna-color-chart-event)";
+    const color =
+      this.appearanceCatalog().history_events?.[this.historyEventCategory(event)]
+        ?.color;
+    return color
+      ? `var(--sauna-color-${color.replaceAll("_", "-")})`
+      : "var(--sauna-color-chart-event)";
   }
   historyEventProjection() {
     // A read-only view of the Timeline/Gang and heating interval owners.
     // Display references never become persisted events or a second lifecycle.
     const session = this.shown?.session;
-    if (!session) return { allEvents: [], events: [], mainEvents: [], groups: [], snapTargets: [] };
+    if (!session)
+      return { allEvents: [], events: [], mainEvents: [], groups: [], snapTargets: [] };
     const allEvents = this.historyEventSources().map((event) => {
         const category = this.historyEventCategory(event),
           label = this.historyEventLabel(event),
@@ -12386,12 +12858,16 @@ class SaunaPanel extends HTMLElement {
           history_category: category,
           history_visible: this.historyEventVisible(event),
           display_label: label,
-          snap: category && Number.isFinite(at)
-            ? { time: at, eventId: event.event_id, kind: event.kind, label } : null,
+          snap:
+            category && Number.isFinite(at)
+              ? { time: at, eventId: event.event_id, kind: event.kind, label }
+              : null,
         };
       }),
-      source = allEvents.filter((event) =>
-        historyEventMarkerKinds.has(event.kind) && Number.isFinite(stamp(event.effective_at)),
+      source = allEvents.filter(
+        (event) =>
+          historyEventMarkerKinds.has(event.kind) &&
+          Number.isFinite(stamp(event.effective_at)),
       ),
       groups = [],
       horizon = stamp(session.ended_at || this.state?.now),
@@ -12401,7 +12877,8 @@ class SaunaPanel extends HTMLElement {
           at: stamp(event.effective_at),
         }));
         if (!members.length) return;
-        const first = members[0], last = members.at(-1);
+        const first = members[0],
+          last = members.at(-1);
         groups.push({
           kind,
           key,
@@ -12417,29 +12894,52 @@ class SaunaPanel extends HTMLElement {
         return groups.at(-1);
       };
     const timeline = session.timeline,
-      gangs = [...(timeline.completed || []), ...(timeline.active ? [timeline.active] : [])],
-      doors = new Map(source.filter((event) => event.history_category === "door")
-        .map((event) => [event.event_id, event]));
+      gangs = [
+        ...(timeline.completed || []),
+        ...(timeline.active ? [timeline.active] : []),
+      ],
+      doors = new Map(
+        source
+          .filter((event) => event.history_category === "door")
+          .map((event) => [event.event_id, event]),
+      );
     for (const cycle of session.door_cycles || []) {
       const members = (cycle.event_ids || []).map((id) => doors.get(id)),
         start = stamp(cycle.started_at),
         end = stamp(cycle.ended_at);
-      if (!members.length || members.some((event) => !event) || !Number.isFinite(start) ||
-        (cycle.ended_at && (!Number.isFinite(end) || end < start))) continue;
+      if (
+        !members.length ||
+        members.some((event) => !event) ||
+        !Number.isFinite(start) ||
+        (cycle.ended_at && (!Number.isFinite(end) || end < start))
+      )
+        continue;
       const group = append("door", `door:${cycle.id}`, members, cycle.open);
       group.start = start;
-      group.end = Number.isFinite(end) ? end
-        : cycle.open && Number.isFinite(horizon) ? Math.max(start, horizon) : start;
+      group.end = Number.isFinite(end)
+        ? end
+        : cycle.open && Number.isFinite(horizon)
+          ? Math.max(start, horizon)
+          : start;
       group.door_cycle_ref = cycle;
       group.gang_links = cycle.gang_links;
-      group.roleLabel = cycle.role === "entry" ? "Eintritt"
-        : cycle.role === "exit" ? "Austritt" : undefined;
+      group.roleLabel =
+        cycle.role === "entry"
+          ? "Eintritt"
+          : cycle.role === "exit"
+            ? "Austritt"
+            : undefined;
     }
-    const infusions = new Map(source.filter((event) => event.kind === "infusion")
-        .map((event) => [event.event_id, event])),
+    const infusions = new Map(
+        source
+          .filter((event) => event.kind === "infusion")
+          .map((event) => [event.event_id, event]),
+      ),
       claimed = new Set();
     for (const gang of gangs) {
-      const members = [...new Set((gang.infusion_events || []).map((event) => event.event_id))]
+      const members = [
+        ...new Set((gang.infusion_events || []).map((event) => event.event_id)),
+      ]
         .filter((id) => infusions.has(id) && !claimed.has(id))
         .map((id) => {
           claimed.add(id);
@@ -12450,8 +12950,11 @@ class SaunaPanel extends HTMLElement {
     for (const [id, event] of infusions)
       if (!claimed.has(id)) append("infusion", `event:${id}`, [event]);
     const heating = new Map();
-    for (const event of allEvents.filter((event) => event.history_category === "heater")) {
-      if (!heating.has(event.history_interval_key)) heating.set(event.history_interval_key, []);
+    for (const event of allEvents.filter(
+      (event) => event.history_category === "heater",
+    )) {
+      if (!heating.has(event.history_interval_key))
+        heating.set(event.history_interval_key, []);
       heating.get(event.history_interval_key).push(event);
     }
     for (const [key, members] of heating) {
@@ -12464,25 +12967,35 @@ class SaunaPanel extends HTMLElement {
     }
     for (const group of groups) {
       group.label = this.historyEventBandLabel(group);
-      group.selectionLabel = group.roleLabel || (group.kind === "heater" ? group.label : undefined);
+      group.selectionLabel =
+        group.roleLabel || (group.kind === "heater" ? group.label : undefined);
       group.visible = group.first.event.history_visible;
-      group.annotation = group.kind === "heater" ? "heater"
-        : group.kind === "door" && group.first.event.kind === "door_open" ? "door" : null;
+      group.annotation =
+        group.kind === "heater"
+          ? "heater"
+          : group.kind === "door" && group.first.event.kind === "door_open"
+            ? "door"
+            : null;
       group.snapTargets = group.members.map(({ event }) => event.snap).filter(Boolean);
-      group.children = group.kind === "infusion" ? group.members.map((member) => ({
-        kind: group.kind,
-        key: `event:${member.event.event_id}`,
-        members: [member],
-        first: member,
-        last: member,
-        start: member.at,
-        end: member.at,
-        open: false,
-        label: member.event.display_label,
-        source_refs: [member.event.source_ref],
-      })) : [];
+      group.children =
+        group.kind === "infusion"
+          ? group.members.map((member) => ({
+              kind: group.kind,
+              key: `event:${member.event.event_id}`,
+              members: [member],
+              first: member,
+              last: member,
+              start: member.at,
+              end: member.at,
+              open: false,
+              label: member.event.display_label,
+              source_refs: [member.event.source_ref],
+            }))
+          : [];
     }
-    const events = orderedHistoryEvents(allEvents.filter((event) => event.history_visible)),
+    const events = orderedHistoryEvents(
+        allEvents.filter((event) => event.history_visible),
+      ),
       mainEvents = events.filter((event) => event.history_category);
     return {
       allEvents,
@@ -12504,19 +13017,32 @@ class SaunaPanel extends HTMLElement {
       domain = this.historyDomain(),
       fullView = view[0] <= domain[0] && view[1] >= domain[1],
       focus = this.historyValueSelection,
-      separation = this.preference("event_marker_size_px") + this.preference("event_marker_gap_px");
+      separation =
+        this.preference("event_marker_size_px") +
+        this.preference("event_marker_gap_px");
     if (!(plotWidth > 0)) return [];
     return this.historyEventGroups().flatMap((group) => {
-      const focused = !fullView && focus?.identity === this.historyValueIdentity() &&
+      const focused =
+          !fullView &&
+          focus?.identity === this.historyValueIdentity() &&
           focus.sourceGroupKey === group.key,
         children = group.children.length ? group.children : [group],
         center = (item) => item.start + (item.end - item.start) / 2,
-        resolved = !fullView && children.length > 1 && (focused ||
-          children.slice(1).every((item, index) =>
-            ((center(item) - center(children[index])) * plotWidth) / (view[1] - view[0]) >= separation,
-          )),
+        resolved =
+          !fullView &&
+          children.length > 1 &&
+          (focused ||
+            children
+              .slice(1)
+              .every(
+                (item, index) =>
+                  ((center(item) - center(children[index])) * plotWidth) /
+                    (view[1] - view[0]) >=
+                  separation,
+              )),
         displayed = resolved ? children : [group];
-      return displayed.filter((item) => item.start <= model.end && item.end >= model.start)
+      return displayed
+        .filter((item) => item.start <= model.end && item.end >= model.start)
         .map((item) => ({ ...item, at: item.start + (item.end - item.start) / 2 }));
     });
   }
@@ -12538,10 +13064,12 @@ class SaunaPanel extends HTMLElement {
     return this.historyLabelContext.measureText(label).width;
   }
   historyEventBandLabel(group) {
-    if (group.kind === "heater") return this.appearanceCatalog().history_events?.heater?.label;
+    if (group.kind === "heater")
+      return this.appearanceCatalog().history_events?.heater?.label;
     if (group.roleLabel) return group.roleLabel;
     if (group.open) return "Tür offen";
-    if (group.members.length > 1) return group.kind === "door" ? "Türvorgang" : "Aufgüsse";
+    if (group.members.length > 1)
+      return group.kind === "door" ? "Türvorgang" : "Aufgüsse";
     const event = group.first.event;
     return this.historyEventLabel(event);
   }
@@ -12549,24 +13077,39 @@ class SaunaPanel extends HTMLElement {
     const groups = this.historyStripEventGroups(model, geometry),
       plotWidth = model.right - model.left,
       position = (time) => ((model.x(time) - model.left) / plotWidth) * 100,
-      bars = groups.map((group) => {
-        const { members, first, start, end, open, kind } = group,
-          ids = members.map(({ event }) => event.event_id),
-          key = encodeURIComponent(JSON.stringify(ids)),
-          grouped = ids.length > 1,
-          label = group.label,
-          when = start === end ? this.tooltipWhen(start)
-            : `${this.tooltipWhen(start)} – ${this.tooltipWhen(end)}`,
-          left = position(Math.max(model.start, start)),
-          right = position(Math.min(model.end, end)),
-          overlapping = groups.filter((other) => other !== group && other.kind !== kind &&
-            other.start <= end && other.end >= start),
-          overlap = overlapping.length > 0,
-          action = grouped ? `history-event-group:${key}` : `history-event:${first.event.event_id}`;
-        return `<button type="button" class="history-event-band-segment" data-key="history-band:${esc(group.key)}" data-action="${esc(action)}" data-history-event-kind="${kind}" data-history-event-members="${esc(key)}"${grouped ? ` data-history-event-group="${esc(key)}"` : ` data-history-event-id="${esc(first.event.event_id)}"`} data-point="${start === end}" data-open="${open}" data-overlap="${overlap}" data-overlap-heater="${overlapping.some((other) => other.kind === "heater")}" data-overlap-door="${overlapping.some((other) => other.kind === "door")}" aria-pressed="false" aria-label="${esc(label)} · ${esc(when)}" title="${esc(label)} · ${esc(when)}" style="left: ${left}%; width: ${right - left}%; --history-event-color: ${this.historyEventColor(first.event)}"><span>${esc(label)}</span></button>`;
-      }).join(""),
+      bars = groups
+        .map((group) => {
+          const { members, first, start, end, open, kind } = group,
+            ids = members.map(({ event }) => event.event_id),
+            key = encodeURIComponent(JSON.stringify(ids)),
+            grouped = ids.length > 1,
+            label = group.label,
+            when =
+              start === end
+                ? this.tooltipWhen(start)
+                : `${this.tooltipWhen(start)} – ${this.tooltipWhen(end)}`,
+            left = position(Math.max(model.start, start)),
+            right = position(Math.min(model.end, end)),
+            overlapping = groups.filter(
+              (other) =>
+                other !== group &&
+                other.kind !== kind &&
+                other.start <= end &&
+                other.end >= start,
+            ),
+            overlap = overlapping.length > 0,
+            action = grouped
+              ? `history-event-group:${key}`
+              : `history-event:${first.event.event_id}`;
+          return `<button type="button" class="history-event-band-segment" data-key="history-band:${esc(group.key)}" data-action="${esc(action)}" data-history-event-kind="${kind}" data-history-event-members="${esc(key)}"${grouped ? ` data-history-event-group="${esc(key)}"` : ` data-history-event-id="${esc(first.event.event_id)}"`} data-point="${start === end}" data-open="${open}" data-overlap="${overlap}" data-overlap-heater="${overlapping.some((other) => other.kind === "heater")}" data-overlap-door="${overlapping.some((other) => other.kind === "door")}" aria-pressed="false" aria-label="${esc(label)} · ${esc(when)}" title="${esc(label)} · ${esc(when)}" style="left: ${left}%; width: ${right - left}%; --history-event-color: ${this.historyEventColor(first.event)}"><span>${esc(label)}</span></button>`;
+        })
+        .join(""),
       names = Object.entries(this.appearanceCatalog().history_events || {})
-        .map(([kind, definition]) => `<button type="button" class="history-event-category" data-key="history-category:${esc(kind)}" data-action="history-event-category:${esc(kind)}" aria-pressed="${this.historyEventCategoryVisible(kind)}" style="--history-event-color: var(--sauna-color-${esc(definition.color.replaceAll("_", "-"))})">${esc(definition.label)}</button>`).join(""),
+        .map(
+          ([kind, definition]) =>
+            `<button type="button" class="history-event-category" data-key="history-category:${esc(kind)}" data-action="history-event-category:${esc(kind)}" aria-pressed="${this.historyEventCategoryVisible(kind)}" style="--history-event-color: var(--sauna-color-${esc(definition.color.replaceAll("_", "-"))})">${esc(definition.label)}</button>`,
+        )
+        .join(""),
       row = `<div class="history-event-band-row" role="group" aria-label="Ereignisse">${bars}</div><div class="history-band-names">${names}</div>`;
     return row;
   }
@@ -12575,13 +13118,15 @@ class SaunaPanel extends HTMLElement {
       .map(({ members, at }) => {
         const x = model.x(at),
           first = members[0].event,
-          sameColor = members.every(({ event }) =>
-            (event.kind === "infusion") === (first.kind === "infusion"),
+          sameColor = members.every(
+            ({ event }) => (event.kind === "infusion") === (first.kind === "infusion"),
           ),
           color = sameColor
             ? this.historyEventColor(first)
             : "var(--sauna-color-chart-event)",
-          key = encodeURIComponent(JSON.stringify(members.map(({ event }) => event.event_id)));
+          key = encodeURIComponent(
+            JSON.stringify(members.map(({ event }) => event.event_id)),
+          );
         return `<line class="history-event-guide" data-key="history-event-guide:${esc(key)}" data-history-event-members="${esc(key)}" vector-effect="non-scaling-stroke" style="--history-event-color: ${color}" x1="${x}" x2="${x}" y1="${model.top}" y2="${model.bottom}"/>`;
       })
       .join("");
@@ -12616,12 +13161,7 @@ class SaunaPanel extends HTMLElement {
     }
     for (const group of this.historyEventGroups()) {
       if (group.annotation === "door")
-        svg += interval(
-          group.start,
-          group.end,
-          "door",
-          "Saunatür offen",
-        );
+        svg += interval(group.start, group.end, "door", "Saunatür offen");
       else if (group.annotation === "heater")
         svg += `<g style="--history-event-color: ${this.historyEventColor(group.first.event)}">${interval(group.start, group.end, "history-heater-interval", group.label)}</g>`;
     }
@@ -12670,18 +13210,22 @@ class SaunaPanel extends HTMLElement {
         "start",
       );
     }
-    const temperatureHeadingLeft = left - this.preference("control_group_gap_px") * scaleX,
+    const temperatureHeadingLeft =
+        left - this.preference("control_group_gap_px") * scaleX,
       humidityHeadingRight = right + this.preference("control_group_gap_px") * scaleX,
       humidityUnit = model.humidityMode === "absolute" ? "g/m³" : "%",
       phaseDimensions = this.historyBandDimensions("phase", geometry),
       detail = !!this.historyBandDetailState?.detail,
-      phaseBandHeight = detail
-        ? phaseDimensions.height : phaseDimensions.compactHeight,
-      labelHeight = this.preference("font_size_small_px") * this.preference("body_line_height"),
+      phaseBandHeight = detail ? phaseDimensions.height : phaseDimensions.compactHeight,
+      labelHeight =
+        this.preference("font_size_small_px") * this.preference("body_line_height"),
       headingOffset = detail
         ? phaseBandHeight / 2
-        : phaseBandHeight + this.historyBandGap() + (geometry?.bandNames?.phase || labelHeight) / 2,
-      headingY = top - (this.historyBandGap() + Math.max(headingOffset, labelHeight)) * scaleY;
+        : phaseBandHeight +
+          this.historyBandGap() +
+          (geometry?.bandNames?.phase || labelHeight) / 2,
+      headingY =
+        top - (this.historyBandGap() + Math.max(headingOffset, labelHeight)) * scaleY;
     const humidityLabel =
         model.humidityMode === "absolute"
           ? "Absolute Feuchte (g/m³)"
@@ -12692,9 +13236,23 @@ class SaunaPanel extends HTMLElement {
       humidityTitleRight = model.width - this.preference("layout_space_13_px") * scaleX;
     return (
       svg +
-      text("°C", temperatureHeadingLeft, headingY, "axis-temperature", "end", ' dominant-baseline="central"') +
+      text(
+        "°C",
+        temperatureHeadingLeft,
+        headingY,
+        "axis-temperature",
+        "end",
+        ' dominant-baseline="central"',
+      ) +
       `<g role="button" tabindex="0" data-action="history-humidity" aria-pressed="${model.humidityMode === "absolute"}" aria-label="${humidityLabel}, ${model.humidityMode === "absolute" ? "zu relativer Feuchte wechseln" : "zu absoluter Feuchte wechseln"}"><rect x="${humidityTitleLeft}" y="${titleTop}" width="${Math.max(0, humidityTitleRight - humidityTitleLeft)}" height="${titleHeight}" fill="transparent" stroke="none" pointer-events="all"/>` +
-      text(humidityUnit, humidityHeadingRight, headingY, "axis-humidity", "start", ' dominant-baseline="central"') +
+      text(
+        humidityUnit,
+        humidityHeadingRight,
+        headingY,
+        "axis-humidity",
+        "start",
+        ' dominant-baseline="central"',
+      ) +
       "</g>"
     );
   }
@@ -12702,25 +13260,44 @@ class SaunaPanel extends HTMLElement {
     const { start, end, left, right, x } = model,
       timeZone = localTimeZone(),
       scaleX = model.width / Math.max(1, width),
-      secondsFormatter = timestampFormatter("clockSeconds", timeZone,
-        this.preference("timestamp_formatter_cache_entries")),
-      labelSpacing = Math.max(this.preference("history_time_tick_spacing_px"),
-        this.historyLabelWidth(secondsFormatter.format(new Date(start)),
-          this.historyChart?.interaction.cachedGeometry) + this.preference("control_group_gap_px") * 2),
-      timeTicks = Math.max(1, Math.min(this.preference("history_axis_max_ticks"),
-        Math.floor((right - left) / scaleX / labelSpacing))),
+      secondsFormatter = timestampFormatter(
+        "clockSeconds",
+        timeZone,
+        this.preference("timestamp_formatter_cache_entries"),
+      ),
+      labelSpacing = Math.max(
+        this.preference("history_time_tick_spacing_px"),
+        this.historyLabelWidth(
+          secondsFormatter.format(new Date(start)),
+          this.historyChart?.interaction.cachedGeometry,
+        ) +
+          this.preference("control_group_gap_px") * 2,
+      ),
+      timeTicks = Math.max(
+        1,
+        Math.min(
+          this.preference("history_axis_max_ticks"),
+          Math.floor((right - left) / scaleX / labelSpacing),
+        ),
+      ),
       rough = (end - start) / timeTicks,
       second = 1000,
       minute = 60 * second,
       hour = 60 * minute,
       day = 24 * hour,
       // Conventional clock divisions; spacing and count remain catalogue-led.
-      steps = [second, minute].flatMap((unit) =>
-        [1, 2, 5, 10, 15, 20, 30].map((count) => count * unit))
+      steps = [second, minute]
+        .flatMap((unit) => [1, 2, 5, 10, 15, 20, 30].map((count) => count * unit))
         .concat([1, 2, 3, 6, 12].map((count) => count * hour)),
       step = steps.find((value) => value >= rough) || Math.ceil(rough / day) * day,
-      dateFormatter = step >= day ? timestampFormatter("date", timeZone,
-        this.preference("timestamp_formatter_cache_entries")) : null,
+      dateFormatter =
+        step >= day
+          ? timestampFormatter(
+              "date",
+              timeZone,
+              this.preference("timestamp_formatter_cache_entries"),
+            )
+          : null,
       align = (reference) => {
         let candidate = reference;
         // Re-evaluate the historical offset if rounding crosses a DST change.
@@ -12732,11 +13309,19 @@ class SaunaPanel extends HTMLElement {
       };
     let svg = "",
       time = align(start);
-    for (let index = 0; index <= timeTicks && time <= end; index++, time = align(time + 1)) {
+    for (
+      let index = 0;
+      index <= timeTicks && time <= end;
+      index++, time = align(time + 1)
+    ) {
       const offset = new Date(time).getTimezoneOffset() * minute;
       if ((time - offset) % step !== 0) continue;
-      const label = step < minute ? secondsFormatter.format(new Date(time))
-        : dateFormatter ? dateFormatter.format(new Date(time)) : this.clock(time, timeZone);
+      const label =
+        step < minute
+          ? secondsFormatter.format(new Date(time))
+          : dateFormatter
+            ? dateFormatter.format(new Date(time))
+            : this.clock(time, timeZone);
       svg += `<text data-history-time="${time}" font-size="${this.preference("font_size_small_px")}" text-anchor="middle" transform="translate(${x(time)} ${this.preference("font_size_small_px") * this.preference("body_line_height")}) scale(${scaleX} 1)">${esc(label)}</text>`;
     }
     return svg;
@@ -12752,15 +13337,12 @@ class SaunaPanel extends HTMLElement {
   }
   zoomAt(factor, clientX, svg) {
     if (!this.window) return;
-    const plot = this.historyInputSnapshot?.model || this.historyChart?.model || this.historyGeometry();
+    const plot =
+      this.historyInputSnapshot?.model ||
+      this.historyChart?.model ||
+      this.historyGeometry();
     const px = this.svgCoordinates(svg, clientX).x,
-      fraction = Math.max(
-        0,
-        Math.min(
-          1,
-          (px - plot.left) / (plot.right - plot.left),
-        ),
-      );
+      fraction = Math.max(0, Math.min(1, (px - plot.left) / (plot.right - plot.left)));
     const [domainStart, domainEnd] =
       this.historyInputSnapshot?.domain || this.historyDomain();
     const currentWidth = this.window[1] - this.window[0],
@@ -12807,8 +13389,7 @@ class SaunaPanel extends HTMLElement {
     const rect =
       this.historyChart?.interaction.readGeometry()?.rects?.[
         svg.matches?.("[data-history-time-axis]") ? "timeAxis" : "surface"
-      ] ||
-      svg.getBoundingClientRect();
+      ] || svg.getBoundingClientRect();
     event.preventDefault();
     this.webkitHistoryGesture = {
       svg,
@@ -12916,10 +13497,7 @@ class SaunaPanel extends HTMLElement {
         return [];
       const trace = this.diagnosticTraceForEvent(traces, event, route[1], metric);
       if (!trace) return [];
-      if (
-        /^(strong_|weak_)/.test(metric) &&
-        !this.diagnosticPersonDataActive(trace.at)
-      )
+      if (/^(strong_|weak_)/.test(metric) && !this.diagnosticPersonDataActive(trace.at))
         return [];
       const position =
         (trace.channels || ["upper", "lower"]).find((pos) =>
@@ -12987,10 +13565,7 @@ class SaunaPanel extends HTMLElement {
       : this.historyNavigationCache.byId.get(event.event_id) || event;
     const effective = stamp(linked.trace_at || linked.effective_at);
     if (!Number.isFinite(effective)) return null;
-    if (
-      /^(strong_|weak_)/.test(metric) &&
-      !this.diagnosticPersonDataActive(effective)
-    )
+    if (/^(strong_|weak_)/.test(metric) && !this.diagnosticPersonDataActive(effective))
       return null;
     let byTime = data.byTime;
     if (traces !== data.traces) {
@@ -13206,7 +13781,12 @@ class SaunaPanel extends HTMLElement {
           ),
         ],
       ];
-    return `<section id="diagnostic-selection" class="diagnostic-selection-context" tabindex="-1" data-trace-at="${esc(trace.at)}"><h3>Erkennungsnachweis · ${this.when(trace.at)}</h3><p id="diagnostic-selection-label" aria-live="polite">${event ? esc(events[event.kind] || event.kind) : "Gespeicherter Prüfzeitpunkt"} · ${esc((trace.channels || []).map((position) => (position === "upper" ? "oben" : position === "lower" ? "unten" : position)).join(", ") || "Keine Messhöhe gespeichert")}${event ? ` <button data-action="event-history:${esc(event.event_id)}">Ereignis im Verlauf</button>` : ""}</p><div class="diagnostic-trace-navigation"><button data-action="diagnostic-trace:previous" ${index <= 0 ? "disabled" : ""} aria-label="Vorheriger Erkennungsnachweis">←</button><input id="diagnostic-trace-index" type="range" min="0" max="${traces.length - 1}" step="1" value="${index}" aria-label="Gespeicherten Erkennungszeitpunkt auswählen" aria-valuetext="${esc(this.when(trace.at))}"><button data-action="diagnostic-trace:next" ${index >= traces.length - 1 ? "disabled" : ""} aria-label="Nächster Erkennungsnachweis">→</button><span>${index + 1} / ${traces.length}</span></div><p>Signale: ${esc((trace.signals || []).filter(activeKey).map((key) => events[key] || key).join(", ") || "Keine")}</p>${groups.map(([label, items, kind]) => `<details id="diagnostic-values-${esc(label.toLowerCase().replaceAll(" ", "-"))}"><summary>${label}</summary><dl>${entries(items, kind)}</dl></details>`).join("")}</section>`;
+    return `<section id="diagnostic-selection" class="diagnostic-selection-context" tabindex="-1" data-trace-at="${esc(trace.at)}"><h3>Erkennungsnachweis · ${this.when(trace.at)}</h3><p id="diagnostic-selection-label" aria-live="polite">${event ? esc(events[event.kind] || event.kind) : "Gespeicherter Prüfzeitpunkt"} · ${esc((trace.channels || []).map((position) => (position === "upper" ? "oben" : position === "lower" ? "unten" : position)).join(", ") || "Keine Messhöhe gespeichert")}${event ? ` <button data-action="event-history:${esc(event.event_id)}">Ereignis im Verlauf</button>` : ""}</p><div class="diagnostic-trace-navigation"><button data-action="diagnostic-trace:previous" ${index <= 0 ? "disabled" : ""} aria-label="Vorheriger Erkennungsnachweis">←</button><input id="diagnostic-trace-index" type="range" min="0" max="${traces.length - 1}" step="1" value="${index}" aria-label="Gespeicherten Erkennungszeitpunkt auswählen" aria-valuetext="${esc(this.when(trace.at))}"><button data-action="diagnostic-trace:next" ${index >= traces.length - 1 ? "disabled" : ""} aria-label="Nächster Erkennungsnachweis">→</button><span>${index + 1} / ${traces.length}</span></div><p>Signale: ${esc(
+      (trace.signals || [])
+        .filter(activeKey)
+        .map((key) => events[key] || key)
+        .join(", ") || "Keine",
+    )}</p>${groups.map(([label, items, kind]) => `<details id="diagnostic-values-${esc(label.toLowerCase().replaceAll(" ", "-"))}"><summary>${label}</summary><dl>${entries(items, kind)}</dl></details>`).join("")}</section>`;
   }
   drawDiagnostics() {
     if (!this.state?.permissions?.admin) {
@@ -14565,7 +15145,9 @@ class SaunaPanel extends HTMLElement {
       return;
     }
     if (action.startsWith("history-phase:")) {
-      this.selectHistoryPhase(decodeURIComponent(action.slice("history-phase:".length)));
+      this.selectHistoryPhase(
+        decodeURIComponent(action.slice("history-phase:".length)),
+      );
       return;
     }
     if (action.startsWith("history-event:")) {
