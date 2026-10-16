@@ -1408,7 +1408,10 @@ fs.mkdirSync(output, { recursive: true });
           },
         ];
       const response = await original(path);
-      if (path.includes("/archive/synthetic-next"))
+      if (
+        new URL(path, "http://fixture").searchParams.get("session_id") ===
+        "synthetic-next"
+      )
         response.session = structuredClone(nextSession);
       return response;
     };
