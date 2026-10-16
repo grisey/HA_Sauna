@@ -479,7 +479,7 @@ test("linear target completion cannot clear newer drafts or another entry", asyn
   }
 });
 
-test("weather uses only configured supplied metrics and escapes source strings", () => {
+test("non-DWD weather keeps supplied metrics and escapes source strings", () => {
   const p = panel();
   assert.equal(p.weatherMarkup(), "");
   p.state.environment = { configured: false, values: [] };
@@ -487,7 +487,9 @@ test("weather uses only configured supplied metrics and escapes source strings",
   p.state.environment = {
     configured: true,
     condition: "partlycloudy",
-    station: { name: '<img src=x onerror="bad()">' },
+    // A generic weather source has no provider field in the environment snapshot.
+    station: { name: 'Private Wetterstation <img src=x onerror="bad()">' },
+    source: { mode: null, interpolated: null },
     values: [
       {
         key: "temperature",
@@ -507,10 +509,22 @@ test("weather uses only configured supplied metrics and escapes source strings",
     ],
   };
   const html = p.weatherMarkup();
+  console.log(
+    "weather-evidence " +
+      JSON.stringify({ scenario: "non-DWD", environment: p.state.environment, html }),
+  );
+  assert.ok(
+    html.includes('<div class="weather-heading"><span>Umgebungswetter</span>'),
+  );
+  assert.ok(!html.includes("DWD"));
   assert.ok(html.includes('role="img"'));
   assert.ok(html.includes("Leicht bewölkt"));
   assert.ok(html.includes("16,4"));
-  assert.ok(html.includes("&lt;img src=x onerror=&quot;bad()&quot;&gt;"));
+  assert.ok(
+    html.includes(
+      "Private Wetterstation &lt;img src=x onerror=&quot;bad()&quot;&gt;",
+    ),
+  );
   assert.ok(html.includes("Außen &lt;b&gt;"));
   assert.ok(html.includes("&lt;script&gt;bad()&lt;/script&gt;"));
   assert.ok(!html.includes("<script>"));
