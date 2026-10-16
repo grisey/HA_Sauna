@@ -34,7 +34,8 @@ from .temperature_program import TemperatureProgram
 from .temporary_door_heat import TemporaryDoorHeatState
 from .temporary_door_heat import advance as advance_door_heat
 from .timeline import (
-    Confirmation, Door, Event, Kind, apply, reconcile_presence_source, utc,
+    Confirmation, Door, Event, InfusionEnd, Kind, apply, reconcile_presence_source,
+    update_infusion_end, utc,
 )
 
 GANG_SIGNALS = (Kind.PERSON_STRONG, Kind.PERSON_WEAK, Kind.INFUSION, Kind.PRESENCE_CONFIRMED)
@@ -344,6 +345,30 @@ class Controller:
     @property
     def session(self) -> Session | None:
         return self._session
+
+    def record_infusion_end(
+        self, session_id: str, source_event_id: str, end: InfusionEnd | None,
+    ) -> bool:
+        """Einen Detektor-Endbeleg ohne Steuerungsübergang in seiner Sitzung buchen."""
+        session = self._session
+        if session is not None and session.session_id == session_id:
+            timeline = update_infusion_end(session.timeline, source_event_id, end)
+            if timeline == session.timeline:
+                return False
+            self._session = replace(session, timeline=timeline)
+            return True
+        for index, session in enumerate(self.completed_sessions):
+            if session.session_id != session_id:
+                continue
+            timeline = update_infusion_end(session.timeline, source_event_id, end)
+            if timeline == session.timeline:
+                return False
+            self.completed_sessions = (
+                *self.completed_sessions[:index], replace(session, timeline=timeline),
+                *self.completed_sessions[index + 1:],
+            )
+            return True
+        return False
 
     @property
     def automatic_operation_enabled(self) -> bool:
