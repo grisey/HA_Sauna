@@ -686,8 +686,67 @@ class Detector:
             for form in followups.values()
         )
 
+    def _original_opening_onset_witnesses(
+        self, episode, prefix, windows, *, quantities=(Quantity.TEMPERATURE, Quantity.HUMIDITY),
+    ):
+        """Gültige Beginnzeugen nur dem zuerst gebundenen Knick zuordnen."""
+        points = {position: (temperature, humidity)
+                  for position, temperature, humidity in prefix.points}
+        epochs = dict(prefix.context)
+        significance = self.p["curve_original_significance"]
+        current = dict(prefix.temperatures)
+        witnesses = []
+        for name, pair in windows:
+            position = Position(name)
+            temperature = current.get(name)
+            if temperature is None or temperature.v >= -significance * temperature.e:
+                continue
+            for index, quantity in enumerate((Quantity.TEMPERATURE, Quantity.HUMIDITY)):
+                if quantity not in quantities:
+                    continue
+                key = ("door_open", position, quantity)
+                candidate = self._curve_candidates.get(key)
+                status = self._curve_status.get(key, {})
+                source = episode["sources"][position][index]
+                series = self._curve_series[position, quantity]
+                if series["source"] != source or series["epoch"] != epochs[position][index]:
+                    continue
+                floor = max(
+                    self._curve_closed_since,
+                    series["started_at"] or self._curve_closed_since,
+                )
+                context = (
+                    (self._curve_door_context, self._curve_closed_since),
+                    (epochs[position][index],), floor, None,
+                )
+                window = getattr(pair, quantity.value)
+                originals = dict(points[position][index])
+                if (candidate is None or status.get("status") != "supported"
+                        or status.get("source") != source
+                        or candidate.context != context
+                        or not all(originals.get(stamp) == value
+                                   for stamp, value in candidate.original_points)):
+                    # Das Raster kann bereits spätere Präfixe enthalten.
+                    # Sein Fit ist dann kein Zeuge dieser ersten Bindung.
+                    start = prefix.received_at - timedelta(seconds=self.p["curve_window_seconds"])
+                    support = tuple(point for point in points[position][index]
+                                    if start <= point[0] <= prefix.received_at)
+                    features = self._fit_candidate_form("door_open", support, floor, quantity)
+                    if not self._curve_supports("door_open", features, floor, quantity):
+                        continue
+                    candidate = _CurveCandidate(
+                        f"door_open:{position.value}:{quantity.value}:{source}:"
+                        f"{context[1]}:{features.onset_at.isoformat()}:{prefix.received_at.isoformat()}",
+                        features.onset_at, prefix.received_at, context, features,
+                        support, features.newest_at,
+                    )
+                if not window.start_at <= candidate.onset_at <= window.newest_at:
+                    continue
+                witnesses.append((key, candidate))
+        return tuple(witnesses)
+
     def _original_temperature_fall_evidence(self, episode, prefix, trace):
-        """Früheste echte Fallfenster im einzigen Türbestand zusammenhalten."""
+        """Echte Fallfenster bis zur ersten Erholung im Türbestand halten."""
         falls = episode.setdefault("original_temperature_falls", {})
         temperatures, context = dict(prefix.temperatures), dict(prefix.context)
         significance = self.p["curve_original_significance"]
@@ -744,6 +803,16 @@ class Detector:
                     }
                     falls[position] = fall
                 elif fall is not None:
+                    reference = fall["window"]
+                    if (fall.get("recovery_window") is None
+                            and window.newest_at > fall["continuity_at"]
+                            and window.v < -significance * window.e
+                            and window.v + significance * window.e
+                            < reference.v + significance * reference.e):
+                        # Der ganze beobachtete Fallblock trägt die spätere
+                        # Bremse; dessen echte Zeit begrenzt auch die Frische.
+                        fall["window"] = window
+                        fall["received_at"] = prefix.received_at
                     fall["continuity_at"] = window.newest_at
                 if (fall is not None and not fall.get("close_counterform", False)
                         and window.v >= -significance * window.e):
@@ -790,17 +859,17 @@ class Detector:
         )
 
     @staticmethod
-    def _reset_original_ventilation(episode, reason, *, water=True, humidity=True):
+    def _reset_original_ventilation(episode, reason, *, water=True, humidity=True, completed=True):
         episode.pop("original_ventilation", None)
         if humidity:
             episode.pop("original_ventilation_rh", None)
             relative = episode.get("original_ventilation_rh_confirmed")
-            if relative is not None and not relative.get("published", True):
+            if completed and relative is not None and not relative.get("published", True):
                 episode.pop("original_ventilation_rh_confirmed")
         if water:
             episode.pop("original_ventilation_water", None)
         complete = episode.get("original_ventilation_complete")
-        if complete is not None and not complete.get("published", True):
+        if completed and complete is not None and not complete.get("published", True):
             episode.pop("original_ventilation_complete")
         episode["original_ventilation_reset_reason"] = reason
 
@@ -899,6 +968,7 @@ class Detector:
                         paired_counterform = True
                         self._reset_original_ventilation(
                             episode, "paired_water_counterform", water=False, humidity=False,
+                            completed=False,
                         )
             if not changed and state["window_status"] is None:
                 state["window_status"] = "insufficient"
@@ -1065,16 +1135,6 @@ class Detector:
                     )
             if not maintained:
                 episode.pop(key, None)
-                confirmed_key = ("original_ventilation_complete" if paired
-                                 else "original_ventilation_rh_confirmed")
-                confirmed_stage = episode.get(confirmed_key)
-                if confirmed_stage is not None and not confirmed_stage.get("published", True):
-                    episode.pop(confirmed_key)
-                    if not paired:
-                        episode.pop("original_ventilation", None)
-                        complete = episode.get("original_ventilation_complete")
-                        if complete is not None and not complete.get("published", True):
-                            episode.pop("original_ventilation_complete")
             candidate = episode.get(key)
             confirmed = False
             if candidate is None and initial:
@@ -1097,7 +1157,11 @@ class Detector:
                 confirmed = maintained and fresh
                 gates["later_originals_for_all_roles"] = _gate(fresh)
             evidence_confirmed = confirmed and not closing
-            proven = evidence_confirmed and self.open
+            completed_key = ("original_ventilation_complete" if paired
+                             else "original_ventilation_rh_confirmed")
+            completed_stage = episode.get(completed_key)
+            retained = completed_stage is not None and not completed_stage.get("published", True)
+            proven = self.open and not closing and (evidence_confirmed or retained)
             stage = {
                 "evaluated": True,
                 "initial_form": initial, "maintained_form": maintained,
@@ -1106,6 +1170,7 @@ class Detector:
                 "bound_support": candidate["support"] if candidate is not None else {},
                 "support": anchors, "confirmable": confirmed, "proven": proven,
                 "evidence_confirmed": evidence_confirmed,
+                "retained_completed_evidence": retained,
                 "close_conflict": (close_value is not None and close_value > significance
                                    and (initial or confirmed)),
             }
@@ -1117,6 +1182,19 @@ class Detector:
             if evidence_confirmed:
                 stage.update(confirmation_received_at=prefix.received_at,
                              confirmation_originals=tuple(newest))
+            if retained:
+                # Die abgeschlossene Originalfolge bleibt ein vergangener
+                # Beleg. Neue Formkandidaten werden weiterhin separat geprüft.
+                stage.update(
+                    evidence_confirmed=True,
+                    confirmation_received_at=completed_stage["confirmation_received_at"],
+                    confirmation_originals=completed_stage["confirmation_originals"],
+                    completed_candidate_at=completed_stage["candidate_at"],
+                    completed_candidate_originals=completed_stage["candidate_originals"],
+                    completed_bound_support=completed_stage["bound_support"],
+                    completed_support=completed_stage["support"],
+                )
+            gates["retained_completed_original_evidence"] = _gate(retained)
             record[name] = stage
             return stage, gates
 
@@ -1137,13 +1215,17 @@ class Detector:
                     ventilation_proven=relative["proven"],
                     ventilation_close_conflict=relative["close_conflict"],
                 )
-                if relative["evidence_confirmed"]:
+                if (relative["evidence_confirmed"]
+                        and "original_ventilation_rh_confirmed" not in episode):
                     episode["original_ventilation_rh_confirmed"] = {
                         **relative, "windows": episode["original_ventilation_rh"]["humidity_windows"],
                         "temperature_windows": episode["original_ventilation_rh"]["temperature_windows"],
                         "published": self.open,
                     }
                 if relative["proven"]:
+                    episode["original_ventilation_rh_confirmed"].update(
+                        published=True, published_at=now,
+                    )
                     episode.pop("original_ventilation_rh", None)
                     self.ventilated = True
                     self._curve_ventilation_at = now
@@ -1177,13 +1259,14 @@ class Detector:
         record.update(absolute)
         _decision(trace, "ventilation_complete", absolute["proven"], gates)
         trace["conditions"]["ventilation_complete_proven"] = absolute["proven"]
-        if absolute["evidence_confirmed"]:
+        if absolute["evidence_confirmed"] and "original_ventilation_complete" not in episode:
             episode["original_ventilation_complete"] = {
                 **absolute, "windows": episode["original_ventilation"]["humidity_windows"],
                 "temperature_windows": episode["original_ventilation"]["temperature_windows"],
                 "published": self.open,
             }
         if absolute["proven"]:
+            episode["original_ventilation_complete"].update(published=True, published_at=now)
             episode.pop("original_ventilation", None)
             emit(Kind.VENTILATION_COMPLETE, event_channels=positions)
 
@@ -1303,6 +1386,9 @@ class Detector:
                         ),
                         "humidity_fall_onset": contrasts.humidity_fall_onset,
                         "humidity_kinks": humidity_kinks,
+                        "onset_witnesses": self._original_opening_onset_witnesses(
+                            episode, prefix, contrasts.positions,
+                        ),
                         "falling_temperatures": {
                             name for name, pair in contrasts.positions
                             if pair.temperature.v < -significance * pair.temperature.e
@@ -1349,6 +1435,18 @@ class Detector:
                         (name, quantity, form.window.newest_at)
                         for (name, quantity), form in followups.items()
                     )
+                    if (not candidate["onset_witnesses"]
+                            and prefix.received_at > candidate["received_at"]):
+                        # Erst später aufgelöste T-Geometrie darf nur einen
+                        # schon im ursprünglichen Support liegenden Knick
+                        # zuordnen. Späte RH-Fits gehören nicht dazu.
+                        onsets = self._original_opening_onset_witnesses(
+                            episode, prefix, candidate["windows"],
+                            quantities=(Quantity.TEMPERATURE,),
+                        )
+                        if onsets:
+                            candidate["onset_witnesses"] = onsets
+                            candidate["onset_witness_received_at"] = prefix.received_at
                 witness = candidate.get("lowering_witness") if candidate is not None else None
                 if (witness is None and candidate is not None and prefix.original
                         and fresh_block and lower_level and all(
@@ -1487,6 +1585,17 @@ class Detector:
                     ) if candidate is not None else None),
                     candidate_received_at=(candidate["received_at"] if candidate is not None else None),
                     candidate_originals=candidate["newest"] if candidate is not None else (),
+                    binding_onsets=tuple({
+                        "position": key[1].value, "quantity": key[2].value,
+                        "onset_at": witness.onset_at, "candidate_id": witness.candidate_id,
+                        "first_at": witness.original_points[0][0],
+                        "newest_at": witness.features.newest_at,
+                    } for key, witness in candidate["onset_witnesses"])
+                    if candidate is not None else (),
+                    onset_witness_received_at=(candidate.get("onset_witness_received_at",
+                                                           candidate["received_at"])
+                                              if candidate is not None
+                                              and candidate["onset_witnesses"] else None),
                     binding_support=(self._original_support(candidate["windows"])
                                      if candidate is not None else {}),
                     continued_support=self._original_support(contrasts.positions),
@@ -4376,16 +4485,22 @@ class Detector:
         now, decision_at, onset_allowed=None,
         boundary_reason="outside_current_context",
         require_bound=False,
+        bound_candidates=None,
     ):
         """Den passenden Kandidaten am allein führenden Bestätigungspfad binden."""
         proposal_key = (route, tuple(positions), tuple(quantities))
         proposal = self._curve_proposals.get(proposal_key)
-        if (
-            proposal is None or proposal.ambiguous
-            or require_bound and proposal.evidence_bound_at is None
-        ):
-            return fallback
-        candidates = proposal.candidates
+        if bound_candidates is None:
+            if (
+                proposal is None or proposal.ambiguous
+                or require_bound and proposal.evidence_bound_at is None
+            ):
+                return fallback
+            candidates = proposal.candidates
+        else:
+            candidates = bound_candidates
+            if not candidates:
+                return fallback
         if any(candidate.onset_at < floor for _, candidate in candidates):
             self._invalidate_curve_proposal(proposal_key, boundary_reason)
             return fallback
@@ -4416,9 +4531,26 @@ class Detector:
         ):
             self._invalidate_curve_proposal(proposal_key, "controller_context")
             return fallback
+        status = self._curve_proposal_status.get(proposal_key, {})
+        if bound_candidates is not None:
+            status = {
+                **status, "proposal_id": None,
+                "onset_at": beginning,
+                "onsets": tuple(candidate.onset_at for _, candidate in candidates),
+                "candidate_ids": tuple(candidate.candidate_id for _, candidate in candidates),
+                "witnesses": tuple({
+                    "position": key[1].value, "quantity": key[2].value,
+                    "candidate_id": candidate.candidate_id, "onset_at": candidate.onset_at,
+                    "first_at": candidate.original_points[0][0],
+                    "newest_at": candidate.features.newest_at,
+                } for key, candidate in candidates),
+            }
         self._curve_proposal_status[proposal_key] = {
-            **self._curve_proposal_status[proposal_key], "status": "consumed",
+            **status, "status": "consumed",
             "confirmed_at": decision_at, "consumed_onset_at": beginning,
+            "attribution_basis": ("original_open_binding" if bound_candidates is not None
+                                  else "curve_proposal"),
+            "consumed_candidate_ids": tuple(candidate.candidate_id for _, candidate in candidates),
         }
         for key, candidate in candidates:
             status = self._curve_status.get(key, {})
@@ -5047,7 +5179,6 @@ class Detector:
         # Der vorhandene bedingte Heiz-Sonderweg behält seine eigene
         # kalibrierte Form und Zulassung im selben Türbestand.
         thermal_opening = thermal_toggle = False
-        thermal_proposal_complete = False
         heating_candidates = {}
         if not self.open and enabled and self.heating_since is not None:
             for position in curve_positions:
@@ -5086,7 +5217,7 @@ class Detector:
             )
             if thermal_opening:
                 heating_floor = max(curve_floor, self.heating_since)
-                thermal_proposal_complete = self._remember_curve_proposal(
+                self._remember_curve_proposal(
                     "door_open_heating", episode["positions"], (Quantity.TEMPERATURE,),
                     floor=heating_floor,
                     context=(self._curve_door_context, episode["started_at"],
@@ -5221,22 +5352,6 @@ class Detector:
             onset_route = "door_open" if mixed_toggle else "door_open_heating"
             onset_quantities = ((Quantity.TEMPERATURE, Quantity.HUMIDITY) if mixed_toggle else
                                 (Quantity.TEMPERATURE,))
-            combined_key = ("door_open", episode["positions"],
-                            (Quantity.TEMPERATURE, Quantity.HUMIDITY))
-            thermal_key = ("door_open_heating", episode["positions"], (Quantity.TEMPERATURE,))
-            thermal_proposal = self._curve_proposals.get(thermal_key)
-            thermal_attribution = bool(
-                mixed_toggle and thermal_opening
-                and combined_key not in self._curve_proposals
-                and self._curve_proposal_status.get(combined_key, {}).get("status")
-                in (None, "incomplete")
-                and thermal_proposal is not None and not thermal_proposal.ambiguous
-                and thermal_proposal_complete
-            )
-            if thermal_attribution:
-                # OLS bestätigt die Öffnung unabhängig. Nur der bereits
-                # vollständige aktuelle Heiz-Proposal liefert ihren Beginn.
-                onset_route, onset_quantities = "door_open_heating", (Quantity.TEMPERATURE,)
             open_floor = self._curve_closed_since
             if onset_route == "door_open_heating" and self.heating_since is not None:
                 open_floor = max(open_floor, self.heating_since)
@@ -5245,6 +5360,8 @@ class Detector:
                 now, floor=open_floor,
                 kind=Kind.DOOR_OPEN, now=now, decision_at=decision_at,
                 onset_allowed=onset_allowed,
+                bound_candidates=(episode["original_open"]["onset_witnesses"]
+                                  if mixed_toggle else None),
             )
             onset_status = self._curve_proposal_status.get(
                 (onset_route, episode["positions"], onset_quantities), {},
@@ -5252,7 +5369,12 @@ class Detector:
             trace["door_open_onset_attribution"] = {
                 "confirmation_basis": "original_ols" if mixed_toggle else "retained_heating_only",
                 "route": onset_route, "quantities": tuple(q.value for q in onset_quantities),
-                "thermal_fallback": thermal_attribution,
+                "thermal_fallback": False,
+                "attribution_basis": ("original_open_binding" if mixed_toggle else "curve_proposal"),
+                "bound_original_onsets": tuple(
+                    (key[1].value, key[2].value, witness.onset_at, witness.candidate_id)
+                    for key, witness in episode["original_open"]["onset_witnesses"]
+                ) if mixed_toggle else (),
                 "used_proposal": (onset_status.get("status") == "consumed"
                                   and onset_status.get("confirmed_at") == decision_at),
                 "effective_at": open_effective,
