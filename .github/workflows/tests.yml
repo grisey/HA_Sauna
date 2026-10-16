@@ -90,7 +90,7 @@ on:
 permissions:
   contents: read
 concurrency:
-  group: tests-${{ github.workflow }}-${{ github.ref }}-${{ inputs.detector_replay && 'detector-replay' || inputs.proxy_calibration_analysis && 'proxy-calibration' || inputs.proxy_expectation_analysis && 'proxy-expectation-analysis' || inputs.proxy_candidate_analysis && 'proxy-candidate-analysis' || inputs.checks || 'all' }}
+  group: tests-${{ github.workflow }}-${{ github.ref }}-${{ inputs.detector_replay && format('detector-replay-{0}-{1}', inputs.detector_mode, inputs.detector_recordings) || inputs.proxy_calibration_analysis && 'proxy-calibration' || inputs.proxy_expectation_analysis && 'proxy-expectation-analysis' || inputs.proxy_candidate_analysis && 'proxy-candidate-analysis' || inputs.checks || 'all' }}
   cancel-in-progress: true
 jobs:
   detector_replay:

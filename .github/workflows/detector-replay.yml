@@ -16,7 +16,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: detector-replay-${{ github.ref }}
+  group: detector-replay-${{ github.ref }}-${{ inputs.mode }}-${{ inputs.recordings }}
   cancel-in-progress: false
 
 jobs:

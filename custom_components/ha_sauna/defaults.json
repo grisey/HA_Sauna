@@ -1938,7 +1938,7 @@
       "allow_zero": true,
       "optional": false,
       "maximum": 1000000,
-      "default": 3,
+      "default": 1,
       "minimum": 0,
       "integer": false,
       "description": "Skalierbare Toleranz für Steigungswechsel der relativen Feuchte vor Tür- und Aufgusskandidaten. Der Faktor multipliziert den größeren Wert aus der kalibrierten Steigungs-Störungsgröße und dem Medianbetrag vorausgehender Steigungswechsel. Die Toleranz ist keine feste Mindeständerung der relativen Feuchte und keine Wahrscheinlichkeit. 0 deaktiviert nur diese zusätzliche Knicktoleranz.",
