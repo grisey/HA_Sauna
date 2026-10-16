@@ -2128,6 +2128,19 @@ class OriginalCurveFollowupTests(unittest.TestCase):
                         item.kind for item in events
                         if item.kind in (Kind.DOOR_OPEN, Kind.VENTILATION, Kind.DOOR_CLOSE)
                     ], [Kind.DOOR_OPEN, Kind.VENTILATION, Kind.DOOR_CLOSE])
+                    # Isolate the next loss from the preceding warm recovery:
+                    # both original sections retain its actual final level.
+                    next_baseline = self._latest(detector)
+                    events += self._feed(detector, (
+                        next_baseline for _ in range(2 * self.count)
+                    ))
+                    originals = self._originals(detector)
+                    for role, value in zip(CLIMATE, next_baseline, strict=True):
+                        self.assertEqual(tuple(
+                            point for _, point in originals[role][-2 * self.count:]
+                        ), (value,) * (2 * self.count))
+                    self.assertFalse(detector.open)
+                    self.assertIsNone(detector.door_episode)
                     # A formerly ventilated, now closed episode must not
                     # suppress the next pending RH stage before its OPEN.
                     next_cycle_traces = []
