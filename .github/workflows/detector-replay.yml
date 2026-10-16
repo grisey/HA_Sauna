@@ -60,6 +60,8 @@ jobs:
           cat "$evidence/stderr.log" >&2
           exit "$result"
       - name: Evaluate original measurements with the selected owner
+        # Keep the mathematical audit available after replay checks fail.
+        if: ${{ !cancelled() && (inputs.mode == 'original_windows' || success()) }}
         timeout-minutes: ${{ fromJSON(needs.configuration.outputs.settings).step_timeouts_minutes.detector_replay }}
         env:
           SAUNA_DETECTOR_EVIDENCE: ${{ runner.temp }}/ha-sauna-detector-replay
