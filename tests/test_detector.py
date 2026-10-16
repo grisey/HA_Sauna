@@ -1018,25 +1018,38 @@ class DetectorTests(unittest.TestCase):
 
     def test_close_on_same_prefix_prevents_pending_rh_stage_confirmation(self):
         detector = self._ventilation_detector()
-        begin, plateau, _, falling = self._ventilation_curve(detector)
+        _, braking_at, _, falling = self._ventilation_curve(detector, water_tail="fall")
         count, step = detector.p["curve_original_samples"], detector.grid_seconds
-        humidity_plateau = begin + (plateau - begin) // 2
+        humidity_plateau = braking_at + count * step
         pending_at = humidity_plateau + (count - 1) * step
-        braking_at = humidity_plateau - count * step
         braking_temperature = falling(braking_at)[0]
         significance = detector.p["curve_original_significance"]
+
+        # Continue the existing fall through a public opening before adding
+        # the separate closing brake and the later RH flattening.
+        found = self._feed_ventilation(detector, braking_at, falling)
+        self.assertTrue(detector.open)
+        self.assertEqual([item.kind for item in found].count(Kind.DOOR_OPEN), 1)
+        opening = detector.door_episode["original_open"]
+        self.assertIn("lowering_witness", opening)
+        self.assertLessEqual(opening["confirmation_received_at"],
+                             T0 + timedelta(seconds=braking_at))
+        self.assertNotIn("original_close", detector.door_episode)
 
         def values(second):
             temperature, humidity = falling(second)
             if second > braking_at:
                 temperature = braking_temperature + (temperature - braking_temperature) / 2
+            if second > humidity_plateau:
+                humidity = falling(humidity_plateau)[1]
             return temperature, humidity
 
         # Bind the close owner at a real brake, then retain the shallower fall
         # until both T windows again support the pending RH flattening.
-        found = self._feed_ventilation(detector, pending_at, values)
+        found += self._feed_ventilation(detector, pending_at, values)
         self.assertIn("original_ventilation_rh", detector.door_episode)
         closing = detector.door_episode["original_close"]
+        self.assertGreater(closing["received_at"], opening["confirmation_received_at"])
         forms = detector.diagnostic["original_forms"]
         self.assertTrue(forms["complete_fresh_original_block"]["result"])
         self.assertGreater(forms["bound_temperature_braking"]["value"], significance)
