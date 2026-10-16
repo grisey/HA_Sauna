@@ -355,6 +355,10 @@ class OriginalCurveEvidenceTests(unittest.TestCase):
                         getattr(changed, field),
                         abs(value_factor) / time_factor * getattr(baseline, field),
                     )
+                for field in ("level_change_median", "level_change_mad"):
+                    self.assertAlmostEqual(
+                        getattr(changed, field), abs(value_factor) * getattr(baseline, field),
+                    )
                 self.assertEqual(
                     changed.history_start,
                     ORIGIN + time_factor * (baseline.history_start - ORIGIN) + shift,
@@ -2234,6 +2238,15 @@ class OriginalFollowupArithmeticTests(unittest.TestCase):
                 self.assertFalse(form.current_flat.result)
                 self.assertTrue(form.current_nonrising.result)
                 self.assertTrue(form.abating)
+                # The rolling previous window has reached the slower fall.
+                # Retaining the original fall still proves its reduction.
+                later = replace(humidity, b=humidity.v)
+                self.assertFalse(original_flattening(
+                    later, temperature, significance=1,
+                ).abating)
+                self.assertTrue(original_flattening(
+                    later, temperature, significance=1, reference_humidity=humidity,
+                ).abating)
                 accelerating = replace(humidity, v=humidity.b - humidity.e - humidity.e_minus)
                 self.assertFalse(original_flattening(
                     accelerating, temperature, significance=1,
@@ -2242,6 +2255,37 @@ class OriginalFollowupArithmeticTests(unittest.TestCase):
                 self.assertFalse(original_flattening(
                     rising, temperature, significance=1,
                 ).abating)
+
+    def test_level_background_uses_causal_mean_changes_and_keeps_value_units(self):
+        for factor, offset in ((1, 0), (4, 100)):
+            with self.subTest(factor=factor, offset=offset):
+                samples = tuple((ORIGIN + timedelta(seconds=2 * i), offset + factor * i**2)
+                                for i in range(15))
+                reference = self._window(tuple(i**2 for i in range(15)),
+                                         value_factor=factor, offset=offset)
+                background = original_kink_tolerance(
+                    samples, reference, factor=1, min_history_windows=2, max_gap_seconds=2,
+                )
+                # Four historical supports have mean changes 15, 21, 27, 33.
+                # Their median is 24 and median absolute deviation is 6.
+                self.assertEqual(background.history_count, 4)
+                self.assertAlmostEqual(background.level_change_median, 24 * factor)
+                self.assertAlmostEqual(background.level_change_mad, 6 * factor)
+                points = tuple((ORIGIN + timedelta(seconds=t), offset) for t in (30, 32))
+                proof = original_decline_evidence(points, reference, background=background)
+                self.assertEqual(proof.direction, 0)
+                self.assertAlmostEqual(proof.level_center, 24 * factor)
+                # Independent normal MAD conversion; acceptance precision is
+                # a numerical check, not an operational sensor parameter.
+                self.assertAlmostEqual(proof.level_scale / factor, 8.895613311033612)
+                self.assertAlmostEqual(proof.level_loss, (302 / 3 - 24) / 8.895613311033612)
+                self.assertIsNone(original_decline_evidence(
+                    points, reference, background=replace(background, level_change_mad=-1),
+                ))
+                self.assertIsNone(original_decline_evidence(
+                    points, replace(reference, mean_minus=reference.mean_minus + 1),
+                    background=background,
+                ))
 
     def test_edge_change_matches_rational_secant_and_affine_symmetries(self):
         for time_factor, value_factor, offset, shift in (

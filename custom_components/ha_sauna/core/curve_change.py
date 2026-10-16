@@ -152,6 +152,8 @@ class OriginalDeclineEvidence:
     mean: float
     direction: float
     level_loss: float
+    level_center: float
+    level_scale: float
 
 
 @dataclass(frozen=True)
@@ -168,6 +170,9 @@ class OriginalKinkTolerance:
     An exactly zero historical scale is valid. Insufficient history retains
     its evidence, while used_scale falls back to the calibrated catalogue.
     The detector owns direction requirements and all admission decisions.
+    The same historical blocks provide the median absolute mean change and
+    its MAD in value units. These are retained separately from slope changes
+    for a later comparison with the observed level loss.
     """
 
     window: OriginalWindowFeatures
@@ -182,6 +187,8 @@ class OriginalKinkTolerance:
     tolerance: float
     delta: float
     effective_change: float
+    level_change_median: float | None
+    level_change_mad: float | None
 
 
 @dataclass(frozen=True)
@@ -772,15 +779,20 @@ def original_followup(
 
 def original_decline_evidence(
     samples: Sequence[tuple[datetime, float]], reference: OriginalWindowFeatures,
+    *, background: OriginalKinkTolerance | None = None,
 ) -> OriginalDeclineEvidence | None:
     """Assess the growing original suffix, without waiting for full K blocks.
 
     At least two distinct times are required to determine a slope. The slope
     bound follows from the supplied value-deviation scale and actual time
     support; elapsed time and sample count alone never confirm a fall. The
-    fixed preceding level and current mean use the same difference envelope
-    as original_followup. Source continuity and admissibility belong to the
-    caller. These contrasts are not an event probability.
+    The optional bound background supplies ordinary absolute changes between
+    adjacent K-original means. Their median is subtracted from the observed
+    loss; their normal-consistent MAD enlarges the catalogue difference scale.
+    This compares the drop with the already observed background, including
+    its ordinary drift. It does not estimate an event probability. Source
+    continuity, retained reference identity and admissibility belong to the
+    caller.
     """
     try:
         if not _original_window_valid(reference):
@@ -798,11 +810,25 @@ def original_decline_evidence(
             return None
         slope, error, mean, _ = line
         direction = slope / error
-        level_loss = (reference.mean_minus - mean) / (2 * reference.scale)
+        level_center, level_scale = 0.0, 2 * reference.scale
+        if background is not None:
+            if background.window != reference:
+                return None
+            if background.status == "history":
+                if any(not _profile_number(value) or value < 0 for value in (
+                    background.level_change_median, background.level_change_mad,
+                )):
+                    return None
+                level_center = background.level_change_median
+                level_scale = max(level_scale, _MAD_NORMALIZATION * background.level_change_mad)
+            elif background.status != "insufficient":
+                return None
+        level_loss = (reference.mean_minus - mean - level_center) / level_scale
         if not all(_profile_number(value) for value in (direction, level_loss)):
             return None
         return OriginalDeclineEvidence(
             points, reference, slope, error, mean, direction, level_loss,
+            level_center, level_scale,
         )
     except (AttributeError, IndexError, OverflowError, TypeError, ValueError):
         return None
@@ -921,7 +947,7 @@ def original_kink_tolerance(
             history.append((stamp, float(value)))
         if history and (start_at - history[-1][0]).total_seconds() > max_gap_seconds:
             history.clear()
-        historical_changes = []
+        historical_changes, historical_levels = [], []
         for end in range(2 * count, len(history) + 1):
             old = _original_line(
                 tuple(history[end - 2 * count : end - count]),
@@ -934,8 +960,15 @@ def original_kink_tolerance(
             if not _profile_number(difference):
                 return None
             historical_changes.append(difference)
+            level_difference = abs(new[2] - old[2])
+            if not _profile_number(level_difference):
+                return None
+            historical_levels.append(level_difference)
         history_count = len(historical_changes)
         history_scale = median(historical_changes) if history_count else None
+        level_median = median(historical_levels) if history_count else None
+        level_mad = (median(abs(value - level_median) for value in historical_levels)
+                     if history_count else None)
         catalog_scale = window.e + window.e_minus
         if not _original_positive(catalog_scale) or (
             history_scale is not None and not _profile_number(history_scale)
@@ -964,6 +997,8 @@ def original_kink_tolerance(
             tolerance=tolerance,
             delta=delta,
             effective_change=effective_change,
+            level_change_median=level_median,
+            level_change_mad=level_mad,
         )
     except (AttributeError, IndexError, OverflowError, TypeError, ValueError):
         return None
@@ -1400,7 +1435,7 @@ def original_flattening(
     temperature_window: OriginalWindowFeatures, *, significance: float,
     reference_humidity: OriginalWindowFeatures | OriginalWaterWindowFeatures | None = None,
 ) -> OriginalFlattening | None:
-    """Compare a humidity fall-to-flat transition with its temperature form.
+    """Compare a slowing humidity fall with its temperature form.
 
     The caller supplies significance and owns support continuity, causal
     availability and stage identity. The same product comparisons accept

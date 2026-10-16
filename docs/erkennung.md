@@ -180,14 +180,32 @@ dieselben. Zwei verschiedene Zeitpunkte sind das mathematische Minimum für
 eine Steigung; eine feste Zahl neuer Fenster ist keine Bestätigungsbedingung.
 
 ```text
-a_Xp < −γO Eᵃ_Xp
-(X̄⁰⁻_p − X̄ᵃ_p)/(2ε_Xp) > γO
+a_Tp < −γO Eᵃ_Tp
+(T̄⁰⁻_p − T̄ᵃ_p)/(2ε_Tp) > γO
 ```
 
-Beide Vergleiche müssen an allen gebundenen Temperatur- und Feuchterollen
+Für die relative Feuchte bleibt der bereits gebundene Fallbeginn erhalten.
+Ihr niedrigeres Niveau muss sich von den zuvor beobachteten Änderungen
+abheben; ein weiterer Feuchtefall nach der Bindung ist nicht erforderlich.
+Die historischen `2K`-Stützen der Knicktoleranz liefern dafür die Beträge
+der Änderungen zwischen ihren beiden Fenstermitteln `d_j`:
+
+```text
+m_Hp = Median(d_j)
+s_Hp = max(2ε_Hp, 1/Φ⁻¹(0,75) · Median(|d_j − m_Hp|))
+(H̄⁰⁻_p − H̄ᵃ_p − m_Hp)/s_Hp > γO
+```
+
+`Φ⁻¹` ist die inverse Standardnormalverteilung; die MAD-Umrechnung macht
+daraus keine Ereigniswahrscheinlichkeit. Hintergrundmittel und Streuung werden
+bei der Kandidatenbindung festgehalten. Bei zu wenigen historischen Stützen
+gelten `m_Hp = 0` und `s_Hp = 2ε_Hp`. Die ausreichende Anzahl historischer
+Stützen stammt aus der gemeinsamen Knicktoleranz-Konfiguration.
+
+Die Temperatur- und Feuchtebedingungen müssen an allen gebundenen Positionen
 passen. Eine zunehmende Anzahl von Messwerten oder eine längere Wartezeit
-bestätigt für sich kein Ereignis. Entscheidend sind der aufgelöste gemeinsame
-Fall und die Absenkung gegenüber dem festgehaltenen Vorlauf. Quellenwechsel,
+bestätigt für sich kein Ereignis. Entscheidend sind der fortgesetzte
+Temperaturfall und die belegte Feuchteabsenkung. Quellenwechsel,
 Unterbrechungen und aufgelöste Gegenverläufe bleiben Ausschlussgründe.
 Der erste solche gemeinsame Absenkungsbeleg wird für den Türvorgang erhalten.
 
@@ -495,7 +513,7 @@ berechnet und als Diagnosewert je Messposition bereitgestellt.
 
 Die beiden Lüftungsstufen werden bei allen erkannten Türvorgängen gleich
 ausgewertet, unabhängig von einem laufenden Gang und der Präsenzquelle. Sie
-benötigen im selben Türvorgang einen vorherigen Feuchtefall und dessen belegten
+benötigen im selben Türvorgang einen vorherigen Feuchtefall und dessen belegte
 deutliche Abflachung, während die Temperatur weiter fällt, ohne merklich
 abzuflachen.
 
@@ -564,6 +582,12 @@ Feuchteoriginale; in der zweiten Stufe müssen die Feuchteoriginale vollständig
 gepaart sein. Ein Zwischenstand außerhalb der erhaltenen Form verwirft den
 jeweiligen noch unbestätigten Stufenkandidaten. Ein bereits vollständig
 belegter und lediglich noch nicht veröffentlichter Nachweis bleibt erhalten.
+
+Auch mehrere Wasserpaare, die mit einem verspäteten Temperaturpartner gemeinsam
+verfügbar werden, werden einzeln gegen diese gebundene Form geprüft. Weiterer
+Wassergehaltsabfall ist dabei zulässig, solange die Abflachung belegt bleibt.
+Ein erneuter starker Fall, ein aufgelöster Anstieg oder die Temperaturgegenform
+verwirft den noch unbestätigten Kandidaten.
 
 Schwankungen innerhalb des abgeflachten Verlaufs sind keine zusätzliche
 Ablehnungsbedingung. Eine einzelne kleine Feuchtesteigung ohne vorherigen
@@ -666,7 +690,9 @@ die Niveauabsenkung gegenüber dem gebundenen Vorlauf (`reference_level_loss`)
 und den festen gemeinsamen Absenkungsbeleg. Für die Bestätigung werden die
 seit der Bindung hinzugekommenen Originale mit ihrem ersten und letzten
 Zeitpunkt, ihrer Anzahl sowie den Richtungs- und Niveaukontrasten getrennt
-ausgewiesen. Die Feuchtebeginnzeugen jeder Position bleiben sichtbar.
+ausgewiesen. Bei der Feuchte sind die beobachtete Absenkung, der historische
+Vergleichswert und die verwendete Streuung gesondert sichtbar. Die
+Feuchtebeginnzeugen jeder Position bleiben sichtbar.
 Eine vollständige Anzahl neuer Fenster ist kein Bestätigungskriterium. Beim Türschluss
 werden die gebundene Temperaturbremse, die gespeicherten Rollenfallfenster,
 das neue Temperaturniveau und die Gegenbelege aus Fenstersteigung und

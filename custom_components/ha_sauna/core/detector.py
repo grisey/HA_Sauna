@@ -970,11 +970,19 @@ class Detector:
                 state["window_status"], state["features"] = window.status, window.features
                 if window.status == "invalid":
                     return "invalid", {}, {"reason": window.reason, "position": position.value}
-                if window.features is not None:
+                pending_stage = episode.get("original_ventilation")
+                if window.features is not None and pending_stage is not None:
                     significance = self.p["curve_original_significance"]
-                    if abs(window.features.v) > significance * window.features.e:
+                    reference = dict(pending_stage["humidity_windows"]).get(position)
+                    temperature = dict(prefix.temperatures).get(position.value)
+                    form = original_flattening(
+                        window.features, temperature, significance=significance,
+                        reference_humidity=reference,
+                    )
+                    if form is None or not form.abating:
                         # Ein neuer T-Partner kann mehrere wartende RH-Paare
-                        # zugleich liefern. Keine innere Gegenform überspringen.
+                        # zugleich liefern. Auch innere Gegenformen verwenden
+                        # die gebundene Abflachung, nicht eine Nullsteigung.
                         paired_counterform = True
                         self._reset_original_ventilation(
                             episode, "paired_water_counterform", water=False, humidity=False,
@@ -1439,7 +1447,7 @@ class Detector:
                         reference="bound_previous_original_mean",
                     ),
                 )
-                forms["opening_confirmation"] = _gate(False, reason="temperature_followup_pending")
+                forms["opening_confirmation"] = _gate(False, reason="joint_original_evidence_pending")
                 if candidate is not None and followups is None:
                     forms["opening_candidate_reset_reason"] = "original_support_disconnected"
                     episode.pop("original_open", None)
@@ -1466,16 +1474,20 @@ class Detector:
                           for position, temperature, humidity in prefix.points}
                 evidence = {}
                 if candidate is not None and followups:
+                    backgrounds = dict(candidate["humidity_kinks"])
                     for name, pair in candidate["windows"]:
                         for index, quantity in enumerate((Quantity.TEMPERATURE, Quantity.HUMIDITY)):
                             evidence[name, quantity] = original_decline_evidence(
                                 points[name][index], getattr(pair, quantity.value),
+                                background=(backgrounds[name] if quantity == Quantity.HUMIDITY
+                                            else None),
                             )
                 resolved_fall = bool(evidence) and all(
                     proof is not None
-                    and proof.direction < -self.p["curve_original_open_contrast"]
+                    and (quantity == Quantity.HUMIDITY
+                         or proof.direction < -self.p["curve_original_open_contrast"])
                     and proof.level_loss > self.p["curve_original_open_contrast"]
-                    for proof in evidence.values()
+                    for (_, quantity), proof in evidence.items()
                 )
                 humidity_onsets = bool(candidate) and {
                     key[1] for key, _ in candidate["onset_witnesses"]
@@ -1499,6 +1511,11 @@ class Detector:
                             "first_at": proof.points[0][0] if proof else None,
                             "newest_at": proof.points[-1][0] if proof else None,
                             "original_count": len(proof.points) if proof else 0,
+                            "direction_required": quantity == Quantity.TEMPERATURE,
+                            "level_background_center": proof.level_center if proof else None,
+                            "level_difference_scale": proof.level_scale if proof else None,
+                            "observed_level_loss": (proof.reference.mean_minus - proof.mean
+                                                    if proof else None),
                             "direction": _gate(
                                 proof.direction < -self.p["curve_original_open_contrast"]
                                 if proof else None,
