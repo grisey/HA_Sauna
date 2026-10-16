@@ -347,9 +347,22 @@ fs.mkdirSync(output, { recursive: true });
   const selectedValues = () =>
     selectionPage.evaluate(() => ({
       selection: structuredClone(f.panel.historyValueSelection),
-      values: [...f.panel.$("#tooltip").querySelectorAll(".history-tooltip-values:not([hidden]) > div:not([hidden])")]
-        .flatMap((row) => [...row.querySelectorAll(".history-tooltip-value")].filter((cell) => !cell.hidden))
-        .map((cell) => `${cell.querySelector(".history-tooltip-number").textContent} ${cell.querySelector(".history-tooltip-unit").textContent}`),
+      values: [
+        ...f.panel
+          .$("#tooltip")
+          .querySelectorAll(
+            ".history-tooltip-values:not([hidden]) > div:not([hidden])",
+          ),
+      ]
+        .flatMap((row) =>
+          [...row.querySelectorAll(".history-tooltip-value")].filter(
+            (cell) => !cell.hidden,
+          ),
+        )
+        .map(
+          (cell) =>
+            `${cell.querySelector(".history-tooltip-number").textContent} ${cell.querySelector(".history-tooltip-unit").textContent}`,
+        ),
     }));
   const humidityState = () =>
     selectionPage.evaluate(() => {
@@ -362,8 +375,15 @@ fs.mkdirSync(output, { recursive: true });
         values = (quantity) =>
           labels
             .filter((node) => node.dataset.quantity === quantity)
-            .flatMap((node) => [...node.parentElement.querySelectorAll(".history-tooltip-value")].filter((cell) => !cell.hidden))
-            .map((cell) => `${cell.querySelector(".history-tooltip-number").textContent} ${cell.querySelector(".history-tooltip-unit").textContent}`),
+            .flatMap((node) =>
+              [...node.parentElement.querySelectorAll(".history-tooltip-value")].filter(
+                (cell) => !cell.hidden,
+              ),
+            )
+            .map(
+              (cell) =>
+                `${cell.querySelector(".history-tooltip-number").textContent} ${cell.querySelector(".history-tooltip-unit").textContent}`,
+            ),
         button = p.$('[data-action="history-humidity"]'),
         axis = [...p.$("[data-history-axes]").querySelectorAll(".axis-humidity")].at(
           -1,
@@ -419,7 +439,9 @@ fs.mkdirSync(output, { recursive: true });
       assert.deepEqual(after.curveValues, [settings.fixtures.history.temperature]);
       assert.ok(
         after.humidity.every(
-          (value) => value === `${settings.fixtures.history.temperature.toFixed(1).replace(".", ",")} g/m³`,
+          (value) =>
+            value ===
+            `${settings.fixtures.history.temperature.toFixed(1).replace(".", ",")} g/m³`,
         ),
         "absolute readouts consume the opaque transport display value",
       );
@@ -537,6 +559,15 @@ fs.mkdirSync(output, { recursive: true });
         },
       ];
     f.session.timeline.processed.push(...events);
+    // Archive responses include the leading backend door-cycle projection.
+    f.session.door_cycles = [{
+      id: "door-cycle-proof",
+      started_at: boundary,
+      ended_at: null,
+      open: true,
+      event_ids: ["door-proof"],
+      gang_links: [],
+    }];
     for (const event of events)
       f.addRecord({
         kind: "detection",
@@ -579,17 +610,28 @@ fs.mkdirSync(output, { recursive: true });
     const segment = phaseBand.locator(`[data-history-phase="${phase}"]`);
     assert.equal(await segment.isVisible(), true);
     assert.equal(await segment.getAttribute("aria-label"), label);
-    assert.equal(await selectionPanel.locator(`.history-background rect.${shape}`).count(), 1);
+    assert.equal(
+      await selectionPanel.locator(`.history-background rect.${shape}`).count(),
+      1,
+    );
   }
-  const doorCategory = selectionPanel.locator('[data-action="history-event-category:door"]');
+  const doorCategory = selectionPanel.locator(
+    '[data-action="history-event-category:door"]',
+  );
   assert.equal(await doorCategory.getAttribute("aria-pressed"), "false");
   await doorCategory.click();
   await settleSelection();
   assert.equal(await doorCategory.getAttribute("aria-pressed"), "true");
   const lowerBand = selectionPanel.locator("[data-history-lower-band]");
   assert.equal(await lowerBand.locator('[data-history-event-kind="door"]').count(), 1);
-  assert.equal(await lowerBand.locator('[data-history-event-kind="infusion"]').count(), 1);
-  assert.equal(await selectionPanel.locator(".history-background line.infusion").count(), 1);
+  assert.equal(
+    await lowerBand.locator('[data-history-event-kind="infusion"]').count(),
+    1,
+  );
+  assert.equal(
+    await selectionPanel.locator(".history-background line.infusion").count(),
+    1,
+  );
   await selectionSurface.scrollIntoViewIfNeeded();
   const selectionTimes = await selectionPage.evaluate(() => {
     const p = f.panel,
@@ -791,12 +833,17 @@ fs.mkdirSync(output, { recursive: true });
   );
   assert.match(await selectionTooltip.innerText(), /Aufguss/);
   const eventSelection = await selectedValues(),
-    infusionTime = Date.parse(settings.fixtures.history.origin) + settings.fixtures.history.detail_selected_seconds * 1000;
+    infusionTime =
+      Date.parse(settings.fixtures.history.origin) +
+      settings.fixtures.history.detail_selected_seconds * 1000;
   assert.equal(eventSelection.selection.kind, "point");
   assert.deepEqual(eventSelection.selection.eventIds, ["infusion-proof"]);
   assert.equal(eventSelection.selection.start, infusionTime);
   assert.equal(eventSelection.selection.end, infusionTime);
-  assert.equal(eventSelection.values.length, settings.fixtures.history.quantities.length);
+  assert.equal(
+    eventSelection.values.length,
+    settings.fixtures.history.quantities.length,
+  );
   const rangeHumidity = await humidityState();
   await humidityButton.press("Enter");
   await settleSelection();
@@ -824,6 +871,12 @@ fs.mkdirSync(output, { recursive: true });
         detected_at: f.state.now,
       };
     f.session.timeline.processed.push(event);
+    f.session.door_cycles[0] = {
+      ...f.session.door_cycles[0],
+      ended_at: at,
+      open: false,
+      event_ids: ["door-proof", "door-close-proof"],
+    };
     f.addRecord({
       kind: "detection",
       received_at: f.state.now,
@@ -1009,6 +1062,11 @@ fs.mkdirSync(output, { recursive: true });
     "the third plot click clears completely",
   );
 
+  // Door evidence shares the phase boundary in this fixture. Hide that category
+  // before the independent phase-snap case so its event snap cannot win the tie.
+  await doorCategory.click();
+  await settleSelection();
+  assert.equal(await doorCategory.getAttribute("aria-pressed"), "false");
   // The fixture's tick projects one ready interval. Restore the same source
   // transition before inspecting the nearby event and the phase snap feedback.
   await selectionPage.evaluate(() => {
@@ -1095,8 +1153,20 @@ fs.mkdirSync(output, { recursive: true });
     .innerText();
   const boundaryValues = () =>
     selectionTooltip
-      .locator(".history-tooltip-values:not([hidden]) > div:not([hidden]) > span[data-quantity]")
-      .evaluateAll((labels) => labels.map((label) => `${label.textContent}${[...label.parentElement.querySelectorAll(".history-tooltip-value")].filter((cell) => !cell.hidden).map((cell) => cell.textContent).join(" | ")}`));
+      .locator(
+        ".history-tooltip-values:not([hidden]) > div:not([hidden]) > span[data-quantity]",
+      )
+      .evaluateAll((labels) =>
+        labels.map(
+          (label) =>
+            `${label.textContent}${[
+              ...label.parentElement.querySelectorAll(".history-tooltip-value"),
+            ]
+              .filter((cell) => !cell.hidden)
+              .map((cell) => cell.textContent)
+              .join(" | ")}`,
+        ),
+      );
   const valuesBeforeSnap = await boundaryValues();
   assert.equal(
     valuesBeforeSnap.length,

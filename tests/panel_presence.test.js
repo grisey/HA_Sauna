@@ -115,7 +115,13 @@ assert.match(detail, /Vorläufige Heizanforderung nach Türschluss[\s\S]*Aktiv/)
 
 const session = {
   ended_at: end,
-  timeline: { session_id: "phase-projection", session_started_at: t, processed: [], completed: [], active: null },
+  timeline: {
+    session_id: "phase-projection",
+    session_started_at: t,
+    processed: [],
+    completed: [],
+    active: null,
+  },
   heating: { intervals: [{ started_at: t, ended_at: end }] },
 };
 const gangs = [{ gang_id: "g", started_at: t, ended_at: end, infusion_events: [{}] }];
