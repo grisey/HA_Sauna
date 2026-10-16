@@ -10,7 +10,7 @@ from unittest.mock import AsyncMock, patch
 
 from aiohttp import ClientSession
 from homeassistant.auth.const import GROUP_ID_USER
-from homeassistant.core import Context
+from homeassistant.core import Context, callback
 from homeassistant.helpers import entity_registry as er
 
 import test_device_path as device_path
@@ -427,6 +427,7 @@ class NotificationServiceLifecycleTests(unittest.IsolatedAsyncioTestCase):
     def observe_replies(self):
         wire, observed = [], asyncio.Event()
 
+        @callback
         def receive(event):
             wire.append(dict(event.data))
             observed.set()
@@ -691,6 +692,14 @@ class NotificationServiceLifecycleTests(unittest.IsolatedAsyncioTestCase):
             ("control-mode", {"mode": "manual"}),
         ), start=1):
             user, reference = users[index], references[index]
+            if route == "control-mode":
+                # Mode changes are supported only after automatic operation OFF;
+                # the recording and its accumulated recipients remain alive.
+                await self.hass.services.async_call(
+                    "switch", "turn_off", {"entity_id": self.operation},
+                    blocking=True, context=Context(user_id=users[0].id),
+                )
+                await self.hass.async_block_till_done()
             target = TargetIdentity("home_assistant", reference.reference_id)
             before = self.runtime.notification_recipients.targets
             self.assertNotIn(target, before)
@@ -705,12 +714,15 @@ class NotificationServiceLifecycleTests(unittest.IsolatedAsyncioTestCase):
             await self.hass.async_block_till_done()
             self.assertEqual(self.runtime.session.session_id, session_id)
             self.assertEqual(self.runtime.notification_recipients.targets, before | {target})
+            if route == "heater":
+                self.assertFalse(self.heater.is_on)
+            elif route == "light":
+                self.assertAlmostEqual(self.runtime.device.light_output.manual_brightness, 37)
             mutations.append({
                 "route": route, "actor_user_id": user.id, "request": body,
                 "target_added": target.endpoint, "success": result["success"],
             })
         self.assertFalse(self.heater.is_on)
-        self.assertAlmostEqual(self.runtime.device.light_output.manual_brightness, 37)
         wire, _ = self.observe_replies()
         response = await self.start_native_send(users[0])
         expected = sorted(reference.reference_id for reference in references)
@@ -747,3 +759,87 @@ class NotificationServiceLifecycleTests(unittest.IsolatedAsyncioTestCase):
             "captured_targets": expected, "observed_service_calls": calls,
             "response": response, "public_reply_events": wire,
         }, sort_keys=True))
+
+    async def test_authenticated_template_switch_input_starts_mapped_native_session(self):
+        from homeassistant.setup import async_setup_component
+
+        self.assertTrue(await async_setup_component(self.hass, "input_boolean", {
+            "input_boolean": {"synthetic_notification_control": {
+                "name": "Synthetic notification control", "initial": False,
+            }},
+        }))
+        self.assertTrue(await async_setup_component(self.hass, "template", {
+            "template": [{"binary_sensor": [{
+                "name": "Synthetic notification input",
+                "unique_id": "synthetic_notification_input",
+                "state": "{{ is_state('input_boolean.synthetic_notification_control', 'on') }}",
+            }]}],
+        }))
+        await self.hass.async_block_till_done()
+        control_input = er.async_get(self.hass).async_get_entity_id(
+            "binary_sensor", "template", "synthetic_notification_input"
+        )
+        self.assertIsNotNone(control_input)
+        self.assertEqual(self.hass.states.get(control_input).state, "off")
+        self.hass.config_entries.async_update_entry(self.entry, options={
+            **self.entry.options, "control_input_mode": "switch",
+            "bindings": {**self.entry.options["bindings"], "control_input": control_input},
+        })
+        await self.hass.async_block_till_done()
+        references, registrations, targets = await self.mobile_references(2)
+        calls = []
+
+        async def terminal_sink(call):
+            calls.append({"service": call.service, "data": dict(call.data)})
+
+        for service in registrations:
+            self.hass.services.async_register("notify", service, terminal_sink)
+        user = await self.hass.auth.async_create_user(
+            "Synthetic authenticated source operator", group_ids=[GROUP_ID_USER]
+        )
+        await self.configure_recipients(((user, (references[0],)),))
+        self.assertIsNone(self.runtime.session)
+        context = Context(user_id=user.id)
+        await self.hass.services.async_call(
+            "input_boolean", "turn_on",
+            {"entity_id": "input_boolean.synthetic_notification_control"},
+            blocking=True, context=context,
+        )
+        await self.hass.async_block_till_done()
+        source = self.hass.states.get("input_boolean.synthetic_notification_control")
+        derived = self.hass.states.get(control_input)
+        self.assertEqual(source.context.user_id, user.id)
+        self.assertEqual(derived.context.user_id, user.id)
+        self.assertTrue(self.runtime.session.operation_enabled)
+        self.assertEqual(self.hass.states.get(self.operation).state, "on")
+        self.assertTrue(self.heater.is_on)
+        accumulated = sorted(
+            target.endpoint for target in self.runtime.notification_recipients.targets
+        )
+        wire, _ = self.observe_replies()
+        response = await self.start_native_send(user)
+        self.fire_native_reply()
+        await self.hass.async_block_till_done()
+        print("NOTIFICATION_EVIDENCE " + json.dumps({
+            "selector": self.id(), "synthetic_terminal_sink": True,
+            "endpoint_receipt": "not observed",
+            "path": "authenticated input_boolean.turn_on -> real template binary_sensor -> bound switch-mode control_input -> session recipients -> native send -> public reply",
+            "source_context_user_id": source.context.user_id,
+            "derived_context_user_id": derived.context.user_id,
+            "derived_context_id": derived.context.id,
+            "session_id": self.runtime.session.session_id,
+            "operation_enabled": self.runtime.session.operation_enabled,
+            "accumulated_targets": accumulated,
+            "observed_service_calls": calls, "response": response,
+            "public_reply_events": wire,
+        }, sort_keys=True))
+        self.assertEqual(accumulated, [references[0].reference_id])
+        self.assertEqual(len(response["handoffs"]), 1)
+        self.assertTrue(response["handoffs"][0]["accepted"])
+        self.assertEqual([call["data"]["target"] for call in calls], [
+            targets[references[0].reference_id]
+        ])
+        self.assertEqual(len(wire), 1)
+        self.assertEqual(wire[0]["session_id"], self.runtime.session.session_id)
+        self.assertEqual(wire[0]["message_id"], response["handoffs"][0]["message_id"])
+        self.assertTrue(wire[0]["handoff_accepted"])
