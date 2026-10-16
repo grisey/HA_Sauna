@@ -674,7 +674,9 @@ def render(input_dir: Path, output_path: Path) -> None:
         raise ValueError("corpus.json: expected a sessions array")
     if not isinstance(cases.get("cases"), list):
         raise ValueError("cases.json: expected a cases array")
-    if any(not isinstance(item, dict) or "id" not in item for item in corpus["sessions"]):
+    if any(
+        not isinstance(item, dict) or "id" not in item for item in corpus["sessions"]
+    ):
         raise ValueError("corpus.json: every session must be an object with an id")
     if any(not isinstance(item, dict) or "id" not in item for item in cases["cases"]):
         raise ValueError("cases.json: every case must be an object with an id")
@@ -708,7 +710,11 @@ def render(input_dir: Path, output_path: Path) -> None:
         payload["feature_comparison"] = read_json(comparison_path)
         payload["input_files"].append("feature_comparison.json")
     serialized = json.dumps(
-        payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"), allow_nan=False
+        payload,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+        allow_nan=False,
     )
     for literal, escaped in (
         ("&", "\\u0026"),

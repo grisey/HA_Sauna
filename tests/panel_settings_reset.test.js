@@ -61,7 +61,10 @@ const makePanel = ({ admin = true, locked = false } = {}) => {
       calls.push(args);
       if (args[0] === "/entry-1/parameters/reset")
         return { parameters: defaults, configuration };
-      if (args[0] === "/entry-1/state?include_catalog=false&include_energy_intervals=false") {
+      if (
+        args[0] ===
+        "/entry-1/state?include_catalog=false&include_energy_intervals=false"
+      ) {
         stateReads++;
         return {
           configuration:
@@ -97,8 +100,10 @@ const makePanel = ({ admin = true, locked = false } = {}) => {
     "one reset POST is sent",
   );
   assert.equal(
-    test.calls.filter(([path]) => path === "/entry-1/state?include_catalog=false&include_energy_intervals=false")
-      .length,
+    test.calls.filter(
+      ([path]) =>
+        path === "/entry-1/state?include_catalog=false&include_energy_intervals=false",
+    ).length,
     2,
     "waits through stale log and program state until defaults are loaded",
   );

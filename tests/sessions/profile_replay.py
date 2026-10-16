@@ -57,17 +57,25 @@ class SessionProfile:
             self.local.stats = {}
             self.local.queries = {}
             with self.thread_lock:
-                self.threads.append({
-                    "name": threading.current_thread().name,
-                    "ident": threading.get_ident(),
-                    "metrics": self.local.stats,
-                    "queries": self.local.queries,
-                })
+                self.threads.append(
+                    {
+                        "name": threading.current_thread().name,
+                        "ident": threading.get_ident(),
+                        "metrics": self.local.stats,
+                        "queries": self.local.queries,
+                    }
+                )
         return self.local.stats
 
     def _start(self, name):
-        key = (self.case.get(), name, self.fit_mode.get(), self.route.get(),
-               self.direction.get(), self.record_kind.get())
+        key = (
+            self.case.get(),
+            name,
+            self.fit_mode.get(),
+            self.route.get(),
+            self.direction.get(),
+            self.record_kind.get(),
+        )
         stats = self._stats().setdefault(key, [0, 0, 0, 0])
         return stats, time.perf_counter_ns(), time.thread_time_ns()
 
@@ -83,6 +91,7 @@ class SessionProfile:
 
     def timed(self, original, name):
         if inspect.iscoroutinefunction(original):
+
             @functools.wraps(original)
             async def asynchronous(*args, **kwargs):
                 start = self._start(name)
@@ -140,9 +149,13 @@ class SessionProfile:
                 self._stats()
                 counts = self.local.queries.setdefault(
                     (self.case.get(), route, position.value, quantity.value),
-                    {"queries": 0, "regular_fits": 0, "failed_queries": 0,
-                     "without_fit_unchanged_evaluation": 0,
-                     "without_fit_changed_evaluation": 0},
+                    {
+                        "queries": 0,
+                        "regular_fits": 0,
+                        "failed_queries": 0,
+                        "without_fit_unchanged_evaluation": 0,
+                        "without_fit_changed_evaluation": 0,
+                    },
                 )
                 counts["queries"] += 1
                 counts["regular_fits"] += observation["fits"]
@@ -165,7 +178,9 @@ class SessionProfile:
             if self.witness.get():
                 mode = "witness_correction"
             else:
-                mode = "free_search" if kwargs.get("onset_at") is None else "fixed_onset"
+                mode = (
+                    "free_search" if kwargs.get("onset_at") is None else "fixed_onset"
+                )
                 observation = self.query.get()
                 if observation is not None:
                     observation["fits"] += 1
@@ -236,12 +251,19 @@ class SessionProfile:
             self.boundary(runtime_class, attribute, f"runtime.{attribute}")
 
         if detector_class is not None:
-            self.patch(detector_class, "_curve_candidate",
-                       self._curve_query(detector_class._curve_candidate))
-            self.patch(detector_class, "_correct_curve_proposals",
-                       self._witness_correction(detector_class._correct_curve_proposals))
-            self.instrumented.extend(("detector.curve_query",
-                                      "detector.correct_curve_proposals"))
+            self.patch(
+                detector_class,
+                "_curve_candidate",
+                self._curve_query(detector_class._curve_candidate),
+            )
+            self.patch(
+                detector_class,
+                "_correct_curve_proposals",
+                self._witness_correction(detector_class._correct_curve_proposals),
+            )
+            self.instrumented.extend(
+                ("detector.curve_query", "detector.correct_curve_proposals")
+            )
         if detector is not None and curve is not None:
             wrapper = self._curve_call(curve.curve_change)
             self.patch(curve, "curve_change", wrapper)
@@ -250,19 +272,35 @@ class SessionProfile:
         for attribute in ("_models", "_fit", "_least_squares"):
             self.boundary(curve, attribute, f"curve.{attribute}")
 
-        for attribute in ("append", "save_session", "read", "flush",
-                          "export", "_export"):
+        for attribute in (
+            "append",
+            "save_session",
+            "read",
+            "flush",
+            "export",
+            "_export",
+        ):
             self.boundary(archive_class, attribute, f"archive.{attribute}")
         if archive_class is not None:
             for attribute in ("_append_plain", "_write"):
                 name = f"archive.{attribute}"
-                self.patch(archive_class, attribute, self._archive_record(
-                    getattr(archive_class, attribute), name, attribute == "_write",
-                ))
+                self.patch(
+                    archive_class,
+                    attribute,
+                    self._archive_record(
+                        getattr(archive_class, attribute),
+                        name,
+                        attribute == "_write",
+                    ),
+                )
                 self.instrumented.append(name)
         # Keep archive.plain and all its recursive calls completely untouched.
         # Archive-internal conversion is included in append/save_session/export.
-        for module, name in ((runner, "runner"), (runtime, "runtime"), (device, "device")):
+        for module, name in (
+            (runner, "runner"),
+            (runtime, "runtime"),
+            (device, "device"),
+        ):
             self.boundary(module, "plain", f"{name}.plain")
         for module, name in ((archive, "archive"), (runtime, "runtime")):
             self.boundary(module, "encoded_plain", f"{name}.encoded_plain")
@@ -277,36 +315,70 @@ class SessionProfile:
             identity = {"thread_name": thread["name"], "thread_ident": thread["ident"]}
             for key, (calls, errors, wall, cpu) in thread["metrics"].items():
                 case, name, mode, route, direction, record_kind = key
-                metrics.append({
-                    **identity, "case": case, "name": name, "fit_mode": mode,
-                    "route": route, "direction": direction,
-                    "record_kind": record_kind,
-                    "calls": calls, "errors": errors,
-                    "wall_ns": wall, "thread_cpu_ns": cpu,
-                })
+                metrics.append(
+                    {
+                        **identity,
+                        "case": case,
+                        "name": name,
+                        "fit_mode": mode,
+                        "route": route,
+                        "direction": direction,
+                        "record_kind": record_kind,
+                        "calls": calls,
+                        "errors": errors,
+                        "wall_ns": wall,
+                        "thread_cpu_ns": cpu,
+                    }
+                )
             for (case, route, position, quantity), counts in thread["queries"].items():
-                queries.append({**identity, "case": case, "route": route,
-                                "position": position, "quantity": quantity, **counts})
+                queries.append(
+                    {
+                        **identity,
+                        "case": case,
+                        "route": route,
+                        "position": position,
+                        "quantity": quantity,
+                        **counts,
+                    }
+                )
         result = self.result
         return {
             "instrumented": sorted(self.instrumented),
             "unavailable": sorted(self.unavailable),
             "instrumentation_error": self.instrumentation_error,
-            "metrics": sorted(metrics, key=lambda row: (
-                row["case"] or "", row["name"], row["fit_mode"] or "",
-                row["route"] or "", row["direction"] or 0,
-                row["record_kind"] or "", row["thread_ident"],
-            )),
-            "curve_queries": sorted(queries, key=lambda row: (
-                row["case"] or "", row["route"], row["position"],
-                row["quantity"], row["thread_ident"],
-            )),
-            "unittest": None if result is None else {
+            "metrics": sorted(
+                metrics,
+                key=lambda row: (
+                    row["case"] or "",
+                    row["name"],
+                    row["fit_mode"] or "",
+                    row["route"] or "",
+                    row["direction"] or 0,
+                    row["record_kind"] or "",
+                    row["thread_ident"],
+                ),
+            ),
+            "curve_queries": sorted(
+                queries,
+                key=lambda row: (
+                    row["case"] or "",
+                    row["route"],
+                    row["position"],
+                    row["quantity"],
+                    row["thread_ident"],
+                ),
+            ),
+            "unittest": None
+            if result is None
+            else {
                 "tests_run": result.testsRun,
                 "successful": result.wasSuccessful(),
-                "failures": len(result.failures), "errors": len(result.errors),
-                "skipped": [{"test": str(test), "reason": reason}
-                            for test, reason in result.skipped],
+                "failures": len(result.failures),
+                "errors": len(result.errors),
+                "skipped": [
+                    {"test": str(test), "reason": reason}
+                    for test, reason in result.skipped
+                ],
                 "expected_failures": len(result.expectedFailures),
                 "unexpected_successes": len(result.unexpectedSuccesses),
             },
@@ -314,27 +386,51 @@ class SessionProfile:
 
 
 def metadata():
-    names = ("RUNNER_NAME", "RUNNER_OS", "RUNNER_ARCH", "ImageOS", "ImageVersion",
-             "GITHUB_RUN_ID", "GITHUB_RUN_ATTEMPT", "GITHUB_JOB", "GITHUB_SHA",
-             "GITHUB_REF", "HA_TEST_REQUIRED", "SAUNA_SESSION_CASE",
-             "SAUNA_SESSION_EVIDENCE", "TMPDIR")
+    names = (
+        "RUNNER_NAME",
+        "RUNNER_OS",
+        "RUNNER_ARCH",
+        "ImageOS",
+        "ImageVersion",
+        "GITHUB_RUN_ID",
+        "GITHUB_RUN_ATTEMPT",
+        "GITHUB_JOB",
+        "GITHUB_SHA",
+        "GITHUB_REF",
+        "HA_TEST_REQUIRED",
+        "SAUNA_SESSION_CASE",
+        "SAUNA_SESSION_EVIDENCE",
+        "TMPDIR",
+    )
     return {
-        "python": sys.version, "executable": sys.executable,
+        "python": sys.version,
+        "executable": sys.executable,
         "implementation": platform.python_implementation(),
-        "platform": platform.platform(), "machine": platform.machine(),
-        "processor": platform.processor(), "cpu_count": os.cpu_count(),
+        "platform": platform.platform(),
+        "machine": platform.machine(),
+        "processor": platform.processor(),
+        "cpu_count": os.cpu_count(),
         "cpu_affinity": sorted(os.sched_getaffinity(0))
-        if hasattr(os, "sched_getaffinity") else None,
+        if hasattr(os, "sched_getaffinity")
+        else None,
         "environment": {name: os.environ[name] for name in names if name in os.environ},
     }
 
 
 def usage():
     values = resource.getrusage(resource.RUSAGE_SELF)
-    return {name: getattr(values, name) for name in (
-        "ru_utime", "ru_stime", "ru_maxrss", "ru_minflt", "ru_majflt",
-        "ru_nvcsw", "ru_nivcsw",
-    )}
+    return {
+        name: getattr(values, name)
+        for name in (
+            "ru_utime",
+            "ru_stime",
+            "ru_maxrss",
+            "ru_minflt",
+            "ru_majflt",
+            "ru_nvcsw",
+            "ru_nivcsw",
+        )
+    }
 
 
 def main():
@@ -356,8 +452,11 @@ def main():
                     profile.restore()
                     profile.patches.clear()
                     profile.instrumented.clear()
-                    print(f"Session profile instrumentation failed: {error}",
-                          file=sys.stderr, flush=True)
+                    print(
+                        f"Session profile instrumentation failed: {error}",
+                        file=sys.stderr,
+                        flush=True,
+                    )
                 profile.result = super().run(suite)
                 return profile.result
             finally:
@@ -373,7 +472,9 @@ def main():
         sys.path[0] = str(SESSION_ROOT.parents[1])
         unittest.main(module=None, argv=DISCOVERY, testRunner=ProfileRunner)
     except SystemExit as error:
-        exit_code = error.code if isinstance(error.code, int) else int(error.code is not None)
+        exit_code = (
+            error.code if isinstance(error.code, int) else int(error.code is not None)
+        )
         raise
     except BaseException as error:
         exit_code = 130 if isinstance(error, KeyboardInterrupt) else 1
@@ -384,12 +485,16 @@ def main():
         total_wall = time.perf_counter_ns() - wall
         try:
             report = {
-                "schema": 1, "started_at": started,
+                "schema": 1,
+                "started_at": started,
                 "finished_at": datetime.now(UTC).isoformat(),
-                "metadata": machine, "discovery_argv": DISCOVERY,
-                "exit_code": exit_code, "exception": exception,
+                "metadata": machine,
+                "discovery_argv": DISCOVERY,
+                "exit_code": exit_code,
+                "exception": exception,
                 "total": {"wall_ns": total_wall, "process_cpu_ns": total_cpu},
-                "resource_before": before, "resource_after": usage(),
+                "resource_before": before,
+                "resource_after": usage(),
                 "measurement_contract": [
                     "Wall and thread CPU spans are inclusive and overlap; do not sum them.",
                     "Async spans include suspension and other work on the same thread.",
@@ -407,13 +512,18 @@ def main():
                 **profile.report(),
             }
             output.parent.mkdir(parents=True, exist_ok=True)
-            output.write_text(json.dumps(report, ensure_ascii=False, indent=2) + "\n",
-                              encoding="utf-8")
+            output.write_text(
+                json.dumps(report, ensure_ascii=False, indent=2) + "\n",
+                encoding="utf-8",
+            )
             print(f"Session profile: {output}", file=sys.stderr, flush=True)
         except Exception as error:
             # Report failures must never replace the original unittest exit/error.
-            print(f"Session profile report failed: {type(error).__name__}: {error}",
-                  file=sys.stderr, flush=True)
+            print(
+                f"Session profile report failed: {type(error).__name__}: {error}",
+                file=sys.stderr,
+                flush=True,
+            )
 
 
 if __name__ == "__main__":

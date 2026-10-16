@@ -203,9 +203,12 @@ class DetectorDecisionTests(unittest.TestCase):
         key = ("door_open", Position.UPPER, Quantity.HUMIDITY)
         cases = (("unresolved", "insufficient"), ("rejects", "rejected"))
         for evidence, expected in cases:
-            with self.subTest(evidence=evidence), patch(
-                f"{MATH}.curve_change",
-                return_value=replace(feature, evidence=evidence),
+            with (
+                self.subTest(evidence=evidence),
+                patch(
+                    f"{MATH}.curve_change",
+                    return_value=replace(feature, evidence=evidence),
+                ),
             ):
                 # An independent owner response needs an independent evaluation.
                 detector._curve_evaluated.clear()
@@ -235,7 +238,7 @@ class DetectorDecisionTests(unittest.TestCase):
     def test_native_peak_requires_fresh_originals_in_its_source_epoch(self):
         detector = Detector(self.parameters, T0, (Position.UPPER,))
         points = self._form_points("peak", T0)
-        initial = points[:-detector.curve_policy.min_side_samples]
+        initial = points[: -detector.curve_policy.min_side_samples]
         key = ("infusion_decay", Position.UPPER, Quantity.HUMIDITY)
         self._originals(detector, initial)
 
@@ -244,9 +247,10 @@ class DetectorDecisionTests(unittest.TestCase):
 
         # This isolates the complementary native peak path. Its form evidence
         # and every later constrained recheck use the real mathematical owner.
-        with patch(f"{MATH}.curve_change", return_value=None), patch(
-            f"{MATH}.curve_form", wraps=curve_form
-        ) as fitted:
+        with (
+            patch(f"{MATH}.curve_change", return_value=None),
+            patch(f"{MATH}.curve_form", wraps=curve_form) as fitted,
+        ):
             evaluate(initial[-1][0])
             first = detector._curve_candidates[key]
             self.assertIsInstance(first.features, CurveFormFeatures)
@@ -283,7 +287,7 @@ class DetectorDecisionTests(unittest.TestCase):
             self.assertEqual(fitted.call_count, calls)
             self.assertIsNone(detector._curve_candidates[key].fresh_newest_at)
 
-            self._originals(detector, points[len(initial):], received_at=points[-1][0])
+            self._originals(detector, points[len(initial) :], received_at=points[-1][0])
             evaluate(points[-1][0])
             fresh = detector._curve_candidates[key]
             self.assertEqual(fresh.candidate_id, first.candidate_id)
@@ -327,7 +331,7 @@ class DetectorDecisionTests(unittest.TestCase):
             confirmed + self.p["curve_window_seconds"] + self.flow.step
         )
         recovery = self._form_points("recovery", start)
-        initial = recovery[:-detector.curve_policy.min_side_samples]
+        initial = recovery[: -detector.curve_policy.min_side_samples]
         self._originals(detector, initial)
         floor = detector._curve_infusion_since
 
@@ -345,7 +349,7 @@ class DetectorDecisionTests(unittest.TestCase):
         self.assertFalse(first["decisions"]["infusion_background"]["result"])
         reference = episode["backgrounds"][Position.UPPER]["reference"]
         self.assertIsNotNone(reference)
-        self._originals(detector, recovery[len(initial):])
+        self._originals(detector, recovery[len(initial) :])
         fresh = advance(recovery[-1][0])
         self.assertFalse(fresh["conditions"]["infusion_level"])
         self.assertTrue(fresh["decisions"]["infusion_background"]["result"])
@@ -374,7 +378,9 @@ class DetectorDecisionTests(unittest.TestCase):
         ]
         self._originals(detector, points)
         episode = {
-            "positions": detector.positions, "backgrounds": {}, "background_start": {}
+            "positions": detector.positions,
+            "backgrounds": {},
+            "background_start": {},
         }
 
         def check(now):
@@ -438,9 +444,14 @@ class DetectorDecisionTests(unittest.TestCase):
             + self.p["infusion_window_seconds"]
             + self.flow.step
         )
-        with self.flow._patch_math(shapes), patch(
-            f"{MATH}.curve_level", side_effect=self.flow._math_level,
-        ), patch(f"{MATH}.curve_form", return_value=None):
+        with (
+            self.flow._patch_math(shapes),
+            patch(
+                f"{MATH}.curve_level",
+                side_effect=self.flow._math_level,
+            ),
+            patch(f"{MATH}.curve_form", return_value=None),
+        ):
             self.flow._feed(detector, ended, points, events)
         episode = detector._infusion_episode
         self.assertEqual(episode["phase"], "ended")
@@ -457,9 +468,12 @@ class DetectorDecisionTests(unittest.TestCase):
         )
         # The independent level witness remains supported. The optional,
         # unbound background was never the cause of this episode's end.
-        with patch(f"{MATH}.curve_level", return_value=level), patch(
-            f"{MATH}.curve_form",
-        ) as owner:
+        with (
+            patch(f"{MATH}.curve_level", return_value=level),
+            patch(
+                f"{MATH}.curve_form",
+            ) as owner,
+        ):
             self._originals(
                 detector,
                 [(last[0], correction)],
@@ -492,7 +506,9 @@ class DetectorDecisionTests(unittest.TestCase):
                 position=position,
             )
         episode = {
-            "positions": detector.positions, "backgrounds": {}, "background_start": {}
+            "positions": detector.positions,
+            "backgrounds": {},
+            "background_start": {},
         }
         evidence = {position: "supports" for position in detector.positions}
 

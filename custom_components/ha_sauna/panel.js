@@ -18,14 +18,10 @@ const energyIntervalTransports = new WeakMap();
 const energyIntervalTime = (value) => {
   const match =
     typeof value === "string" &&
-    /^(\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d)(?:\.(\d{1,6}))?(Z|[+-]\d\d:\d\d)$/.exec(
-      value,
-    );
+    /^(\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d)(?:\.(\d{1,6}))?(Z|[+-]\d\d:\d\d)$/.exec(value);
   if (!match) return null;
   const seconds = Date.parse(`${match[1]}${match[3]}`);
-  return Number.isFinite(seconds)
-    ? [seconds, (match[2] || "").padEnd(6, "0")]
-    : null;
+  return Number.isFinite(seconds) ? [seconds, (match[2] || "").padEnd(6, "0")] : null;
 };
 const compareEnergyIntervalTimes = (left, right) =>
   left[0] - right[0] || (left[1] < right[1] ? -1 : left[1] > right[1] ? 1 : 0);
@@ -44,12 +40,7 @@ const energyIntervalSignature = (energy) => {
 };
 const mergeEnergyIntervals = (current, incoming, startedAt) => {
   if (!incoming) return incoming;
-  const {
-    intervals,
-    interval_delta: delta,
-    intervals_available,
-    ...energy
-  } = incoming;
+  const { intervals, interval_delta: delta, intervals_available, ...energy } = incoming;
   // Omitted evidence is legacy. It neither inherits a previous series nor
   // supplies a cursor merely because its scalar accounted_at advanced.
   if (!Object.hasOwn(incoming, "interval_delta")) return energy;
@@ -10968,9 +10959,7 @@ class SaunaPanel extends HTMLElement {
     if (event?.kind === "ventilation_confirmed") {
       const data = this.diagnosticData(),
         at = stamp(
-          event.trace_at ||
-            data.traceTimes.get(event.event_id) ||
-            event.effective_at,
+          event.trace_at || data.traceTimes.get(event.event_id) || event.effective_at,
         ),
         candidates =
           !traces || traces === data.traces
@@ -10997,10 +10986,7 @@ class SaunaPanel extends HTMLElement {
         person_strong: ["strong_humidity_slope", "person_strong"],
         person_weak: ["weak_humidity_slope", "person_weak"],
         infusion: ["infusion_humidity_delta", "infusion"],
-        ventilation_complete: [
-          "ventilation_water_slope",
-          "ventilation_complete",
-        ],
+        ventilation_complete: ["ventilation_water_slope", "ventilation_complete"],
       }[event?.kind] || null
     );
   }

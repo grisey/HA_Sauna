@@ -47,12 +47,17 @@ def load_owners():
         for name, module in sys.modules.items()
         if name.startswith("_proxy_forms_core.") and getattr(module, "__file__", None)
     }
-    paths.update((
-        Path(__file__), HERE / "detector_replay.py", HERE / "proxy_forms.py",
-        HERE / "replay_time_axis.py", ROOT / "custom_components/ha_sauna/defaults.json",
-        ROOT / "custom_components/ha_sauna/core/detector.py",
-        ROOT / "tests/settings.json",
-    ))
+    paths.update(
+        (
+            Path(__file__),
+            HERE / "detector_replay.py",
+            HERE / "proxy_forms.py",
+            HERE / "replay_time_axis.py",
+            ROOT / "custom_components/ha_sauna/defaults.json",
+            ROOT / "custom_components/ha_sauna/core/detector.py",
+            ROOT / "tests/settings.json",
+        )
+    )
     return modules, [replay._identity(path) for path in sorted(paths)]
 
 
@@ -62,15 +67,19 @@ def contrast_record(contrasts):
         return None
     record = {
         field.name: getattr(contrasts, field.name)
-        for field in fields(contrasts) if field.name != "positions"
+        for field in fields(contrasts)
+        if field.name != "positions"
     }
     for name in ("humidity_rise_onset", "humidity_fall_onset"):
         record[name] = getattr(contrasts, name)
-    record["positions"] = [{
-        "position": position,
-        "temperature": {"$ref": f"#/channel_windows/{position}_temperature"},
-        "humidity": {"$ref": f"#/channel_windows/{position}_humidity"},
-    } for position, _ in contrasts.positions]
+    record["positions"] = [
+        {
+            "position": position,
+            "temperature": {"$ref": f"#/channel_windows/{position}_temperature"},
+            "humidity": {"$ref": f"#/channel_windows/{position}_humidity"},
+        }
+        for position, _ in contrasts.positions
+    ]
     return record
 
 
@@ -79,8 +88,11 @@ def kink_record(position, kink):
     if kink is None:
         return None
     return {
-        **{field.name: getattr(kink, field.name)
-           for field in fields(kink) if field.name != "window"},
+        **{
+            field.name: getattr(kink, field.name)
+            for field in fields(kink)
+            if field.name != "window"
+        },
         "window": {"$ref": f"#/channel_windows/{position}_humidity"},
     }
 
@@ -95,32 +107,49 @@ def humidity_onset_gates(contrasts, kinks, *, significance, factor):
     """
     result = {}
     for name, direction in (("rise", 1), ("fall", -1)):
-        value = (getattr(contrasts, f"humidity_{name}_onset")
-                 if contrasts is not None else None)
+        value = (
+            getattr(contrasts, f"humidity_{name}_onset")
+            if contrasts is not None
+            else None
+        )
         raw = value > significance if value is not None else None
         positions = {
-            position: direction * kink.effective_change > 0 if kink is not None else None
+            position: direction * kink.effective_change > 0
+            if kink is not None
+            else None
             for position, kink in kinks.items()
         }
-        directed = bool(positions) and (factor == 0 or all(
-            passed is True for passed in positions.values()
-        ))
+        directed = bool(positions) and (
+            factor == 0 or all(passed is True for passed in positions.values())
+        )
         factor_range = None
         if raw is True:
             complete = bool(kinks) and all(kink is not None for kink in kinks.values())
             factor_range = {
                 "status": "ready" if complete else "unknown",
-                "minimum": 0.0, "minimum_inclusive": True,
+                "minimum": 0.0,
+                "minimum_inclusive": True,
                 "maximum": min(
                     direction * kink.delta / kink.used_scale for kink in kinks.values()
-                ) if complete else None,
+                )
+                if complete
+                else None,
                 "maximum_inclusive": False,
             }
         result[name] = {
-            "raw": {"result": raw, "value": value,
-                    "operator": ">", "threshold": significance},
-            "kink": {"result": directed, "direction": direction,
-                     "factor": factor, "applied": factor != 0, "positions": positions},
+            "raw": {
+                "result": raw,
+                "value": value,
+                "operator": ">",
+                "threshold": significance,
+            },
+            "kink": {
+                "result": directed,
+                "direction": direction,
+                "factor": factor,
+                "applied": factor != 0,
+                "positions": positions,
+            },
             "with_kink": raw and directed if raw is not None else None,
             "factor_zero_result": raw,
             "allowed_factor_range": factor_range,
@@ -137,7 +166,8 @@ def audit_group(group, inputs, modules, parameters, origin, output_dir, provenan
     roles = tuple(replay.reader.ROLES)
     if set(roles) != {
         f"{position}_{quantity.value}"
-        for position in expected for quantity in quantity_type
+        for position in expected
+        for quantity in quantity_type
     }:
         raise ValueError("Reader roles differ from the required product T/RH positions")
     settings = parameters.as_dict()
@@ -147,11 +177,13 @@ def audit_group(group, inputs, modules, parameters, origin, output_dir, provenan
     cached_kinks = {position: None for position in expected}
     gaps = {
         role: settings[f"curve_original_gap_{quantity}_{position}_seconds"]
-        for role in roles for position, quantity in (role.split("_", 1),)
+        for role in roles
+        for position, quantity in (role.split("_", 1),)
     }
     scales = {
         role: settings[f"curve_original_noise_{quantity}_{position}"]
-        for role in roles for position, quantity in (role.split("_", 1),)
+        for role in roles
+        for position, quantity in (role.split("_", 1),)
     }
     pending_water = {position: {} for position in expected}
     events = replay._events(group, inputs["sessions"], inputs["axes"])
@@ -159,23 +191,34 @@ def audit_group(group, inputs, modules, parameters, origin, output_dir, provenan
     counts = Counter()
     kink_helper_calls = Counter()
     onset_counts = {
-        direction: Counter({
-            "raw_true": 0, "raw_false": 0, "raw_unknown": 0,
-            "with_kink_true": 0, "with_kink_false": 0, "with_kink_unknown": 0,
-            "raw_true_suppressed": 0,
-        }) for direction in ("rise", "fall")
+        direction: Counter(
+            {
+                "raw_true": 0,
+                "raw_false": 0,
+                "raw_unknown": 0,
+                "with_kink_true": 0,
+                "with_kink_false": 0,
+                "with_kink_unknown": 0,
+                "raw_true_suppressed": 0,
+            }
+        )
+        for direction in ("rise", "fall")
     }
     started = time.perf_counter()
     consumed = 0
     last_at = None
     metadata = {
-        "type": "metadata", "schema_version": 2, "group": group,
-        "manifest": inputs["manifest_identity"], "sources": provenance,
+        "type": "metadata",
+        "schema_version": 2,
+        "group": group,
+        "manifest": inputs["manifest_identity"],
+        "sources": provenance,
         "parameters": settings,
         "parameters_sha256": replay.reader.sha(replay._canonical(settings)),
         "expected_positions": expected,
-        "time_axes": {member["id"]: inputs["axes"][member["id"]]
-                      for member in group["recordings"]},
+        "time_axes": {
+            member["id"]: inputs["axes"][member["id"]] for member in group["recordings"]
+        },
         "input_provenance": {
             member["id"]: inputs["sessions"][member["id"]]["provenance"]
             for member in group["recordings"]
@@ -251,6 +294,7 @@ def audit_group(group, inputs, modules, parameters, origin, output_dir, provenan
     }
     completion = {"type": "completion", "group_id": group["id"], "status": "running"}
     with gzip.GzipFile(filename=str(diagnostic_path), mode="wb", mtime=0) as stream:
+
         def emit(row):
             counts[row["type"]] += 1
             stream.write(replay._canonical(replay.relative(row, origin)) + b"\n")
@@ -259,8 +303,11 @@ def audit_group(group, inputs, modules, parameters, origin, output_dir, provenan
         try:
             for seconds, _, source_index, recording, role, point in events:
                 at = origin + timedelta(seconds=seconds)
-                if (not point["valid"] or not point["fit_eligible"]
-                        or point["time_basis"] != "original_received_time"):
+                if (
+                    not point["valid"]
+                    or not point["fit_eligible"]
+                    or point["time_basis"] != "original_received_time"
+                ):
                     raise ValueError(
                         f"Unsupported original validity/time basis: {recording}/{source_index}",
                     )
@@ -269,19 +316,25 @@ def audit_group(group, inputs, modules, parameters, origin, output_dir, provenan
                         f"Unsupported same-time correction or time regression: "
                         f"{recording}/{source_index}/{role}",
                     )
-                if points[role] and (
-                    at - points[role][-1][0]
-                ).total_seconds() > settings["sensor_timeout_seconds"]:
+                if (
+                    points[role]
+                    and (at - points[role][-1][0]).total_seconds()
+                    > settings["sensor_timeout_seconds"]
+                ):
                     points[role].clear()
                 points[role].append((at, point["value"]))
                 cached[role] = owner.original_window(
-                    tuple(points[role]), count=count, scale=scales[role],
-                    max_gap_seconds=gaps[role], at=at,
+                    tuple(points[role]),
+                    count=count,
+                    scale=scales[role],
+                    max_gap_seconds=gaps[role],
+                    at=at,
                 )
                 available = {
-                    name: feature if feature is not None and (
-                        at - feature.newest_at
-                    ).total_seconds() <= gaps[name] else None
+                    name: feature
+                    if feature is not None
+                    and (at - feature.newest_at).total_seconds() <= gaps[name]
+                    else None
                     for name, feature in cached.items()
                 }
                 changed_position, quantity = role.split("_", 1)
@@ -289,16 +342,20 @@ def audit_group(group, inputs, modules, parameters, origin, output_dir, provenan
                     cached_kinks[changed_position] = None
                     if available[role] is not None:
                         cached_kinks[changed_position] = owner.original_kink_tolerance(
-                            samples=points[role], window=available[role],
+                            samples=points[role],
+                            window=available[role],
                             factor=settings["curve_original_kink_factor"],
-                            min_history_windows=settings["curve_original_kink_history_windows"],
+                            min_history_windows=settings[
+                                "curve_original_kink_history_windows"
+                            ],
                             max_gap_seconds=gaps[role],
                         )
                         kink_helper_calls[role] += 1
                 kinks = {
-                    name: kink if kink is not None and (
-                        kink.window is available[f"{name}_humidity"]
-                    ) else None
+                    name: kink
+                    if kink is not None
+                    and (kink.window is available[f"{name}_humidity"])
+                    else None
                     for name, kink in cached_kinks.items()
                 }
                 windows = {}
@@ -306,10 +363,16 @@ def audit_group(group, inputs, modules, parameters, origin, output_dir, provenan
                     temperature = available[f"{position}_temperature"]
                     humidity = available[f"{position}_humidity"]
                     if temperature is not None and humidity is not None:
-                        windows[position] = owner.OriginalPositionWindows(temperature, humidity)
-                contrasts = owner.original_contrasts(windows, expected_positions=expected)
+                        windows[position] = owner.OriginalPositionWindows(
+                            temperature, humidity
+                        )
+                contrasts = owner.original_contrasts(
+                    windows, expected_positions=expected
+                )
                 onset_gates = humidity_onset_gates(
-                    contrasts, kinks, significance=settings["curve_original_significance"],
+                    contrasts,
+                    kinks,
+                    significance=settings["curve_original_significance"],
                     factor=settings["curve_original_kink_factor"],
                 )
                 position, quantity = role.split("_", 1)
@@ -324,40 +387,61 @@ def audit_group(group, inputs, modules, parameters, origin, output_dir, provenan
                         del pending[stamp]
                         continue
                     support = owner.original_water_pair_support(
-                        item["sample"], tuple(points[f"{position}_temperature"]),
+                        item["sample"],
+                        tuple(points[f"{position}_temperature"]),
                         temperature_scale=scales[f"{position}_temperature"],
                         humidity_scale=scales[f"{position}_humidity"],
-                        max_gap_seconds=gaps[f"{position}_temperature"], at=at,
+                        max_gap_seconds=gaps[f"{position}_temperature"],
+                        at=at,
                     )
                     item["last_status"] = support.status
-                    water_support.append({
-                        "position": position, "humidity_sample": item["sample"],
-                        "original_support": support,
-                    })
+                    water_support.append(
+                        {
+                            "position": position,
+                            "humidity_sample": item["sample"],
+                            "original_support": support,
+                        }
+                    )
                     if support.status == "ready":
                         del pending[stamp]
                 if len(pending) > settings["curve_max_points"]:
                     raise ValueError(
                         f"Unresolved native water-pair support exceeds retention: {position}",
                     )
-                emit({
-                    "type": "original_prefix", "received_at": at,
-                    "recording_id": recording, "source_index": source_index,
-                    "local_t_s": point["t"], "role": role,
-                    "source": f"bound-role:{role}", "time_basis": "received",
-                    "original": True, "value": point["value"],
-                    "channel_windows": available,
-                    "original_contrasts": contrast_record(contrasts),
-                    "original_humidity_kinks": {
-                        position: kink_record(position, kink) for position, kink in kinks.items()
-                    },
-                    "humidity_onset_gates": onset_gates,
-                    "water_support": water_support,
-                })
+                emit(
+                    {
+                        "type": "original_prefix",
+                        "received_at": at,
+                        "recording_id": recording,
+                        "source_index": source_index,
+                        "local_t_s": point["t"],
+                        "role": role,
+                        "source": f"bound-role:{role}",
+                        "time_basis": "received",
+                        "original": True,
+                        "value": point["value"],
+                        "channel_windows": available,
+                        "original_contrasts": contrast_record(contrasts),
+                        "original_humidity_kinks": {
+                            position: kink_record(position, kink)
+                            for position, kink in kinks.items()
+                        },
+                        "humidity_onset_gates": onset_gates,
+                        "water_support": water_support,
+                    }
+                )
                 for direction, gate in onset_gates.items():
-                    for name, passed in (("raw", gate["raw"]["result"]),
-                                         ("with_kink", gate["with_kink"])):
-                        status = "unknown" if passed is None else "true" if passed else "false"
+                    for name, passed in (
+                        ("raw", gate["raw"]["result"]),
+                        ("with_kink", gate["with_kink"]),
+                    ):
+                        status = (
+                            "unknown"
+                            if passed is None
+                            else "true"
+                            if passed
+                            else "false"
+                        )
                         onset_counts[direction][f"{name}_{status}"] += 1
                     if gate["raw"]["result"] is True and gate["with_kink"] is False:
                         onset_counts[direction]["raw_true_suppressed"] += 1
@@ -369,19 +453,25 @@ def audit_group(group, inputs, modules, parameters, origin, output_dir, provenan
             raise
         finally:
             completion.update(
-                original_rows=len(events), consumed_originals=consumed,
-                received_through=last_at, counts=dict(counts),
+                original_rows=len(events),
+                consumed_originals=consumed,
+                received_through=last_at,
+                counts=dict(counts),
                 humidity_onset_prefix_counts={
-                    direction: dict(values) for direction, values in onset_counts.items()
+                    direction: dict(values)
+                    for direction, values in onset_counts.items()
                 },
                 kink_helper_calls_by_role=dict(kink_helper_calls),
-                pending_water={position: len(pending)
-                               for position, pending in pending_water.items()},
+                pending_water={
+                    position: len(pending)
+                    for position, pending in pending_water.items()
+                },
                 wall_seconds=time.perf_counter() - started,
             )
             emit(completion)
     return {
-        **completion, "diagnostics": replay._identity(diagnostic_path),
+        **completion,
+        "diagnostics": replay._identity(diagnostic_path),
         "rows_by_role": dict(Counter(event[4] for event in events)),
     }
 
@@ -399,12 +489,18 @@ def run_audit(manifest_path, output_dir, recordings=None):
     output_dir.mkdir(parents=True, exist_ok=True)
     report_path = output_dir / "original-window-audit.json"
     report = {
-        "schema_version": 2, "manifest": inputs["manifest_identity"],
-        "sources": provenance, "status": "running", "active_group": None, "groups": [],
+        "schema_version": 2,
+        "manifest": inputs["manifest_identity"],
+        "sources": provenance,
+        "status": "running",
+        "active_group": None,
+        "groups": [],
     }
 
     def save():
-        report_path.write_bytes(replay._canonical(replay.relative(report, origin)) + b"\n")
+        report_path.write_bytes(
+            replay._canonical(replay.relative(report, origin)) + b"\n"
+        )
 
     save()
     try:
@@ -413,12 +509,21 @@ def run_audit(manifest_path, output_dir, recordings=None):
             save()
             print(f"ORIGINAL WINDOWS {group['id']} BEGIN", flush=True)
             result = audit_group(
-                group, inputs, modules, parameters, origin, output_dir, provenance,
+                group,
+                inputs,
+                modules,
+                parameters,
+                origin,
+                output_dir,
+                provenance,
             )
             report["groups"].append(result)
-            print(f"ORIGINAL WINDOWS {group['id']} END "
-                  f"originals={result['consumed_originals']} "
-                  f"wall={result['wall_seconds']:.1f}s", flush=True)
+            print(
+                f"ORIGINAL WINDOWS {group['id']} END "
+                f"originals={result['consumed_originals']} "
+                f"wall={result['wall_seconds']:.1f}s",
+                flush=True,
+            )
         report.update(status="completed", active_group=None)
     except BaseException as error:
         report.update(status="failed", error=f"{type(error).__name__}: {error}")
@@ -430,9 +535,15 @@ def run_audit(manifest_path, output_dir, recordings=None):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--manifest", type=Path, default=replay.DEFAULT_MANIFEST,
-                        help="Manifest with fixture paths relative to repository tests/")
-    parser.add_argument("--recordings", help="Comma-separated IDs; select only whole time groups")
+    parser.add_argument(
+        "--manifest",
+        type=Path,
+        default=replay.DEFAULT_MANIFEST,
+        help="Manifest with fixture paths relative to repository tests/",
+    )
+    parser.add_argument(
+        "--recordings", help="Comma-separated IDs; select only whole time groups"
+    )
     parser.add_argument("--output", type=Path, required=True)
     args = parser.parse_args()
     if platform.system() != "Linux":

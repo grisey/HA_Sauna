@@ -40,7 +40,9 @@ def curve_policy():
 
 
 def trace_points(stop):
-    return [(T0 + timedelta(seconds=second), trace(second)[0]) for second in range(stop)]
+    return [
+        (T0 + timedelta(seconds=second), trace(second)[0]) for second in range(stop)
+    ]
 
 
 def level_trace_points(*, noisy=True):
@@ -52,8 +54,10 @@ def level_trace_points(*, noisy=True):
     noise = trace(151)[1] - trace(150)[1] if noisy else 0
     pattern = (-2, -1, 1, 2, 1, -1)
     return [
-        (T0 + timedelta(seconds=second),
-         trace(second)[1] + noise * pattern[index % len(pattern)])
+        (
+            T0 + timedelta(seconds=second),
+            trace(second)[1] + noise * pattern[index % len(pattern)],
+        )
         for index, second in enumerate(range(85, 150))
     ]
 
@@ -66,11 +70,25 @@ def recovery_trace_points(degree=2):
     falling_step = trace(70)[0] - trace(71)[0]
     slower_step = trace(280)[0] - trace(281)[0]
     return [
-        (stamp, trace(0)[0] + falling_step * tail / 2 * (
-            ((stamp - valley).total_seconds() / tail)**2
-            + (slower_step / falling_step * ((stamp - valley).total_seconds() / tail)**3
-               if degree == 3 else 0)
-        ) + value - trace(100)[1])
+        (
+            stamp,
+            trace(0)[0]
+            + falling_step
+            * tail
+            / 2
+            * (
+                ((stamp - valley).total_seconds() / tail) ** 2
+                + (
+                    slower_step
+                    / falling_step
+                    * ((stamp - valley).total_seconds() / tail) ** 3
+                    if degree == 3
+                    else 0
+                )
+            )
+            + value
+            - trace(100)[1],
+        )
         for stamp, value in source
     ]
 
@@ -106,9 +124,13 @@ class CurveLevelTests(unittest.TestCase):
                 # Test oracle: both tails still decline throughout the window.
                 # The small per-second change comes from the existing trace.
                 declining = [
-                    (at, value + small_step * span * (
-                        1 - (at - points[0][0]).total_seconds() / span
-                    ) ** degree)
+                    (
+                        at,
+                        value
+                        + small_step
+                        * span
+                        * (1 - (at - points[0][0]).total_seconds() / span) ** degree,
+                    )
                     for at, value in points
                 ]
                 result = curve_level(declining, policy=curve_policy())
@@ -123,7 +145,9 @@ class CurveLevelTests(unittest.TestCase):
         origin = datetime.fromisoformat(fixture("session")["origin"])
         samples = {"upper_humidity": [], "lower_humidity": []}
         with gzip.open(
-            ROOT / "fixtures/replay/R04.samples.jsonl.gz", "rt", encoding="utf-8",
+            ROOT / "fixtures/replay/R04.samples.jsonl.gz",
+            "rt",
+            encoding="utf-8",
         ) as stream:
             for line in stream:
                 row = json.loads(line)
@@ -135,7 +159,8 @@ class CurveLevelTests(unittest.TestCase):
         for role, points in samples.items():
             with self.subTest(role=role):
                 self.assertGreaterEqual(
-                    len(points), 2 * curve_policy().min_side_samples,
+                    len(points),
+                    2 * curve_policy().min_side_samples,
                 )
                 result = curve_level(points, policy=curve_policy())
                 self.assertTrue(result is None or result.evidence == "rejects", result)
@@ -181,8 +206,7 @@ class CurveLevelTests(unittest.TestCase):
         policy = curve_policy()
         count = 2 * policy.max_points + 1
         points = [
-            (T0 + timedelta(seconds=index), trace(100)[1])
-            for index in range(count)
+            (T0 + timedelta(seconds=index), trace(100)[1]) for index in range(count)
         ]
         # One interior original differs, even if bounded time sampling would
         # omit it. Neither a level nor exact equality may be invented from that.
@@ -199,10 +223,13 @@ class CurveTrendTests(unittest.TestCase):
         points = []
         for second in range(23, 84):
             fall = max(0, min(second - 30, 70 - second, 20))
-            points.append((T0 + timedelta(seconds=second), 80 - .04 * fall))
+            points.append((T0 + timedelta(seconds=second), 80 - 0.04 * fall))
         result = curve_change(
-            points, policy=curve_policy(), onset_at=T0 + timedelta(seconds=71),
-            direction=-1, onset_not_before=T0 + timedelta(seconds=57),
+            points,
+            policy=curve_policy(),
+            onset_at=T0 + timedelta(seconds=71),
+            direction=-1,
+            onset_not_before=T0 + timedelta(seconds=57),
         )
         self.assertIsNotNone(result)
         self.assertEqual(result.evidence, "supports")
@@ -210,7 +237,8 @@ class CurveTrendTests(unittest.TestCase):
         self.assertEqual(result.after_trend.direction, 0)
         self.assertTrue(result.after_trend.exact_constant)
         self.assertAlmostEqual(
-            result.slope_after - result.slope_before, result.slope_change,
+            result.slope_after - result.slope_before,
+            result.slope_change,
         )
 
     def test_actual_falling_flat_and_rising_flanks_have_their_own_direction(self):
@@ -220,8 +248,10 @@ class CurveTrendTests(unittest.TestCase):
                 # Irregular original times stay on the existing trace's own
                 # linear pieces; no measurement is interpolated by the helper.
                 points = [
-                    (T0 + timedelta(seconds=second + (index % 3) / 4),
-                     trace(second + (index % 3) / 4)[0])
+                    (
+                        T0 + timedelta(seconds=second + (index % 3) / 4),
+                        trace(second + (index % 3) / 4)[0],
+                    )
                     for index, second in enumerate(seconds)
                 ]
                 result = curve_trend(points, policy=curve_policy())
@@ -323,7 +353,9 @@ class CurveRecoveryTests(unittest.TestCase):
                 for originals in (points[:-1], points):
                     cutoff = originals[-1][0] - window
                     result = curve_recovery(
-                        originals, policy=policy, current_not_before=cutoff,
+                        originals,
+                        policy=policy,
+                        current_not_before=cutoff,
                     )
                     self.assertIsNotNone(result)
                     self.assertEqual(result.evidence, "supports", result)
@@ -337,7 +369,9 @@ class CurveRecoveryTests(unittest.TestCase):
                     )
                     self.assertEqual(result.before_trend.direction, -1)
                     self.assertEqual(result.after_trend.direction, 1)
-                    self.assertGreaterEqual(result.before_count, policy.min_side_samples)
+                    self.assertGreaterEqual(
+                        result.before_count, policy.min_side_samples
+                    )
                     self.assertGreaterEqual(result.after_count, policy.min_side_samples)
                     self.assertLess(result.decline_newest_at, result.valley_at)
                     self.assertLess(result.valley_at, result.recovery_start_at)
@@ -345,13 +379,17 @@ class CurveRecoveryTests(unittest.TestCase):
                     self.assertLess(result.decline_start_at, cutoff)
                     self.assertEqual(result.recovery_newest_at, originals[-1][0])
                     for stamp in (
-                        result.decline_start_at, result.decline_newest_at,
-                        result.recovery_start_at, result.recovery_newest_at,
+                        result.decline_start_at,
+                        result.decline_newest_at,
+                        result.recovery_start_at,
+                        result.recovery_newest_at,
                     ):
                         self.assertIn(stamp, {stamp for stamp, _ in originals})
                     if previous is not None:
                         self.assertGreater(result.newest_at, previous.newest_at)
-                        self.assertGreater(result.recovery_newest_at, previous.recovery_newest_at)
+                        self.assertGreater(
+                            result.recovery_newest_at, previous.recovery_newest_at
+                        )
                     previous = result
 
     def test_falling_level_heating_and_one_excursion_do_not_supply_full_recovery(self):
@@ -361,20 +399,36 @@ class CurveRecoveryTests(unittest.TestCase):
         falling_step = trace(70)[0] - trace(71)[0]
         variants = {
             "continuing fall": [
-                (stamp, trace(0)[0] - falling_step * (stamp - start).total_seconds()
-                 + value - trace(100)[1])
+                (
+                    stamp,
+                    trace(0)[0]
+                    - falling_step * (stamp - start).total_seconds()
+                    + value
+                    - trace(100)[1],
+                )
                 for stamp, value in source
             ],
             "fall slows to an endpoint": [
-                (stamp, trace(0)[0] + falling_step * (stop - stamp).total_seconds()**2 / (2 * span)
-                 + value - trace(100)[1])
+                (
+                    stamp,
+                    trace(0)[0]
+                    + falling_step * (stop - stamp).total_seconds() ** 2 / (2 * span)
+                    + value
+                    - trace(100)[1],
+                )
                 for stamp, value in source
             ],
-            "level": [(stamp, trace(0)[0] + value - trace(100)[1])
-                      for stamp, value in source],
+            "level": [
+                (stamp, trace(0)[0] + value - trace(100)[1]) for stamp, value in source
+            ],
             "continuing heat": [
-                (stamp, trace(0)[0] + falling_step * (stamp - start).total_seconds()
-                 + value - trace(100)[1])
+                (
+                    stamp,
+                    trace(0)[0]
+                    + falling_step * (stamp - start).total_seconds()
+                    + value
+                    - trace(100)[1],
+                )
                 for stamp, value in source
             ],
         }
@@ -385,8 +439,10 @@ class CurveRecoveryTests(unittest.TestCase):
         for name, points in variants.items():
             with self.subTest(shape=name):
                 result = curve_recovery(
-                    points, policy=curve_policy(),
-                    current_not_before=stop - timedelta(
+                    points,
+                    policy=curve_policy(),
+                    current_not_before=stop
+                    - timedelta(
                         seconds=parameters().values["door_window_seconds"],
                     ),
                 )
@@ -402,18 +458,23 @@ class CurveRecoveryTests(unittest.TestCase):
         self.assertEqual(supported.evidence, "supports", supported)
         self.assertEqual(supported.recovery_start_at, cutoff)
         self.assertEqual(
-            supported, curve_recovery(points, policy=policy, current_not_before=cutoff),
+            supported,
+            curve_recovery(points, policy=policy, current_not_before=cutoff),
         )
-        rising_only = points[len(points) // 2:]
+        rising_only = points[len(points) // 2 :]
         cases = (
             (rising_only, cutoff),
             (points, points[-(policy.min_side_samples - 1)][0]),
             (points, points[-1][0] + window),
         )
         for originals, current_not_before in cases:
-            with self.subTest(start=originals[0][0], current_not_before=current_not_before):
+            with self.subTest(
+                start=originals[0][0], current_not_before=current_not_before
+            ):
                 result = curve_recovery(
-                    originals, policy=policy, current_not_before=current_not_before,
+                    originals,
+                    policy=policy,
+                    current_not_before=current_not_before,
                 )
                 self.assertTrue(result is None or result.evidence == "rejects", result)
 
@@ -436,7 +497,9 @@ class CurveChangeTests(unittest.TestCase):
         window_start = opening_confirmed_at - lookback
         origin = datetime.fromisoformat(fixture("session")["origin"])
         samples = {"upper_humidity": [], "lower_humidity": []}
-        with gzip.open(ROOT / "fixtures/replay/R04.samples.jsonl.gz", "rt", encoding="utf-8") as stream:
+        with gzip.open(
+            ROOT / "fixtures/replay/R04.samples.jsonl.gz", "rt", encoding="utf-8"
+        ) as stream:
             for line in stream:
                 row = json.loads(line)
                 at = origin + timedelta(seconds=row["t"])
@@ -459,13 +522,18 @@ class CurveChangeTests(unittest.TestCase):
                 full_window_fits = []
                 while observed_at < closed_at:
                     previous = cursor
-                    while cursor < len(originals) and originals[cursor][0] <= observed_at:
+                    while (
+                        cursor < len(originals) and originals[cursor][0] <= observed_at
+                    ):
                         cursor += 1
                     if cursor == previous:
                         observed_at += grid
                         continue
-                    points = [point for point in originals[:cursor]
-                              if observed_at - lookback <= point[0] <= observed_at]
+                    points = [
+                        point
+                        for point in originals[:cursor]
+                        if observed_at - lookback <= point[0] <= observed_at
+                    ]
                     full_window_fits = []
 
                     def observed_models(times, values, noise, knots, policy):
@@ -478,7 +546,9 @@ class CurveChangeTests(unittest.TestCase):
                         evaluations[role] += 1
                         evaluation_started = perf_counter()
                         result = curve_change(
-                            points, policy=policy, direction=1,
+                            points,
+                            policy=policy,
+                            direction=1,
                             onset_not_before=opened_at,
                         )
                         curve_seconds += perf_counter() - evaluation_started
@@ -499,12 +569,17 @@ class CurveChangeTests(unittest.TestCase):
                     }
                     knot_times = dict(knots)
                     search_cost = 2 * log(len(knots))
-                    knot_diagnostics.extend({
-                        "original_at": original_at[knot_times[index]].isoformat(),
-                        "hinge": coefficients[3],
-                        "slope_change_per_second": coefficients[3] / span,
-                        "score_gain_after_search": smooth_score - score - search_cost,
-                    } for score, index, coefficients in changes)
+                    knot_diagnostics.extend(
+                        {
+                            "original_at": original_at[knot_times[index]].isoformat(),
+                            "hinge": coefficients[3],
+                            "slope_change_per_second": coefficients[3] / span,
+                            "score_gain_after_search": smooth_score
+                            - score
+                            - search_cost,
+                        }
+                        for score, index, coefficients in changes
+                    )
                 diagnostic = (
                     f"{role}: {result!r}; first_observed_at={first_observed_at!r}; "
                     f"evaluations={evaluations[role]}; full_window_knots={knot_diagnostics!r}"
@@ -514,14 +589,17 @@ class CurveChangeTests(unittest.TestCase):
                 self.assertIsNotNone(first_observed_at, msg=diagnostic)
                 self.assertLess(first_observed_at, closed_at, msg=diagnostic)
                 self.assertLessEqual(
-                    abs((result.onset_at - reference).total_seconds()), 10,
+                    abs((result.onset_at - reference).total_seconds()),
+                    10,
                     msg=diagnostic,
                 )
                 self.assertLess(result.slope_before, result.slope_after, msg=diagnostic)
                 self.assertLess(result.slope_after, 0, msg=diagnostic)
                 self.assertIn(result.onset_at, {at for at, _ in points}, msg=diagnostic)
                 self.assertEqual(result.newest_at, points[-1][0], msg=diagnostic)
-                self.assertTrue(all(at <= first_observed_at for at, _ in points), msg=diagnostic)
+                self.assertTrue(
+                    all(at <= first_observed_at for at, _ in points), msg=diagnostic
+                )
         print(
             f"R04 candidate scan: evaluations={sum(evaluations.values())} "
             f"per_role={evaluations!r} curve_change_seconds={curve_seconds:.6f} "
@@ -534,7 +612,10 @@ class CurveChangeTests(unittest.TestCase):
         onset = T0 + timedelta(seconds=70)
         with patch.object(curves, "_models", wraps=curves._models) as fits:
             result = curve_change(
-                points, policy=policy, onset_at=onset, direction=-1,
+                points,
+                policy=policy,
+                onset_at=onset,
+                direction=-1,
                 onset_not_before=onset,
             )
         self.assertIsNotNone(result)
@@ -544,15 +625,23 @@ class CurveChangeTests(unittest.TestCase):
         self.assertEqual(len(fits.call_args_list[0].args[0]), len(points))
         self.assertEqual(result.before_count + result.after_count, len(points))
         opposite = curve_change(
-            points, policy=policy, onset_at=onset, direction=1,
+            points,
+            policy=policy,
+            onset_at=onset,
+            direction=1,
             onset_not_before=onset,
         )
         self.assertIsNotNone(opposite)
         self.assertEqual(opposite.evidence, "rejects")
-        self.assertIsNone(curve_change(
-            points, policy=policy, onset_at=onset, direction=-1,
-            onset_not_before=onset + timedelta.resolution,
-        ))
+        self.assertIsNone(
+            curve_change(
+                points,
+                policy=policy,
+                onset_at=onset,
+                direction=-1,
+                onset_not_before=onset + timedelta.resolution,
+            )
+        )
 
     def test_positive_change_can_leave_both_slopes_negative(self):
         policy = replace(curve_policy(), max_candidates=curve_policy().max_points)
@@ -574,12 +663,15 @@ class CurveChangeTests(unittest.TestCase):
         # This is its full 60-second original window at the false close tick;
         # neither the frozen hypothesis nor its owner floor can move for a fit.
         points = [
-            (T0 + timedelta(seconds=second), 80 - .04 * max(0, second - 70))
+            (T0 + timedelta(seconds=second), 80 - 0.04 * max(0, second - 70))
             for second in range(43, 104)
         ]
         onset = T0 + timedelta(seconds=90)
         result = curve_change(
-            points, policy=curve_policy(), onset_at=onset, direction=1,
+            points,
+            policy=curve_policy(),
+            onset_at=onset,
+            direction=1,
             onset_not_before=T0 + timedelta(seconds=68),
         )
         self.assertIsNotNone(result)
@@ -593,15 +685,21 @@ class CurveChangeTests(unittest.TestCase):
         noisy_points = [
             (at, value + noisy_level - trace(100)[1])
             for (at, value), (_, noisy_level) in zip(
-                points, level_trace_points()[:len(points)], strict=True,
+                points,
+                level_trace_points()[: len(points)],
+                strict=True,
             )
         ]
         noisy_result = curve_change(
-            noisy_points, policy=curve_policy(), onset_at=onset, direction=1,
+            noisy_points,
+            policy=curve_policy(),
+            onset_at=onset,
+            direction=1,
             onset_not_before=T0 + timedelta(seconds=68),
         )
         self.assertTrue(
-            noisy_result is None or noisy_result.evidence == "rejects", noisy_result,
+            noisy_result is None or noisy_result.evidence == "rejects",
+            noisy_result,
         )
 
     def test_owner_floor_preserves_real_braking_after_earlier_heating(self):
@@ -615,15 +713,21 @@ class CurveChangeTests(unittest.TestCase):
         # existing model family; their input rates come from the trace fixture.
         # Before the owner floor, the old heating has the opposite local sense.
         points = [
-            (T0 + timedelta(seconds=second),
-             trace(0)[0] - falling_step * (second - opening)**2 / (braking - opening)
-             + (2 * falling_step - slower_step) * max(0, second - braking))
+            (
+                T0 + timedelta(seconds=second),
+                trace(0)[0]
+                - falling_step * (second - opening) ** 2 / (braking - opening)
+                + (2 * falling_step - slower_step) * max(0, second - braking),
+            )
             for second in range(43, braking + 2 * policy.min_side_samples)
         ]
         onset = T0 + timedelta(seconds=braking)
         with patch.object(curves, "_models", wraps=curves._models) as fits:
             result = curve_change(
-                points, policy=policy, onset_at=onset, direction=1,
+                points,
+                policy=policy,
+                onset_at=onset,
+                direction=1,
                 onset_not_before=T0 + timedelta(seconds=opening),
             )
         self.assertIsNotNone(result)
@@ -668,16 +772,22 @@ class CurveChangeTests(unittest.TestCase):
         self.assertIsNotNone(later)
         self.assertEqual(later.evidence, "supports")
         self.assertEqual(later.onset_at, initial.onset_at)
-        self.assertIsNone(curve_change(
-            trace_points(85), policy=policy,
-            onset_at=initial.onset_at + timedelta(microseconds=1),
-        ))
+        self.assertIsNone(
+            curve_change(
+                trace_points(85),
+                policy=policy,
+                onset_at=initial.onset_at + timedelta(microseconds=1),
+            )
+        )
 
     def test_fit_budget_retains_only_original_points_and_pins_the_frozen_onset(self):
         policy = curve_policy()
         count = 2 * policy.max_points + 1
         points = [
-            (T0 + timedelta(seconds=79 * index / (count - 1)), trace(79 * index / (count - 1))[0])
+            (
+                T0 + timedelta(seconds=79 * index / (count - 1)),
+                trace(79 * index / (count - 1))[0],
+            )
             for index in range(count)
         ]
         onset_at = points[len(points) // 2][0]
@@ -689,9 +799,14 @@ class CurveChangeTests(unittest.TestCase):
             selections.append(selected)
             return selected
 
-        with patch.object(curves, "_bounded_samples", side_effect=observed_selection), patch.object(
-            curves, "_models", wraps=curves._models,
-        ) as fits:
+        with (
+            patch.object(curves, "_bounded_samples", side_effect=observed_selection),
+            patch.object(
+                curves,
+                "_models",
+                wraps=curves._models,
+            ) as fits,
+        ):
             curve_change(points, policy=policy, onset_at=onset_at)
 
         self.assertEqual(len(selections), 1)
@@ -723,20 +838,31 @@ class CurveChangeTests(unittest.TestCase):
                     # y'' jumps by direction*curvature. The existing balanced
                     # fixture perturbation supplies noise without defining k.
                     points = [
-                        (source[0][0] + time_scale * (stamp - source[0][0]),
-                         trace(0)[0]
-                         - falling_step * (stamp - source[0][0]).total_seconds()
-                         + direction * curvature * max(
-                             0, (stamp - original_onset).total_seconds(),
-                         )**2 / 2
-                         + value - trace(100)[1])
+                        (
+                            source[0][0] + time_scale * (stamp - source[0][0]),
+                            trace(0)[0]
+                            - falling_step * (stamp - source[0][0]).total_seconds()
+                            + direction
+                            * curvature
+                            * max(
+                                0,
+                                (stamp - original_onset).total_seconds(),
+                            )
+                            ** 2
+                            / 2
+                            + value
+                            - trace(100)[1],
+                        )
                         for stamp, value in source
                     ]
                     onset = points[len(points) // 2][0]
                     with patch.object(curves, "_models", wraps=curves._models) as fits:
                         result = curve_change(
-                            points[:-1], policy=policy, hinge_order=2,
-                            onset_at=onset, direction=direction,
+                            points[:-1],
+                            policy=policy,
+                            hinge_order=2,
+                            onset_at=onset,
+                            direction=direction,
                             onset_not_before=points[0][0],
                         )
                     self.assertIsNotNone(result)
@@ -746,19 +872,24 @@ class CurveChangeTests(unittest.TestCase):
                     self.assertEqual(result.slope_before, result.slope_after)
                     self.assertEqual(result.slope_change, 0)
                     self.assertAlmostEqual(
-                        result.slope_before, -falling_step / time_scale,
+                        result.slope_before,
+                        -falling_step / time_scale,
                         delta=slower_step / time_scale,
                     )
                     self.assertAlmostEqual(
-                        result.curvature_change, direction * curvature / time_scale**2,
+                        result.curvature_change,
+                        direction * curvature / time_scale**2,
                         delta=slower_step / (tail * time_scale**2),
                     )
                     self.assertGreater(result.signed_strength * direction, 0)
                     self.assertLess(onset, min(points, key=lambda point: point[1])[0])
                     self.assertGreaterEqual(fits.call_count, 2)
-                    self.assertTrue(all(
-                        call.kwargs.get("hinge_order") == 2 for call in fits.call_args_list
-                    ))
+                    self.assertTrue(
+                        all(
+                            call.kwargs.get("hinge_order") == 2
+                            for call in fits.call_args_list
+                        )
+                    )
                     normalized_onset = (onset - points[0][0]) / (
                         points[-2][0] - points[0][0]
                     )
@@ -767,8 +898,11 @@ class CurveChangeTests(unittest.TestCase):
                         [normalized_onset],
                     )
                     fresh = curve_change(
-                        points, policy=policy, hinge_order=2,
-                        onset_at=result.onset_at, direction=direction,
+                        points,
+                        policy=policy,
+                        hinge_order=2,
+                        onset_at=result.onset_at,
+                        direction=direction,
                         onset_not_before=points[0][0],
                     )
                     self.assertIsNotNone(fresh)
@@ -778,7 +912,9 @@ class CurveChangeTests(unittest.TestCase):
                     self.assertGreater(fresh.newest_at, result.newest_at)
                     self.assertEqual(fresh.slope_change, 0)
 
-    def test_integrated_hinge_does_not_turn_smooth_cooling_or_a_trough_into_an_onset(self):
+    def test_integrated_hinge_does_not_turn_smooth_cooling_or_a_trough_into_an_onset(
+        self,
+    ):
         source = level_trace_points()
         onset = source[len(source) // 2][0]
         span = (source[-1][0] - source[0][0]).total_seconds()
@@ -790,31 +926,52 @@ class CurveChangeTests(unittest.TestCase):
             # cubic slowing is globally smooth, with no new curvature jump.
             self.assertLess(degree * amplitude / span, falling_step)
             variants[f"smooth falling degree {degree}"] = [
-                (stamp, trace(0)[0]
-                 - falling_step * (stamp - source[0][0]).total_seconds()
-                 + amplitude * ((stamp - source[0][0]).total_seconds() / span)**degree
-                 + value - trace(100)[1])
+                (
+                    stamp,
+                    trace(0)[0]
+                    - falling_step * (stamp - source[0][0]).total_seconds()
+                    + amplitude
+                    * ((stamp - source[0][0]).total_seconds() / span) ** degree
+                    + value
+                    - trace(100)[1],
+                )
                 for stamp, value in source
             ]
         for degree in (2, 3):
             # A pre-existing smooth minimum is not the beginning of a new
             # curvature regime and cannot supply an earlier contact time.
             variants[f"smooth trough degree {degree}"] = [
-                (stamp, trace(0)[0] + amplitude * (
-                    ((stamp - onset).total_seconds() / span)**2
-                    + (((stamp - onset).total_seconds() / span)**3 if degree == 3 else 0)
-                ) + value - trace(100)[1])
+                (
+                    stamp,
+                    trace(0)[0]
+                    + amplitude
+                    * (
+                        ((stamp - onset).total_seconds() / span) ** 2
+                        + (
+                            ((stamp - onset).total_seconds() / span) ** 3
+                            if degree == 3
+                            else 0
+                        )
+                    )
+                    + value
+                    - trace(100)[1],
+                )
                 for stamp, value in source
             ]
-        isolated = [(stamp, trace(0)[0] + value - trace(100)[1])
-                    for stamp, value in source]
+        isolated = [
+            (stamp, trace(0)[0] + value - trace(100)[1]) for stamp, value in source
+        ]
         isolated[len(isolated) // 2] = (onset, trace(85)[0])
         variants["one isolated original"] = isolated
         for name, points in variants.items():
             with self.subTest(shape=name):
                 result = curve_change(
-                    points, policy=curve_policy(), hinge_order=2,
-                    onset_at=onset, direction=1, onset_not_before=points[0][0],
+                    points,
+                    policy=curve_policy(),
+                    hinge_order=2,
+                    onset_at=onset,
+                    direction=1,
+                    onset_not_before=points[0][0],
                 )
                 self.assertTrue(result is None or result.evidence == "rejects", result)
 
@@ -829,8 +986,14 @@ class CurveChangeTests(unittest.TestCase):
         self.assertEqual(default, curve_change(points, policy=policy, hinge_order=1))
         for invalid in (True, False, 0, 3, 1.0, "2", None):
             with self.subTest(hinge_order=invalid):
-                self.assertIsNone(curve_change(points, policy=policy, hinge_order=invalid))
-        self.assertIsNone(curve_change(
-            points, policy=policy, hinge_order=2,
-            onset_at=points[len(points) // 2][0] + timedelta.resolution,
-        ))
+                self.assertIsNone(
+                    curve_change(points, policy=policy, hinge_order=invalid)
+                )
+        self.assertIsNone(
+            curve_change(
+                points,
+                policy=policy,
+                hinge_order=2,
+                onset_at=points[len(points) // 2][0] + timedelta.resolution,
+            )
+        )

@@ -108,7 +108,9 @@ class NotificationRecipientsTests(unittest.TestCase):
         self.assertEqual(eligible_recipients(resolutions), {self.entity})
         self.assertIs(validate_assignment(assignment, resolutions), assignment)
         result = SessionRecipients("instance", "session").accumulate(
-            ActorRef("user", "input"), (assignment,), resolutions,
+            ActorRef("user", "input"),
+            (assignment,),
+            resolutions,
         )
         self.assertEqual(result.targets, {self.target})
 

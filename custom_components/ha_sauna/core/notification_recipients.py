@@ -151,9 +151,7 @@ def _resolution_index(resolutions: Iterable[RecipientResolution]):
 
 
 def _eligible(resolution: RecipientResolution) -> bool:
-    return (
-        resolution.recipient is not None and resolution.recipient.capability.sendable
-    )
+    return resolution.recipient is not None and resolution.recipient.capability.sendable
 
 
 def eligible_recipients(
@@ -188,9 +186,7 @@ def validate_assignment(
         if result.recipient is None:
             raise ValueError(f"Recipient is unresolved: {ref.reference_id}")
         if not _eligible(result):
-            raise ValueError(
-                f"Send capability evidence required: {ref.reference_id}"
-            )
+            raise ValueError(f"Send capability evidence required: {ref.reference_id}")
     return assignment
 
 

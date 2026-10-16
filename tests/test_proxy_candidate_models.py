@@ -21,16 +21,21 @@ TESTS = Path(__file__).resolve().parent
 class ProxyCandidateModelsTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        cls.policy = candidates.validate_policy(json.loads(
-            (TESTS / "analysis/proxy_candidate_policy.json").read_text()
-        ))
+        cls.policy = candidates.validate_policy(
+            json.loads((TESTS / "analysis/proxy_candidate_policy.json").read_text())
+        )
         source = json.loads(
             (TESTS / "fixtures/scenarios/source_curves.json").read_text()
         )["curves"]["occupied_infusion"]
         column = source["roles"].index("upper_humidity") + 1
         cls.records = [
-            {"t": row[0], "value": row[column], "origin": "samples",
-             "valid": True, "fit_eligible": True}
+            {
+                "t": row[0],
+                "value": row[column],
+                "origin": "samples",
+                "valid": True,
+                "fit_eligible": True,
+            }
             for row in source["rows"]
         ]
         cls.source = source
@@ -68,12 +73,13 @@ class ProxyCandidateModelsTests(unittest.TestCase):
             elif index <= peak:
                 value = self.baseline + (index - onset) * self.amplitude
             else:
-                value = peak_level - (index - peak) * (
-                    peak_level - new_level
-                ) / side
-            points.append((
-                candidates.EPOCH + timedelta(seconds=index * self.step), value,
-            ))
+                value = peak_level - (index - peak) * (peak_level - new_level) / side
+            points.append(
+                (
+                    candidates.EPOCH + timedelta(seconds=index * self.step),
+                    value,
+                )
+            )
         return points, (onset, peak), new_level
 
     def test_future_values_and_invalid_future_originals_cannot_change_a_prefix(self):
@@ -83,22 +89,43 @@ class ProxyCandidateModelsTests(unittest.TestCase):
         changed = deepcopy(self.records)
         for row in changed:
             if row["t"] > window:
-                row.update(value=None, valid=False, fit_eligible=False,
-                           invalid_reason="invalid_future_original")
+                row.update(
+                    value=None,
+                    valid=False,
+                    fit_eligible=False,
+                    invalid_reason="invalid_future_original",
+                )
         results = []
         for records in (prefix, self.records, changed):
             original = candidates.OriginalChannel("upper_humidity", records)
             points, quality = original.support(
-                window, window, self.policy["sampling"], minimum,
+                window,
+                window,
+                self.policy["sampling"],
+                minimum,
             )
             self.assertTrue(quality["eligible"], quality)
-            self.assertTrue(all(stamp <= candidates.EPOCH + timedelta(
-                seconds=window,
-            ) for stamp, _ in points))
+            self.assertTrue(
+                all(
+                    stamp
+                    <= candidates.EPOCH
+                    + timedelta(
+                        seconds=window,
+                    )
+                    for stamp, _ in points
+                )
+            )
             self.owner.begin_anchor()
-            results.append((points, quality, candidates.common_models(
-                self.owner, points,
-            )))
+            results.append(
+                (
+                    points,
+                    quality,
+                    candidates.common_models(
+                        self.owner,
+                        points,
+                    ),
+                )
+            )
         self.assertEqual(results[0], results[1])
         self.assertEqual(results[0], results[2])
 
@@ -106,17 +133,27 @@ class ProxyCandidateModelsTests(unittest.TestCase):
         broken = deepcopy(prefix)
         middle = len(broken) - minimum - 1
         self.assertGreaterEqual(middle, 0)
-        broken[middle].update(value=None, valid=False, fit_eligible=False,
-                              invalid_reason="invalid_original")
+        broken[middle].update(
+            value=None,
+            valid=False,
+            fit_eligible=False,
+            invalid_reason="invalid_original",
+        )
         original = candidates.OriginalChannel("upper_humidity", broken)
         points, quality = original.support(
-            window, window, self.policy["sampling"], minimum,
+            window,
+            window,
+            self.policy["sampling"],
+            minimum,
         )
         self.assertEqual(points, [])
         self.assertFalse(quality["eligible"])
         self.assertEqual(quality["invalid_originals"], 1)
         later, quality = original.support(
-            window, window, self.policy["sampling"], minimum,
+            window,
+            window,
+            self.policy["sampling"],
+            minimum,
             start=broken[middle + 1]["t"],
         )
         self.assertTrue(quality["eligible"], quality)
@@ -127,8 +164,7 @@ class ProxyCandidateModelsTests(unittest.TestCase):
         original_fit = self.owner.module._fit
 
         def observe(rows, values, noise, policy):
-            coordinates = (tuple(row[1] for row in rows)
-                           if len(rows[0]) > 1 else None)
+            coordinates = tuple(row[1] for row in rows) if len(rows[0]) > 1 else None
             calls.append((len(rows), tuple(values), noise, coordinates))
             return original_fit(rows, values, noise, policy)
 
@@ -148,20 +184,27 @@ class ProxyCandidateModelsTests(unittest.TestCase):
         value_factor, time_factor = 3, 2
         time_offset = self.policy["sampling"]["anchor_step_s"]
         transformed = [
-            (candidates.EPOCH + timedelta(seconds=time_offset + time_factor * (
-                stamp - candidates.EPOCH
-            ).total_seconds()), self.baseline + value_factor * value)
+            (
+                candidates.EPOCH
+                + timedelta(
+                    seconds=time_offset
+                    + time_factor * (stamp - candidates.EPOCH).total_seconds()
+                ),
+                self.baseline + value_factor * value,
+            )
             for stamp, value in self.samples
         ]
         self.owner.begin_anchor()
         mapped = candidates.common_models(self.owner, transformed)
         self.assertEqual(mapped["status"], "resolved", mapped)
         self.assertEqual(mapped["best_model"], original["best_model"])
-        self.assertEqual(mapped["selected_times_s"], [
-            time_offset + time_factor * at for at in original["selected_times_s"]
-        ])
+        self.assertEqual(
+            mapped["selected_times_s"],
+            [time_offset + time_factor * at for at in original["selected_times_s"]],
+        )
         self.assertAlmostEqual(
-            mapped["noise_scale"], value_factor * original["noise_scale"],
+            mapped["noise_scale"],
+            value_factor * original["noise_scale"],
             places=7,
         )
         before = {item["model"]: item for item in original["models"]}
@@ -186,20 +229,34 @@ class ProxyCandidateModelsTests(unittest.TestCase):
         # Four continuous hinge coefficients plus two estimated knot times.
         self.assertEqual(pulse["parameters"], 6)
         self.assertAlmostEqual(
-            pulse["score"] - pulse["loss"], 6 * log(len(points)), places=7,
+            pulse["score"] - pulse["loss"],
+            6 * log(len(points)),
+            places=7,
         )
 
     def test_a_favorable_pulse_score_still_requires_observed_ordered_flanks(self):
         points, (onset, peak), _ = self._pulse()
-        score_candidate = {"models": [{
-            "model": "PULS",
-            "gain_over_other": self.policy["competition"]["minimum_score_gain"] + 1,
-            "knots_s": [(points[index][0] - candidates.EPOCH).total_seconds()
-                        for index in (onset, peak)],
-            "search_count": 1, "has_rise_onset": True,
-        }]}
+        score_candidate = {
+            "models": [
+                {
+                    "model": "PULS",
+                    "gain_over_other": self.policy["competition"]["minimum_score_gain"]
+                    + 1,
+                    "knots_s": [
+                        (points[index][0] - candidates.EPOCH).total_seconds()
+                        for index in (onset, peak)
+                    ],
+                    "search_count": 1,
+                    "has_rise_onset": True,
+                }
+            ]
+        }
         assessment = candidates.pulse_assessment(
-            self.owner, points, score_candidate, self.policy, influence=False,
+            self.owner,
+            points,
+            score_candidate,
+            self.policy,
+            influence=False,
         )
         self.assertTrue(assessment["supported"], assessment)
         for direction in (-1, 0, 1):
@@ -209,13 +266,17 @@ class ProxyCandidateModelsTests(unittest.TestCase):
                     for index, (stamp, _) in enumerate(points)
                 ]
                 assessment = candidates.pulse_assessment(
-                    self.owner, monotone, score_candidate, self.policy, influence=False,
+                    self.owner,
+                    monotone,
+                    score_candidate,
+                    self.policy,
+                    influence=False,
                 )
                 self.assertFalse(assessment["supported"], assessment)
 
     def test_missing_owner_comparison_and_short_support_produce_no_model_ranking(self):
         minimum = 3 * self.policy["numerics"]["min_side_samples"]
-        short = candidates.common_models(self.owner, self.samples[:minimum - 1])
+        short = candidates.common_models(self.owner, self.samples[: minimum - 1])
         self.assertNotEqual(short["status"], "resolved")
         self.assertFalse(short.get("models"))
         # None is the owner's contract for an unresolved comparison, including
@@ -236,31 +297,50 @@ class ProxyCandidateModelsTests(unittest.TestCase):
             hypotheses["minimum_new_level_points"] * self.step,
         )
         first = end + hypotheses["tail_window_s"] + 2 * self.step
-        anchors = [first + index * interval
-                   for index in range(hypotheses["tail_level_confirmations"])]
-        plateau = [(candidates.EPOCH + timedelta(seconds=end + index * self.step),
-                    new_level)
-                   for index in range(1, ceil((anchors[-1] - end) / self.step) + 1)]
-        records = [{"t": (stamp - candidates.EPOCH).total_seconds(), "value": value,
-                    "origin": "samples", "valid": True, "fit_eligible": True}
-                   for stamp, value in points + plateau]
+        anchors = [
+            first + index * interval
+            for index in range(hypotheses["tail_level_confirmations"])
+        ]
+        plateau = [
+            (candidates.EPOCH + timedelta(seconds=end + index * self.step), new_level)
+            for index in range(1, ceil((anchors[-1] - end) / self.step) + 1)
+        ]
+        records = [
+            {
+                "t": (stamp - candidates.EPOCH).total_seconds(),
+                "value": value,
+                "origin": "samples",
+                "valid": True,
+                "fit_eligible": True,
+            }
+            for stamp, value in points + plateau
+        ]
         for interrupted in (False, True):
             with self.subTest(interrupted=interrupted):
                 inputs = deepcopy(records)
                 if interrupted:
                     inputs[len(points)].update(
-                        value=None, valid=False, fit_eligible=False,
+                        value=None,
+                        valid=False,
+                        fit_eligible=False,
                         invalid_reason="invalid_original",
                     )
                 original = candidates.OriginalChannel("upper_humidity", inputs)
                 trace = candidates.PulseTrace("upper_humidity", self.policy)
-                trace.accept({
-                    "knots_s": [(points[index][0] - candidates.EPOCH).total_seconds()
-                                for index in (onset, peak)],
-                    "has_rise_onset": True, "context_start_s": 0,
-                    "newest_original_s": end, "confirmed_at_s": end,
-                    "first_assessment": {"has_rise_onset": True},
-                }, hypotheses)
+                trace.accept(
+                    {
+                        "knots_s": [
+                            (points[index][0] - candidates.EPOCH).total_seconds()
+                            for index in (onset, peak)
+                        ],
+                        "has_rise_onset": True,
+                        "context_start_s": 0,
+                        "newest_original_s": end,
+                        "confirmed_at_s": end,
+                        "first_assessment": {"has_rise_onset": True},
+                    },
+                    hypotheses,
+                )
                 # Establish the accepted pulse's causal anchor before the
                 # later bridge observation can interrupt its continuation.
                 trace.advance(end, original, [], self.owner)
@@ -270,12 +350,16 @@ class ProxyCandidateModelsTests(unittest.TestCase):
                 active = trace.active
                 self.assertIsNotNone(active["level_confirmed_at_s"], active)
                 self.assertAlmostEqual(active["fitted_new_level"], new_level, places=7)
-                self.assertEqual(bool(active["continuity_interrupted_at_s"]), interrupted)
+                self.assertEqual(
+                    bool(active["continuity_interrupted_at_s"]), interrupted
+                )
                 self.assertIsNone(active["event_probability"])
                 self.assertIsNone(active["event_kind"])
                 self.assertIsNone(active["physical_event_time_s"])
 
-    def test_derived_ah_cannot_add_an_independent_climate_vote_or_event_probability(self):
+    def test_derived_ah_cannot_add_an_independent_climate_vote_or_event_probability(
+        self,
+    ):
         row = self.source["rows"][0]
         roles = self.source["roles"]
         upper_t = row[roles.index("upper_temperature") + 1]
@@ -285,16 +369,22 @@ class ProxyCandidateModelsTests(unittest.TestCase):
         self.assertGreater(self.ah(upper_t, rh), self.ah(lower_t, rh))
         measured = {
             "upper_temperature": [{"tail_trend": {"direction": -1}}],
-            "upper_humidity": [{"tail_trend": {"direction": 0},
-                                "tail_level": {"evidence": "supports"}}],
+            "upper_humidity": [
+                {"tail_trend": {"direction": 0}, "tail_level": {"evidence": "supports"}}
+            ],
         }
         expected = candidates.climate_interpretations(measured)
         self.assertTrue(expected)
         for ah_direction in (-1, 1):
-            extended = {**measured, "upper_absolute_humidity": [{
-                "tail_trend": {"direction": ah_direction},
-                "tail_level": {"evidence": "supports"},
-            }]}
+            extended = {
+                **measured,
+                "upper_absolute_humidity": [
+                    {
+                        "tail_trend": {"direction": ah_direction},
+                        "tail_level": {"evidence": "supports"},
+                    }
+                ],
+            }
             self.assertEqual(candidates.climate_interpretations(extended), expected)
         self.assertIsNone(candidates.probability_requirements()["event_probability"])
 

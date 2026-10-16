@@ -56,8 +56,10 @@ import time
 ROOT = Path(__file__).resolve().parents[2]
 TESTS = ROOT / "tests"
 ROLES = (
-    ("upper", "temperature"), ("upper", "humidity"),
-    ("lower", "temperature"), ("lower", "humidity"),
+    ("upper", "temperature"),
+    ("upper", "humidity"),
+    ("lower", "temperature"),
+    ("lower", "humidity"),
 )
 
 
@@ -66,8 +68,11 @@ def digest(payload):
 
 
 def finite_number(value):
-    return (isinstance(value, (int, float)) and not isinstance(value, bool)
-            and math.isfinite(value))
+    return (
+        isinstance(value, (int, float))
+        and not isinstance(value, bool)
+        and math.isfinite(value)
+    )
 
 
 def serializable(value):
@@ -85,8 +90,13 @@ def serializable(value):
 
 
 def encoded(value):
-    return json.dumps(serializable(value), sort_keys=True, ensure_ascii=False,
-                      allow_nan=False, separators=(",", ":")).encode("utf-8")
+    return json.dumps(
+        serializable(value),
+        sort_keys=True,
+        ensure_ascii=False,
+        allow_nan=False,
+        separators=(",", ":"),
+    ).encode("utf-8")
 
 
 def write_json(path, value):
@@ -99,32 +109,42 @@ def write_json(path, value):
 
 def validate_cases(document):
     """Validate explicit hypotheses before importing any product modules."""
-    if (not isinstance(document, dict)
-            or type(document.get("schema_version")) is not int
-            or document.get("schema_version") != 1
-            or set(document) != {"schema_version", "cases"}
-            or not isinstance(document["cases"], list)
-            or not document["cases"]):
+    if (
+        not isinstance(document, dict)
+        or type(document.get("schema_version")) is not int
+        or document.get("schema_version") != 1
+        or set(document) != {"schema_version", "cases"}
+        or not isinstance(document["cases"], list)
+        or not document["cases"]
+    ):
         raise ValueError("Expected schema_version 1 and a nonempty cases list")
     identities = set()
     for case in document["cases"]:
         required = {"id", "recording", "bind_at_s", "through_s", "channels"}
-        if (not isinstance(case, dict) or not required <= set(case)
-                or set(case) - required - {"direction"}):
+        if (
+            not isinstance(case, dict)
+            or not required <= set(case)
+            or set(case) - required - {"direction"}
+        ):
             raise ValueError(
                 "A case needs id, recording, bind_at_s, through_s, channels",
             )
         identity = case["id"]
-        if (not isinstance(identity, str)
-                or re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_-]*", identity) is None
-                or identity in identities):
+        if (
+            not isinstance(identity, str)
+            or re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_-]*", identity) is None
+            or identity in identities
+        ):
             raise ValueError("Case id must be unique and filename-safe")
         identities.add(identity)
         if not isinstance(case["recording"], str) or not case["recording"]:
             raise ValueError(f"{identity}: recording must be a manifest id")
-        if (not finite_number(case["bind_at_s"]) or case["bind_at_s"] < 0
-                or not finite_number(case["through_s"])
-                or case["through_s"] <= case["bind_at_s"]):
+        if (
+            not finite_number(case["bind_at_s"])
+            or case["bind_at_s"] < 0
+            or not finite_number(case["through_s"])
+            or case["through_s"] <= case["bind_at_s"]
+        ):
             raise ValueError(f"{identity}: require 0 <= bind_at_s < through_s")
         if "direction" in case and (
             type(case["direction"]) is not int or case["direction"] not in (-1, 1)
@@ -137,9 +157,11 @@ def validate_cases(document):
         for channel in channels:
             required_channel = {"position", "quantity", "onset_at_s"}
             optional = {"direction", "floor_at_s", "points_not_before_s"}
-            if (not isinstance(channel, dict)
-                    or not required_channel <= set(channel)
-                    or set(channel) - required_channel - optional):
+            if (
+                not isinstance(channel, dict)
+                or not required_channel <= set(channel)
+                or set(channel) - required_channel - optional
+            ):
                 raise ValueError(f"{identity}: malformed channel")
             role = (channel["position"], channel["quantity"])
             if role not in ROLES or role in seen:
@@ -153,7 +175,8 @@ def validate_cases(document):
             for key in ("onset_at_s", "floor_at_s", "points_not_before_s"):
                 if key in channel and (
                     not finite_number(channel[key])
-                    or channel[key] < 0 or channel[key] > case["bind_at_s"]
+                    or channel[key] < 0
+                    or channel[key] > case["bind_at_s"]
                 ):
                     raise ValueError(
                         f"{identity}/{role}: {key} must be in causal prefix",
@@ -172,11 +195,17 @@ def load_owners():
     modules = {
         name: importlib.import_module(f"_proxy_forms_core.{name}") for name in names
     }
-    files = [path, Path(__file__).resolve(), TESTS / "settings.json",
-             ROOT / "custom_components/ha_sauna/defaults.json"]
+    files = [
+        path,
+        Path(__file__).resolve(),
+        TESTS / "settings.json",
+        ROOT / "custom_components/ha_sauna/defaults.json",
+    ]
     files.extend(Path(module.__file__) for module in modules.values())
-    provenance = [{"file": str(item.relative_to(ROOT)),
-                   "sha256": digest(item.read_bytes())} for item in files]
+    provenance = [
+        {"file": str(item.relative_to(ROOT)), "sha256": digest(item.read_bytes())}
+        for item in files
+    ]
     return reader, modules, provenance
 
 
@@ -213,9 +242,13 @@ class FitCache:
         if key not in self.changes:
             self.counts["change_calls"] += 1
             self.changes[key] = self._call(
-                self.module.curve_change, points,
-                policy=self.policy, onset_at=onset, direction=direction,
-                onset_not_before=floor, hinge_order=order,
+                self.module.curve_change,
+                points,
+                policy=self.policy,
+                onset_at=onset,
+                direction=direction,
+                onset_not_before=floor,
+                hinge_order=order,
             )
         else:
             self.counts["change_cache_hits"] += 1
@@ -226,7 +259,9 @@ class FitCache:
         if key not in self.trends:
             self.counts["trend_calls"] += 1
             self.trends[key] = self._call(
-                self.module.curve_trend, points, policy=self.policy,
+                self.module.curve_trend,
+                points,
+                policy=self.policy,
             )
         else:
             self.counts["trend_cache_hits"] += 1
@@ -234,10 +269,19 @@ class FitCache:
 
 
 def source_state(series):
-    return {key: series[key] for key in (
-        "source", "time_basis", "epoch", "version", "started_at", "received_at",
-        "last_original_version", "last_original_received_at",
-    )}
+    return {
+        key: series[key]
+        for key in (
+            "source",
+            "time_basis",
+            "epoch",
+            "version",
+            "started_at",
+            "received_at",
+            "last_original_version",
+            "last_original_received_at",
+        )
+    }
 
 
 def context_identity(series):
@@ -245,9 +289,11 @@ def context_identity(series):
 
 
 def assessment(features):
-    return {"status": "unresolved" if features is None else features.evidence,
-            "reason": "owner_returned_none" if features is None else None,
-            "features": serializable(features)}
+    return {
+        "status": "unresolved" if features is None else features.evidence,
+        "reason": "owner_returned_none" if features is None else None,
+        "features": serializable(features),
+    }
 
 
 def trend_assessment(cache, points, context):
@@ -255,7 +301,8 @@ def trend_assessment(cache, points, context):
     return {
         "status": "unresolved" if features is None else "observed",
         "reason": "owner_returned_none" if features is None else None,
-        "original_count": len(points), "support_sha256": digest(encoded(points)),
+        "original_count": len(points),
+        "support_sha256": digest(encoded(points)),
         "first_at": points[0][0] if points else None,
         "newest_at": points[-1][0] if points else None,
         "features": serializable(features),
@@ -272,13 +319,20 @@ class BoundChannel:
         self.key = (self.position, self.quantity)
         self.onset = origin + timedelta(seconds=channel["onset_at_s"])
         self.direction = channel.get("direction", case.get("direction"))
-        self.cutoff = (origin + timedelta(seconds=channel["points_not_before_s"])
-                       if "points_not_before_s" in channel else None)
+        self.cutoff = (
+            origin + timedelta(seconds=channel["points_not_before_s"])
+            if "points_not_before_s" in channel
+            else None
+        )
         series = detector._curve_series[self.key]
-        declared_floor = (origin + timedelta(seconds=channel["floor_at_s"])
-                          if "floor_at_s" in channel else None)
+        declared_floor = (
+            origin + timedelta(seconds=channel["floor_at_s"])
+            if "floor_at_s" in channel
+            else None
+        )
         self.floor = max(
-            stamp for stamp in (declared_floor, series["started_at"] or origin)
+            stamp
+            for stamp in (declared_floor, series["started_at"] or origin)
             if stamp is not None
         )
         self.context = context_identity(series)
@@ -295,14 +349,19 @@ class BoundChannel:
         elif self.onset < self.floor:
             self.reason = "onset_before_bound_source_floor"
         self.binding = {
-            "position": self.position, "quantity": self.quantity,
-            "direction": self.direction, "onset_at": self.onset,
-            "declared_floor_at": declared_floor, "effective_floor_at": self.floor,
-            "points_not_before": self.cutoff, "bound_at": at,
+            "position": self.position,
+            "quantity": self.quantity,
+            "direction": self.direction,
+            "onset_at": self.onset,
+            "declared_floor_at": declared_floor,
+            "effective_floor_at": self.floor,
+            "points_not_before": self.cutoff,
+            "bound_at": at,
             "first_newest_at": self.first_newest,
             "source_state": source_state(series),
             "initial_support_sha256": digest(encoded(points)),
-            "initial_original_points": points, "unresolved_reason": self.reason,
+            "initial_original_points": points,
+            "unresolved_reason": self.reason,
         }
 
     def support_at(self, detector, at, update=None):
@@ -311,13 +370,16 @@ class BoundChannel:
         points = detector._curve_points(*self.key, at, points_not_before=self.cutoff)
         if self.reason is None and context_identity(series) != self.context:
             self.reason = "bound_source_context_interrupted"
-        if (self.reason is None and update is not None
-                and update["kind"] == "correction"
-                and update["original_at"] in self.used_points):
+        if (
+            self.reason is None
+            and update is not None
+            and update["kind"] == "correction"
+            and update["original_at"] in self.used_points
+        ):
             self.reason = "previously_assessed_original_corrected"
         if self.reason is None and not any(stamp == self.onset for stamp, _ in points):
             self.reason = "fixed_original_onset_expired"
-        if (self.reason is None and detector._value(*self.key, at) is None):
+        if self.reason is None and detector._value(*self.key, at) is None:
             self.reason = "original_source_unavailable"
         return series, points
 
@@ -325,19 +387,28 @@ class BoundChannel:
         started_wall, started_cpu = time.perf_counter(), time.process_time()
         counts = cache.counts.copy()
         series, points = self.support_at(detector, at, update)
-        fresh = tuple(point for point in points
-                      if self.first_newest is not None and point[0] > self.first_newest)
+        fresh = tuple(
+            point
+            for point in points
+            if self.first_newest is not None and point[0] > self.first_newest
+        )
         reason = self.reason
         if update is not None and reason is None:
             if update["kind"] != "new_original" or not fresh:
                 reason = "not_a_later_original_state"
         row = {
-            "at": at, "position": self.position, "quantity": self.quantity,
+            "at": at,
+            "position": self.position,
+            "quantity": self.quantity,
             "phase": "binding" if update is None else "later_original_state",
-            "onset_at": self.onset, "requested_change_direction": self.direction,
-            "source_state": source_state(series), "input_update": update,
-            "support_sha256": digest(encoded(points)), "original_points": points,
-            "original_count": len(points), "fresh_original_count": len(fresh),
+            "onset_at": self.onset,
+            "requested_change_direction": self.direction,
+            "source_state": source_state(series),
+            "input_update": update,
+            "support_sha256": digest(encoded(points)),
+            "original_points": points,
+            "original_count": len(points),
+            "fresh_original_count": len(fresh),
             "first_newest_at": self.first_newest,
             "newest_at": points[-1][0] if points else None,
             "reason": reason,
@@ -345,31 +416,50 @@ class BoundChannel:
         if reason is None:
             for name, order in (("M1", 1), ("M2", 2)):
                 features = cache.change(
-                    points, self.onset, self.floor, self.direction, order, self.context,
+                    points,
+                    self.onset,
+                    self.floor,
+                    self.direction,
+                    order,
+                    self.context,
                 )
                 row[name] = assessment(features)
                 if update is None:
                     # Keep counterevidence too; an initial None stays unbound.
-                    self.frozen_fits.setdefault(name, (
-                        row[name]["status"], features.fit if features is not None else None,
-                    ))
+                    self.frozen_fits.setdefault(
+                        name,
+                        (
+                            row[name]["status"],
+                            features.fit if features is not None else None,
+                        ),
+                    )
             # Trends never inherit the model fit's sign or model noise scale.
-            before = tuple(point for point in points
-                           if self.floor <= point[0] < self.onset)
+            before = tuple(
+                point for point in points if self.floor <= point[0] < self.onset
+            )
             after = tuple(point for point in points if point[0] > self.onset)
             row["before_trend"] = trend_assessment(cache, before, self.context)
             row["after_trend"] = trend_assessment(cache, after, self.context)
             row["new_original_trend"] = trend_assessment(cache, fresh, self.context)
         else:
             unresolved = {"status": "unresolved", "reason": reason, "features": None}
-            for name in ("M1", "M2", "before_trend", "after_trend",
-                         "new_original_trend"):
+            for name in (
+                "M1",
+                "M2",
+                "before_trend",
+                "after_trend",
+                "new_original_trend",
+            ):
                 row[name] = dict(unresolved)
         if update is None:
             for name in ("M1", "M2"):
                 self.frozen_fits.setdefault(name, (row[name]["status"], None))
         row["frozen_value_prediction"] = self.frozen_value_prediction(
-            cache, at, points, reason, update,
+            cache,
+            at,
+            points,
+            reason,
+            update,
         )
         if reason is None:
             self.used_points.update(points)
@@ -381,26 +471,45 @@ class BoundChannel:
         return row
 
     def frozen_value_prediction(self, cache, at, points, reason, update):
-        original = next((point for point in points if update is not None
-                         and point[0] == update["original_at"]), None)
-        if update is not None and reason is None and not (
-            update["kind"] == "new_original" and at > self.binding["bound_at"]
-            and update["source_role"] == f"{self.position.value}_{self.quantity.value}"
-            and original is not None and original[0] > self.binding["bound_at"]
-            and original[0] not in self.used_points
+        original = next(
+            (
+                point
+                for point in points
+                if update is not None and point[0] == update["original_at"]
+            ),
+            None,
+        )
+        if (
+            update is not None
+            and reason is None
+            and not (
+                update["kind"] == "new_original"
+                and at > self.binding["bound_at"]
+                and update["source_role"]
+                == f"{self.position.value}_{self.quantity.value}"
+                and original is not None
+                and original[0] > self.binding["bound_at"]
+                and original[0] not in self.used_points
+            )
         ):
             reason = "not_a_new_own_original_after_binding"
         result = {
             "bound_at": self.binding["bound_at"],
             "original_at": original[0] if original is not None else None,
-            "measurement_unit": ("°C" if self.quantity.value == "temperature"
-                                 else "RH percentage points"),
+            "measurement_unit": (
+                "°C" if self.quantity.value == "temperature" else "RH percentage points"
+            ),
             "normalization": "residual / binding noise_scale; null if unavailable or zero",
             "models": {},
         }
         for name, (evidence, snapshot) in self.frozen_fits.items():
-            deviation = (cache.module.curve_deviation(snapshot.profile, original, snapshot=snapshot)
-                         if update is not None and reason is None and snapshot is not None else None)
+            deviation = (
+                cache.module.curve_deviation(
+                    snapshot.profile, original, snapshot=snapshot
+                )
+                if update is not None and reason is None and snapshot is not None
+                else None
+            )
             status = "unresolved"
             model_reason = reason
             if reason is None:
@@ -413,7 +522,9 @@ class BoundChannel:
                 else:
                     status = "observed_deviation"
             model = {
-                "binding_evidence": evidence, "status": status, "reason": model_reason,
+                "binding_evidence": evidence,
+                "status": status,
+                "reason": model_reason,
                 "deviation": deviation,
             }
             if update is None:
@@ -446,7 +557,11 @@ def feed_original(detector, models, origin, event):
     value = point["value"] if finite_number(point["value"]) else None
     at = origin + timedelta(seconds=seconds)
     measurement = models.Measurement(
-        *key, value, str(point["value"]), f"bound-role:{role}", at,
+        *key,
+        value,
+        str(point["value"]),
+        f"bound-role:{role}",
+        at,
     )
     accepted = detector.accept(measurement)
     if accepted:
@@ -458,15 +573,19 @@ def feed_original(detector, models, origin, event):
         kind = "source_context_reset"
     elif series["version"] == previous["version"]:
         kind = "duplicate"
-    elif (series["last_original_version"] == series["version"]
-          and series["points"]):
+    elif series["last_original_version"] == series["version"] and series["points"]:
         kind = "new_original"
     else:
         kind = "correction"
     return key, {
-        "kind": kind, "source_index": source_index, "received_at": at,
-        "original_at": at, "source_role": role, "raw_value": point["value"],
-        "normalized_value": value, "previous_last_point": before_last,
+        "kind": kind,
+        "source_index": source_index,
+        "received_at": at,
+        "original_at": at,
+        "source_role": role,
+        "raw_value": point["value"],
+        "normalized_value": value,
+        "previous_last_point": before_last,
         "reported_age_s": point.get("reported_age_s"),
         "source_state_before": previous,
     }
@@ -480,12 +599,17 @@ def analyze_recording(cases, session, fixture, modules, origin, output):
     detector = modules["detector"].Detector(parameters, origin)
     cache = FitCache(modules["curve_change"], detector.curve_policy)
     events = received_events(session)
-    timeline = [(event[0], 0, event[1], event) for event in events
-                if event[0] <= max(case["through_s"] for case in cases)]
-    timeline.extend((case["bind_at_s"], 1, index, case)
-                    for index, case in enumerate(cases))
-    timeline.extend((case["through_s"], 2, index, case)
-                    for index, case in enumerate(cases))
+    timeline = [
+        (event[0], 0, event[1], event)
+        for event in events
+        if event[0] <= max(case["through_s"] for case in cases)
+    ]
+    timeline.extend(
+        (case["bind_at_s"], 1, index, case) for index, case in enumerate(cases)
+    )
+    timeline.extend(
+        (case["through_s"], 2, index, case) for index, case in enumerate(cases)
+    )
     timeline.sort(key=lambda item: item[:3])
     active, results = {}, {}
     audit = Counter()
@@ -498,12 +622,16 @@ def analyze_recording(cases, session, fixture, modules, origin, output):
                 audit[update["kind"]] += 1
                 # Preserve all same-time source messages, including corrections.
                 for state in active.values():
-                    if (seconds <= state["spec"]["through_s"]
-                            and key in state["channels"]):
+                    if (
+                        seconds <= state["spec"]["through_s"]
+                        and key in state["channels"]
+                    ):
                         state["result"]["input_audit"].append(update)
                         bound = state["channels"][key]
-                        if (update["kind"] == "correction"
-                                and update["original_at"] in bound.used_points):
+                        if (
+                            update["kind"] == "correction"
+                            and update["original_at"] in bound.used_points
+                        ):
                             bound.reason = "previously_assessed_original_corrected"
                 # A same-time duplicate does not erase a genuinely new state
                 # already received in this batch. A correction does replace it.
@@ -512,13 +640,17 @@ def analyze_recording(cases, session, fixture, modules, origin, output):
             elif kind == 1:
                 case = item
                 result = {
-                    "case": case, "recording": session["id"],
+                    "case": case,
+                    "recording": session["id"],
                     "source": session["provenance"],
                     "parameters": parameters.as_dict(),
                     "parameters_sha256": digest(encoded(parameters.as_dict())),
                     "curve_policy": asdict(detector.curve_policy),
-                    "binding": [], "rows": [], "input_audit": [],
-                    "status": "running", "event_probability": None,
+                    "binding": [],
+                    "rows": [],
+                    "input_audit": [],
+                    "status": "running",
+                    "event_probability": None,
                     "value_prediction": "rows/frozen_value_prediction",
                     "prediction_limitation": (
                         "binding fits only; raw deviations and initial-noise normalization "
@@ -528,13 +660,20 @@ def analyze_recording(cases, session, fixture, modules, origin, output):
                 channels = {}
                 for spec in case["channels"]:
                     bound = BoundChannel(
-                        case, spec, detector, modules["models"], origin, at,
+                        case,
+                        spec,
+                        detector,
+                        modules["models"],
+                        origin,
+                        at,
                     )
                     channels[bound.key] = bound
                     result["binding"].append(bound.binding)
                     result["rows"].append(bound.evaluate(detector, cache, at))
                 active[case["id"]] = {
-                    "spec": case, "channels": channels, "result": result,
+                    "spec": case,
+                    "channels": channels,
+                    "result": result,
                 }
                 results[case["id"]] = result
             else:
@@ -565,24 +704,32 @@ def analyze_recording(cases, session, fixture, modules, origin, output):
                 result["terminal_support"] = []
                 for bound in state["channels"].values():
                     series, points = bound.support_at(detector, at)
-                    result["terminal_support"].append({
-                        "position": bound.position, "quantity": bound.quantity,
-                        "at": at, "status": (
-                            "unresolved" if bound.reason
-                            else "original_context_available"
-                        ),
-                        "reason": bound.reason,
-                        "source_state": source_state(series),
-                        "original_count": len(points), "numerically_rechecked": False,
-                    })
+                    result["terminal_support"].append(
+                        {
+                            "position": bound.position,
+                            "quantity": bound.quantity,
+                            "at": at,
+                            "status": (
+                                "unresolved"
+                                if bound.reason
+                                else "original_context_available"
+                            ),
+                            "reason": bound.reason,
+                            "source_state": source_state(series),
+                            "original_count": len(points),
+                            "numerically_rechecked": False,
+                        }
+                    )
                 case_counts = Counter()
                 for row in result["rows"]:
                     case_counts.update(row["work"]["calls"])
                 result["work"] = {
-                    "wall_seconds": sum(row["work"]["wall_seconds"]
-                                        for row in result["rows"]),
-                    "cpu_seconds": sum(row["work"]["cpu_seconds"]
-                                       for row in result["rows"]),
+                    "wall_seconds": sum(
+                        row["work"]["wall_seconds"] for row in result["rows"]
+                    ),
+                    "cpu_seconds": sum(
+                        row["work"]["cpu_seconds"] for row in result["rows"]
+                    ),
                     "calls": dict(case_counts),
                     "scope": "case assessments; source preparation timed per recording",
                 }
@@ -594,7 +741,8 @@ def analyze_recording(cases, session, fixture, modules, origin, output):
                 )
                 del active[identity]
     return {
-        "recording": session["id"], "source": session["provenance"],
+        "recording": session["id"],
+        "source": session["provenance"],
         "bound_original_messages_read": len(events),
         "consumed_message_kinds": dict(audit),
         "numerical_calls": dict(cache.counts),
@@ -625,11 +773,16 @@ def run_analysis(document, output):
     output = Path(output)
     output.mkdir(parents=True, exist_ok=True)
     result = {
-        "schema_version": 1, "status": "running", "input": document,
-        "input_sha256": digest(encoded(document)), "origin": origin,
+        "schema_version": 1,
+        "status": "running",
+        "input": document,
+        "input_sha256": digest(encoded(document)),
+        "origin": origin,
         "owners": owners,
-        "manifest": {"file": str(manifest_path.relative_to(ROOT)),
-                     "sha256": digest(manifest_payload)},
+        "manifest": {
+            "file": str(manifest_path.relative_to(ROOT)),
+            "sha256": digest(manifest_payload),
+        },
         "semantics": {
             "purpose": (
                 "preparatory fixed-hypothesis and observed-sequence investigation"
@@ -708,13 +861,20 @@ def run_analysis(document, output):
             "consume the bound recorded Parameters input"
         )
         recording_result = analyze_recording(
-            cases, session, json.loads(fixture_payload), modules, origin, output,
+            cases,
+            session,
+            json.loads(fixture_payload),
+            modules,
+            origin,
+            output,
         )
         result["recordings"].append(recording_result)
         write_json(output / "expectation-analysis.json", result)
     result["status"] = "completed"
-    result["work"] = {"wall_seconds": time.perf_counter() - started_wall,
-                      "cpu_seconds": time.process_time() - started_cpu}
+    result["work"] = {
+        "wall_seconds": time.perf_counter() - started_wall,
+        "cpu_seconds": time.process_time() - started_cpu,
+    }
     write_json(output / "expectation-analysis.json", result)
     return result
 
@@ -723,7 +883,9 @@ def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument(
-        "--cases-json", required=True, help="Explicit schema-v1 JSON string",
+        "--cases-json",
+        required=True,
+        help="Explicit schema-v1 JSON string",
     )
     args = parser.parse_args(argv)
     try:

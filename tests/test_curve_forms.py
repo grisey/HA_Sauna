@@ -41,7 +41,7 @@ def turning_shapes():
         noise = value - trace(100)[1]
         for model, shape in (
             ("hinge1", abs(x)),
-            ("hinge2", -x + max(0, x + 1 / 2)**2),
+            ("hinge2", -x + max(0, x + 1 / 2) ** 2),
         ):
             piecewise[model].append((at, trace(0)[0] + amplitude * shape + noise))
     return {
@@ -56,7 +56,8 @@ def replay_slice(recording, start, end):
     points = []
     with gzip.open(
         ROOT / f"fixtures/replay/{recording}.samples.jsonl.gz",
-        "rt", encoding="utf-8",
+        "rt",
+        encoding="utf-8",
     ) as stream:
         for line in stream:
             row = json.loads(line)
@@ -85,7 +86,8 @@ class CurveFormTests(unittest.TestCase):
         self.assertGreaterEqual(result.before_count, curve_policy().min_side_samples)
         self.assertGreaterEqual(result.after_count, curve_policy().min_side_samples)
         self.assert_score_close(
-            result.score_gain, result.counter_score - result.positive_score,
+            result.score_gain,
+            result.counter_score - result.positive_score,
         )
 
     def test_shape_class_accepts_smooth_and_both_piecewise_forms(self):
@@ -93,18 +95,23 @@ class CurveFormTests(unittest.TestCase):
         for model, valley in turning_shapes().items():
             for form, sign in (("recovery", 1), ("peak", -1)):
                 with self.subTest(generator=model, form=form):
-                    points = [(at, center + sign * (value - center))
-                              for at, value in valley]
+                    points = [
+                        (at, center + sign * (value - center)) for at, value in valley
+                    ]
                     result = curve_form(points, policy=curve_policy(), form=form)
                     self.assert_supported(result, -sign, sign)
                     # The generator's family can belong to the positive class;
                     # another positive family may legitimately fit better.
-                    self.assertTrue(any(
-                        item.model == model and item.compatible is True
-                        for item in result.candidate_models
-                    ), result)
+                    self.assertTrue(
+                        any(
+                            item.model == model and item.compatible is True
+                            for item in result.candidate_models
+                        ),
+                        result,
+                    )
                     self.assertIn(
-                        result.positive_model, {"quadratic", "cubic", "hinge1", "hinge2"},
+                        result.positive_model,
+                        {"quadratic", "cubic", "hinge1", "hinge2"},
                     )
                     self.assertLess(points[len(points) // 3][0], result.turn_at)
                     self.assertLess(result.turn_at, points[2 * len(points) // 3][0])
@@ -122,8 +129,10 @@ class CurveFormTests(unittest.TestCase):
             form = "recovery" if value_scale > 0 else "peak"
             with self.subTest(value_scale=value_scale, time_scale=time_scale):
                 points = [
-                    (origin + shift + (at - origin) * time_scale,
-                     offset + value_scale * value)
+                    (
+                        origin + shift + (at - origin) * time_scale,
+                        offset + value_scale * value,
+                    )
                     for at, value in source
                 ]
                 result = curve_form(points, policy=curve_policy(), form=form)
@@ -132,11 +141,13 @@ class CurveFormTests(unittest.TestCase):
                 self.assertEqual(result.positive_model, base.positive_model)
                 self.assert_score_close(result.score_gain, base.score_gain)
                 self.assert_score_close(
-                    result.noise_scale, abs(value_scale) * base.noise_scale,
+                    result.noise_scale,
+                    abs(value_scale) * base.noise_scale,
                 )
                 expected_turn = origin + shift + (base.turn_at - origin) * time_scale
                 self.assertLessEqual(
-                    abs(result.turn_at - expected_turn), 4 * timedelta.resolution,
+                    abs(result.turn_at - expected_turn),
+                    4 * timedelta.resolution,
                 )
 
     def test_models_share_originals_noise_and_account_for_parameters_and_search(self):
@@ -158,7 +169,8 @@ class CurveFormTests(unittest.TestCase):
         _, first_values, first_noise = full_fits[0]
         original_times = next(
             tuple(row[1] for row in rows)
-            for rows, _, _ in full_fits if len(rows[0]) > 1
+            for rows, _, _ in full_fits
+            if len(rows[0]) > 1
         )
         self.assertEqual(first_noise, result.noise_scale)
         for rows, values, noise in full_fits:
@@ -166,7 +178,8 @@ class CurveFormTests(unittest.TestCase):
             self.assertEqual(noise, first_noise)
             if len(rows[0]) > 1:
                 self.assertEqual(
-                    tuple(row[1] for row in rows), original_times,
+                    tuple(row[1] for row in rows),
+                    original_times,
                 )
         hinges = [item for item in result.candidate_models if item.hinge_order]
         self.assertTrue(hinges)
@@ -175,7 +188,9 @@ class CurveFormTests(unittest.TestCase):
             with self.subTest(model=item.model, knot=item.knot_at):
                 self.assert_score_close(
                     item.score,
-                    item.loss + item.parameter_count * log(result.count) + item.search_cost,
+                    item.loss
+                    + item.parameter_count * log(result.count)
+                    + item.search_cost,
                 )
                 if item.hinge_order:
                     self.assertEqual(item.parameter_count, item.coefficient_count + 1)
@@ -184,20 +199,28 @@ class CurveFormTests(unittest.TestCase):
                 else:
                     self.assertEqual(item.parameter_count, item.coefficient_count)
                     self.assertEqual(item.search_cost, 0)
-        self.assertTrue(any(
-            item.compatible is True and item.model == result.positive_model
-            and isclose(item.score, result.positive_score)
-            for item in result.candidate_models
-        ), result)
-        self.assertTrue(any(
-            item.compatible is False and item.model == result.counter_model
-            and isclose(item.score, result.counter_score)
-            for item in result.candidate_models
-        ), result)
+        self.assertTrue(
+            any(
+                item.compatible is True
+                and item.model == result.positive_model
+                and isclose(item.score, result.positive_score)
+                for item in result.candidate_models
+            ),
+            result,
+        )
+        self.assertTrue(
+            any(
+                item.compatible is False
+                and item.model == result.counter_model
+                and isclose(item.score, result.counter_score)
+                for item in result.candidate_models
+            ),
+            result,
+        )
 
     def test_reference_stays_frozen_and_only_later_original_times_are_fresh(self):
         points = recovery_trace_points()
-        initial = points[:-curve_policy().min_side_samples]
+        initial = points[: -curve_policy().min_side_samples]
         first = curve_form(initial, policy=curve_policy(), form="recovery")
         self.assert_supported(first, -1, 1)
         self.assertEqual(first.fresh_original_count, 0)
@@ -213,7 +236,9 @@ class CurveFormTests(unittest.TestCase):
         ):
             with self.subTest(newest=originals[-1][0], fresh=expected_fresh):
                 result = curve_form(
-                    originals, policy=curve_policy(), form="recovery",
+                    originals,
+                    policy=curve_policy(),
+                    form="recovery",
                     reference=reference,
                 )
                 self.assert_supported(result, -1, 1)
@@ -230,14 +255,20 @@ class CurveFormTests(unittest.TestCase):
                 self.assertEqual(bound.search_count, reference.search_count)
                 self.assert_score_close(
                     bound.score,
-                    bound.loss + reference.parameter_count * log(result.count)
+                    bound.loss
+                    + reference.parameter_count * log(result.count)
                     + 2 * log(reference.search_count),
                 )
                 self.assert_score_close(result.reference_score, bound.score)
-        self.assertIsNone(curve_form(
-            points, policy=curve_policy(), form="recovery", reference=reference,
-            current_not_before=reference.turn_at,
-        ))
+        self.assertIsNone(
+            curve_form(
+                points,
+                policy=curve_policy(),
+                form="recovery",
+                reference=reference,
+                current_not_before=reference.turn_at,
+            )
+        )
 
     def test_structural_m1_replacement_cost_counts_its_shared_time_once(self):
         # Structural cost regression, not a tuned score-boundary example:
@@ -245,8 +276,9 @@ class CurveFormTests(unittest.TestCase):
         # changes both diagnostic fields but only one independent parameter.
         source = level_trace_points()
         center = trace(0)[0]
-        old_peak = [(at, 2 * center - value)
-                    for at, value in turning_shapes()["hinge1"]]
+        old_peak = [
+            (at, 2 * center - value) for at, value in turning_shapes()["hinge1"]
+        ]
         policy = replace(curve_policy(), max_candidates=len(source))
         first = curve_form(old_peak, policy=policy, form="peak")
         self.assert_supported(first, 1, -1)
@@ -258,30 +290,44 @@ class CurveFormTests(unittest.TestCase):
         shifted_turn = source[len(source) // 2 + 1][0]
         slope = trace(70)[0] - trace(71)[0]
         shifted_peak = [
-            (at, center - slope * abs((at - shifted_turn).total_seconds())
-             - (value - trace(100)[1]))
+            (
+                at,
+                center
+                - slope * abs((at - shifted_turn).total_seconds())
+                - (value - trace(100)[1]),
+            )
             for at, value in source
         ]
         result = curve_form(
-            shifted_peak, policy=policy, form="peak", reference=reference,
+            shifted_peak,
+            policy=policy,
+            form="peak",
+            reference=reference,
         )
         self.assertIsNotNone(result)
         self.assertEqual(result.form_evidence, "supports", result)
         self.assertEqual(result.positive_model, "hinge1", result)
-        best = next(item for item in result.candidate_models if (
-            item.model == result.positive_model and item.score == result.positive_score
-        ))
+        best = next(
+            item
+            for item in result.candidate_models
+            if (
+                item.model == result.positive_model
+                and item.score == result.positive_score
+            )
+        )
         self.assertEqual(best.turn_kind, "knot", best)
         self.assertEqual(best.turn_at, best.knot_at)
         self.assertNotEqual(best.turn_at, reference.turn_at)
         self.assertEqual(result.reference, reference)
         self.assertEqual(result.replacement_parameter_count, 1)
         self.assert_score_close(
-            result.replacement_cost, log(result.count) + best.search_cost,
+            result.replacement_cost,
+            log(result.count) + best.search_cost,
         )
         self.assertGreater(result.replacement_gain, 0, result)
         self.assert_score_close(
-            result.replacement_gain, result.reference_score - best.score,
+            result.replacement_gain,
+            result.reference_score - best.score,
         )
 
     def test_one_failed_hinge_fit_does_not_discount_the_attempted_search(self):
@@ -293,8 +339,7 @@ class CurveFormTests(unittest.TestCase):
         def hinge_design(rows, values):
             # Both hinge orders have a zero prefix in their fourth column.
             # The cubic's fourth column is already nonzero at its second time.
-            return (len(values) == len(points) and len(rows[0]) == 4
-                    and rows[1][3] == 0)
+            return len(values) == len(points) and len(rows[0]) == 4 and rows[1][3] == 0
 
         def observed_fit(rows, values, noise, policy):
             if hinge_design(rows, values):
@@ -320,14 +365,18 @@ class CurveFormTests(unittest.TestCase):
         self.assertIsNotNone(result)
         self.assertEqual(len(injected), 1)
         self.assertEqual(failed_attempts, baseline_attempts)
-        baseline_hinges = {(item.model, item.knot_at): item
-                           for item in baseline.candidate_models if item.hinge_order}
+        baseline_hinges = {
+            (item.model, item.knot_at): item
+            for item in baseline.candidate_models
+            if item.hinge_order
+        }
         remaining = [item for item in result.candidate_models if item.hinge_order]
         # This full-rank fixture loses exactly the injected candidate, while
         # every attempted M1/M2 design still belongs to the declared search.
         self.assertEqual(len(baseline_hinges), len(baseline_attempts))
         self.assertEqual(
-            len(baseline_attempts), 2 * len({knot for _, knot in baseline_hinges}),
+            len(baseline_attempts),
+            2 * len({knot for _, knot in baseline_hinges}),
         )
         self.assertEqual(len(remaining), len(baseline_hinges) - 1)
         self.assertEqual(baseline.hinge_fits_attempted, len(baseline_attempts))
@@ -340,7 +389,8 @@ class CurveFormTests(unittest.TestCase):
                 self.assertEqual(item.search_count, len(failed_attempts))
                 self.assertEqual(item.search_count, previous.search_count)
                 self.assert_score_close(
-                    item.search_cost, 2 * log(len(failed_attempts)),
+                    item.search_cost,
+                    2 * log(len(failed_attempts)),
                 )
                 self.assertEqual(item.search_cost, previous.search_cost)
                 self.assert_score_close(item.score, previous.score)
@@ -361,7 +411,12 @@ class CurveFormTests(unittest.TestCase):
             with self.subTest(form=form):
                 coefficients = [0, -2 * sign, sign, sign]
                 geometry = curves._form_turn(
-                    coefficients, knot, 1, form, 0, len(source),
+                    coefficients,
+                    knot,
+                    1,
+                    form,
+                    0,
+                    len(source),
                 )
                 self.assertEqual(geometry[:3], (True, knot, "knot"))
                 self.assertEqual(geometry[4:], (1, 0))
@@ -370,10 +425,17 @@ class CurveFormTests(unittest.TestCase):
                     for (at, _), x in zip(source, times, strict=True)
                 ]
                 reference = curves.CurveFormReference(
-                    form=form, model="hinge1", start_at=start, turn_at=knot_at,
-                    turn_kind=geometry[2], knot_at=knot_at, hinge_order=1,
-                    parameter_count=len(coefficients) + 1, search_count=1,
-                    initial_newest_at=end, current_not_before=None,
+                    form=form,
+                    model="hinge1",
+                    start_at=start,
+                    turn_at=knot_at,
+                    turn_kind=geometry[2],
+                    knot_at=knot_at,
+                    hinge_order=1,
+                    parameter_count=len(coefficients) + 1,
+                    search_count=1,
+                    initial_newest_at=end,
+                    current_not_before=None,
                 )
 
                 def exact_known_fit(rows, values, supplied_noise, policy):
@@ -381,14 +443,19 @@ class CurveFormTests(unittest.TestCase):
                     # The supplied originals are exactly this four-term form;
                     # centering changes only its intercept at normalized x=0.
                     self.assertEqual(supplied_noise, noise)
-                    self.assertEqual(tuple(tuple(row) for row in rows), tuple(
-                        (1.0, x, x * x, max(0, x - knot)) for x in times
-                    ))
+                    self.assertEqual(
+                        tuple(tuple(row) for row in rows),
+                        tuple((1.0, x, x * x, max(0, x - knot)) for x in times),
+                    )
                     return [values[0], *coefficients[1:]], 0.0
 
                 with patch.object(curves, "_fit", side_effect=exact_known_fit) as fit:
                     rechecked = curves._fixed_form_model(
-                        points, noise, curve_policy(), reference, records=(),
+                        points,
+                        noise,
+                        curve_policy(),
+                        reference,
+                        records=(),
                     )
                 fit.assert_called_once()
                 self.assertIsNotNone(rechecked)
@@ -414,9 +481,12 @@ class CurveFormTests(unittest.TestCase):
             variants["monotone"].append((at, trace(0)[0] - step * elapsed + noise))
             # Its derivative is strictly negative before the final endpoint;
             # flattening never supplies a positive observed recovery flank.
-            variants["continuing slower fall"].append((
-                at, trace(0)[0] + step * (span - elapsed)**2 / (2 * span) + noise,
-            ))
+            variants["continuing slower fall"].append(
+                (
+                    at,
+                    trace(0)[0] + step * (span - elapsed) ** 2 / (2 * span) + noise,
+                )
+            )
         spike = list(source)
         middle = len(spike) // 2
         spike[middle] = (spike[middle][0], trace(69)[1])
@@ -426,21 +496,28 @@ class CurveFormTests(unittest.TestCase):
                 with self.subTest(shape=name, form=form):
                     result = curve_form(points, policy=curve_policy(), form=form)
                     self.assertTrue(
-                        result is None or result.evidence != "supports", result,
+                        result is None or result.evidence != "supports",
+                        result,
                     )
         resolved = curve_form(
-            variants["monotone"], policy=curve_policy(), form="recovery",
+            variants["monotone"],
+            policy=curve_policy(),
+            form="recovery",
         )
         self.assertIsNotNone(resolved)
         self.assertEqual(resolved.form_evidence, "rejects", resolved)
         # Missing and degenerate evidence remain distinct from that counterform.
         for unresolved in (
-            source[:curve_policy().min_side_samples],
+            source[: curve_policy().min_side_samples],
             level_trace_points(noisy=False),
         ):
-            self.assertIsNone(curve_form(
-                unresolved, policy=curve_policy(), form="recovery",
-            ))
+            self.assertIsNone(
+                curve_form(
+                    unresolved,
+                    policy=curve_policy(),
+                    form="recovery",
+                )
+            )
 
     def test_r03_and_r04_user_referenced_pulses_have_observed_peak_form(self):
         # Independent references: R03's single pulse near t730 and R04's first
@@ -452,7 +529,9 @@ class CurveFormTests(unittest.TestCase):
         ):
             with self.subTest(recording=recording):
                 points = replay_slice(recording, start, end)
-                self.assertGreaterEqual(len(points), 2 * curve_policy().min_side_samples)
+                self.assertGreaterEqual(
+                    len(points), 2 * curve_policy().min_side_samples
+                )
                 result = curve_form(points, policy=curve_policy(), form="peak")
                 self.assert_supported(result, 1, -1)
                 self.assertEqual(result.start_at, points[0][0])

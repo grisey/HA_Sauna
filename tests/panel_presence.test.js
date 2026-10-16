@@ -97,10 +97,7 @@ panel.state.presence.current = panel.state.presence.external["<sensor>"];
 const directDetail = panel.presenceDetails();
 assert.match(directDetail, /Präsenzsensor mit Türereignis/);
 assert.doesNotMatch(directDetail, /Beobachtete Quelle/);
-assert.match(
-  directDetail,
-  /Vorläufige Heizanforderung nach Türschluss[\s\S]*Aktiv/,
-);
+assert.match(directDetail, /Vorläufige Heizanforderung nach Türschluss[\s\S]*Aktiv/);
 assert.match(directDetail, /Sensor nicht verfügbar/);
 assert.doesNotMatch(directDetail, /unavailable/);
 assert.doesNotMatch(detail, /Aktivierungsregeln sind offen|keine Wiedergabe/);

@@ -11,8 +11,11 @@ import math
 
 
 def _seconds(value, label):
-    if (isinstance(value, bool) or not isinstance(value, (int, float))
-            or not math.isfinite(value)):
+    if (
+        isinstance(value, bool)
+        or not isinstance(value, (int, float))
+        or not math.isfinite(value)
+    ):
         raise ValueError(f"{label} must be finite seconds")
     return value
 
@@ -51,15 +54,19 @@ def recording_time_axes(manifest, *, durations_s=None):
             if previous is None:
                 if offset != 0 or gap is not None or "previous_recording" in member:
                     raise ValueError(f"{identity}: group origin must have zero offset")
-            elif (member.get("previous_recording") != previous
-                  or offset < previous_offset
-                  or _seconds(gap, "gap_from_previous_end_s") < 0):
+            elif (
+                member.get("previous_recording") != previous
+                or offset < previous_offset
+                or _seconds(gap, "gap_from_previous_end_s") < 0
+            ):
                 raise ValueError(f"{identity}: invalid preceding recording or gap")
             if previous is not None and durations_s is not None:
                 duration = _seconds(durations_s[previous], "previous duration_s")
                 if duration < 0 or not math.isclose(
-                    offset - previous_offset - duration, gap,
-                    rel_tol=0.0, abs_tol=0.000001,
+                    offset - previous_offset - duration,
+                    gap,
+                    rel_tol=0.0,
+                    abs_tol=0.000001,
                 ):
                     raise ValueError(f"{identity}: gap differs from fixture duration")
             axes[identity] = {
@@ -78,5 +85,6 @@ def recording_time_axes(manifest, *, durations_s=None):
 
 def sequence_time(recording_axis, local_t_s):
     """Map local seconds to group seconds, including negative snapshot times."""
-    return (_seconds(local_t_s, "local_t_s")
-            + _seconds(recording_axis["origin_offset_s"], "origin_offset_s"))
+    return _seconds(local_t_s, "local_t_s") + _seconds(
+        recording_axis["origin_offset_s"], "origin_offset_s"
+    )

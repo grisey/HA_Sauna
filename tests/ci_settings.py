@@ -95,7 +95,11 @@ def install_ha():
     # Reuse the complete shared environment used by the native HA/browser fixtures.
     subprocess.run(
         [
-            sys.executable, "-m", "pip", "install", "-r",
+            sys.executable,
+            "-m",
+            "pip",
+            "install",
+            "-r",
             str(ROOT / "tests/browser/requirements.txt"),
         ],
         check=True,
@@ -126,9 +130,7 @@ def run_ha():
     sys.path.insert(0, str(HA_ROOT))
     print("HA_TESTS", json.dumps(names or ["all"]), flush=True)
     loader = unittest.defaultTestLoader
-    suite = (
-        loader.loadTestsFromNames(names) if names else loader.discover(str(HA_ROOT))
-    )
+    suite = loader.loadTestsFromNames(names) if names else loader.discover(str(HA_ROOT))
     result = unittest.TextTestRunner(verbosity=2).run(suite)
     successful = result.wasSuccessful() and result.testsRun > 0
     if os.environ.get("HA_TEST_REQUIRED") and result.skipped:

@@ -23,7 +23,14 @@ from time import perf_counter
 from types import ModuleType
 
 from proxy_forms import (
-    ROOT, ROLES, TESTS, bound_file, number, read_session, sha, write_json,
+    ROOT,
+    ROLES,
+    TESTS,
+    bound_file,
+    number,
+    read_session,
+    sha,
+    write_json,
 )
 
 
@@ -36,15 +43,22 @@ ORIGIN = datetime.fromisoformat(
     json.loads(SETTINGS_PAYLOAD)["fixtures"]["session"]["origin"]
 )
 GATES = (
-    "previous_water_fall", "water_fall_braking", "current_water_flat",
+    "previous_water_fall",
+    "water_fall_braking",
+    "current_water_flat",
     "temperature_still_falling",
 )
 
 
 def encoded(value):
     """One deterministic, finite JSON representation for files and hashes."""
-    return json.dumps(value, ensure_ascii=False, allow_nan=False, sort_keys=True,
-                      separators=(",", ":"))
+    return json.dumps(
+        value,
+        ensure_ascii=False,
+        allow_nan=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    )
 
 
 def core_owners():
@@ -55,18 +69,30 @@ def core_owners():
     package.__path__ = [str(path)]
     package.__package__ = name
     package.__spec__ = importlib.util.spec_from_loader(
-        name, loader=None, is_package=True,
+        name,
+        loader=None,
+        is_package=True,
     )
     sys.modules[name] = package
     curves = importlib.import_module(f"{name}.curve_change")
     parameters = importlib.import_module(f"{name}.parameters")
-    files = [Path(module.__file__) for key, module in sys.modules.items()
-             if key.startswith(f"{name}.") and getattr(module, "__file__", None)]
-    files.extend((path.parent / "defaults.json", SETTINGS_PATH, Path(__file__),
-                  Path(__file__).with_name("proxy_forms.py")))
-    provenance = [{"file": str(file.relative_to(ROOT)),
-                   "sha256": sha(file.read_bytes())}
-                  for file in sorted(set(files))]
+    files = [
+        Path(module.__file__)
+        for key, module in sys.modules.items()
+        if key.startswith(f"{name}.") and getattr(module, "__file__", None)
+    ]
+    files.extend(
+        (
+            path.parent / "defaults.json",
+            SETTINGS_PATH,
+            Path(__file__),
+            Path(__file__).with_name("proxy_forms.py"),
+        )
+    )
+    provenance = [
+        {"file": str(file.relative_to(ROOT)), "sha256": sha(file.read_bytes())}
+        for file in sorted(set(files))
+    ]
     return curves, parameters.Parameters, provenance
 
 
@@ -77,17 +103,21 @@ def case_parameters(entry, parameter_type):
     spec = fixture.get("configuration", {})
     program = spec.get("program", {})
     supplied = dict(spec.get("parameters", {}))
-    for key, parameter in (("start_c", "target_temperature_c"),
-                           ("end_c", "final_temperature_c"),
-                           ("gangs", "temperature_gangs")):
+    for key, parameter in (
+        ("start_c", "target_temperature_c"),
+        ("end_c", "final_temperature_c"),
+        ("gangs", "temperature_gangs"),
+    ):
         if key in program:
             supplied[parameter] = program[key]
     if program.get("targets"):
         program = {**program, "steps": program["targets"]}
     if program.get("steps"):
-        supplied.update(target_temperature_c=program["steps"][0],
-                        final_temperature_c=program["steps"][-1],
-                        temperature_gangs=len(program["steps"]))
+        supplied.update(
+            target_temperature_c=program["steps"][0],
+            final_temperature_c=program["steps"][-1],
+            temperature_gangs=len(program["steps"]),
+        )
     values = parameter_type(supplied).as_dict()
     provenance = {
         "fixture": binding,
@@ -114,9 +144,7 @@ def channel_arguments(values, position, quantity):
     return {
         "count": values["curve_original_samples"],
         "scale": values[f"curve_original_noise_{quantity}_{position}"],
-        "max_gap_seconds": values[
-            f"curve_original_gap_{quantity}_{position}_seconds"
-        ],
+        "max_gap_seconds": values[f"curve_original_gap_{quantity}_{position}_seconds"],
     }
 
 
@@ -130,27 +158,40 @@ def sample(record):
 
 def identity(record):
     """Reference the unchanged bound original without repeating its value."""
-    return {"role": record["role"], "channel_index": record["channel_index"],
-            "source_index": record["original"]["source_index"],
-            "t": record["original"]["t"],
-            "source_reason": record["source_reason"]}
+    return {
+        "role": record["role"],
+        "channel_index": record["channel_index"],
+        "source_index": record["original"]["source_index"],
+        "t": record["original"]["t"],
+        "source_reason": record["source_reason"],
+    }
 
 
 def source_span(records):
     """Consecutive channel indices identify every original in this interval."""
-    return {"count": len(records),
-            "first": identity(records[0]) if records else None,
-            "last": identity(records[-1]) if records else None}
+    return {
+        "count": len(records),
+        "first": identity(records[0]) if records else None,
+        "last": identity(records[-1]) if records else None,
+    }
 
 
 def gate(value, operator, threshold, unit, reason=None):
     result = None
     if value is not None and threshold is not None:
         result = value > threshold if operator == ">" else value <= threshold
-    return {"value": value, "operator": operator, "threshold": threshold,
-            "unit": unit, "result": result,
-            "reason": reason if result is None else
-            "comparison_passed" if result else "comparison_failed"}
+    return {
+        "value": value,
+        "operator": operator,
+        "threshold": threshold,
+        "unit": unit,
+        "result": result,
+        "reason": reason
+        if result is None
+        else "comparison_passed"
+        if result
+        else "comparison_failed",
+    }
 
 
 class PositionFeatures:
@@ -159,8 +200,10 @@ class PositionFeatures:
     def __init__(self, position, values, curves):
         self.position, self.values, self.curves = position, values, curves
         self.count = values["curve_original_samples"]
-        self.raw = {quantity: deque(maxlen=2 * self.count)
-                    for quantity in ("temperature", "humidity")}
+        self.raw = {
+            quantity: deque(maxlen=2 * self.count)
+            for quantity in ("temperature", "humidity")
+        }
         self.latest = {}
         self.channel_counts = Counter()
         # Every RH original is represented exactly once in settled or pending.
@@ -178,11 +221,17 @@ class PositionFeatures:
         quantity = role.removeprefix(f"{self.position}_")
         previous = self.latest.get(quantity)
         source_reason = original.get("invalid_reason")
-        if (previous is not None and at is not None
-                and previous["at"] is not None and at <= previous["at"]):
+        if (
+            previous is not None
+            and at is not None
+            and previous["at"] is not None
+            and at <= previous["at"]
+        ):
             source_reason = "nonincreasing_original_channel_time"
         record = {
-            "role": role, "original": original, "at": at,
+            "role": role,
+            "original": original,
+            "at": at,
             "channel_index": self.channel_counts[quantity],
             "value": original["value"] if not source_reason else None,
             "source_reason": source_reason,
@@ -191,8 +240,9 @@ class PositionFeatures:
         self.raw[quantity].append(record)
         self.latest[quantity] = record
         if quantity == "humidity":
-            self.pending.append({"humidity": record,
-                                 "left": self.latest.get("temperature")})
+            self.pending.append(
+                {"humidity": record, "left": self.latest.get("temperature")}
+            )
         return record
 
     def resolve_pairs(self, at):
@@ -222,11 +272,12 @@ class PositionFeatures:
                 ],
             }
             support = self.curves.original_water_pair_support(
-                sample(humidity), tuple(map(sample, bracket)), at=at,
+                sample(humidity),
+                tuple(map(sample, bracket)),
+                at=at,
                 **arguments,
             )
-            self.pending_support = {"status": support.status,
-                                    "reason": support.reason}
+            self.pending_support = {"status": support.status, "reason": support.reason}
             # Before the first T arrives, an equal-time T may still become
             # available in a later source row. Retain that RH identity as well.
             first_temperature_pending = (
@@ -239,9 +290,13 @@ class PositionFeatures:
                     )
                 break
             self.pending.popleft()
-            paired = {"humidity": humidity, "pair": support.pair,
-                      "status": support.status, "reason": support.reason,
-                      "bracket": bracket}
+            paired = {
+                "humidity": humidity,
+                "pair": support.pair,
+                "status": support.status,
+                "reason": support.reason,
+                "bracket": bracket,
+            }
             self.settled.append(paired)
             self.pending_support = None
             yield paired
@@ -252,7 +307,9 @@ class PositionFeatures:
         records = tuple(self.raw[quantity])
         arguments = channel_arguments(self.values, self.position, quantity)
         window = self.curves.original_window(
-            tuple(map(sample, records)), at=at, **arguments,
+            tuple(map(sample, records)),
+            at=at,
+            **arguments,
         )
         reason = None
         if window is None:
@@ -264,48 +321,74 @@ class PositionFeatures:
                 reason = "invalid_prefix_time"
             elif any(record["at"] is None for record in records):
                 reason = "invalid_original_time"
-            elif any((later["at"] - earlier["at"]).total_seconds()
-                     > arguments["max_gap_seconds"]
-                     for earlier, later in zip(records, records[1:])):
+            elif any(
+                (later["at"] - earlier["at"]).total_seconds()
+                > arguments["max_gap_seconds"]
+                for earlier, later in zip(records, records[1:])
+            ):
                 reason = "original_gap_exceeds_catalogue_limit"
-            elif not 0 <= (at - records[-1]["at"]).total_seconds() <= (
-                arguments["max_gap_seconds"]
+            elif (
+                not 0
+                <= (at - records[-1]["at"]).total_seconds()
+                <= (arguments["max_gap_seconds"])
             ):
                 reason = "newest_original_not_fresh"
             else:
                 reason = "owner_rejected_original_window"
         output = {
             "status": "ready" if window is not None else "unknown",
-            "reason": reason, "arguments": arguments,
-            "previous_sources": source_span(records[:-self.count]),
-            "current_sources": source_span(records[-self.count:]),
-            "invalid_sources": [identity(record) for record in records
-                                if record["source_reason"]],
+            "reason": reason,
+            "arguments": arguments,
+            "previous_sources": source_span(records[: -self.count]),
+            "current_sources": source_span(records[-self.count :]),
+            "invalid_sources": [
+                identity(record) for record in records if record["source_reason"]
+            ],
         }
         if window is not None:
-            output["features"] = {name: getattr(window, name) for name in (
-                "b", "v", "e_minus", "e", "mean_minus", "mean", "r_minus", "r",
-            )}
-            output.update(start_t=seconds(window.start_at),
-                          newest_t=seconds(window.newest_at))
+            output["features"] = {
+                name: getattr(window, name)
+                for name in (
+                    "b",
+                    "v",
+                    "e_minus",
+                    "e",
+                    "mean_minus",
+                    "mean",
+                    "r_minus",
+                    "r",
+                )
+            }
+            output.update(
+                start_t=seconds(window.start_at), newest_t=seconds(window.newest_at)
+            )
         return window, output
 
     def paired_identity(self, entry):
-        output = {"humidity": identity(entry["humidity"]),
-                  "status": entry["status"], "reason": entry["reason"]}
+        output = {
+            "humidity": identity(entry["humidity"]),
+            "status": entry["status"],
+            "reason": entry["reason"],
+        }
         pair = entry["pair"]
         if pair is None:
-            output["temperature_support"] = [identity(record)
-                                             for record in entry["bracket"]]
+            output["temperature_support"] = [
+                identity(record) for record in entry["bracket"]
+            ]
             return output
-        for key, point in (("temperature_before", pair.temperature_before),
-                           ("temperature_after", pair.temperature_after)):
-            output[key] = identity(next(record for record in entry["bracket"]
-                                        if sample(record) == point))
-        output.update(temperature=pair.temperature,
-                      lower_density=pair.lower_density,
-                      upper_density=pair.upper_density,
-                      available_t=seconds(pair.available_at))
+        for key, point in (
+            ("temperature_before", pair.temperature_before),
+            ("temperature_after", pair.temperature_after),
+        ):
+            output[key] = identity(
+                next(record for record in entry["bracket"] if sample(record) == point)
+            )
+        output.update(
+            temperature=pair.temperature,
+            lower_density=pair.lower_density,
+            upper_density=pair.upper_density,
+            available_t=seconds(pair.available_at),
+        )
         return output
 
     def snapshot(self, at, *, prefix=False):
@@ -315,63 +398,88 @@ class PositionFeatures:
         # without a newly resolved RH pair. No old ready result is cached.
         support = self.curves.original_water_window(
             tuple(item["pair"] for item in self.settled),
-            count=self.count, max_gap_seconds=self.humidity_gap, at=at,
+            count=self.count,
+            max_gap_seconds=self.humidity_gap,
+            at=at,
         )
         water = support.features
         significance = self.values["curve_original_significance"]
         water_reason = support.reason or "water_window_unavailable"
         water_gates = {
             "previous_water_fall": gate(
-                -water.b if water else None, ">",
+                -water.b if water else None,
+                ">",
                 significance * water.e_minus if water else None,
-                "g/m³/s", water_reason,
+                "g/m³/s",
+                water_reason,
             ),
             "water_fall_braking": gate(
-                water.v - water.b if water else None, ">",
+                water.v - water.b if water else None,
+                ">",
                 significance * (water.e + water.e_minus) if water else None,
-                "g/m³/s", water_reason,
+                "g/m³/s",
+                water_reason,
             ),
             "current_water_flat": gate(
-                abs(water.v) if water else None, "<=",
+                abs(water.v) if water else None,
+                "<=",
                 significance * water.e if water else None,
-                "g/m³/s", water_reason,
+                "g/m³/s",
+                water_reason,
             ),
         }
         deviation = water.normalized_level_deviation() if water else None
         water_gates["temperature_still_falling"] = gate(
-            -temperature.v if temperature else None, ">",
+            -temperature.v if temperature else None,
+            ">",
             significance * temperature.e if temperature else None,
-            "°C/s", thermal["reason"],
+            "°C/s",
+            thermal["reason"],
         )
         settled = tuple(self.settled)
         water_output = {
-            "status": support.status, "reason": support.reason,
+            "status": support.status,
+            "reason": support.reason,
             "level_deviation_comparison_diagnostic": {
-                **gate(deviation, "<=", significance, "normalized",
-                       "owner_level_deviation_unknown" if water else water_reason),
+                **gate(
+                    deviation,
+                    "<=",
+                    significance,
+                    "normalized",
+                    "owner_level_deviation_unknown" if water else water_reason,
+                ),
                 "role": "diagnostic_only; excluded from form qualification",
             },
-            "previous_rh_sources": source_span(tuple(
-                entry["humidity"] for entry in settled[:-self.count]
-            )),
-            "current_rh_sources": source_span(tuple(
-                entry["humidity"] for entry in settled[-self.count:]
-            )),
+            "previous_rh_sources": source_span(
+                tuple(entry["humidity"] for entry in settled[: -self.count])
+            ),
+            "current_rh_sources": source_span(
+                tuple(entry["humidity"] for entry in settled[-self.count :])
+            ),
             "last_pair": self.paired_identity(settled[-1]) if settled else None,
-            "invalid_pairs": [{"humidity": identity(entry["humidity"]),
-                               "reason": entry["reason"]}
-                              for entry in settled if entry["pair"] is None],
+            "invalid_pairs": [
+                {"humidity": identity(entry["humidity"]), "reason": entry["reason"]}
+                for entry in settled
+                if entry["pair"] is None
+            ],
         }
         if water is not None:
             lower, upper = water.constant_bounds(significance)
             water_output.update(
-                features={"b": water.b, "v": water.v, "e_minus": water.e_minus,
-                          "e": water.e, "D": deviation},
-                start_t=seconds(water.start_at), newest_t=seconds(water.newest_at),
+                features={
+                    "b": water.b,
+                    "v": water.v,
+                    "e_minus": water.e_minus,
+                    "e": water.e,
+                    "D": deviation,
+                },
+                start_t=seconds(water.start_at),
+                newest_t=seconds(water.newest_at),
                 available_t=seconds(water.available_at),
                 newest_paired_rh_age_s=(at - water.newest_at).total_seconds(),
                 old_envelope_intersection_diagnostic={
-                    "lower": lower, "upper": upper,
+                    "lower": lower,
+                    "upper": upper,
                     "compatible": water.constant_compatible(significance),
                     "unscaled_lower": water.constant_lower,
                     "unscaled_upper": water.constant_upper,
@@ -382,40 +490,54 @@ class PositionFeatures:
             "temperature": seconds(temperature.newest_at) if temperature else None,
             "humidity": seconds(humidity.newest_at) if humidity else None,
             "paired_rh": seconds(water.newest_at) if water else None,
-            "right_temperature_partner": seconds(water.available_at)
-            if water else None,
+            "right_temperature_partner": seconds(water.available_at) if water else None,
         }
-        fresh = {key: (value > self.previous_prefix_newest[key]
-                       if value is not None and self.previous_prefix_newest
-                       and self.previous_prefix_newest[key] is not None else None)
-                 for key, value in newest.items()}
-        pending = {"count": len(self.pending),
-                   "first": identity(self.pending[0]["humidity"])
-                   if self.pending else None,
-                   "last": identity(self.pending[-1]["humidity"])
-                   if self.pending else None,
-                   "first_support": self.pending_support}
+        fresh = {
+            key: (
+                value > self.previous_prefix_newest[key]
+                if value is not None
+                and self.previous_prefix_newest
+                and self.previous_prefix_newest[key] is not None
+                else None
+            )
+            for key, value in newest.items()
+        }
+        pending = {
+            "count": len(self.pending),
+            "first": identity(self.pending[0]["humidity"]) if self.pending else None,
+            "last": identity(self.pending[-1]["humidity"]) if self.pending else None,
+            "first_support": self.pending_support,
+        }
         complete = all(window is not None for window in (temperature, humidity, water))
         results = [item["result"] for item in water_gates.values()]
         all_gates = None if None in results else all(results)
         output = {
-            "position": self.position, "complete_support": complete,
-            "raw_temperature": thermal, "raw_humidity": rh,
-            "water": water_output, "pending_suffix": pending,
+            "position": self.position,
+            "complete_support": complete,
+            "raw_temperature": thermal,
+            "raw_humidity": rh,
+            "water": water_output,
+            "pending_suffix": pending,
             "latest_received_originals": {
-                quantity: {"source": identity(record),
-                           "age_s": (at - record["at"]).total_seconds()
-                           if at is not None and record["at"] is not None else None}
+                quantity: {
+                    "source": identity(record),
+                    "age_s": (at - record["at"]).total_seconds()
+                    if at is not None and record["at"] is not None
+                    else None,
+                }
                 for quantity, record in self.latest.items()
             },
             "newest_support_times_s": newest,
             "advanced_since_previous_source_prefix": fresh,
-            "gates": water_gates, "all_four_form_gates": all_gates,
+            "gates": water_gates,
+            "all_four_form_gates": all_gates,
             "qualified_form_only": all_gates if complete else None,
-            "blocking_gates": [key for key, item in water_gates.items()
-                               if item["result"] is False],
-            "unknown_gates": [key for key, item in water_gates.items()
-                              if item["result"] is None],
+            "blocking_gates": [
+                key for key, item in water_gates.items() if item["result"] is False
+            ],
+            "unknown_gates": [
+                key for key, item in water_gates.items() if item["result"] is None
+            ],
             "support_reason": None if complete else "incomplete_original_support",
         }
         if prefix:
@@ -451,17 +573,26 @@ def add_summary(counts, snapshot):
 
 
 def analyse_session(session, values, curves, emit, parameter_hash):
-    states = {position: PositionFeatures(position, values, curves)
-              for position in POSITIONS}
+    states = {
+        position: PositionFeatures(position, values, curves) for position in POSITIONS
+    }
     # Initial snapshots never enter the original-prefix windows, matching
     # original_prefix in test_original_curve_evidence. Source rows remain exact.
-    events = merge(*([
-        (point["source_index"], role, point)
-        for point in session["original_series"][role]
-        if point["origin"] == "samples"
-    ] for role in ROLES), key=lambda item: item[0])
-    counts = {kind: {position: Counter() for position in POSITIONS}
-              for kind in ("prefixes", "pair_resolutions")}
+    events = merge(
+        *(
+            [
+                (point["source_index"], role, point)
+                for point in session["original_series"][role]
+                if point["origin"] == "samples"
+            ]
+            for role in ROLES
+        ),
+        key=lambda item: item[0],
+    )
+    counts = {
+        kind: {position: Counter() for position in POSITIONS}
+        for kind in ("prefixes", "pair_resolutions")
+    }
     input_hash = session["provenance"]["samples"]["sha256"]
     source_row = 0
     for source_row, (source_index, role, point) in enumerate(events, 1):
@@ -469,38 +600,62 @@ def analyse_session(session, values, curves, emit, parameter_hash):
         position = role.split("_", 1)[0]
         state = states[position]
         record = state.ingest(role, point, at)
-        common = {"case_id": session["id"], "climate_source_row": source_row,
-                  "source_index": source_index, "at_s": point["t"],
-                  "input_sha256": input_hash, "parameters_sha256": parameter_hash}
+        common = {
+            "case_id": session["id"],
+            "climate_source_row": source_row,
+            "source_index": source_index,
+            "at_s": point["t"],
+            "input_sha256": input_hash,
+            "parameters_sha256": parameter_hash,
+        }
         for entry in state.resolve_pairs(at):
             snapshot = state.snapshot(at)
-            emit({"kind": "pair_resolution", **common,
-                  "resolved_rh_channel_index": entry["humidity"]["channel_index"],
-                  "position": snapshot})
+            emit(
+                {
+                    "kind": "pair_resolution",
+                    **common,
+                    "resolved_rh_channel_index": entry["humidity"]["channel_index"],
+                    "position": snapshot,
+                }
+            )
             add_summary(counts["pair_resolutions"][position], snapshot)
-        positions = {key: value.snapshot(at, prefix=True)
-                     for key, value in states.items()}
-        emit({"kind": "source_prefix", **common, "input": identity(record),
-              "positions": positions,
-              "both_positions_qualified_form_only": (
-                  all(value["qualified_form_only"] for value in positions.values())
-                  if all(value["complete_support"] for value in positions.values())
-                  else None
-              )})
+        positions = {
+            key: value.snapshot(at, prefix=True) for key, value in states.items()
+        }
+        emit(
+            {
+                "kind": "source_prefix",
+                **common,
+                "input": identity(record),
+                "positions": positions,
+                "both_positions_qualified_form_only": (
+                    all(value["qualified_form_only"] for value in positions.values())
+                    if all(value["complete_support"] for value in positions.values())
+                    else None
+                ),
+            }
+        )
         for key, snapshot in positions.items():
             add_summary(counts["prefixes"][key], snapshot)
-    return {"id": session["id"], "climate_source_prefixes": source_row,
-            "input_counts": session["counts"],
-            "provenance": session["provenance"],
-            "counts": counts,
-            "final_pending_suffix": {
-                key: {"count": len(state.pending),
-                      "first": identity(state.pending[0]["humidity"])
-                      if state.pending else None,
-                      "last": identity(state.pending[-1]["humidity"])
-                      if state.pending else None}
-                for key, state in states.items()
-            }}
+    return {
+        "id": session["id"],
+        "climate_source_prefixes": source_row,
+        "input_counts": session["counts"],
+        "provenance": session["provenance"],
+        "counts": counts,
+        "final_pending_suffix": {
+            key: {
+                "count": len(state.pending),
+                "first": identity(state.pending[0]["humidity"])
+                if state.pending
+                else None,
+                "last": identity(state.pending[-1]["humidity"])
+                if state.pending
+                else None,
+            }
+            for key, state in states.items()
+        },
+    }
 
 
 def main():
@@ -515,9 +670,13 @@ def main():
         raise ValueError("Replay manifest requires distinct, nonempty session IDs")
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--output", type=Path, required=True)
-    parser.add_argument("--cases", nargs="+", choices=manifest_ids,
-                        metavar="MANIFEST_ID",
-                        help="Manifest IDs; default: all in manifest order")
+    parser.add_argument(
+        "--cases",
+        nargs="+",
+        choices=manifest_ids,
+        metavar="MANIFEST_ID",
+        help="Manifest IDs; default: all in manifest order",
+    )
     args = parser.parse_args()
     requested = args.cases if args.cases is not None else manifest_ids
     if len(requested) != len(set(requested)):
@@ -525,7 +684,8 @@ def main():
     entries = [entry for entry in entries if entry["id"] in requested]
     curves, parameter_type, owner_files = core_owners()
     metadata = {
-        "schema_version": 1, "kind": "metadata",
+        "schema_version": 1,
+        "kind": "metadata",
         "scope": (
             "all unchanged original climate prefixes; descriptive form features only"
         ),
@@ -534,12 +694,15 @@ def main():
             "per-case bound configuration/program resolved by Parameters; "
             "unchanged catalogue, no search"
         ),
-        "manifest": {"file": str(manifest_path.relative_to(ROOT)),
-                     "sha256": sha(manifest_payload)},
+        "manifest": {
+            "file": str(manifest_path.relative_to(ROOT)),
+            "sha256": sha(manifest_payload),
+        },
         "time_origin": {
             "file": str(SETTINGS_PATH.relative_to(ROOT)),
             "sha256": sha(SETTINGS_PAYLOAD),
-            "setting": "fixtures.session.origin", "value": ORIGIN.isoformat(),
+            "setting": "fixtures.session.origin",
+            "value": ORIGIN.isoformat(),
         },
         "owners_and_loader": owner_files,
         "assumptions": {
@@ -625,9 +788,11 @@ def main():
     destination = args.output / "ventilation_forms.jsonl.gz"
     sessions = []
     with destination.open("wb") as raw:
-        with gzip.GzipFile(filename="", mode="wb", fileobj=raw,
-                           compresslevel=1, mtime=0) as compressed:
+        with gzip.GzipFile(
+            filename="", mode="wb", fileobj=raw, compresslevel=1, mtime=0
+        ) as compressed:
             with io.TextIOWrapper(compressed, encoding="utf-8", newline="\n") as stream:
+
                 def emit(row):
                     stream.write(encoded(row) + "\n")
 
@@ -637,40 +802,66 @@ def main():
                     print(f"Reading original prefixes: {entry['id']}", flush=True)
                     session = read_session(entry)
                     values, parameter_provenance = case_parameters(
-                        entry, parameter_type,
+                        entry,
+                        parameter_type,
                     )
                     parameter_hash = parameter_provenance["effective_parameters_sha256"]
                     session["provenance"]["read_count_scope"] = "read_session only"
                     session["provenance"]["total_read_counts"] = {
-                        "fixture": 2, "samples": 1,
+                        "fixture": 2,
+                        "samples": 1,
                     }
-                    emit({"kind": "session_input", "case_id": session["id"],
-                          "provenance": session["provenance"],
-                          "parameters": parameter_provenance,
-                          "counts": session["counts"]})
+                    emit(
+                        {
+                            "kind": "session_input",
+                            "case_id": session["id"],
+                            "provenance": session["provenance"],
+                            "parameters": parameter_provenance,
+                            "counts": session["counts"],
+                        }
+                    )
                     result = analyse_session(
-                        session, values, curves, emit, parameter_hash,
+                        session,
+                        values,
+                        curves,
+                        emit,
+                        parameter_hash,
                     )
                     result["parameters"] = parameter_provenance
                     result["elapsed_seconds"] = perf_counter() - case_started
                     sessions.append(result)
-                    print(f"{entry['id']}: "
-                          f"{result['climate_source_prefixes']} prefixes, "
-                          f"{result['elapsed_seconds']:.3f}s", flush=True)
+                    print(
+                        f"{entry['id']}: "
+                        f"{result['climate_source_prefixes']} prefixes, "
+                        f"{result['elapsed_seconds']:.3f}s",
+                        flush=True,
+                    )
     summary = {
-        "schema_version": 1, "scope": metadata["scope"],
+        "schema_version": 1,
+        "scope": metadata["scope"],
         "manifest": metadata["manifest"],
-        "owners_and_loader": owner_files, "case_ids": metadata["case_ids"],
-        "features_file": destination.name, "features_bytes": destination.stat().st_size,
-        "sessions": sessions, "elapsed_seconds": perf_counter() - started,
+        "owners_and_loader": owner_files,
+        "case_ids": metadata["case_ids"],
+        "features_file": destination.name,
+        "features_bytes": destination.stat().st_size,
+        "sessions": sessions,
+        "elapsed_seconds": perf_counter() - started,
     }
     write_json(args.output / "summary.json", summary)
-    print(encoded({"features_file": str(destination),
-                   "summary_file": str(args.output / "summary.json"),
-                   "case_ids": metadata["case_ids"],
-                   "climate_source_prefixes": sum(
-                       session["climate_source_prefixes"] for session in sessions
-                   ), "elapsed_seconds": summary["elapsed_seconds"]}), flush=True)
+    print(
+        encoded(
+            {
+                "features_file": str(destination),
+                "summary_file": str(args.output / "summary.json"),
+                "case_ids": metadata["case_ids"],
+                "climate_source_prefixes": sum(
+                    session["climate_source_prefixes"] for session in sessions
+                ),
+                "elapsed_seconds": summary["elapsed_seconds"],
+            }
+        ),
+        flush=True,
+    )
 
 
 if __name__ == "__main__":

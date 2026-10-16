@@ -52,8 +52,11 @@ class CurvePolicy:
 
 def _profile_number(value):
     try:
-        return (isinstance(value, (int, float)) and not isinstance(value, bool)
-                and isfinite(value))
+        return (
+            isinstance(value, (int, float))
+            and not isinstance(value, bool)
+            and isfinite(value)
+        )
     except OverflowError:
         return False
 
@@ -228,28 +231,37 @@ class OriginalContrasts:
     @property
     def humidity_rise_onset(self) -> float:
         """Joint RH rise and new upward slope change at every position."""
-        return min(min(
-            pair.humidity.v / pair.humidity.e,
-            (pair.humidity.v - pair.humidity.b)
-            / (pair.humidity.e + pair.humidity.e_minus),
-        ) for _, pair in self.positions)
+        return min(
+            min(
+                pair.humidity.v / pair.humidity.e,
+                (pair.humidity.v - pair.humidity.b)
+                / (pair.humidity.e + pair.humidity.e_minus),
+            )
+            for _, pair in self.positions
+        )
 
     @property
     def humidity_fall_onset(self) -> float:
         """Joint RH fall and new downward slope change at every position."""
-        return min(min(
-            -pair.humidity.v / pair.humidity.e,
-            -(pair.humidity.v - pair.humidity.b)
-            / (pair.humidity.e + pair.humidity.e_minus),
-        ) for _, pair in self.positions)
+        return min(
+            min(
+                -pair.humidity.v / pair.humidity.e,
+                -(pair.humidity.v - pair.humidity.b)
+                / (pair.humidity.e + pair.humidity.e_minus),
+            )
+            for _, pair in self.positions
+        )
 
     @property
     def opening_support(self) -> float:
         """Continuing joint T/RH fall, without requiring another slope kink."""
-        return min(min(
-            -pair.temperature.v / pair.temperature.e,
-            -pair.humidity.v / pair.humidity.e,
-        ) for _, pair in self.positions)
+        return min(
+            min(
+                -pair.temperature.v / pair.temperature.e,
+                -pair.humidity.v / pair.humidity.e,
+            )
+            for _, pair in self.positions
+        )
 
 
 @dataclass(frozen=True)
@@ -330,15 +342,15 @@ class OriginalWaterWindowFeatures:
             ):
                 return None
             radii = tuple(
-                (pair.upper_density - pair.lower_density) / 2
-                for pair in self.current
+                (pair.upper_density - pair.lower_density) / 2 for pair in self.current
             )
             middles = tuple(
                 pair.lower_density + radius
                 for pair, radius in zip(self.current, radii, strict=True)
             )
             fixed = tuple(
-                middle for middle, radius in zip(middles, radii, strict=True)
+                middle
+                for middle, radius in zip(middles, radii, strict=True)
                 if radius == 0
             )
             if fixed:
@@ -347,7 +359,7 @@ class OriginalWaterWindowFeatures:
                     return None
             else:
                 smallest = min(radii)
-                weights = tuple((smallest / radius)**2 for radius in radii)
+                weights = tuple((smallest / radius) ** 2 for radius in radii)
                 total = fsum(weights)
                 anchor = middles[radii.index(smallest)]
                 level = anchor + fsum(
@@ -383,9 +395,12 @@ class OriginalWaterWindowFeatures:
                 continue
             middle = (pair.lower_density + pair.upper_density) / 2
             radius = (pair.upper_density - pair.lower_density) / 2
-            bounds.append((
-                middle - significance * radius, middle + significance * radius,
-            ))
+            bounds.append(
+                (
+                    middle - significance * radius,
+                    middle + significance * radius,
+                )
+            )
         lower = max(bound[0] for bound in bounds)
         upper = min(bound[1] for bound in bounds)
         if not all(_profile_number(value) for value in (lower, upper)):
@@ -449,14 +464,16 @@ class OriginalFlattening:
     @property
     def maintained(self) -> bool:
         """Flat humidity while temperature still falls without braking."""
-        return (self.current_flat.result and self.temperature_falling.result
-                and self.temperature_not_braking.result)
+        return (
+            self.current_flat.result
+            and self.temperature_falling.result
+            and self.temperature_not_braking.result
+        )
 
     @property
     def initial(self) -> bool:
         """Maintained form reached by braking a preceding humidity fall."""
-        return (self.maintained and self.previous_fall.result
-                and self.braking.result)
+        return self.maintained and self.previous_fall.result and self.braking.result
 
 
 def _original_positive(value: object) -> bool:
@@ -464,23 +481,43 @@ def _original_positive(value: object) -> bool:
 
 
 def _original_window_valid(window: object) -> bool:
-    return (isinstance(window, OriginalWindowFeatures)
-            and all(_profile_number(value) for value in (
-                window.v, window.b, window.e, window.e_minus,
-                window.mean, window.mean_minus, window.r, window.r_minus,
-            ))
-            and all(_original_positive(value) for value in (
-                window.scale, window.e, window.e_minus,
-            ))
-            and window.r >= 0 and window.r_minus >= 0)
+    return (
+        isinstance(window, OriginalWindowFeatures)
+        and all(
+            _profile_number(value)
+            for value in (
+                window.v,
+                window.b,
+                window.e,
+                window.e_minus,
+                window.mean,
+                window.mean_minus,
+                window.r,
+                window.r_minus,
+            )
+        )
+        and all(
+            _original_positive(value)
+            for value in (
+                window.scale,
+                window.e,
+                window.e_minus,
+            )
+        )
+        and window.r >= 0
+        and window.r_minus >= 0
+    )
 
 
 def _original_comparable_windows_valid(
-    window: OriginalWindowFeatures, reference: OriginalWindowFeatures,
+    window: OriginalWindowFeatures,
+    reference: OriginalWindowFeatures,
 ) -> bool:
-    if (not _original_window_valid(window)
-            or not _original_window_valid(reference)
-            or window.scale != reference.scale):
+    if (
+        not _original_window_valid(window)
+        or not _original_window_valid(reference)
+        or window.scale != reference.scale
+    ):
         return False
     count = len(reference.previous)
     if count < 2:
@@ -494,16 +531,19 @@ def _original_comparable_windows_valid(
                 if not isinstance(point, tuple) or len(point) != 2:
                     return False
                 stamp, value = point
-                if (not isinstance(stamp, datetime)
-                        or not _profile_number(value)
-                        or (previous_at is not None and stamp <= previous_at)):
+                if (
+                    not isinstance(stamp, datetime)
+                    or not _profile_number(value)
+                    or (previous_at is not None and stamp <= previous_at)
+                ):
                     return False
                 previous_at = stamp
     return True
 
 
 def _original_line(
-    points: tuple[tuple[datetime, float], ...], scale: float,
+    points: tuple[tuple[datetime, float], ...],
+    scale: float,
 ) -> tuple[float, float, float, float] | None:
     """Return slope, slope error bound, mean and max-normalized residual."""
     origin = points[0][0]
@@ -515,15 +555,21 @@ def _original_line(
     s_tt = fsum(time * time for time in centered_times)
     if not _original_positive(s_tt):
         return None
-    slope = fsum(
-        time * (value - mean_value)
-        for time, (_, value) in zip(centered_times, points, strict=True)
-    ) / s_tt
+    slope = (
+        fsum(
+            time * (value - mean_value)
+            for time, (_, value) in zip(centered_times, points, strict=True)
+        )
+        / s_tt
+    )
     error = scale * (fsum(abs(time) for time in centered_times) / s_tt)
-    residual = max(
-        abs(value - mean_value - slope * time)
-        for time, (_, value) in zip(centered_times, points, strict=True)
-    ) / scale
+    residual = (
+        max(
+            abs(value - mean_value - slope * time)
+            for time, (_, value) in zip(centered_times, points, strict=True)
+        )
+        / scale
+    )
     result = (slope, error, mean_value, residual)
     if not all(_profile_number(value) for value in result) or error <= 0:
         return None
@@ -531,8 +577,12 @@ def _original_line(
 
 
 def original_window(
-    samples: Sequence[tuple[datetime, float]], *, count: int, scale: float,
-    max_gap_seconds: float, at: datetime,
+    samples: Sequence[tuple[datetime, float]],
+    *,
+    count: int,
+    scale: float,
+    max_gap_seconds: float,
+    at: datetime,
 ) -> OriginalWindowFeatures | None:
     """Use the last 2K originals at or before at, without repairing their order.
 
@@ -544,10 +594,14 @@ def original_window(
     The caller retains source continuity and any earlier history validity.
     """
     try:
-        if (not isinstance(count, int) or isinstance(count, bool) or count < 2
-                or not _original_positive(scale)
-                or not _original_positive(max_gap_seconds)
-                or not isinstance(at, datetime)):
+        if (
+            not isinstance(count, int)
+            or isinstance(count, bool)
+            or count < 2
+            or not _original_positive(scale)
+            or not _original_positive(max_gap_seconds)
+            or not isinstance(at, datetime)
+        ):
             return None
         selected = []
         later = None
@@ -561,9 +615,7 @@ def original_window(
                 continue
             if not _profile_number(value):
                 return None
-            if selected and (
-                selected[-1][0] - stamp
-            ).total_seconds() > max_gap_seconds:
+            if selected and (selected[-1][0] - stamp).total_seconds() > max_gap_seconds:
                 return None
             selected.append((stamp, float(value)))
             if len(selected) == 2 * count:
@@ -580,16 +632,25 @@ def original_window(
         if old is None or new is None:
             return None
         return OriginalWindowFeatures(
-            previous=previous, current=current, scale=float(scale),
-            v=new[0], b=old[0], e=new[1], e_minus=old[1],
-            mean=new[2], mean_minus=old[2], r=new[3], r_minus=old[3],
+            previous=previous,
+            current=current,
+            scale=float(scale),
+            v=new[0],
+            b=old[0],
+            e=new[1],
+            e_minus=old[1],
+            mean=new[2],
+            mean_minus=old[2],
+            r=new[3],
+            r_minus=old[3],
         )
     except (AttributeError, IndexError, OverflowError, TypeError, ValueError):
         return None
 
 
 def original_followup(
-    window: OriginalWindowFeatures, reference: OriginalWindowFeatures,
+    window: OriginalWindowFeatures,
+    reference: OriginalWindowFeatures,
 ) -> OriginalFollowupFeatures | None:
     """Compare immutable, ordered 2K support with a fixed earlier reference.
 
@@ -620,10 +681,16 @@ def original_followup(
         current_reference_error = window.e + reference.e
         previous_reference_error = window.e_minus + reference.e
         level_scale = 2 * window.scale
-        if not all(_original_positive(value) for value in (
-            current_error, previous_error, current_reference_error,
-            previous_reference_error, level_scale,
-        )):
+        if not all(
+            _original_positive(value)
+            for value in (
+                current_error,
+                previous_error,
+                current_reference_error,
+                previous_reference_error,
+                level_scale,
+            )
+        ):
             return None
         current_direction = window.v / window.e
         previous_direction = window.b / window.e_minus
@@ -638,22 +705,32 @@ def original_followup(
         level_change = (window.mean - window.mean_minus) / level_scale
         residual = max(window.r, window.r_minus)
         reference_level_loss = (reference.mean_minus - window.mean) / level_scale
-        if not all(_profile_number(value) for value in (
-            current_direction, previous_direction, current_change,
-            previous_change, level_change, residual,
-            reference_level_loss,
-            current_change_from_reference_current,
-            previous_change_from_reference_current,
-        )):
+        if not all(
+            _profile_number(value)
+            for value in (
+                current_direction,
+                previous_direction,
+                current_change,
+                previous_change,
+                level_change,
+                residual,
+                reference_level_loss,
+                current_change_from_reference_current,
+                previous_change_from_reference_current,
+            )
+        ):
             return None
         return OriginalFollowupFeatures(
-            window=window, reference=reference,
+            window=window,
+            reference=reference,
             fresh_previous=sum(stamp > reference_at for stamp, _ in window.previous),
             fresh_current=sum(stamp > reference_at for stamp, _ in window.current),
             current_direction=current_direction,
             previous_direction=previous_direction,
-            current_change=current_change, previous_change=previous_change,
-            level_change=level_change, residual=residual,
+            current_change=current_change,
+            previous_change=previous_change,
+            level_change=level_change,
+            residual=residual,
             reference_level_loss=reference_level_loss,
             current_change_from_reference_current=(
                 current_change_from_reference_current
@@ -667,7 +744,8 @@ def original_followup(
 
 
 def original_edge_change(
-    window: OriginalWindowFeatures, reference: OriginalWindowFeatures,
+    window: OriginalWindowFeatures,
+    reference: OriginalWindowFeatures,
 ) -> OriginalEdgeChange | None:
     """Compare the newest secant with a retained current OLS reference.
 
@@ -679,8 +757,10 @@ def original_edge_change(
     nonfinite or unresolved numerical bounds remain unknown (None).
     """
     try:
-        if (not _original_comparable_windows_valid(window, reference)
-                or window.newest_at <= reference.newest_at):
+        if (
+            not _original_comparable_windows_valid(window, reference)
+            or window.newest_at <= reference.newest_at
+        ):
             return None
         previous, current = window.current[-2:]
         duration = (current[0] - previous[0]).total_seconds()
@@ -689,24 +769,33 @@ def original_edge_change(
         slope = (current[1] - previous[1]) / duration
         error = 2 * window.scale / duration
         change_error = error + reference.e
-        if (not _profile_number(slope)
-                or not _original_positive(error)
-                or not _original_positive(change_error)):
+        if (
+            not _profile_number(slope)
+            or not _original_positive(error)
+            or not _original_positive(change_error)
+        ):
             return None
         direction = slope / error
         change = (slope - reference.v) / change_error
         if not all(_profile_number(value) for value in (direction, change)):
             return None
         return OriginalEdgeChange(
-            window=window, reference=reference, direction=direction, change=change,
+            window=window,
+            reference=reference,
+            direction=direction,
+            change=change,
         )
     except (AttributeError, IndexError, OverflowError, TypeError, ValueError):
         return None
 
 
 def original_kink_tolerance(
-    samples: Sequence[tuple[datetime, float]], window: OriginalWindowFeatures, *,
-    factor: float, min_history_windows: int, max_gap_seconds: float,
+    samples: Sequence[tuple[datetime, float]],
+    window: OriginalWindowFeatures,
+    *,
+    factor: float,
+    min_history_windows: int,
+    max_gap_seconds: float,
 ) -> OriginalKinkTolerance | None:
     """Shrink one raw slope change by a caller-scaled causal background.
 
@@ -724,12 +813,15 @@ def original_kink_tolerance(
     is added. factor == 0 preserves the raw delta as a control case.
     """
     try:
-        if (not _original_window_valid(window)
-                or not _profile_number(factor) or factor < 0
-                or not isinstance(min_history_windows, int)
-                or isinstance(min_history_windows, bool)
-                or min_history_windows <= 0
-                or not _original_positive(max_gap_seconds)):
+        if (
+            not _original_window_valid(window)
+            or not _profile_number(factor)
+            or factor < 0
+            or not isinstance(min_history_windows, int)
+            or isinstance(min_history_windows, bool)
+            or min_history_windows <= 0
+            or not _original_positive(max_gap_seconds)
+        ):
             return None
         count = len(window.previous)
         if count < 2 or len(window.current) != count:
@@ -759,21 +851,18 @@ def original_kink_tolerance(
                 continue
             if not _profile_number(value):
                 return None
-            if history and (
-                stamp - history[-1][0]
-            ).total_seconds() > max_gap_seconds:
+            if history and (stamp - history[-1][0]).total_seconds() > max_gap_seconds:
                 history.clear()
             history.append((stamp, float(value)))
-        if history and (
-            start_at - history[-1][0]
-        ).total_seconds() > max_gap_seconds:
+        if history and (start_at - history[-1][0]).total_seconds() > max_gap_seconds:
             history.clear()
         historical_changes = []
         for end in range(2 * count, len(history) + 1):
             old = _original_line(
-                tuple(history[end - 2 * count:end - count]), window.scale,
+                tuple(history[end - 2 * count : end - count]),
+                window.scale,
             )
-            new = _original_line(tuple(history[end - count:end]), window.scale)
+            new = _original_line(tuple(history[end - count : end]), window.scale)
             if old is None or new is None:
                 return None
             difference = abs(new[0] - old[0])
@@ -783,8 +872,9 @@ def original_kink_tolerance(
         history_count = len(historical_changes)
         history_scale = median(historical_changes) if history_count else None
         catalog_scale = window.e + window.e_minus
-        if (not _original_positive(catalog_scale)
-                or (history_scale is not None and not _profile_number(history_scale))):
+        if not _original_positive(catalog_scale) or (
+            history_scale is not None and not _profile_number(history_scale)
+        ):
             return None
         enough_history = history_count >= min_history_windows
         used_scale = catalog_scale
@@ -797,20 +887,26 @@ def original_kink_tolerance(
         remaining = max(0.0, abs(delta) - tolerance)
         effective_change = -remaining if delta < 0 else remaining
         return OriginalKinkTolerance(
-            window=window, factor=float(factor), history_count=history_count,
+            window=window,
+            factor=float(factor),
+            history_count=history_count,
             history_start=history[0][0] if history_count else None,
             history_end=history[-1][0] if history_count else None,
             history_scale=history_scale,
             status="history" if enough_history else "insufficient",
-            catalog_scale=catalog_scale, used_scale=used_scale,
-            tolerance=tolerance, delta=delta, effective_change=effective_change,
+            catalog_scale=catalog_scale,
+            used_scale=used_scale,
+            tolerance=tolerance,
+            delta=delta,
+            effective_change=effective_change,
         )
     except (AttributeError, IndexError, OverflowError, TypeError, ValueError):
         return None
 
 
 def original_thermal_contrasts(
-    temperatures: Mapping[str, OriginalWindowFeatures], *,
+    temperatures: Mapping[str, OriginalWindowFeatures],
+    *,
     expected_positions: Sequence[str],
 ) -> OriginalThermalContrasts | None:
     """Aggregate E2 temperature terms over every required configured position.
@@ -820,8 +916,11 @@ def original_thermal_contrasts(
     """
     try:
         expected = tuple(expected_positions)
-        if (not expected or any(not isinstance(position, str) for position in expected)
-                or len(set(expected)) != len(expected)):
+        if (
+            not expected
+            or any(not isinstance(position, str) for position in expected)
+            or len(set(expected)) != len(expected)
+        ):
             return None
         opening_terms = []
         braking_terms = []
@@ -832,8 +931,9 @@ def original_thermal_contrasts(
                 return None
             slope_difference = temperature.v - temperature.b
             difference_error = temperature.e + temperature.e_minus
-            if (not _profile_number(slope_difference)
-                    or not _original_positive(difference_error)):
+            if not _profile_number(slope_difference) or not _original_positive(
+                difference_error
+            ):
                 return None
             braking = slope_difference / difference_error
             warming = temperature.v / temperature.e
@@ -843,15 +943,18 @@ def original_thermal_contrasts(
             braking_terms.append(braking)
             warming_terms.append(warming)
         return OriginalThermalContrasts(
-            braking=min(braking_terms), warming_min=min(warming_terms),
-            warming_max=max(warming_terms), opening=min(opening_terms),
+            braking=min(braking_terms),
+            warming_min=min(warming_terms),
+            warming_max=max(warming_terms),
+            opening=min(opening_terms),
         )
     except (AttributeError, IndexError, KeyError, OverflowError, TypeError, ValueError):
         return None
 
 
 def original_contrasts(
-    windows: Mapping[str, OriginalPositionWindows], *,
+    windows: Mapping[str, OriginalPositionWindows],
+    *,
     expected_positions: Sequence[str],
     humidity_minima: Mapping[str, float] | None = None,
 ) -> OriginalContrasts | None:
@@ -863,8 +966,11 @@ def original_contrasts(
     """
     try:
         expected = tuple(expected_positions)
-        if (not expected or any(not isinstance(position, str) for position in expected)
-                or len(set(expected)) != len(expected)):
+        if (
+            not expected
+            or any(not isinstance(position, str) for position in expected)
+            or len(set(expected)) != len(expected)
+        ):
             return None
         positions = tuple((position, windows[position]) for position in expected)
         if any(not isinstance(pair, OriginalPositionWindows) for _, pair in positions):
@@ -886,8 +992,9 @@ def original_contrasts(
                 return None
             slope_difference = humidity.v - humidity.b
             difference_error = humidity.e + humidity.e_minus
-            if (not _profile_number(slope_difference)
-                    or not _original_positive(difference_error)):
+            if not _profile_number(slope_difference) or not _original_positive(
+                difference_error
+            ):
                 return None
             humidity_change = slope_difference / difference_error
             if not _profile_number(humidity_change):
@@ -903,8 +1010,9 @@ def original_contrasts(
                     return None
                 recovery_difference = humidity.mean - minimum
                 recovery_scale = 2 * humidity.scale
-                if (not _profile_number(recovery_difference)
-                        or not _original_positive(recovery_scale)):
+                if not _profile_number(recovery_difference) or not _original_positive(
+                    recovery_scale
+                ):
                     return None
                 recovery_terms.append(recovery_difference / recovery_scale)
         opening = min(thermal.opening, min(opening_terms))
@@ -915,10 +1023,22 @@ def original_contrasts(
         background_slope = max(abs(value) for value in humidity_terms)
         background_residual = max(residual_terms)
         recovery = min(recovery_terms) if humidity_minima is not None else None
-        closing = (max(min(braking, recovery), thermal.closing)
-                   if recovery is not None else None)
-        numbers = (opening, braking, warming_min, warming_max, rise, fall,
-                   background_slope, background_residual, humidity_rise_change)
+        closing = (
+            max(min(braking, recovery), thermal.closing)
+            if recovery is not None
+            else None
+        )
+        numbers = (
+            opening,
+            braking,
+            warming_min,
+            warming_max,
+            rise,
+            fall,
+            background_slope,
+            background_residual,
+            humidity_rise_change,
+        )
         if not all(_profile_number(value) for value in numbers):
             return None
         if recovery is not None and (
@@ -926,10 +1046,17 @@ def original_contrasts(
         ):
             return None
         return OriginalContrasts(
-            positions=positions, opening=opening, braking=braking,
-            warming_min=warming_min, warming_max=warming_max, rise=rise, fall=fall,
-            background_slope=background_slope, background_residual=background_residual,
-            humidity_recovery=recovery, closing=closing,
+            positions=positions,
+            opening=opening,
+            braking=braking,
+            warming_min=warming_min,
+            warming_max=warming_max,
+            rise=rise,
+            fall=fall,
+            background_slope=background_slope,
+            background_residual=background_residual,
+            humidity_recovery=recovery,
+            closing=closing,
             humidity_rise_change=humidity_rise_change,
         )
     except (AttributeError, IndexError, KeyError, OverflowError, TypeError, ValueError):
@@ -938,9 +1065,12 @@ def original_contrasts(
 
 def original_water_pair_support(
     humidity_sample: tuple[datetime, float],
-    temperatures: Sequence[tuple[datetime, float]], *,
-    temperature_scale: float, humidity_scale: float,
-    max_gap_seconds: float, at: datetime,
+    temperatures: Sequence[tuple[datetime, float]],
+    *,
+    temperature_scale: float,
+    humidity_scale: float,
+    max_gap_seconds: float,
+    at: datetime,
 ) -> OriginalWaterPairSupport:
     """Assess one RH original with its immediate causal T neighbors.
 
@@ -954,12 +1084,16 @@ def original_water_pair_support(
     """
     try:
         humidity_at, humidity = humidity_sample
-        if (not isinstance(at, datetime) or not isinstance(humidity_at, datetime)
-                or humidity_at > at or not _profile_number(humidity)
-                or not 0 <= humidity <= 100
-                or not _original_positive(temperature_scale)
-                or not _original_positive(humidity_scale)
-                or not _original_positive(max_gap_seconds)):
+        if (
+            not isinstance(at, datetime)
+            or not isinstance(humidity_at, datetime)
+            or humidity_at > at
+            or not _profile_number(humidity)
+            or not 0 <= humidity <= 100
+            or not _original_positive(temperature_scale)
+            or not _original_positive(humidity_scale)
+            or not _original_positive(max_gap_seconds)
+        ):
             return OriginalWaterPairSupport("invalid", reason="invalid_input")
         before = None
         after = None
@@ -967,7 +1101,8 @@ def original_water_pair_support(
         for stamp, value in temperatures:
             if not isinstance(stamp, datetime):
                 return OriginalWaterPairSupport(
-                    "invalid", reason="invalid_temperature_time",
+                    "invalid",
+                    reason="invalid_temperature_time",
                 )
             if previous_at is not None and stamp <= previous_at:
                 return OriginalWaterPairSupport("invalid", reason="temperature_order")
@@ -976,7 +1111,8 @@ def original_water_pair_support(
                 break
             if not _profile_number(value):
                 return OriginalWaterPairSupport(
-                    "invalid", reason="invalid_temperature_value",
+                    "invalid",
+                    reason="invalid_temperature_value",
                 )
             point = (stamp, float(value))
             if stamp == humidity_at:
@@ -988,11 +1124,17 @@ def original_water_pair_support(
                 after = point
                 break
         if before is None:
-            return OriginalWaterPairSupport("invalid", reason="left_temperature_missing")
+            return OriginalWaterPairSupport(
+                "invalid", reason="left_temperature_missing"
+            )
         if after is None:
             if (humidity_at - before[0]).total_seconds() > max_gap_seconds:
-                return OriginalWaterPairSupport("invalid", reason="temperature_support_gap")
-            return OriginalWaterPairSupport("pending", reason="right_temperature_pending")
+                return OriginalWaterPairSupport(
+                    "invalid", reason="temperature_support_gap"
+                )
+            return OriginalWaterPairSupport(
+                "pending", reason="right_temperature_pending"
+            )
         gap = (after[0] - before[0]).total_seconds()
         if not 0 <= gap <= max_gap_seconds:
             return OriginalWaterPairSupport("invalid", reason="temperature_support_gap")
@@ -1001,17 +1143,22 @@ def original_water_pair_support(
             fraction = (humidity_at - before[0]).total_seconds() / gap
             temperature += fraction * (after[1] - before[1])
         lower = absolute_humidity(
-            temperature - temperature_scale, humidity - humidity_scale,
+            temperature - temperature_scale,
+            humidity - humidity_scale,
         )
         upper = absolute_humidity(
-            temperature + temperature_scale, humidity + humidity_scale,
+            temperature + temperature_scale,
+            humidity + humidity_scale,
         )
         if not all(_profile_number(value) for value in (temperature, lower, upper)):
             return OriginalWaterPairSupport("invalid", reason="invalid_water_envelope")
         pair = OriginalWaterPair(
             humidity_sample=(humidity_at, float(humidity)),
-            temperature_before=before, temperature_after=after,
-            temperature=temperature, lower_density=lower, upper_density=upper,
+            temperature_before=before,
+            temperature_after=after,
+            temperature=temperature,
+            lower_density=lower,
+            upper_density=upper,
             available_at=after[0],
         )
         return OriginalWaterPairSupport("ready", pair=pair)
@@ -1021,14 +1168,21 @@ def original_water_pair_support(
 
 def original_water_pair(
     humidity_sample: tuple[datetime, float],
-    temperatures: Sequence[tuple[datetime, float]], *,
-    temperature_scale: float, humidity_scale: float,
-    max_gap_seconds: float, at: datetime,
+    temperatures: Sequence[tuple[datetime, float]],
+    *,
+    temperature_scale: float,
+    humidity_scale: float,
+    max_gap_seconds: float,
+    at: datetime,
 ) -> OriginalWaterPair | None:
     """Compatibility view of the causal water-pair support assessment."""
     return original_water_pair_support(
-        humidity_sample, temperatures, temperature_scale=temperature_scale,
-        humidity_scale=humidity_scale, max_gap_seconds=max_gap_seconds, at=at,
+        humidity_sample,
+        temperatures,
+        temperature_scale=temperature_scale,
+        humidity_scale=humidity_scale,
+        max_gap_seconds=max_gap_seconds,
+        at=at,
     ).pair
 
 
@@ -1039,15 +1193,28 @@ def _original_water_pair_valid(pair: object) -> bool:
     before_at, before = pair.temperature_before
     after_at, after = pair.temperature_after
     return (
-        all(isinstance(stamp, datetime) for stamp in (
-            humidity_at, before_at, after_at, pair.available_at,
-        ))
+        all(
+            isinstance(stamp, datetime)
+            for stamp in (
+                humidity_at,
+                before_at,
+                after_at,
+                pair.available_at,
+            )
+        )
         and before_at <= humidity_at <= after_at
         and pair.available_at == after_at
-        and all(_profile_number(value) for value in (
-            humidity, before, after, pair.temperature,
-            pair.lower_density, pair.upper_density,
-        ))
+        and all(
+            _profile_number(value)
+            for value in (
+                humidity,
+                before,
+                after,
+                pair.temperature,
+                pair.lower_density,
+                pair.upper_density,
+            )
+        )
         and 0 <= humidity <= 100
         and 0 <= pair.lower_density <= pair.upper_density
     )
@@ -1058,35 +1225,40 @@ def _original_water_line(
 ) -> tuple[float, float] | None:
     """OLS slope and its exact point-envelope bound, in g/m³ per second."""
     origin = pairs[0].humidity_sample[0]
-    times = tuple(
-        (pair.humidity_sample[0] - origin).total_seconds() for pair in pairs
-    )
+    times = tuple((pair.humidity_sample[0] - origin).total_seconds() for pair in pairs)
     mean_time = fsum(times) / len(times)
     centered_times = tuple(time - mean_time for time in times)
     s_tt = fsum(time * time for time in centered_times)
     if not _original_positive(s_tt):
         return None
-    middles = tuple(
-        (pair.lower_density + pair.upper_density) / 2 for pair in pairs
-    )
+    middles = tuple((pair.lower_density + pair.upper_density) / 2 for pair in pairs)
     radii = tuple((pair.upper_density - pair.lower_density) / 2 for pair in pairs)
     mean_value = fsum(middles) / len(middles)
-    slope = fsum(
-        time * (value - mean_value)
-        for time, value in zip(centered_times, middles, strict=True)
-    ) / s_tt
-    error = fsum(
-        abs(time) * radius
-        for time, radius in zip(centered_times, radii, strict=True)
-    ) / s_tt
+    slope = (
+        fsum(
+            time * (value - mean_value)
+            for time, value in zip(centered_times, middles, strict=True)
+        )
+        / s_tt
+    )
+    error = (
+        fsum(
+            abs(time) * radius
+            for time, radius in zip(centered_times, radii, strict=True)
+        )
+        / s_tt
+    )
     if not all(_profile_number(value) for value in (slope, error)) or error < 0:
         return None
     return slope, error
 
 
 def original_water_window(
-    pairs: Sequence[OriginalWaterPair], *, count: int,
-    max_gap_seconds: float, at: datetime,
+    pairs: Sequence[OriginalWaterPair],
+    *,
+    count: int,
+    max_gap_seconds: float,
+    at: datetime,
 ) -> OriginalWaterWindowSupport:
     """Use the last exactly 2K consecutive supplied RH-pair identities.
 
@@ -1099,39 +1271,59 @@ def original_water_window(
     waiting for a newer pair's right T partner.
     """
     try:
-        if (not isinstance(count, int) or isinstance(count, bool) or count < 2
-                or not _original_positive(max_gap_seconds)
-                or not isinstance(at, datetime)):
+        if (
+            not isinstance(count, int)
+            or isinstance(count, bool)
+            or count < 2
+            or not _original_positive(max_gap_seconds)
+            or not isinstance(at, datetime)
+        ):
             return OriginalWaterWindowSupport("invalid", reason="invalid_input")
-        selected = tuple(pairs[-2 * count:])
+        selected = tuple(pairs[-2 * count :])
         if not selected:
-            return OriginalWaterWindowSupport("insufficient", reason="insufficient_pairs")
+            return OriginalWaterWindowSupport(
+                "insufficient", reason="insufficient_pairs"
+            )
         previous_at = None
         pending = False
         for pair in selected:
             if not _original_water_pair_valid(pair):
-                return OriginalWaterWindowSupport("invalid", reason="invalid_water_pair")
+                return OriginalWaterWindowSupport(
+                    "invalid", reason="invalid_water_pair"
+                )
             stamp = pair.humidity_sample[0]
             if previous_at is not None:
                 gap = (stamp - previous_at).total_seconds()
                 if not 0 < gap <= max_gap_seconds:
                     return OriginalWaterWindowSupport(
-                        "invalid", reason="humidity_order_or_gap",
+                        "invalid",
+                        reason="humidity_order_or_gap",
                     )
             previous_at = stamp
             pending |= pair.available_at > at or stamp > at
         if pending:
-            return OriginalWaterWindowSupport("pending", reason="pair_not_yet_available")
+            return OriginalWaterWindowSupport(
+                "pending", reason="pair_not_yet_available"
+            )
         if len(selected) != 2 * count:
-            return OriginalWaterWindowSupport("insufficient", reason="insufficient_pairs")
+            return OriginalWaterWindowSupport(
+                "insufficient", reason="insufficient_pairs"
+            )
         previous, current = selected[:count], selected[count:]
         old, new = _original_water_line(previous), _original_water_line(current)
         if old is None or new is None:
-            return OriginalWaterWindowSupport("invalid", reason="invalid_window_geometry")
+            return OriginalWaterWindowSupport(
+                "invalid", reason="invalid_window_geometry"
+            )
         return OriginalWaterWindowSupport(
-            "ready", features=OriginalWaterWindowFeatures(
-                previous=previous, current=current,
-                v=new[0], b=old[0], e=new[1], e_minus=old[1],
+            "ready",
+            features=OriginalWaterWindowFeatures(
+                previous=previous,
+                current=current,
+                v=new[0],
+                b=old[0],
+                e=new[1],
+                e_minus=old[1],
             ),
         )
     except (AttributeError, IndexError, OverflowError, TypeError, ValueError):
@@ -1140,7 +1332,9 @@ def original_water_window(
 
 def original_flattening(
     humidity_window: OriginalWindowFeatures | OriginalWaterWindowFeatures,
-    temperature_window: OriginalWindowFeatures, *, significance: float,
+    temperature_window: OriginalWindowFeatures,
+    *,
+    significance: float,
 ) -> OriginalFlattening | None:
     """Compare a humidity fall-to-flat transition with its temperature form.
 
@@ -1150,22 +1344,33 @@ def original_flattening(
     water envelopes. Invalid support or nonfinite arithmetic stays unknown.
     """
     try:
-        if (not _original_positive(significance)
-                or not _original_window_valid(temperature_window)):
+        if not _original_positive(significance) or not _original_window_valid(
+            temperature_window
+        ):
             return None
         if isinstance(humidity_window, OriginalWindowFeatures):
             if not _original_window_valid(humidity_window):
                 return None
         elif isinstance(humidity_window, OriginalWaterWindowFeatures):
-            if (not humidity_window.previous or not humidity_window.current
-                    or any(not _original_water_pair_valid(pair) for pair in (
-                        humidity_window.previous + humidity_window.current
-                    ))
-                    or not all(_profile_number(value) for value in (
-                        humidity_window.v, humidity_window.b,
-                        humidity_window.e, humidity_window.e_minus,
-                    ))
-                    or humidity_window.e < 0 or humidity_window.e_minus < 0):
+            if (
+                not humidity_window.previous
+                or not humidity_window.current
+                or any(
+                    not _original_water_pair_valid(pair)
+                    for pair in (humidity_window.previous + humidity_window.current)
+                )
+                or not all(
+                    _profile_number(value)
+                    for value in (
+                        humidity_window.v,
+                        humidity_window.b,
+                        humidity_window.e,
+                        humidity_window.e_minus,
+                    )
+                )
+                or humidity_window.e < 0
+                or humidity_window.e_minus < 0
+            ):
                 return None
         else:
             return None
@@ -1179,34 +1384,53 @@ def original_flattening(
         humidity_change_bound = significance * humidity_change_error
         temperature_current_bound = significance * temperature.e
         temperature_change_bound = significance * temperature_change_error
-        if not all(_profile_number(value) for value in (
-            humidity_change, humidity_change_error,
-            temperature_change, temperature_change_error,
-            humidity_previous_bound, humidity_current_bound, humidity_change_bound,
-            temperature_current_bound, temperature_change_bound,
-        )):
+        if not all(
+            _profile_number(value)
+            for value in (
+                humidity_change,
+                humidity_change_error,
+                temperature_change,
+                temperature_change_error,
+                humidity_previous_bound,
+                humidity_current_bound,
+                humidity_change_bound,
+                temperature_current_bound,
+                temperature_change_bound,
+            )
+        ):
             return None
         return OriginalFlattening(
-            humidity_window=humidity_window, temperature_window=temperature_window,
+            humidity_window=humidity_window,
+            temperature_window=temperature_window,
             significance=significance,
             previous_fall=OriginalFlatteningContrast(
-                -humidity.b, ">", humidity_previous_bound,
+                -humidity.b,
+                ">",
+                humidity_previous_bound,
                 -humidity.b > humidity_previous_bound,
             ),
             current_flat=OriginalFlatteningContrast(
-                abs(humidity.v), "<=", humidity_current_bound,
+                abs(humidity.v),
+                "<=",
+                humidity_current_bound,
                 abs(humidity.v) <= humidity_current_bound,
             ),
             braking=OriginalFlatteningContrast(
-                humidity_change, ">", humidity_change_bound,
+                humidity_change,
+                ">",
+                humidity_change_bound,
                 humidity_change > humidity_change_bound,
             ),
             temperature_falling=OriginalFlatteningContrast(
-                -temperature.v, ">", temperature_current_bound,
+                -temperature.v,
+                ">",
+                temperature_current_bound,
                 -temperature.v > temperature_current_bound,
             ),
             temperature_not_braking=OriginalFlatteningContrast(
-                temperature_change, "<=", temperature_change_bound,
+                temperature_change,
+                "<=",
+                temperature_change_bound,
                 temperature_change <= temperature_change_bound,
             ),
         )
@@ -1229,12 +1453,21 @@ class CurveProfile:
     knot_x: float | None = None
 
     def __post_init__(self):
-        counts = {"constant": 1, "linear": 2, "quadratic": 3, "cubic": 4,
-                  "hinge1": 4, "hinge2": 4}
-        if (not isinstance(self.model, str) or self.model not in counts
-                or not isinstance(self.coefficients, tuple)
-                or len(self.coefficients) != counts[self.model]
-                or not all(_profile_number(value) for value in self.coefficients)):
+        counts = {
+            "constant": 1,
+            "linear": 2,
+            "quadratic": 3,
+            "cubic": 4,
+            "hinge1": 4,
+            "hinge2": 4,
+        }
+        if (
+            not isinstance(self.model, str)
+            or self.model not in counts
+            or not isinstance(self.coefficients, tuple)
+            or len(self.coefficients) != counts[self.model]
+            or not all(_profile_number(value) for value in self.coefficients)
+        ):
             raise ValueError(
                 "A profile needs a known basis and finite tuple coefficients",
             )
@@ -1265,14 +1498,16 @@ class CurveFitSnapshot:
     noise_scale: float | None
 
     def __post_init__(self):
-        if (not isinstance(self.profile, CurveProfile)
-                or not isinstance(self.time_origin, datetime)
-                or not isinstance(self.newest_at, datetime)
-                or not _profile_number(self.time_scale_seconds)
-                or self.time_scale_seconds <= 0
-                or not _profile_number(self.value_center)
-                or self.noise_scale is not None and (
-                    not _profile_number(self.noise_scale) or self.noise_scale < 0)):
+        if (
+            not isinstance(self.profile, CurveProfile)
+            or not isinstance(self.time_origin, datetime)
+            or not isinstance(self.newest_at, datetime)
+            or not _profile_number(self.time_scale_seconds)
+            or self.time_scale_seconds <= 0
+            or not _profile_number(self.value_center)
+            or self.noise_scale is not None
+            and (not _profile_number(self.noise_scale) or self.noise_scale < 0)
+        ):
             raise ValueError(
                 "A snapshot needs finite normalization and nonnegative noise",
             )
@@ -1285,7 +1520,10 @@ class CurveFitSnapshot:
 
 
 def curve_value(
-    profile: CurveProfile, at: datetime, *, snapshot: CurveFitSnapshot,
+    profile: CurveProfile,
+    at: datetime,
+    *,
+    snapshot: CurveFitSnapshot,
 ) -> float | None:
     """Evaluate an explicit, possibly manually edited profile without any fit.
 
@@ -1294,28 +1532,35 @@ def curve_value(
     This function neither chooses a profile nor checks source freshness/horizon.
     """
     try:
-        if (not isinstance(profile, CurveProfile)
-                or not isinstance(snapshot, CurveFitSnapshot)
-                or not isinstance(at, datetime)):
+        if (
+            not isinstance(profile, CurveProfile)
+            or not isinstance(snapshot, CurveFitSnapshot)
+            or not isinstance(at, datetime)
+        ):
             return None
         x = (at - snapshot.time_origin).total_seconds() / snapshot.time_scale_seconds
         if not isfinite(x):
             return None
         if profile.model.startswith("hinge"):
             order = 1 if profile.model == "hinge1" else 2
-            row = (1.0, x, x * x, max(0.0, x - profile.knot_x)**order)
+            row = (1.0, x, x * x, max(0.0, x - profile.knot_x) ** order)
         else:
             row = tuple(x**power for power in range(len(profile.coefficients)))
-        value = snapshot.value_center + fsum(starmap(
-            mul, zip(row, profile.coefficients, strict=True),
-        ))
+        value = snapshot.value_center + fsum(
+            starmap(
+                mul,
+                zip(row, profile.coefficients, strict=True),
+            )
+        )
         return value if isfinite(value) else None
     except (AttributeError, OverflowError, TypeError, ValueError, ZeroDivisionError):
         return None
 
 
 def curve_deviation(
-    profile: CurveProfile, sample: tuple[datetime, float], *,
+    profile: CurveProfile,
+    sample: tuple[datetime, float],
+    *,
     snapshot: CurveFitSnapshot,
 ) -> dict | None:
     """Return observed-minus-expected error in the input unit, without refits.
@@ -1338,8 +1583,13 @@ def curve_deviation(
         normalized = residual / noise if noise is not None and noise > 0 else None
         if normalized is not None and not isfinite(normalized):
             normalized = None
-        return {"expected": expected, "observed": observed, "residual": residual,
-                "noise_scale": noise, "normalized_residual": normalized}
+        return {
+            "expected": expected,
+            "observed": observed,
+            "residual": residual,
+            "noise_scale": noise,
+            "normalized_residual": normalized,
+        }
     except (AttributeError, OverflowError, TypeError, ValueError, ZeroDivisionError):
         return None
 
@@ -1552,8 +1802,10 @@ class CurveFormFeatures:
 
 def _policy_valid(policy):
     counts = (
-        policy.min_side_samples, policy.max_points,
-        policy.max_candidates, policy.robust_iterations,
+        policy.min_side_samples,
+        policy.max_points,
+        policy.max_candidates,
+        policy.robust_iterations,
     )
     return (
         all(isinstance(value, int) and not isinstance(value, bool) for value in counts)
@@ -1638,13 +1890,13 @@ def _least_squares(rows, values, weights):
         upper[index][index] = norm
         orthogonal.append([value / norm for value in column])
     projected = [
-        fsum(starmap(mul, zip(basis, target, strict=True)))
-        for basis in orthogonal
+        fsum(starmap(mul, zip(basis, target, strict=True))) for basis in orthogonal
     ]
     result = [0.0] * count
     for index in reversed(range(count)):
         result[index] = (
-            projected[index] - fsum(
+            projected[index]
+            - fsum(
                 upper[index][following] * result[following]
                 for following in range(index + 1, count)
             )
@@ -1676,7 +1928,8 @@ def _fit(rows, values, noise, policy):
     # quadratic part. Its scale is identical for every competing model.
     normalized = [abs(residual / noise) for residual in residuals]
     loss = fsum(
-        residual * residual if residual <= policy.huber_delta
+        residual * residual
+        if residual <= policy.huber_delta
         else 2 * policy.huber_delta * residual - policy.huber_delta**2
         for residual in normalized
     )
@@ -1689,35 +1942,48 @@ def _smooth_models(times, values, noise, policy):
     cubic = [[1.0, time, time * time, time**3] for time in times]
     smooth = []
     for name, rows in (
-        ("linear", linear), ("quadratic", quadratic), ("cubic", cubic),
+        ("linear", linear),
+        ("quadratic", quadratic),
+        ("cubic", cubic),
     ):
         fitted = _fit(rows, values, noise, policy)
         if fitted is None:
             return None
-        smooth.append((
-            fitted[1] + len(rows[0]) * log(len(values)), name,
-            _residuals(rows, values, fitted[0]), fitted[0],
-        ))
+        smooth.append(
+            (
+                fitted[1] + len(rows[0]) * log(len(values)),
+                name,
+                _residuals(rows, values, fitted[0]),
+                fitted[0],
+            )
+        )
     return quadratic, smooth
 
 
 def _models(times, values, noise, knots, policy, *, hinge_order=1, smooth_result=None):
-    result = (smooth_result if smooth_result is not None
-              else _smooth_models(times, values, noise, policy))
+    result = (
+        smooth_result
+        if smooth_result is not None
+        else _smooth_models(times, values, noise, policy)
+    )
     if result is None:
         return None
     quadratic, smooth = result
     smooth_score, smooth_model, residuals, _ = min(
-        smooth, key=lambda item: item[:2],
+        smooth,
+        key=lambda item: item[:2],
     )
     changes = []
     for index, knot in knots:
-        rows = [row + [
-            max(0.0, time - knot) if hinge_order == 1
-            else max(0.0, time - knot)**2,
-        ] for row, time in zip(
-            quadratic, times, strict=True
-        )]
+        rows = [
+            row
+            + [
+                max(0.0, time - knot)
+                if hinge_order == 1
+                else max(0.0, time - knot) ** 2,
+            ]
+            for row, time in zip(quadratic, times, strict=True)
+        ]
         fitted = _fit(rows, values, noise, policy)
         if fitted is None:
             continue
@@ -1731,7 +1997,14 @@ def _models(times, values, noise, knots, policy, *, hinge_order=1, smooth_result
 
 
 def _side_change_rejects(
-    times, values, noise, knot, start, change, value_resolution, policy,
+    times,
+    values,
+    noise,
+    knot,
+    start,
+    change,
+    value_resolution,
+    policy,
 ):
     """Assess relative counterevidence only on independently linear sides.
 
@@ -1771,15 +2044,19 @@ def _side_change_rejects(
             return None
         linear_score = linear[1] + 2 * log(len(points))
         for degree in (2, 3):
-            rows = [[time**power for power in range(degree + 1)]
-                    for time in local_times]
+            rows = [
+                [time**power for power in range(degree + 1)] for time in local_times
+            ]
             smooth = _fit(rows, side_values, noise, policy)
             if smooth is None:
                 return None
             smooth_score = smooth[1] + (degree + 1) * log(len(points))
-            score_resolution = len(points) * ulp(max(
-                abs(linear_score), abs(smooth_score),
-            ))
+            score_resolution = len(points) * ulp(
+                max(
+                    abs(linear_score),
+                    abs(smooth_score),
+                )
+            )
             if smooth_score - linear_score <= score_resolution:
                 return None
         slopes.append(linear[0][1] / span)
@@ -1793,9 +2070,12 @@ def _side_change_rejects(
     common_score = common[1] + 3 * log(len(points))
     separate_score = fsum(losses) + 4 * log(len(points))
     score_gain = common_score - separate_score
-    score_resolution = len(points) * ulp(max(
-        abs(common_score), abs(separate_score),
-    ))
+    score_resolution = len(points) * ulp(
+        max(
+            abs(common_score),
+            abs(separate_score),
+        )
+    )
     if not isfinite(score_gain) or abs(score_gain) <= score_resolution:
         return None
     if score_gain < 0:
@@ -1803,7 +2083,8 @@ def _side_change_rejects(
     difference = slopes[1] - slopes[0]
     resolution = fsum(resolutions)
     if (
-        not isfinite(difference) or not isfinite(resolution)
+        not isfinite(difference)
+        or not isfinite(resolution)
         or abs(difference) <= resolution
     ):
         return None
@@ -1811,8 +2092,17 @@ def _side_change_rejects(
 
 
 def _supported_without_point(
-    times, values, noise, index, residuals, penalty, policy,
-    *, shape_start, value_resolution, hinge_order=1,
+    times,
+    values,
+    noise,
+    index,
+    residuals,
+    penalty,
+    policy,
+    *,
+    shape_start,
+    value_resolution,
+    hinge_order=1,
 ):
     """One bounded refit rejects evidence that rests on one influential value."""
     removed = max(range(len(values)), key=lambda point: (abs(residuals[point]), point))
@@ -1825,7 +2115,11 @@ def _supported_without_point(
     retained_values = [values[point] for point in retained]
     model_options = {"hinge_order": hinge_order} if hinge_order != 1 else {}
     result = _models(
-        retained_times, retained_values, noise, [(index, knot)], policy,
+        retained_times,
+        retained_values,
+        noise,
+        [(index, knot)],
+        policy,
         **model_options,
     )
     if result is None:
@@ -1837,13 +2131,20 @@ def _supported_without_point(
         return False, coefficients[3]
     side_rejects = (
         _side_change_rejects(
-            retained_times, retained_values, noise, knot, shape_start, coefficients[3],
-            value_resolution, policy,
-        ) if hinge_order == 1 else None
+            retained_times,
+            retained_values,
+            noise,
+            knot,
+            shape_start,
+            coefficients[3],
+            value_resolution,
+            policy,
+        )
+        if hinge_order == 1
+        else None
     )
     return (
-        smooth_score - score - penalty > resolution
-        and side_rejects is not True,
+        smooth_score - score - penalty > resolution and side_rejects is not True,
         coefficients[3],
     )
 
@@ -1878,18 +2179,26 @@ def _level_models(times, raw_values, policy):
     cubic = [[1.0, time, time * time, time**3] for time in times]
     fitted_models = []
     for name, degree in (
-        ("constant", 0), ("linear", 1), ("quadratic", 2), ("cubic", 3),
+        ("constant", 0),
+        ("linear", 1),
+        ("quadratic", 2),
+        ("cubic", 3),
     ):
-        rows = [row[:degree + 1] for row in cubic]
+        rows = [row[: degree + 1] for row in cubic]
         fitted = _fit(rows, values, noise, policy)
         if fitted is None:
             return None
-        fitted_models.append((
-            fitted[1] + (degree + 1) * log(len(values)), name, fitted[0],
-        ))
+        fitted_models.append(
+            (
+                fitted[1] + (degree + 1) * log(len(values)),
+                name,
+                fitted[0],
+            )
+        )
     level_score, _, coefficients = fitted_models[0]
     trend_score, trend_model, _ = min(
-        fitted_models[1:], key=lambda item: item[:2],
+        fitted_models[1:],
+        key=lambda item: item[:2],
     )
     score_gain = trend_score - level_score
     score_resolution = len(values) * ulp(max(abs(level_score), abs(trend_score)))
@@ -1897,12 +2206,20 @@ def _level_models(times, raw_values, policy):
     if not isfinite(level) or abs(score_gain) <= score_resolution:
         return None
     return (
-        noise, level, level_score, trend_score, score_gain, trend_model, residuals,
+        noise,
+        level,
+        level_score,
+        trend_score,
+        score_gain,
+        trend_model,
+        residuals,
     )
 
 
 def curve_level(
-    samples: Sequence[tuple[datetime, float]], *, policy: CurvePolicy,
+    samples: Sequence[tuple[datetime, float]],
+    *,
+    policy: CurvePolicy,
 ) -> CurveLevelFeatures | None:
     """Assess one fixed recent tail without searching for a favorable plateau.
 
@@ -1937,10 +2254,17 @@ def curve_level(
             return None
         if all(value == raw_values[0] for value in raw_values):
             return CurveLevelFeatures(
-                evidence="supports", start_at=stamps[0], newest_at=stamps[-1],
-                count=len(selected), noise_scale=0.0, level=raw_values[0],
-                level_score=None, trend_score=None, score_gain=None,
-                trend_model=None, exact_constant=True,
+                evidence="supports",
+                start_at=stamps[0],
+                newest_at=stamps[-1],
+                count=len(selected),
+                noise_scale=0.0,
+                level=raw_values[0],
+                level_score=None,
+                trend_score=None,
+                score_gain=None,
+                trend_model=None,
+                exact_constant=True,
             )
         times = [(sample[0] - stamps[0]).total_seconds() / span for sample in selected]
         values = [sample[1] for sample in selected]
@@ -1948,31 +2272,52 @@ def curve_level(
         if result is None:
             return None
         (
-            noise, level, level_score, trend_score, score_gain, trend_model, residuals,
+            noise,
+            level,
+            level_score,
+            trend_score,
+            score_gain,
+            trend_model,
+            residuals,
         ) = result
         supported = score_gain > 0
         if supported:
-            removed = max(range(len(values)), key=lambda point: (
-                abs(residuals[point]), point,
-            ))
+            removed = max(
+                range(len(values)),
+                key=lambda point: (
+                    abs(residuals[point]),
+                    point,
+                ),
+            )
             retained = [point for point in range(len(values)) if point != removed]
             if len(retained) < 2 * policy.min_side_samples:
                 return None
             rescue = _level_models(
                 [times[point] for point in retained],
-                [values[point] for point in retained], policy,
+                [values[point] for point in retained],
+                policy,
             )
             if rescue is None or rescue[4] <= 0:
                 return None
         return CurveLevelFeatures(
             evidence="supports" if supported else "rejects",
-            start_at=stamps[0], newest_at=stamps[-1], count=len(selected),
-            noise_scale=noise, level=level, level_score=level_score,
-            trend_score=trend_score, score_gain=score_gain,
-            trend_model=trend_model, exact_constant=False,
+            start_at=stamps[0],
+            newest_at=stamps[-1],
+            count=len(selected),
+            noise_scale=noise,
+            level=level,
+            level_score=level_score,
+            trend_score=trend_score,
+            score_gain=score_gain,
+            trend_model=trend_model,
+            exact_constant=False,
         )
     except (
-        AttributeError, IndexError, OverflowError, TypeError, ValueError,
+        AttributeError,
+        IndexError,
+        OverflowError,
+        TypeError,
+        ValueError,
         ZeroDivisionError,
     ):
         return None
@@ -1980,28 +2325,42 @@ def curve_level(
 
 def _calibration_originals(channels, origin):
     """Validate four immutable original streams without merging their clocks."""
-    if (not isinstance(channels, tuple) or len(channels) != 4
-            or not isinstance(origin, datetime)):
+    if (
+        not isinstance(channels, tuple)
+        or len(channels) != 4
+        or not isinstance(origin, datetime)
+    ):
         return False
     names = []
     for item in channels:
         if not isinstance(item, tuple) or len(item) != 2:
             return False
         name, samples = item
-        if (not isinstance(name, str) or not name or name in names
-                or not isinstance(samples, tuple) or not samples):
+        if (
+            not isinstance(name, str)
+            or not name
+            or name in names
+            or not isinstance(samples, tuple)
+            or not samples
+        ):
             return False
         names.append(name)
         previous = None
         for sample in samples:
-            if (not isinstance(sample, tuple) or len(sample) != 2
-                    or not isinstance(sample[0], datetime)
-                    or not _profile_number(sample[1])):
+            if (
+                not isinstance(sample, tuple)
+                or len(sample) != 2
+                or not isinstance(sample[0], datetime)
+                or not _profile_number(sample[1])
+            ):
                 return False
             try:
                 elapsed = (sample[0] - origin).total_seconds()
-                if (not isfinite(elapsed)
-                        or previous is not None and sample[0] <= previous):
+                if (
+                    not isfinite(elapsed)
+                    or previous is not None
+                    and sample[0] <= previous
+                ):
                     return False
             except (TypeError, OverflowError):
                 return False
@@ -2033,29 +2392,45 @@ class CurveCalibrationPolicy:
 
     def __post_init__(self):
         try:
-            valid_curve = isinstance(self.curve, CurvePolicy) and _policy_valid(self.curve)
+            valid_curve = isinstance(self.curve, CurvePolicy) and _policy_valid(
+                self.curve
+            )
         except (AttributeError, TypeError, ValueError, OverflowError):
             valid_curve = False
         counts = (self.min_examples, self.min_continuation_samples)
-        numbers = (self.residual_quantile, self.residual_limit_multiplier,
-                   self.residual_loss_floor, self.minimum_gain, self.max_phase_x)
-        if (not valid_curve or not isinstance(self.channels, tuple)
-                or len(self.channels) != 4
-                or not all(isinstance(name, str) and name for name in self.channels)
-                or len(set(self.channels)) != len(self.channels)
-                or not isinstance(self.noise_floors, tuple)
-                or len(self.noise_floors) != len(self.channels)
-                or not all(_profile_number(value) and value > 0
-                           for value in self.noise_floors)
-                or not all(isinstance(value, int) and not isinstance(value, bool)
-                           and value > 0 for value in counts)
-                or self.min_continuation_samples > self.curve.max_points
-                or not all(_profile_number(value) for value in numbers)
-                or not 0 < self.residual_quantile <= 1
-                or self.residual_limit_multiplier < 1
-                or self.residual_loss_floor <= 0 or self.minimum_gain < 0
-                or self.max_phase_x < 1):
-            raise ValueError("Calibration needs four channels and finite declared limits")
+        numbers = (
+            self.residual_quantile,
+            self.residual_limit_multiplier,
+            self.residual_loss_floor,
+            self.minimum_gain,
+            self.max_phase_x,
+        )
+        if (
+            not valid_curve
+            or not isinstance(self.channels, tuple)
+            or len(self.channels) != 4
+            or not all(isinstance(name, str) and name for name in self.channels)
+            or len(set(self.channels)) != len(self.channels)
+            or not isinstance(self.noise_floors, tuple)
+            or len(self.noise_floors) != len(self.channels)
+            or not all(
+                _profile_number(value) and value > 0 for value in self.noise_floors
+            )
+            or not all(
+                isinstance(value, int) and not isinstance(value, bool) and value > 0
+                for value in counts
+            )
+            or self.min_continuation_samples > self.curve.max_points
+            or not all(_profile_number(value) for value in numbers)
+            or not 0 < self.residual_quantile <= 1
+            or self.residual_limit_multiplier < 1
+            or self.residual_loss_floor <= 0
+            or self.minimum_gain < 0
+            or self.max_phase_x < 1
+        ):
+            raise ValueError(
+                "Calibration needs four channels and finite declared limits"
+            )
 
 
 @dataclass(frozen=True)
@@ -2073,9 +2448,11 @@ class CurveCalibrationExample:
 
     def __post_init__(self):
         try:
-            valid_span = (isinstance(self.onset_at, datetime)
-                          and isinstance(self.binding_until, datetime)
-                          and self.binding_until > self.onset_at)
+            valid_span = (
+                isinstance(self.onset_at, datetime)
+                and isinstance(self.binding_until, datetime)
+                and self.binding_until > self.onset_at
+            )
         except TypeError:
             valid_span = False
         if not valid_span or not _calibration_originals(self.channels, self.onset_at):
@@ -2091,13 +2468,20 @@ class CurveTemplateChannel:
     residual_limit: float
 
     def __post_init__(self):
-        if (not isinstance(self.name, str) or not self.name
-                or not isinstance(self.profile, CurveProfile)
-                or self.profile.model not in ("quadratic", "cubic", "hinge1", "hinge2")
-                or self.profile.coefficients[0] != 0
-                or self.profile.knot_x is not None and self.profile.knot_x <= 0
-                or not _profile_number(self.residual_limit) or self.residual_limit <= 0):
-            raise ValueError("A channel needs a zero-origin shape and finite residual band")
+        if (
+            not isinstance(self.name, str)
+            or not self.name
+            or not isinstance(self.profile, CurveProfile)
+            or self.profile.model not in ("quadratic", "cubic", "hinge1", "hinge2")
+            or self.profile.coefficients[0] != 0
+            or self.profile.knot_x is not None
+            and self.profile.knot_x <= 0
+            or not _profile_number(self.residual_limit)
+            or self.residual_limit <= 0
+        ):
+            raise ValueError(
+                "A channel needs a zero-origin shape and finite residual band"
+            )
 
 
 @dataclass(frozen=True)
@@ -2118,31 +2502,46 @@ class CurveCalibrationProfile:
     calibration_count: int
 
     def __post_init__(self):
-        if (not isinstance(self.policy, CurveCalibrationPolicy)
-                or not _profile_number(self.duration_seconds) or self.duration_seconds <= 0
-                or not isfinite(self.duration_seconds * self.policy.max_phase_x)
-                or not isinstance(self.reference_channel, str)
-                or self.reference_channel not in self.policy.channels
-                or not isinstance(self.reference_sign, int)
-                or isinstance(self.reference_sign, bool) or self.reference_sign not in (-1, 1)
-                or not isinstance(self.channels, tuple)
-                or not all(isinstance(channel, CurveTemplateChannel)
-                           for channel in self.channels)
-                or tuple(channel.name for channel in self.channels) != self.policy.channels
-                or not _profile_number(self.residual_limit) or self.residual_limit <= 0
-                or not isinstance(self.calibration_count, int)
-                or isinstance(self.calibration_count, bool)
-                or self.calibration_count < self.policy.min_examples):
+        if (
+            not isinstance(self.policy, CurveCalibrationPolicy)
+            or not _profile_number(self.duration_seconds)
+            or self.duration_seconds <= 0
+            or not isfinite(self.duration_seconds * self.policy.max_phase_x)
+            or not isinstance(self.reference_channel, str)
+            or self.reference_channel not in self.policy.channels
+            or not isinstance(self.reference_sign, int)
+            or isinstance(self.reference_sign, bool)
+            or self.reference_sign not in (-1, 1)
+            or not isinstance(self.channels, tuple)
+            or not all(
+                isinstance(channel, CurveTemplateChannel) for channel in self.channels
+            )
+            or tuple(channel.name for channel in self.channels) != self.policy.channels
+            or not _profile_number(self.residual_limit)
+            or self.residual_limit <= 0
+            or not isinstance(self.calibration_count, int)
+            or isinstance(self.calibration_count, bool)
+            or self.calibration_count < self.policy.min_examples
+        ):
             raise ValueError("A calibrated profile needs finite four-channel geometry")
-        reference = self.channels[self.policy.channels.index(self.reference_channel)].profile
+        reference = self.channels[
+            self.policy.channels.index(self.reference_channel)
+        ].profile
         expected = _calibration_shape(reference, 1.0)
-        resolution = _FLOAT_EPSILON * len(reference.coefficients) * fsum(
-            abs(value) for value in reference.coefficients
+        resolution = (
+            _FLOAT_EPSILON
+            * len(reference.coefficients)
+            * fsum(abs(value) for value in reference.coefficients)
         )
-        if (expected is None or abs(expected - self.reference_sign) > resolution
-                or any(channel.profile.knot_x is not None
-                       and channel.profile.knot_x >= self.policy.max_phase_x
-                       for channel in self.channels)):
+        if (
+            expected is None
+            or abs(expected - self.reference_sign) > resolution
+            or any(
+                channel.profile.knot_x is not None
+                and channel.profile.knot_x >= self.policy.max_phase_x
+                for channel in self.channels
+            )
+        ):
             raise ValueError("The reference shape must retain g_ref(1)=reference_sign")
 
 
@@ -2158,14 +2557,22 @@ class CurveChannelBaseline:
     binding_count: int
 
     def __post_init__(self):
-        if (not isinstance(self.name, str) or not self.name
-                or not all(_profile_number(value)
-                           for value in (self.level, self.slope, self.noise_scale))
-                or self.noise_scale <= 0
-                or not all(isinstance(value, int) and not isinstance(value, bool)
-                           and value > 0
-                           for value in (self.before_count, self.binding_count))):
-            raise ValueError("A baseline needs finite values and original sample counts")
+        if (
+            not isinstance(self.name, str)
+            or not self.name
+            or not all(
+                _profile_number(value)
+                for value in (self.level, self.slope, self.noise_scale)
+            )
+            or self.noise_scale <= 0
+            or not all(
+                isinstance(value, int) and not isinstance(value, bool) and value > 0
+                for value in (self.before_count, self.binding_count)
+            )
+        ):
+            raise ValueError(
+                "A baseline needs finite values and original sample counts"
+            )
 
 
 @dataclass(frozen=True)
@@ -2184,32 +2591,50 @@ class CurveTemplateBinding:
     channels: tuple[CurveChannelBaseline, ...]
 
     def __post_init__(self):
-        if (not isinstance(self.profile, CurveCalibrationProfile)
-                or not isinstance(self.onset_at, datetime)
-                or not isinstance(self.binding_until, datetime)
-                or not _profile_number(self.amplitude) or self.amplitude <= 0
-                or not isinstance(self.channels, tuple)
-                or not all(isinstance(channel, CurveChannelBaseline)
-                           for channel in self.channels)
-                or tuple(channel.name for channel in self.channels)
-                != self.profile.policy.channels
-                or any(not self.profile.policy.curve.min_side_samples <= count
-                       <= self.profile.policy.curve.max_points
-                       for channel in self.channels
-                       for count in (channel.before_count, channel.binding_count))
-                or any(channel.noise_scale < floor for channel, floor in zip(
-                    self.channels, self.profile.policy.noise_floors, strict=True,
-                ))):
-            raise ValueError("A binding needs one finite shared amplitude and four baselines")
+        if (
+            not isinstance(self.profile, CurveCalibrationProfile)
+            or not isinstance(self.onset_at, datetime)
+            or not isinstance(self.binding_until, datetime)
+            or not _profile_number(self.amplitude)
+            or self.amplitude <= 0
+            or not isinstance(self.channels, tuple)
+            or not all(
+                isinstance(channel, CurveChannelBaseline) for channel in self.channels
+            )
+            or tuple(channel.name for channel in self.channels)
+            != self.profile.policy.channels
+            or any(
+                not self.profile.policy.curve.min_side_samples
+                <= count
+                <= self.profile.policy.curve.max_points
+                for channel in self.channels
+                for count in (channel.before_count, channel.binding_count)
+            )
+            or any(
+                channel.noise_scale < floor
+                for channel, floor in zip(
+                    self.channels,
+                    self.profile.policy.noise_floors,
+                    strict=True,
+                )
+            )
+        ):
+            raise ValueError(
+                "A binding needs one finite shared amplitude and four baselines"
+            )
         try:
             elapsed = (self.binding_until - self.onset_at).total_seconds()
-            valid_span = 0 < elapsed <= (
-                self.profile.duration_seconds * self.profile.policy.max_phase_x
+            valid_span = (
+                0
+                < elapsed
+                <= (self.profile.duration_seconds * self.profile.policy.max_phase_x)
             )
         except (TypeError, OverflowError):
             valid_span = False
         if not valid_span:
-            raise ValueError("A binding prefix must lie within the declared phase horizon")
+            raise ValueError(
+                "A binding prefix must lie within the declared phase horizon"
+            )
 
 
 @dataclass(frozen=True)
@@ -2226,8 +2651,11 @@ class CurveChannelScore:
     within_residual_limit: bool
 
     def __post_init__(self):
-        if (not isinstance(self.name, str) or not self.name
-                or not _calibration_score_fields(self)):
+        if (
+            not isinstance(self.name, str)
+            or not self.name
+            or not _calibration_score_fields(self)
+        ):
             raise ValueError("A channel score needs finite losses and original counts")
 
 
@@ -2251,51 +2679,74 @@ class CurveContinuationScore:
     within_residual_limit: bool
 
     def __post_init__(self):
-        if (self.status not in ("supports", "rejects")
-                or not _calibration_score_fields(self)
-                or not isinstance(self.channels, tuple) or len(self.channels) != 4
-                or not all(isinstance(channel, CurveChannelScore)
-                           for channel in self.channels)
-                or len({channel.name for channel in self.channels}) != len(self.channels)
-                or self.count != sum(channel.count for channel in self.channels)
-                or self.original_count != sum(channel.original_count
-                                              for channel in self.channels)):
-            raise ValueError("A continuation score needs four finite channel comparisons")
+        if (
+            self.status not in ("supports", "rejects")
+            or not _calibration_score_fields(self)
+            or not isinstance(self.channels, tuple)
+            or len(self.channels) != 4
+            or not all(
+                isinstance(channel, CurveChannelScore) for channel in self.channels
+            )
+            or len({channel.name for channel in self.channels}) != len(self.channels)
+            or self.count != sum(channel.count for channel in self.channels)
+            or self.original_count
+            != sum(channel.original_count for channel in self.channels)
+        ):
+            raise ValueError(
+                "A continuation score needs four finite channel comparisons"
+            )
 
 
 def _calibration_score_fields(score):
     return (
-        all(isinstance(value, int) and not isinstance(value, bool) and value > 0
-            for value in (score.count, score.original_count))
+        all(
+            isinstance(value, int) and not isinstance(value, bool) and value > 0
+            for value in (score.count, score.original_count)
+        )
         and score.count <= score.original_count
-        and all(_profile_number(value) for value in (
-            score.template_loss, score.null_loss, score.score_gain, score.residual_limit,
-        ))
-        and score.template_loss >= 0 and score.null_loss >= 0 and score.residual_limit > 0
+        and all(
+            _profile_number(value)
+            for value in (
+                score.template_loss,
+                score.null_loss,
+                score.score_gain,
+                score.residual_limit,
+            )
+        )
+        and score.template_loss >= 0
+        and score.null_loss >= 0
+        and score.residual_limit > 0
         and isinstance(score.within_residual_limit, bool)
     )
 
 
 def _calibration_row(model, x, knot):
     if model.startswith("hinge"):
-        return (x, x * x, max(0.0, x - knot)**(1 if model == "hinge1" else 2))
+        return (x, x * x, max(0.0, x - knot) ** (1 if model == "hinge1" else 2))
     return tuple(x**power for power in range(1, 4 if model == "cubic" else 3))
 
 
 def _calibration_shape(profile, x):
     try:
-        value = fsum(starmap(mul, zip(
-            _calibration_row(profile.model, x, profile.knot_x),
-            profile.coefficients[1:], strict=True,
-        )))
+        value = fsum(
+            starmap(
+                mul,
+                zip(
+                    _calibration_row(profile.model, x, profile.knot_x),
+                    profile.coefficients[1:],
+                    strict=True,
+                ),
+            )
+        )
         return value if isfinite(value) else None
     except (OverflowError, TypeError, ValueError):
         return None
 
 
 def _calibration_series(channels, policy, origin):
-    if (not _calibration_originals(channels, origin)
-            or {item[0] for item in channels} != set(policy.channels)):
+    if not _calibration_originals(channels, origin) or {
+        item[0] for item in channels
+    } != set(policy.channels):
         return None
     by_name = dict(channels)
     return tuple(by_name[name] for name in policy.channels)
@@ -2318,9 +2769,11 @@ def _calibration_baseline(samples, origin, floor, policy):
         return None
     residuals = _residuals(rows, values, initial)
     residual_center = median(residuals)
-    noise = max(floor, _MAD_NORMALIZATION * median(
-        abs(value - residual_center) for value in residuals
-    ))
+    noise = max(
+        floor,
+        _MAD_NORMALIZATION
+        * median(abs(value - residual_center) for value in residuals),
+    )
     fitted = _fit(rows, values, noise, policy)
     if fitted is None:
         return None
@@ -2331,12 +2784,19 @@ def _calibration_baseline(samples, origin, floor, policy):
 
 
 def curve_template_value(
-    binding: CurveTemplateBinding, channel: str, at: datetime, *, null: bool = False,
+    binding: CurveTemplateBinding,
+    channel: str,
+    at: datetime,
+    *,
+    null: bool = False,
 ) -> float | None:
     """Evaluate the unchanged bound template/null within its declared horizon."""
     try:
-        if (not isinstance(binding, CurveTemplateBinding)
-                or not isinstance(null, bool) or not isinstance(at, datetime)):
+        if (
+            not isinstance(binding, CurveTemplateBinding)
+            or not isinstance(null, bool)
+            or not isinstance(at, datetime)
+        ):
             return None
         index = binding.profile.policy.channels.index(channel)
         elapsed = (at - binding.onset_at).total_seconds()
@@ -2356,7 +2816,11 @@ def curve_template_value(
 
 
 def bind_curve_template(
-    profile: CurveCalibrationProfile, before, prefix, *, onset_at: datetime,
+    profile: CurveCalibrationProfile,
+    before,
+    prefix,
+    *,
+    onset_at: datetime,
     binding_until: datetime,
 ) -> CurveTemplateBinding | None:
     """Fit B,V on strictly pre-origin originals, then one A on the prefix.
@@ -2379,11 +2843,17 @@ def bind_curve_template(
         baselines, rows, values = [], [], []
         for index, name in enumerate(policy.channels):
             originals = initial[index]
-            if (len(originals) < policy.curve.min_side_samples
-                    or originals[0][0] < onset_at or originals[-1][0] > binding_until):
+            if (
+                len(originals) < policy.curve.min_side_samples
+                or originals[0][0] < onset_at
+                or originals[-1][0] > binding_until
+            ):
                 return None
             baseline = _calibration_baseline(
-                pre[index], onset_at, policy.noise_floors[index], policy.curve,
+                pre[index],
+                onset_at,
+                policy.noise_floors[index],
+                policy.curve,
             )
             if baseline is None:
                 return None
@@ -2391,13 +2861,21 @@ def bind_curve_template(
             selected = _bounded_samples(originals, policy.curve.max_points, None)
             if len(selected) < policy.curve.min_side_samples:
                 return None
-            baselines.append(CurveChannelBaseline(
-                name, level, slope, noise, before_count, len(selected),
-            ))
+            baselines.append(
+                CurveChannelBaseline(
+                    name,
+                    level,
+                    slope,
+                    noise,
+                    before_count,
+                    len(selected),
+                )
+            )
             for at, value in selected:
                 seconds = (at - onset_at).total_seconds()
                 shape = _calibration_shape(
-                    profile.channels[index].profile, seconds / profile.duration_seconds,
+                    profile.channels[index].profile,
+                    seconds / profile.duration_seconds,
                 )
                 if shape is None:
                     return None
@@ -2407,10 +2885,20 @@ def bind_curve_template(
         if fitted is None or fitted[0][0] <= 0:
             return None
         return CurveTemplateBinding(
-            profile, onset_at, binding_until, fitted[0][0], tuple(baselines),
+            profile,
+            onset_at,
+            binding_until,
+            fitted[0][0],
+            tuple(baselines),
         )
-    except (AttributeError, IndexError, OverflowError, TypeError, ValueError,
-            ZeroDivisionError):
+    except (
+        AttributeError,
+        IndexError,
+        OverflowError,
+        TypeError,
+        ValueError,
+        ZeroDivisionError,
+    ):
         return None
 
 
@@ -2422,7 +2910,8 @@ def _calibration_loss(residuals, delta):
 
 
 def score_curve_continuation(
-    binding: CurveTemplateBinding, later,
+    binding: CurveTemplateBinding,
+    later,
 ) -> CurveContinuationScore | None:
     """Compare only later own originals; this function never performs a fit."""
     try:
@@ -2435,8 +2924,10 @@ def score_curve_continuation(
         channels = []
         for index, name in enumerate(policy.channels):
             samples = originals[index]
-            if (len(samples) < policy.min_continuation_samples
-                    or samples[0][0] <= binding.binding_until):
+            if (
+                len(samples) < policy.min_continuation_samples
+                or samples[0][0] <= binding.binding_until
+            ):
                 return None
             selected = _bounded_samples(samples, policy.curve.max_points, None)
             if len(selected) < policy.min_continuation_samples:
@@ -2453,30 +2944,55 @@ def score_curve_continuation(
             loss = _calibration_loss(residuals, policy.curve.huber_delta)
             null_loss = _calibration_loss(null_residuals, policy.curve.huber_delta)
             limit = binding.profile.channels[index].residual_limit
-            channels.append(CurveChannelScore(
-                name, len(selected), len(samples), loss, null_loss,
-                null_loss - loss, limit, loss <= limit,
-            ))
+            channels.append(
+                CurveChannelScore(
+                    name,
+                    len(selected),
+                    len(samples),
+                    loss,
+                    null_loss,
+                    null_loss - loss,
+                    limit,
+                    loss <= limit,
+                )
+            )
         loss = fsum(channel.template_loss for channel in channels) / len(channels)
         null_loss = fsum(channel.null_loss for channel in channels) / len(channels)
-        within = (loss <= binding.profile.residual_limit
-                  and all(channel.within_residual_limit for channel in channels))
+        within = loss <= binding.profile.residual_limit and all(
+            channel.within_residual_limit for channel in channels
+        )
         gain = null_loss - loss
         return CurveContinuationScore(
             "supports" if within and gain > policy.minimum_gain else "rejects",
             sum(channel.count for channel in channels),
             sum(channel.original_count for channel in channels),
-            loss, null_loss, gain, binding.profile.residual_limit, tuple(channels), within,
+            loss,
+            null_loss,
+            gain,
+            binding.profile.residual_limit,
+            tuple(channels),
+            within,
         )
-    except (AttributeError, IndexError, OverflowError, TypeError, ValueError,
-            ZeroDivisionError):
+    except (
+        AttributeError,
+        IndexError,
+        OverflowError,
+        TypeError,
+        ValueError,
+        ZeroDivisionError,
+    ):
         return None
 
 
 def fit_curve_calibration(
-    examples: Sequence[CurveCalibrationExample], *, policy: CurveCalibrationPolicy,
-    duration_seconds: float, reference_channel: str, reference_sign: int,
-    basis: str, knot_x: float | None = None,
+    examples: Sequence[CurveCalibrationExample],
+    *,
+    policy: CurveCalibrationPolicy,
+    duration_seconds: float,
+    reference_channel: str,
+    reference_sign: int,
+    basis: str,
+    knot_x: float | None = None,
 ) -> CurveCalibrationProfile | None:
     """Learn one declared P2/P3/M1/M2 candidate and its residual bands.
 
@@ -2490,15 +3006,21 @@ def fit_curve_calibration(
     """
     try:
         models = {"P2": "quadratic", "P3": "cubic", "M1": "hinge1", "M2": "hinge2"}
-        if (not isinstance(policy, CurveCalibrationPolicy)
-                or not _profile_number(duration_seconds) or duration_seconds <= 0
-                or reference_channel not in policy.channels
-                or not isinstance(reference_sign, int)
-                or isinstance(reference_sign, bool) or reference_sign not in (-1, 1)
-                or not isinstance(basis, str) or basis not in models
-                or len(examples) < policy.min_examples
-                or not all(isinstance(example, CurveCalibrationExample)
-                           for example in examples)):
+        if (
+            not isinstance(policy, CurveCalibrationPolicy)
+            or not _profile_number(duration_seconds)
+            or duration_seconds <= 0
+            or reference_channel not in policy.channels
+            or not isinstance(reference_sign, int)
+            or isinstance(reference_sign, bool)
+            or reference_sign not in (-1, 1)
+            or not isinstance(basis, str)
+            or basis not in models
+            or len(examples) < policy.min_examples
+            or not all(
+                isinstance(example, CurveCalibrationExample) for example in examples
+            )
+        ):
             return None
         model = models[basis]
         if model.startswith("hinge"):
@@ -2512,26 +3034,35 @@ def fit_curve_calibration(
             originals = _calibration_series(example.channels, policy, example.onset_at)
             if originals is None:
                 return None
-            before = tuple(tuple(sample for sample in samples
-                                 if sample[0] < example.onset_at)
-                           for samples in originals)
-            phase = tuple(tuple(sample for sample in samples
-                                if sample[0] >= example.onset_at)
-                          for samples in originals)
+            before = tuple(
+                tuple(sample for sample in samples if sample[0] < example.onset_at)
+                for samples in originals
+            )
+            phase = tuple(
+                tuple(sample for sample in samples if sample[0] >= example.onset_at)
+                for samples in originals
+            )
             baselines = []
             for index, samples in enumerate(phase):
-                if (len(samples) < policy.curve.min_side_samples
-                        or (samples[-1][0] - example.onset_at).total_seconds()
-                        > duration_seconds * policy.max_phase_x):
+                if (
+                    len(samples) < policy.curve.min_side_samples
+                    or (samples[-1][0] - example.onset_at).total_seconds()
+                    > duration_seconds * policy.max_phase_x
+                ):
                     return None
                 baseline = _calibration_baseline(
-                    before[index], example.onset_at, policy.noise_floors[index], policy.curve,
+                    before[index],
+                    example.onset_at,
+                    policy.noise_floors[index],
+                    policy.curve,
                 )
                 if baseline is None:
                     return None
                 baselines.append(baseline)
             selected = _bounded_samples(
-                phase[reference_index], policy.curve.max_points, None,
+                phase[reference_index],
+                policy.curve.max_points,
+                None,
             )
             level, slope, noise, _ = baselines[reference_index]
             rows, values = [], []
@@ -2542,9 +3073,16 @@ def fit_curve_calibration(
             fitted = _fit(rows, values, noise, policy.curve)
             if fitted is None:
                 return None
-            unit = reference_sign * fsum(starmap(mul, zip(
-                _calibration_row(model, 1.0, knot_x), fitted[0], strict=True,
-            )))
+            unit = reference_sign * fsum(
+                starmap(
+                    mul,
+                    zip(
+                        _calibration_row(model, 1.0, knot_x),
+                        fitted[0],
+                        strict=True,
+                    ),
+                )
+            )
             if not isfinite(unit) or unit <= 0:
                 return None
             training.append((example, before, phase, baselines, unit))
@@ -2553,10 +3091,18 @@ def fit_curve_calibration(
             rows, values = [], []
             for example, _, phase, baselines, unit in training:
                 level, slope, noise, _ = baselines[index]
-                for at, value in _bounded_samples(phase[index], policy.curve.max_points, None):
+                for at, value in _bounded_samples(
+                    phase[index], policy.curve.max_points, None
+                ):
                     seconds = (at - example.onset_at).total_seconds()
-                    rows.append(tuple(coefficient * unit / noise for coefficient in
-                                      _calibration_row(model, seconds / duration_seconds, knot_x)))
+                    rows.append(
+                        tuple(
+                            coefficient * unit / noise
+                            for coefficient in _calibration_row(
+                                model, seconds / duration_seconds, knot_x
+                            )
+                        )
+                    )
                     values.append((value - level - slope * seconds) / noise)
             fitted = _fit(rows, values, 1.0, policy.curve)
             if fitted is None:
@@ -2567,25 +3113,55 @@ def fit_curve_calibration(
             return None
         factor = reference_sign / reference_value
         initial_limit = policy.residual_loss_floor * policy.residual_limit_multiplier
-        channels = tuple(CurveTemplateChannel(
-            name, CurveProfile(model, tuple(value * factor for value in shape.coefficients),
-                               knot_x), initial_limit,
-        ) for name, shape in zip(policy.channels, shapes, strict=True))
+        channels = tuple(
+            CurveTemplateChannel(
+                name,
+                CurveProfile(
+                    model, tuple(value * factor for value in shape.coefficients), knot_x
+                ),
+                initial_limit,
+            )
+            for name, shape in zip(policy.channels, shapes, strict=True)
+        )
         profile = CurveCalibrationProfile(
-            policy, duration_seconds, reference_channel, reference_sign,
-            channels, initial_limit, len(training),
+            policy,
+            duration_seconds,
+            reference_channel,
+            reference_sign,
+            channels,
+            initial_limit,
+            len(training),
         )
         scores = []
         for example, before, phase, _, _ in training:
             pre = tuple(zip(policy.channels, before, strict=True))
-            prefix = tuple((name, tuple(sample for sample in samples
-                                       if sample[0] <= example.binding_until))
-                           for name, samples in zip(policy.channels, phase, strict=True))
-            later = tuple((name, tuple(sample for sample in samples
-                                      if sample[0] > example.binding_until))
-                          for name, samples in zip(policy.channels, phase, strict=True))
+            prefix = tuple(
+                (
+                    name,
+                    tuple(
+                        sample
+                        for sample in samples
+                        if sample[0] <= example.binding_until
+                    ),
+                )
+                for name, samples in zip(policy.channels, phase, strict=True)
+            )
+            later = tuple(
+                (
+                    name,
+                    tuple(
+                        sample
+                        for sample in samples
+                        if sample[0] > example.binding_until
+                    ),
+                )
+                for name, samples in zip(policy.channels, phase, strict=True)
+            )
             binding = bind_curve_template(
-                profile, pre, prefix, onset_at=example.onset_at,
+                profile,
+                pre,
+                prefix,
+                onset_at=example.onset_at,
                 binding_until=example.binding_until,
             )
             score = score_curve_continuation(binding, later)
@@ -2596,18 +3172,38 @@ def fit_curve_calibration(
         def learned_limit(losses):
             ordered = sorted(losses)
             quantile = ordered[ceil(policy.residual_quantile * len(ordered)) - 1]
-            return max(policy.residual_loss_floor, quantile) * policy.residual_limit_multiplier
+            return (
+                max(policy.residual_loss_floor, quantile)
+                * policy.residual_limit_multiplier
+            )
 
         return CurveCalibrationProfile(
-            policy, duration_seconds, reference_channel, reference_sign,
-            tuple(CurveTemplateChannel(
-                channel.name, channel.profile,
-                learned_limit(score.channels[index].template_loss for score in scores),
-            ) for index, channel in enumerate(channels)),
-            learned_limit(score.template_loss for score in scores), len(training),
+            policy,
+            duration_seconds,
+            reference_channel,
+            reference_sign,
+            tuple(
+                CurveTemplateChannel(
+                    channel.name,
+                    channel.profile,
+                    learned_limit(
+                        score.channels[index].template_loss for score in scores
+                    ),
+                )
+                for index, channel in enumerate(channels)
+            ),
+            learned_limit(score.template_loss for score in scores),
+            len(training),
         )
-    except (AttributeError, IndexError, KeyError, OverflowError, TypeError, ValueError,
-            ZeroDivisionError):
+    except (
+        AttributeError,
+        IndexError,
+        KeyError,
+        OverflowError,
+        TypeError,
+        ValueError,
+        ZeroDivisionError,
+    ):
         return None
 
 
@@ -2619,17 +3215,33 @@ def _trend_models(samples, policy):
     resolution = len(samples) * ulp(max(abs(value) for value in raw_values))
     delta = raw_values[-1] - raw_values[0]
     if all(value == raw_values[0] for value in raw_values):
-        return CurveTrendFeatures(
-            direction=0, slope=0.0, noise_scale=0.0,
-            level_score=None, trend_score=None, score_gain=None,
-            exact_constant=True, exact_linear=False,
-        ), None, None
+        return (
+            CurveTrendFeatures(
+                direction=0,
+                slope=0.0,
+                noise_scale=0.0,
+                level_score=None,
+                trend_score=None,
+                score_gain=None,
+                exact_constant=True,
+                exact_linear=False,
+            ),
+            None,
+            None,
+        )
     # Check every original before downsampling. An omitted excursion must not
     # turn quantized observations into an exact line or an exact constant.
-    collinear = isfinite(delta) and abs(delta) > resolution and all(
-        abs((value - raw_values[0]) - delta * (
-            (stamp - stamps[0]).total_seconds() / span
-        )) <= resolution for stamp, value in samples
+    collinear = (
+        isfinite(delta)
+        and abs(delta) > resolution
+        and all(
+            abs(
+                (value - raw_values[0])
+                - delta * ((stamp - stamps[0]).total_seconds() / span)
+            )
+            <= resolution
+            for stamp, value in samples
+        )
     )
     # Removing either endpoint must still leave resolved change. Otherwise a
     # lone value after a long reporting gap could supply the entire direction.
@@ -2641,11 +3253,20 @@ def _trend_models(samples, policy):
         slope = delta / span
         if not isfinite(slope) or slope == 0:
             return None
-        return CurveTrendFeatures(
-            direction=1 if delta > 0 else -1, slope=slope, noise_scale=0.0,
-            level_score=None, trend_score=None, score_gain=None,
-            exact_constant=False, exact_linear=True,
-        ), None, None
+        return (
+            CurveTrendFeatures(
+                direction=1 if delta > 0 else -1,
+                slope=slope,
+                noise_scale=0.0,
+                level_score=None,
+                trend_score=None,
+                score_gain=None,
+                exact_constant=False,
+                exact_linear=True,
+            ),
+            None,
+            None,
+        )
     selected = _bounded_samples(samples, policy.max_points, None)
     if len(selected) < policy.min_side_samples:
         return None
@@ -2654,8 +3275,7 @@ def _trend_models(samples, policy):
     centered = [value - center for value in values]
     if not all(isfinite(value) for value in centered):
         return None
-    rows = [[1.0, (stamp - stamps[0]).total_seconds() / span]
-            for stamp, _ in selected]
+    rows = [[1.0, (stamp - stamps[0]).total_seconds() / span] for stamp, _ in selected]
     preliminary = _least_squares(rows, centered, [1.0] * len(centered))
     if preliminary is None:
         return None
@@ -2682,7 +3302,7 @@ def _trend_models(samples, policy):
         return None
     times = [row[1] for row in rows]
     time_center = fsum(times) / len(times)
-    time_spread = fsum((time - time_center)**2 for time in times)
+    time_spread = fsum((time - time_center) ** 2 for time in times)
     if not isfinite(time_spread) or time_spread <= 0:
         return None
     influences = []
@@ -2690,23 +3310,40 @@ def _trend_models(samples, policy):
         # A high-leverage endpoint can have a tiny fitted residual although
         # removing it changes the entire direction. External deletion residuals
         # r/(1-h) account for that influence without another fit per point.
-        remaining = fsum((
-            1.0, -1 / len(times), -(time - time_center)**2 / time_spread,
-        ))
+        remaining = fsum(
+            (
+                1.0,
+                -1 / len(times),
+                -((time - time_center) ** 2) / time_spread,
+            )
+        )
         unresolved = remaining <= len(times) * _FLOAT_EPSILON
-        influences.append((
-            unresolved, 0.0 if unresolved else abs(residual) / remaining,
-        ))
-    return CurveTrendFeatures(
-        direction=(1 if slope > 0 else -1) if score_gain > 0 else 0,
-        slope=slope, noise_scale=noise,
-        level_score=level_score, trend_score=trend_score, score_gain=score_gain,
-        exact_constant=False, exact_linear=False,
-    ), selected, influences
+        influences.append(
+            (
+                unresolved,
+                0.0 if unresolved else abs(residual) / remaining,
+            )
+        )
+    return (
+        CurveTrendFeatures(
+            direction=(1 if slope > 0 else -1) if score_gain > 0 else 0,
+            slope=slope,
+            noise_scale=noise,
+            level_score=level_score,
+            trend_score=trend_score,
+            score_gain=score_gain,
+            exact_constant=False,
+            exact_linear=False,
+        ),
+        selected,
+        influences,
+    )
 
 
 def curve_trend(
-    samples: Sequence[tuple[datetime, float]], *, policy: CurvePolicy,
+    samples: Sequence[tuple[datetime, float]],
+    *,
+    policy: CurvePolicy,
 ) -> CurveTrendFeatures | None:
     """Assess one fixed original segment, without selecting a favorable tail.
 
@@ -2735,9 +3372,13 @@ def curve_trend(
             return None
         features, selected, influences = result
         if features.direction and not features.exact_linear:
-            removed = max(range(len(selected)), key=lambda point: (
-                influences[point], point,
-            ))
+            removed = max(
+                range(len(selected)),
+                key=lambda point: (
+                    influences[point],
+                    point,
+                ),
+            )
             retained = [
                 sample for point, sample in enumerate(selected) if point != removed
             ]
@@ -2748,7 +3389,11 @@ def curve_trend(
                 return None
         return features
     except (
-        AttributeError, IndexError, OverflowError, TypeError, ValueError,
+        AttributeError,
+        IndexError,
+        OverflowError,
+        TypeError,
+        ValueError,
         ZeroDivisionError,
     ):
         return None
@@ -2777,20 +3422,28 @@ def _smooth_valley(coefficients, value_resolution, count):
         roots = [-first / linear]
     else:
         discriminant = linear * linear - 4 * quadratic * first
-        discriminant_resolution = count * ulp(max(
-            linear * linear, abs(4 * quadratic * first),
-        ))
+        discriminant_resolution = count * ulp(
+            max(
+                linear * linear,
+                abs(4 * quadratic * first),
+            )
+        )
         if discriminant <= discriminant_resolution:
             return None
         root = sqrt(discriminant)
-        numerator = -.5 * (linear + (root if linear >= 0 else -root))
+        numerator = -0.5 * (linear + (root if linear >= 0 else -root))
         if numerator == 0:
             return None
         roots = [numerator / quadratic, first / numerator]
-    minima = [root for root in roots if (
-        isfinite(root) and 0 < root < 1
-        and linear + 2 * quadratic * root > resolution
-    )]
+    minima = [
+        root
+        for root in roots
+        if (
+            isfinite(root)
+            and 0 < root < 1
+            and linear + 2 * quadratic * root > resolution
+        )
+    ]
     if len(minima) != 1:
         return None
     root = minima[0]
@@ -2822,9 +3475,15 @@ def _recovery_assessment(samples, selected, noise, current_not_before, policy):
     other_score, other_name, residuals, _, _ = min(other, key=lambda item: item[:2])
     if not recovery:
         return CurveRecoveryFeatures(
-            evidence="rejects", start_at=start, newest_at=newest, count=len(samples),
-            noise_scale=noise, model=other_name, recovery_score=None,
-            other_score=other_score, score_gain=None,
+            evidence="rejects",
+            start_at=start,
+            newest_at=newest,
+            count=len(samples),
+            noise_scale=noise,
+            model=other_name,
+            recovery_score=None,
+            other_score=other_score,
+            score_gain=None,
         ), residuals
     recovery_score, name, _, _, valley = min(recovery, key=lambda item: item[:2])
     score_gain = other_score - recovery_score
@@ -2833,16 +3492,26 @@ def _recovery_assessment(samples, selected, noise, current_not_before, policy):
         return None
     if score_gain < 0:
         return CurveRecoveryFeatures(
-            evidence="rejects", start_at=start, newest_at=newest, count=len(samples),
-            noise_scale=noise, model=other_name, recovery_score=recovery_score,
-            other_score=other_score, score_gain=score_gain,
+            evidence="rejects",
+            start_at=start,
+            newest_at=newest,
+            count=len(samples),
+            noise_scale=noise,
+            model=other_name,
+            recovery_score=recovery_score,
+            other_score=other_score,
+            score_gain=score_gain,
         ), residuals
     valley_at = start + timedelta(seconds=valley * span)
     before = [point for point in samples if point[0] < valley_at]
-    after = [point for point in samples if (
-        point[0] > valley_at
-        and (current_not_before is None or point[0] >= current_not_before)
-    )]
+    after = [
+        point
+        for point in samples
+        if (
+            point[0] > valley_at
+            and (current_not_before is None or point[0] >= current_not_before)
+        )
+    ]
     if min(len(before), len(after)) < policy.min_side_samples:
         return None
     before_trend = curve_trend(before, policy=policy)
@@ -2852,18 +3521,30 @@ def _recovery_assessment(samples, selected, noise, current_not_before, policy):
     supported = before_trend.direction == -1 and after_trend.direction == 1
     return CurveRecoveryFeatures(
         evidence="supports" if supported else "rejects",
-        start_at=start, newest_at=newest, count=len(samples), noise_scale=noise,
-        model=name, recovery_score=recovery_score, other_score=other_score,
-        score_gain=score_gain, valley_at=valley_at,
-        before_count=len(before), after_count=len(after),
-        decline_start_at=before[0][0], decline_newest_at=before[-1][0],
-        recovery_start_at=after[0][0], recovery_newest_at=after[-1][0],
-        before_trend=before_trend, after_trend=after_trend,
+        start_at=start,
+        newest_at=newest,
+        count=len(samples),
+        noise_scale=noise,
+        model=name,
+        recovery_score=recovery_score,
+        other_score=other_score,
+        score_gain=score_gain,
+        valley_at=valley_at,
+        before_count=len(before),
+        after_count=len(after),
+        decline_start_at=before[0][0],
+        decline_newest_at=before[-1][0],
+        recovery_start_at=after[0][0],
+        recovery_newest_at=after[-1][0],
+        before_trend=before_trend,
+        after_trend=after_trend,
     ), residuals
 
 
 def curve_recovery(
-    samples: Sequence[tuple[datetime, float]], *, policy: CurvePolicy,
+    samples: Sequence[tuple[datetime, float]],
+    *,
+    policy: CurvePolicy,
     current_not_before: datetime | None = None,
 ) -> CurveRecoveryFeatures | None:
     """Assess a complete smooth fall and rise without assigning an event onset.
@@ -2886,7 +3567,8 @@ def curve_recovery(
         if not _policy_valid(policy) or len(samples) < 2 * policy.min_side_samples:
             return None
         if current_not_before is not None and not isinstance(
-            current_not_before, datetime,
+            current_not_before,
+            datetime,
         ):
             return None
         stamps = [stamp for stamp, _ in samples]
@@ -2924,42 +3606,66 @@ def curve_recovery(
             if exact is None or not (exact.exact_constant or exact.exact_linear):
                 return None
             return CurveRecoveryFeatures(
-                evidence="rejects", start_at=stamps[0], newest_at=stamps[-1],
-                count=len(samples), noise_scale=0.0,
+                evidence="rejects",
+                start_at=stamps[0],
+                newest_at=stamps[-1],
+                count=len(samples),
+                noise_scale=0.0,
                 model="constant" if exact.exact_constant else "linear",
-                recovery_score=None, other_score=None, score_gain=None,
+                recovery_score=None,
+                other_score=None,
+                score_gain=None,
             )
         result = _recovery_assessment(
-            samples, selected, noise, current_not_before, policy,
+            samples,
+            selected,
+            noise,
+            current_not_before,
+            policy,
         )
         if result is None:
             return None
         features, residuals = result
         if features.evidence == "supports":
-            removed = max(range(len(selected)), key=lambda point: (
-                abs(residuals[point]), point,
-            ))
+            removed = max(
+                range(len(selected)),
+                key=lambda point: (
+                    abs(residuals[point]),
+                    point,
+                ),
+            )
             removed_at = selected[removed][0]
             retained = [point for point in samples if point[0] != removed_at]
-            retained_selected = [point for index, point in enumerate(selected)
-                                 if index != removed]
+            retained_selected = [
+                point for index, point in enumerate(selected) if index != removed
+            ]
             if len(retained_selected) < 2 * policy.min_side_samples:
                 return None
             rescue = _recovery_assessment(
-                retained, retained_selected, noise, current_not_before, policy,
+                retained,
+                retained_selected,
+                noise,
+                current_not_before,
+                policy,
             )
             if rescue is None or rescue[0].evidence != "supports":
                 return None
         return features
     except (
-        AttributeError, IndexError, OverflowError, TypeError, ValueError,
+        AttributeError,
+        IndexError,
+        OverflowError,
+        TypeError,
+        ValueError,
         ZeroDivisionError,
     ):
         return None
 
 
 def curve_change(
-    samples: Sequence[tuple[datetime, float]], *, policy: CurvePolicy,
+    samples: Sequence[tuple[datetime, float]],
+    *,
+    policy: CurvePolicy,
     onset_at: datetime | None = None,
     direction: int | None = None,
     onset_not_before: datetime | None = None,
@@ -2991,12 +3697,14 @@ def curve_change(
     """
     try:
         if (
-            isinstance(hinge_order, bool) or not isinstance(hinge_order, int)
+            isinstance(hinge_order, bool)
+            or not isinstance(hinge_order, int)
             or hinge_order not in (1, 2)
         ):
             return None
         if direction is not None and (
-            isinstance(direction, bool) or not isinstance(direction, int)
+            isinstance(direction, bool)
+            or not isinstance(direction, int)
             or direction not in (-1, 1)
         ):
             return None
@@ -3038,25 +3746,34 @@ def curve_change(
         if not isfinite(noise) or noise <= resolution:
             return None
         support_boundaries = (
-            policy.min_side_samples - 1, len(times) - policy.min_side_samples - 1,
+            policy.min_side_samples - 1,
+            len(times) - policy.min_side_samples - 1,
         )
-        eligible = [index for index in range(
-            policy.min_side_samples - 1, len(times) - policy.min_side_samples
-        ) if onset_not_before is None or stamps[index] >= onset_not_before]
+        eligible = [
+            index
+            for index in range(
+                policy.min_side_samples - 1, len(times) - policy.min_side_samples
+            )
+            if onset_not_before is None or stamps[index] >= onset_not_before
+        ]
         if not eligible:
             return None
-        searched = [eligible[index] for index in _indices(
-            len(eligible), policy.max_candidates
-        )]
+        searched = [
+            eligible[index] for index in _indices(len(eligible), policy.max_candidates)
+        ]
         if onset_at is not None:
             index = stamps.index(onset_at)
             if index not in eligible:
                 return None
             if index not in searched:
                 if len(searched) == policy.max_candidates:
-                    nearest = min(range(len(searched)), key=lambda point: (
-                        abs(times[searched[point]] - times[index]), point,
-                    ))
+                    nearest = min(
+                        range(len(searched)),
+                        key=lambda point: (
+                            abs(times[searched[point]] - times[index]),
+                            point,
+                        ),
+                    )
                     searched[nearest] = index
                 else:
                     searched.append(index)
@@ -3068,14 +3785,14 @@ def curve_change(
             return None
         smooth_score, smooth_model, residuals, changes = result
         compatible = [
-            item for item in changes
-            if direction is None or item[2][3] * direction > 0
+            item for item in changes if direction is None or item[2][3] * direction > 0
         ]
         if onset_at is None:
             if not compatible:
                 return None
             change_score, index, coefficients = min(
-                compatible, key=lambda item: item[:2],
+                compatible,
+                key=lambda item: item[:2],
             )
         else:
             fitted = next((item for item in changes if item[1] == index), None)
@@ -3108,18 +3825,32 @@ def curve_change(
             return None
         shape_start = (
             (onset_not_before - stamps[0]).total_seconds() / span
-            if onset_not_before is not None else times[0]
+            if onset_not_before is not None
+            else times[0]
         )
         if supported and hinge_order == 1:
             side_rejects = _side_change_rejects(
-                times, values, noise, times[index], shape_start, coefficients[3],
-                resolution, policy,
+                times,
+                values,
+                noise,
+                times[index],
+                shape_start,
+                coefficients[3],
+                resolution,
+                policy,
             )
             supported = side_rejects is not True
         if supported:
             rescue = _supported_without_point(
-                times, values, noise, index, residuals, search_penalty, policy,
-                shape_start=shape_start, value_resolution=resolution,
+                times,
+                values,
+                noise,
+                index,
+                residuals,
+                search_penalty,
+                policy,
+                shape_start=shape_start,
+                value_resolution=resolution,
                 hinge_order=hinge_order,
             )
             if rescue is None or not rescue[0] or rescue[1] * coefficients[3] <= 0:
@@ -3130,12 +3861,17 @@ def curve_change(
         curvature_change = 2 * coefficients[3] / span**2 if hinge_order == 2 else 0.0
         strength = (
             coefficients[3] * (times[-1] - times[index]) / noise
-            if hinge_order == 1 else
-            coefficients[3] * (times[-1] - times[index])**2 / noise
+            if hinge_order == 1
+            else coefficients[3] * (times[-1] - times[index]) ** 2 / noise
         )
         finite = (
-            slope_before, slope_after, slope_change, strength,
-            smooth_score, change_score, curvature_change,
+            slope_before,
+            slope_after,
+            slope_change,
+            strength,
+            smooth_score,
+            change_score,
+            curvature_change,
         )
         if not all(isfinite(value) for value in finite):
             return None
@@ -3147,24 +3883,41 @@ def curve_change(
             )
         return CurveFeatures(
             evidence="supports" if supported else "rejects",
-            onset_at=stamps[index], newest_at=stamps[-1],
-            before_count=index + 1, after_count=len(times) - index - 1,
-            noise_scale=noise, slope_before=slope_before,
-            slope_after=slope_after, slope_change=slope_change,
-            signed_strength=strength, smooth_score=smooth_score,
-            change_score=change_score, score_gain=score_gain,
-            smooth_model=smooth_model, after_trend=after_trend,
-            hinge_order=hinge_order, curvature_change=curvature_change,
+            onset_at=stamps[index],
+            newest_at=stamps[-1],
+            before_count=index + 1,
+            after_count=len(times) - index - 1,
+            noise_scale=noise,
+            slope_before=slope_before,
+            slope_after=slope_after,
+            slope_change=slope_change,
+            signed_strength=strength,
+            smooth_score=smooth_score,
+            change_score=change_score,
+            score_gain=score_gain,
+            smooth_model=smooth_model,
+            after_trend=after_trend,
+            hinge_order=hinge_order,
+            curvature_change=curvature_change,
             fit=CurveFitSnapshot(
                 profile=CurveProfile(
-                    f"hinge{hinge_order}", tuple(coefficients), times[index],
+                    f"hinge{hinge_order}",
+                    tuple(coefficients),
+                    times[index],
                 ),
-                time_origin=stamps[0], time_scale_seconds=span, value_center=center,
-                newest_at=stamps[-1], noise_scale=noise,
+                time_origin=stamps[0],
+                time_scale_seconds=span,
+                value_center=center,
+                newest_at=stamps[-1],
+                noise_scale=noise,
             ),
         )
     except (
-        AttributeError, IndexError, OverflowError, TypeError, ValueError,
+        AttributeError,
+        IndexError,
+        OverflowError,
+        TypeError,
+        ValueError,
         ZeroDivisionError,
     ):
         # Bad/degenerate local windows must not interrupt the product loop.
@@ -3189,10 +3942,12 @@ def _form_turn(coefficients, knot, order, form, value_resolution, count):
     if scale == 0:
         return False, None, None, "no_interior_target_turn", 0, 0
     normalized = [value / scale for value in coefficients]
-    resolution = max(value_resolution / scale,
-                     count * _FLOAT_EPSILON * fsum(
-                         power * abs(value) for power, value in enumerate(normalized)
-                     ))
+    resolution = max(
+        value_resolution / scale,
+        count
+        * _FLOAT_EPSILON
+        * fsum(power * abs(value) for power, value in enumerate(normalized)),
+    )
     nodes = {0.0, 1.0}
     if order:
         _, first, quadratic, change = normalized
@@ -3209,8 +3964,11 @@ def _form_turn(coefficients, knot, order, form, value_resolution, count):
                     nodes.add(root)
 
         def derivative(at):
-            return (first + 2 * quadratic * at if at < knot
-                    else right_first + 2 * right_quadratic * at)
+            return (
+                first + 2 * quadratic * at
+                if at < knot
+                else right_first + 2 * right_quadratic * at
+            )
     else:
         first = normalized[1]
         linear = 2 * normalized[2]
@@ -3221,14 +3979,17 @@ def _form_turn(coefficients, knot, order, form, value_resolution, count):
                 roots = [-first / linear]
         else:
             discriminant = linear * linear - 4 * quadratic * first
-            discriminant_resolution = count * ulp(max(
-                linear * linear, abs(4 * quadratic * first),
-            ))
+            discriminant_resolution = count * ulp(
+                max(
+                    linear * linear,
+                    abs(4 * quadratic * first),
+                )
+            )
             if abs(discriminant) <= discriminant_resolution:
                 return None, None, None, "stationary_discriminant_unresolved", 0, 0
             if discriminant > discriminant_resolution:
                 root = sqrt(discriminant)
-                numerator = -.5 * (linear + (root if linear >= 0 else -root))
+                numerator = -0.5 * (linear + (root if linear >= 0 else -root))
                 if numerator == 0:
                     return None, None, None, "stationary_root_unresolved", 0, 0
                 roots = [numerator / quadratic, first / numerator]
@@ -3236,6 +3997,7 @@ def _form_turn(coefficients, knot, order, form, value_resolution, count):
 
         def derivative(at):
             return fsum((first, linear * at, quadratic * at * at))
+
     nodes = sorted(nodes)
     directions = []
     for left, right in zip(nodes, nodes[1:]):
@@ -3262,39 +4024,79 @@ def _form_turn(coefficients, knot, order, form, value_resolution, count):
     # a stationary constraint would incorrectly force the *other* derivative
     # to zero. The original flank and deletion checks remain mandatory.
     kind = "knot" if order == 1 and turn == knot else "stationary"
-    reason = "unique_target_with_opposite_background_turn" if maxima else "unique_interior_target_turn"
+    reason = (
+        "unique_target_with_opposite_background_turn"
+        if maxima
+        else "unique_interior_target_turn"
+    )
     return True, turn, kind, reason, 1, len(maxima)
 
 
-def _form_record(name, fitted, times, values, noise, start, span, form,
-                 value_resolution, *, knot=None, order=0, parameter_count=None,
-                 coefficient_count=None, search_count=1):
+def _form_record(
+    name,
+    fitted,
+    times,
+    values,
+    noise,
+    start,
+    span,
+    form,
+    value_resolution,
+    *,
+    knot=None,
+    order=0,
+    parameter_count=None,
+    coefficient_count=None,
+    search_count=1,
+):
     coefficients, loss = fitted
-    compatible, turn, turn_kind, geometry_reason, target_count, opposite_count = _form_turn(
-        coefficients, knot, order, form, value_resolution, len(values),
+    compatible, turn, turn_kind, geometry_reason, target_count, opposite_count = (
+        _form_turn(
+            coefficients,
+            knot,
+            order,
+            form,
+            value_resolution,
+            len(values),
+        )
     )
-    rows = [[1.0, at, at * at, at**3][:len(coefficients)] for at in times]
+    rows = [[1.0, at, at * at, at**3][: len(coefficients)] for at in times]
     if order:
-        rows = [[1.0, at, at * at, max(0.0, at - knot)**order] for at in times]
+        rows = [[1.0, at, at * at, max(0.0, at - knot) ** order] for at in times]
     count = len(coefficients) if coefficient_count is None else coefficient_count
     parameters = count if parameter_count is None else parameter_count
     search_cost = 2 * log(search_count) if search_count > 1 else 0.0
     score = loss + parameters * log(len(values)) + search_cost
     model = CurveFormModel(
-        model=name, score=score, loss=loss, compatible=compatible,
+        model=name,
+        score=score,
+        loss=loss,
+        compatible=compatible,
         turn_at=start + timedelta(seconds=turn * span) if turn is not None else None,
         turn_kind=turn_kind,
         knot_at=start + timedelta(seconds=knot * span) if knot is not None else None,
-        hinge_order=order, coefficient_count=count, parameter_count=parameters,
-        search_count=search_count, search_cost=search_cost,
-        geometry_reason=geometry_reason, target_turn_count=target_count,
+        hinge_order=order,
+        coefficient_count=count,
+        parameter_count=parameters,
+        search_count=search_count,
+        search_cost=search_cost,
+        geometry_reason=geometry_reason,
+        target_turn_count=target_count,
         opposite_turn_count=opposite_count,
     )
     return model, coefficients, _residuals(rows, values, coefficients)
 
 
-def _form_models(selected, noise, policy, form, *, knot_times=None,
-                 retained_search_count=None, include_knot=None):
+def _form_models(
+    selected,
+    noise,
+    policy,
+    form,
+    *,
+    knot_times=None,
+    retained_search_count=None,
+    include_knot=None,
+):
     """Fit each existing family once on the same originals and noise scale."""
     start, newest = selected[0][0], selected[-1][0]
     span = (newest - start).total_seconds()
@@ -3310,25 +4112,52 @@ def _form_models(selected, noise, policy, form, *, knot_times=None,
     level = _fit([[1.0] for _ in times], values, noise, policy)
     if level is None:
         return None
-    records = [_form_record("constant", level, times, values, noise,
-                           start, span, form, resolution)]
+    records = [
+        _form_record(
+            "constant", level, times, values, noise, start, span, form, resolution
+        )
+    ]
     for score, name, _, coefficients in smooth:
         # Reuse the owner's already computed loss, without another robust fit.
         loss = score - len(coefficients) * log(len(values))
-        records.append(_form_record(name, (coefficients, loss), times, values,
-                                    noise, start, span, form, resolution))
+        records.append(
+            _form_record(
+                name,
+                (coefficients, loss),
+                times,
+                values,
+                noise,
+                start,
+                span,
+                form,
+                resolution,
+            )
+        )
     if knot_times is None:
-        eligible = list(range(policy.min_side_samples,
-                              len(times) - policy.min_side_samples))
-        indices = [eligible[index] for index in _indices(len(eligible), policy.max_candidates)]
+        eligible = list(
+            range(policy.min_side_samples, len(times) - policy.min_side_samples)
+        )
+        indices = [
+            eligible[index] for index in _indices(len(eligible), policy.max_candidates)
+        ]
         if include_knot is not None:
-            pinned = next((index for index, (stamp, _) in enumerate(selected)
-                           if stamp == include_knot), None)
+            pinned = next(
+                (
+                    index
+                    for index, (stamp, _) in enumerate(selected)
+                    if stamp == include_knot
+                ),
+                None,
+            )
             if pinned in eligible and pinned not in indices:
                 if len(indices) == policy.max_candidates:
-                    nearest = min(range(len(indices)), key=lambda i: (
-                        abs(times[indices[i]] - times[pinned]), i,
-                    ))
+                    nearest = min(
+                        range(len(indices)),
+                        key=lambda i: (
+                            abs(times[indices[i]] - times[pinned]),
+                            i,
+                        ),
+                    )
                     indices[nearest] = pinned
                 else:
                     indices.append(pinned)
@@ -3336,26 +4165,54 @@ def _form_models(selected, noise, policy, form, *, knot_times=None,
         knots = [(index, times[index]) for index in indices]
         knot_times = tuple(selected[index][0] for index in indices)
     else:
-        knots = [(index, (stamp - start).total_seconds() / span)
-                 for index, stamp in enumerate(knot_times) if start < stamp < newest]
+        knots = [
+            (index, (stamp - start).total_seconds() / span)
+            for index, stamp in enumerate(knot_times)
+            if start < stamp < newest
+        ]
     changes = []
     for order in (1, 2):
         if not knots:
             continue
-        result = _models(times, values, noise, knots, policy, hinge_order=order,
-                         smooth_result=smooth_result)
+        result = _models(
+            times,
+            values,
+            noise,
+            knots,
+            policy,
+            hinge_order=order,
+            smooth_result=smooth_result,
+        )
         if result is not None:
-            changes.extend((order, index, coefficients, score)
-                           for score, index, coefficients in result[3])
+            changes.extend(
+                (order, index, coefficients, score)
+                for score, index, coefficients in result[3]
+            )
     # Every attempted knot/order was searched, including a failed/rank-deficient
     # fit. Such failures must not discount the surviving hypotheses' search.
-    search_count = 2 * len(knots) if retained_search_count is None else retained_search_count
+    search_count = (
+        2 * len(knots) if retained_search_count is None else retained_search_count
+    )
     for order, index, coefficients, score in changes:
         knot = next(value for candidate, value in knots if candidate == index)
         loss = score - 5 * log(len(values))
-        records.append(_form_record(f"hinge{order}", (coefficients, loss), times,
-            values, noise, start, span, form, resolution, knot=knot, order=order,
-            parameter_count=5, search_count=search_count))
+        records.append(
+            _form_record(
+                f"hinge{order}",
+                (coefficients, loss),
+                times,
+                values,
+                noise,
+                start,
+                span,
+                form,
+                resolution,
+                knot=knot,
+                order=order,
+                parameter_count=5,
+                search_count=search_count,
+            )
+        )
     return records, knot_times, search_count
 
 
@@ -3370,53 +4227,82 @@ def _fixed_form_model(selected, noise, policy, reference, records):
         for record in records:
             model = record[0]
             if model.model == reference.model and model.knot_at == reference.knot_at:
-                if (model.compatible is True and (
+                if model.compatible is True and (
                     model.turn_kind != reference.turn_kind
                     or abs(model.turn_at - reference.turn_at) > datetime.resolution
-                )):
+                ):
                     return None
                 # Search costs belong to the first proposal, even if a later
                 # prefix permits a different number of competing knots.
-                return (CurveFormModel(
-                    **{**model.__dict__, "score": model.loss
-                       + reference.parameter_count * log(len(selected))
-                       + 2 * log(reference.search_count),
-                       "parameter_count": reference.parameter_count,
-                       "search_count": reference.search_count,
-                       "search_cost": 2 * log(reference.search_count)},
-                ), record[1], record[2])
+                return (
+                    CurveFormModel(
+                        **{
+                            **model.__dict__,
+                            "score": model.loss
+                            + reference.parameter_count * log(len(selected))
+                            + 2 * log(reference.search_count),
+                            "parameter_count": reference.parameter_count,
+                            "search_count": reference.search_count,
+                            "search_cost": 2 * log(reference.search_count),
+                        },
+                    ),
+                    record[1],
+                    record[2],
+                )
     raw_values = [value for _, value in selected]
     center = median(raw_values)
     values = [value - center for value in raw_values]
     times = [(stamp - start).total_seconds() / span for stamp, _ in selected]
-    knot = ((reference.knot_at - start).total_seconds() / span
-            if reference.knot_at is not None else None)
+    knot = (
+        (reference.knot_at - start).total_seconds() / span
+        if reference.knot_at is not None
+        else None
+    )
     order = reference.hinge_order
     if reference.turn_kind == "knot":
-        rows = [[1.0, at, at * at, max(0.0, at - knot)**order] for at in times]
+        rows = [[1.0, at, at * at, max(0.0, at - knot) ** order] for at in times]
         fitted = _fit(rows, values, noise, policy)
         count = 4
     elif order:
-        derivative = (1.0 if turn > knot else 0.0) if order == 1 else 2 * max(0.0, turn - knot)
-        rows = [[1.0, at * at - 2 * turn * at,
-                 max(0.0, at - knot)**order - derivative * at] for at in times]
+        derivative = (
+            (1.0 if turn > knot else 0.0) if order == 1 else 2 * max(0.0, turn - knot)
+        )
+        rows = [
+            [
+                1.0,
+                at * at - 2 * turn * at,
+                max(0.0, at - knot) ** order - derivative * at,
+            ]
+            for at in times
+        ]
         fitted = _fit(rows, values, noise, policy)
         if fitted is not None:
             offset, quadratic, change = fitted[0]
-            fitted = ([offset, -2 * turn * quadratic - derivative * change,
-                       quadratic, change], fitted[1])
+            fitted = (
+                [
+                    offset,
+                    -2 * turn * quadratic - derivative * change,
+                    quadratic,
+                    change,
+                ],
+                fitted[1],
+            )
         count = 3
     else:
         degree = {"quadratic": 2, "cubic": 3}[reference.model]
-        rows = [[1.0, *((at - turn)**power for power in range(2, degree + 1))]
-                for at in times]
+        rows = [
+            [1.0, *((at - turn) ** power for power in range(2, degree + 1))]
+            for at in times
+        ]
         fitted = _fit(rows, values, noise, policy)
         if fitted is not None:
             local = fitted[0]
             cubic = local[2] if degree == 3 else 0.0
-            coefficients = [local[0] + local[1] * turn**2 - cubic * turn**3,
-                            -2 * local[1] * turn + 3 * cubic * turn**2,
-                            local[1] - 3 * cubic * turn]
+            coefficients = [
+                local[0] + local[1] * turn**2 - cubic * turn**3,
+                -2 * local[1] * turn + 3 * cubic * turn**2,
+                local[1] - 3 * cubic * turn,
+            ]
             if degree == 3:
                 coefficients.append(cubic)
             fitted = coefficients, fitted[1]
@@ -3424,22 +4310,40 @@ def _fixed_form_model(selected, noise, policy, reference, records):
     if fitted is None:
         return None
     resolution = len(selected) * ulp(max(abs(value) for value in raw_values))
-    record = _form_record(reference.model, fitted, times, values, noise, start,
-        span, reference.form, resolution, knot=knot, order=order,
-        parameter_count=reference.parameter_count, coefficient_count=count,
-        search_count=reference.search_count)
+    record = _form_record(
+        reference.model,
+        fitted,
+        times,
+        values,
+        noise,
+        start,
+        span,
+        reference.form,
+        resolution,
+        knot=knot,
+        order=order,
+        parameter_count=reference.parameter_count,
+        coefficient_count=count,
+        search_count=reference.search_count,
+    )
     model = record[0]
-    if (model.compatible is True and model.turn_at is not None
-            and abs(model.turn_at - reference.turn_at) > datetime.resolution):
+    if (
+        model.compatible is True
+        and model.turn_at is not None
+        and abs(model.turn_at - reference.turn_at) > datetime.resolution
+    ):
         return None
     return record
 
 
 def _form_flanks(samples, turn_at, form, current_not_before, policy, cache):
     before = [point for point in samples if point[0] < turn_at]
-    after = [point for point in samples if point[0] > turn_at and (
-        current_not_before is None or point[0] >= current_not_before
-    )]
+    after = [
+        point
+        for point in samples
+        if point[0] > turn_at
+        and (current_not_before is None or point[0] >= current_not_before)
+    ]
     results = []
     for points in (before, after):
         key = tuple(points)
@@ -3450,9 +4354,11 @@ def _form_flanks(samples, turn_at, form, current_not_before, policy, cache):
     if before_trend is None or after_trend is None:
         evidence = "unresolved"
     else:
-        compatible = (before_trend.direction == 1 and after_trend.direction == -1
-                      if form == "peak" else
-                      before_trend.direction == -1 and after_trend.direction in (0, 1))
+        compatible = (
+            before_trend.direction == 1 and after_trend.direction == -1
+            if form == "peak"
+            else before_trend.direction == -1 and after_trend.direction in (0, 1)
+        )
         evidence = "supports" if compatible else "rejects"
     return before_trend, after_trend, len(before), len(after), evidence
 
@@ -3461,12 +4367,24 @@ def _form_comparison(records, count):
     positive = [record for record in records if record[0].compatible is True]
     counter = [record for record in records if record[0].compatible is False]
     unclear = [record for record in records if record[0].compatible is None]
-    positive = min(positive, key=lambda item: (item[0].score, item[0].model)) if positive else None
-    counter = min(counter, key=lambda item: (item[0].score, item[0].model)) if counter else None
+    positive = (
+        min(positive, key=lambda item: (item[0].score, item[0].model))
+        if positive
+        else None
+    )
+    counter = (
+        min(counter, key=lambda item: (item[0].score, item[0].model))
+        if counter
+        else None
+    )
     scores = [record[0].score for record in (positive, counter) if record is not None]
     resolution = count * ulp(max(map(abs, scores))) if scores else None
     gain = counter[0].score - positive[0].score if positive and counter else None
-    if unclear and scores and min(item[0].score for item in unclear) <= min(scores) + resolution:
+    if (
+        unclear
+        and scores
+        and min(item[0].score for item in unclear) <= min(scores) + resolution
+    ):
         evidence = "unresolved"
     elif not positive:
         evidence = "rejects" if counter else "unresolved"
@@ -3478,8 +4396,11 @@ def _form_comparison(records, count):
 
 
 def curve_form(
-    samples: Sequence[tuple[datetime, float]], *, policy: CurvePolicy,
-    form: str = "peak", reference: CurveFormReference | None = None,
+    samples: Sequence[tuple[datetime, float]],
+    *,
+    policy: CurvePolicy,
+    form: str = "peak",
+    reference: CurveFormReference | None = None,
     current_not_before: datetime | None = None,
 ) -> CurveFormFeatures | None:
     """Assess an observed peak or recovery across the existing fit families.
@@ -3516,25 +4437,33 @@ def curve_form(
             return None
         if any(isinstance(value, bool) or not isfinite(value) for _, value in samples):
             return None
-        if current_not_before is not None and not isinstance(current_not_before, datetime):
+        if current_not_before is not None and not isinstance(
+            current_not_before, datetime
+        ):
             return None
         supplied_reference = reference is not None
         if supplied_reference:
             if not isinstance(reference, CurveFormReference) or reference.form != form:
                 return None
             parameters = {"quadratic": 3, "cubic": 4, "hinge1": 5, "hinge2": 5}
-            if (reference.model not in parameters
-                    or reference.parameter_count != parameters[reference.model]
-                    or not isinstance(reference.search_count, int)
-                    or isinstance(reference.search_count, bool) or reference.search_count < 1
-                    or reference.start_at != stamps[0]
-                    or reference.initial_newest_at > stamps[-1]
-                    or not stamps[0] < reference.turn_at < stamps[-1]
-                    or reference.turn_kind not in ("knot", "stationary")
-                    or reference.hinge_order != {"hinge1": 1, "hinge2": 2}.get(reference.model, 0)
-                    or (reference.hinge_order != 0) != (reference.knot_at is not None)
-                    or reference.turn_kind == "knot" and (
-                        reference.hinge_order != 1 or reference.turn_at != reference.knot_at)):
+            if (
+                reference.model not in parameters
+                or reference.parameter_count != parameters[reference.model]
+                or not isinstance(reference.search_count, int)
+                or isinstance(reference.search_count, bool)
+                or reference.search_count < 1
+                or reference.start_at != stamps[0]
+                or reference.initial_newest_at > stamps[-1]
+                or not stamps[0] < reference.turn_at < stamps[-1]
+                or reference.turn_kind not in ("knot", "stationary")
+                or reference.hinge_order
+                != {"hinge1": 1, "hinge2": 2}.get(reference.model, 0)
+                or (reference.hinge_order != 0) != (reference.knot_at is not None)
+                or reference.turn_kind == "knot"
+                and (
+                    reference.hinge_order != 1 or reference.turn_at != reference.knot_at
+                )
+            ):
                 return None
             if current_not_before is None:
                 current_not_before = reference.current_not_before
@@ -3547,7 +4476,9 @@ def curve_form(
         span = (selected[-1][0] - selected[0][0]).total_seconds()
         if not isfinite(span) or span <= 0:
             return None
-        times = [(stamp - selected[0][0]).total_seconds() / span for stamp, _ in selected]
+        times = [
+            (stamp - selected[0][0]).total_seconds() / span for stamp, _ in selected
+        ]
         common = _common_noise(times, [value for _, value in selected])
         if common is None:
             return None
@@ -3556,18 +4487,29 @@ def curve_form(
         if fitted is None:
             return None
         records, knot_times, search_count = fitted
-        positive, counter, gain, resolution, form_evidence = _form_comparison(records, len(selected))
+        positive, counter, gain, resolution, form_evidence = _form_comparison(
+            records, len(selected)
+        )
         if reference is None and positive is not None:
             model = positive[0]
             reference = CurveFormReference(
-                form=form, model=model.model, start_at=stamps[0],
-                turn_at=model.turn_at, turn_kind=model.turn_kind,
-                knot_at=model.knot_at, hinge_order=model.hinge_order,
-                parameter_count=model.parameter_count, search_count=model.search_count,
-                initial_newest_at=stamps[-1], current_not_before=current_not_before,
+                form=form,
+                model=model.model,
+                start_at=stamps[0],
+                turn_at=model.turn_at,
+                turn_kind=model.turn_kind,
+                knot_at=model.knot_at,
+                hinge_order=model.hinge_order,
+                parameter_count=model.parameter_count,
+                search_count=model.search_count,
+                initial_newest_at=stamps[-1],
+                current_not_before=current_not_before,
             )
-        fixed = (positive if not supplied_reference else
-                 _fixed_form_model(selected, noise, policy, reference, records))
+        fixed = (
+            positive
+            if not supplied_reference
+            else _fixed_form_model(selected, noise, policy, reference, records)
+        )
         reference_gain = reference_resolution = None
         reference_evidence = "unresolved"
         replacement_gain = replacement_cost = None
@@ -3577,9 +4519,12 @@ def curve_form(
             reference_evidence = "rejects"
         elif fixed is not None and fixed[0].compatible is True and counter is not None:
             reference_gain = counter[0].score - fixed[0].score
-            reference_resolution = len(selected) * ulp(max(
-                abs(counter[0].score), abs(fixed[0].score),
-            ))
+            reference_resolution = len(selected) * ulp(
+                max(
+                    abs(counter[0].score),
+                    abs(fixed[0].score),
+                )
+            )
             if abs(reference_gain) > reference_resolution:
                 reference_evidence = "supports" if reference_gain > 0 else "rejects"
         if supplied_reference and fixed is not None and positive is not None:
@@ -3595,7 +4540,9 @@ def curve_form(
             replacement_parameters = len(moved_times)
             if replacement_parameters:
                 replacement_gain = fixed[0].score - best.score
-                replacement_cost = replacement_parameters * log(len(selected)) + best.search_cost
+                replacement_cost = (
+                    replacement_parameters * log(len(selected)) + best.search_cost
+                )
                 displaced = replacement_gain > replacement_cost + (resolution or 0.0)
                 if displaced:
                     reference_evidence = "rejects"
@@ -3604,44 +4551,80 @@ def curve_form(
         before_count = after_count = 0
         flank_evidence = "unresolved"
         if reference is not None:
-            (before_trend, after_trend, before_count, after_count,
-             flank_evidence) = _form_flanks(
-                samples, reference.turn_at, form, current_not_before, policy, flank_cache,
+            (before_trend, after_trend, before_count, after_count, flank_evidence) = (
+                _form_flanks(
+                    samples,
+                    reference.turn_at,
+                    form,
+                    current_not_before,
+                    policy,
+                    flank_cache,
+                )
             )
         influence_evidence = "not_assessed"
         influence_gain = influence_resolution = None
         removed_at = None
-        if (form_evidence == reference_evidence == flank_evidence == "supports"
-                and fixed is not None and counter is not None):
-            removed = max(range(len(selected)), key=lambda index: (
-                abs(counter[2][index]), index,
-            ))
+        if (
+            form_evidence == reference_evidence == flank_evidence == "supports"
+            and fixed is not None
+            and counter is not None
+        ):
+            removed = max(
+                range(len(selected)),
+                key=lambda index: (
+                    abs(counter[2][index]),
+                    index,
+                ),
+            )
             removed_at = selected[removed][0]
             retained = [point for point in samples if point[0] != removed_at]
-            retained_selected = [point for index, point in enumerate(selected) if index != removed]
+            retained_selected = [
+                point for index, point in enumerate(selected) if index != removed
+            ]
             influence_evidence = "unresolved"
             if len(retained_selected) >= 2 * policy.min_side_samples:
-                rescue = _form_models(retained_selected, noise, policy, form,
-                    knot_times=knot_times, retained_search_count=search_count)
+                rescue = _form_models(
+                    retained_selected,
+                    noise,
+                    policy,
+                    form,
+                    knot_times=knot_times,
+                    retained_search_count=search_count,
+                )
                 if rescue is not None:
                     rescue_records, _, _ = rescue
                     _, rescue_counter, _, _, rescue_form = _form_comparison(
-                        rescue_records, len(retained_selected),
+                        rescue_records,
+                        len(retained_selected),
                     )
                     rescue_fixed = _fixed_form_model(
-                        retained_selected, noise, policy, reference, rescue_records,
+                        retained_selected,
+                        noise,
+                        policy,
+                        reference,
+                        rescue_records,
                     )
                     if rescue_fixed is not None and rescue_fixed[0].compatible is False:
                         influence_evidence = "rejects"
-                    elif (rescue_fixed is not None and rescue_fixed[0].compatible is True
-                          and rescue_counter is not None):
+                    elif (
+                        rescue_fixed is not None
+                        and rescue_fixed[0].compatible is True
+                        and rescue_counter is not None
+                    ):
                         influence_gain = rescue_counter[0].score - rescue_fixed[0].score
-                        influence_resolution = len(retained_selected) * ulp(max(
-                            abs(rescue_counter[0].score), abs(rescue_fixed[0].score),
-                        ))
+                        influence_resolution = len(retained_selected) * ulp(
+                            max(
+                                abs(rescue_counter[0].score),
+                                abs(rescue_fixed[0].score),
+                            )
+                        )
                         _, _, _, _, rescue_flanks = _form_flanks(
-                            retained, reference.turn_at, form, current_not_before,
-                            policy, flank_cache,
+                            retained,
+                            reference.turn_at,
+                            form,
+                            current_not_before,
+                            policy,
+                            flank_cache,
                         )
                         if rescue_form == "rejects" or rescue_flanks == "rejects":
                             influence_evidence = "rejects"
@@ -3654,55 +4637,99 @@ def curve_form(
             evidence, reason = form_evidence, "form_comparison_" + form_evidence
         elif reference_evidence != "supports":
             evidence = reference_evidence
-            reason = "positive_geometry_displaces_reference" if displaced else "frozen_geometry_" + reference_evidence
+            reason = (
+                "positive_geometry_displaces_reference"
+                if displaced
+                else "frozen_geometry_" + reference_evidence
+            )
         elif flank_evidence != "supports":
             evidence, reason = flank_evidence, "original_flanks_" + flank_evidence
         elif influence_evidence != "supports":
-            evidence, reason = influence_evidence, "one_point_removal_" + influence_evidence
+            evidence, reason = (
+                influence_evidence,
+                "one_point_removal_" + influence_evidence,
+            )
         else:
             evidence, reason = "supports", "form_and_frozen_geometry_supported"
         observed_form = None
         if flank_evidence == "supports":
-            observed_form = ("rise_to_fall" if form == "peak" else
-                             "fall_to_level" if after_trend.direction == 0 else "fall_to_rise")
+            observed_form = (
+                "rise_to_fall"
+                if form == "peak"
+                else "fall_to_level"
+                if after_trend.direction == 0
+                else "fall_to_rise"
+            )
         return CurveFormFeatures(
-            evidence=evidence, form_evidence=form_evidence,
-            reference_evidence=reference_evidence, influence_evidence=influence_evidence,
-            reason=reason, form=form, start_at=stamps[0], newest_at=stamps[-1],
-            count=len(selected), original_count=len(samples), noise_scale=noise,
+            evidence=evidence,
+            form_evidence=form_evidence,
+            reference_evidence=reference_evidence,
+            influence_evidence=influence_evidence,
+            reason=reason,
+            form=form,
+            start_at=stamps[0],
+            newest_at=stamps[-1],
+            count=len(selected),
+            original_count=len(samples),
+            noise_scale=noise,
             positive_score=positive[0].score if positive is not None else None,
             counter_score=counter[0].score if counter is not None else None,
-            score_gain=gain, positive_model=positive[0].model if positive is not None else None,
+            score_gain=gain,
+            positive_model=positive[0].model if positive is not None else None,
             counter_model=counter[0].model if counter is not None else None,
             turn_at=reference.turn_at if reference is not None else None,
-            reference=reference, reference_score=fixed[0].score if fixed is not None else None,
-            reference_score_gain=reference_gain, replacement_gain=replacement_gain,
+            reference=reference,
+            reference_score=fixed[0].score if fixed is not None else None,
+            reference_score_gain=reference_gain,
+            replacement_gain=replacement_gain,
             replacement_cost=replacement_cost,
-            fresh_original_count=(sum(stamp > reference.initial_newest_at for stamp in stamps)
-                                  if supplied_reference else 0),
-            before_trend=before_trend, after_trend=after_trend,
-            before_count=before_count, after_count=after_count, removed_at=removed_at,
+            fresh_original_count=(
+                sum(stamp > reference.initial_newest_at for stamp in stamps)
+                if supplied_reference
+                else 0
+            ),
+            before_trend=before_trend,
+            after_trend=after_trend,
+            before_count=before_count,
+            after_count=after_count,
+            removed_at=removed_at,
             influence_score_gain=influence_gain,
             candidate_models=tuple(record[0] for record in records),
-            score_resolution=resolution, reference_score_resolution=reference_resolution,
-            influence_score_resolution=influence_resolution, observed_form=observed_form,
+            score_resolution=resolution,
+            reference_score_resolution=reference_resolution,
+            influence_score_resolution=influence_resolution,
+            observed_form=observed_form,
             reference_model=fixed[0] if fixed is not None else None,
             replacement_parameter_count=replacement_parameters,
             hinge_fits_attempted=search_count,
-            hinge_fits_failed=search_count - sum(record[0].hinge_order != 0 for record in records),
+            hinge_fits_failed=search_count
+            - sum(record[0].hinge_order != 0 for record in records),
             fit=CurveFitSnapshot(
                 profile=CurveProfile(
-                    fixed[0].model, tuple(fixed[1]),
-                    ((fixed[0].knot_at - selected[0][0]).total_seconds() / span
-                     if fixed[0].knot_at is not None else None),
+                    fixed[0].model,
+                    tuple(fixed[1]),
+                    (
+                        (fixed[0].knot_at - selected[0][0]).total_seconds() / span
+                        if fixed[0].knot_at is not None
+                        else None
+                    ),
                 ),
-                time_origin=selected[0][0], time_scale_seconds=span,
+                time_origin=selected[0][0],
+                time_scale_seconds=span,
                 value_center=center,
-                newest_at=selected[-1][0], noise_scale=noise,
-            ) if fixed is not None else None,
+                newest_at=selected[-1][0],
+                noise_scale=noise,
+            )
+            if fixed is not None
+            else None,
         )
     except (
-        AttributeError, IndexError, KeyError, OverflowError, TypeError, ValueError,
+        AttributeError,
+        IndexError,
+        KeyError,
+        OverflowError,
+        TypeError,
+        ValueError,
         ZeroDivisionError,
     ):
         return None
