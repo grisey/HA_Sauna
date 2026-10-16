@@ -34,7 +34,7 @@ async def _mobile_actions(hass: HomeAssistant) -> dict[str, dict]:
     devices = []
     for device in dr.async_get(hass).devices.values():
         _, entry = dr.async_get_device_and_config_entry_for_domain(
-            hass, device.id, "mobile_app"
+            hass, device.id, domain="mobile_app"
         )
         if entry is not None and entry.state is ConfigEntryState.LOADED:
             devices.append(device)

@@ -96,6 +96,12 @@ class ProgramConfigurationTests(unittest.TestCase):
                 await async_set_parameters(hass, entry, {"target_temperature_c": "invalid"},
                                            partial=True, actor=actor)
             runtime._record_notification_participant.assert_not_called()
+            with self.assertRaisesRegex(ValueError, "ausgeschaltetem Automatikbetrieb"):
+                await async_set_control_mode(hass, entry, "manual", actor=actor)
+            runtime._record_notification_participant.assert_not_called()
+            self.assertEqual(runtime.configuration.control_mode, "automatic")
+            runtime._set_operation(False)
+            self.assertTrue(runtime.controller.control_mode_change_allowed)
             await async_set_control_mode(hass, entry, "manual", actor=actor)
             runtime._record_notification_participant.assert_called_once_with(actor)
             runtime._record_notification_participant.reset_mock()

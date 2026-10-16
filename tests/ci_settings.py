@@ -93,8 +93,8 @@ def outputs():
 
 def install_ha():
     # requirements.txt is the sole version lock for every HA/browser job.
-    # The native mobile-app action fixture imports stream core/HLS via camera.
-    names = {"homeassistant", "securetar", "cronsim", "av", "numpy"}
+    # The native mobile-app action fixture imports stream and camera image helpers.
+    names = {"homeassistant", "securetar", "cronsim", "av", "numpy", "PyTurboJPEG"}
     requirements = [
         line.strip()
         for line in (ROOT / "tests/browser/requirements.txt").read_text().splitlines()
