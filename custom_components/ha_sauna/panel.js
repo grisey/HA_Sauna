@@ -11,8 +11,153 @@ const equalPresetColumns = (count, maximum) => {
     if (count % columns === 0) return columns;
   return 1;
 };
-const HISTORY_PLOT = Object.freeze({ width: 1200, left: 65, right: 1135 });
 const stamp = (v) => (v ? new Date(v).getTime() : null);
+const energyIntervalTransports = new WeakMap();
+// Date alone drops the owner's microseconds. Compare whole seconds and the
+// original fraction separately, retaining the wire strings at every boundary.
+const energyIntervalTime = (value) => {
+  const match =
+    typeof value === "string" &&
+    /^(\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d)(?:\.(\d{1,6}))?(Z|[+-]\d\d:\d\d)$/.exec(
+      value,
+    );
+  if (!match) return null;
+  const seconds = Date.parse(`${match[1]}${match[3]}`);
+  return Number.isFinite(seconds)
+    ? [seconds, (match[2] || "").padEnd(6, "0")]
+    : null;
+};
+const compareEnergyIntervalTimes = (left, right) =>
+  left[0] - right[0] || (left[1] < right[1] ? -1 : left[1] > right[1] ? 1 : 0);
+const energyIntervalTransport = (energy) =>
+  energy && energyIntervalTransports.get(energy);
+const energyIntervalSignature = (energy) => {
+  if (!energy) return energy;
+  const { intervals, interval_delta, intervals_available, ...scalar } = energy,
+    transport = energyIntervalTransport(energy);
+  return {
+    ...scalar,
+    interval_horizon: transport?.horizon || null,
+    interval_revision: transport?.revision || 0,
+    interval_bootstrap_needed: !!transport?.bootstrapNeeded,
+  };
+};
+const mergeEnergyIntervals = (current, incoming, startedAt) => {
+  if (!incoming) return incoming;
+  const {
+    intervals,
+    interval_delta: delta,
+    intervals_available,
+    ...energy
+  } = incoming;
+  // Omitted evidence is legacy. It neither inherits a previous series nor
+  // supplies a cursor merely because its scalar accounted_at advanced.
+  if (!Object.hasOwn(incoming, "interval_delta")) return energy;
+  const previous = energyIntervalTransport(current),
+    transport = {
+      horizon: previous?.horizon || null,
+      revision: previous?.revision || 0,
+      intervals: previous?.intervals || [],
+      bootstrapNeeded: false,
+    },
+    finish = () => {
+      if (transport.horizon)
+        Object.defineProperty(energy, "intervals", { value: transport.intervals });
+      energyIntervalTransports.set(energy, transport);
+      return energy;
+    },
+    retry = () => {
+      transport.bootstrapNeeded = true;
+      return finish();
+    };
+  if (!delta || !Array.isArray(delta.intervals)) return retry();
+  const to = energyIntervalTime(delta.to),
+    accounted = energyIntervalTime(incoming.accounted_at),
+    bootstrap = delta.from === null,
+    from = energyIntervalTime(bootstrap ? startedAt : delta.from),
+    horizon = energyIntervalTime(transport.horizon);
+  if (
+    !to ||
+    !accounted ||
+    !from ||
+    compareEnergyIntervalTimes(to, accounted) !== 0 ||
+    compareEnergyIntervalTimes(from, to) > 0 ||
+    (!bootstrap && (!horizon || compareEnergyIntervalTimes(from, horizon) > 0))
+  )
+    return retry();
+  // Validate the entire received suffix before changing the cached prefix.
+  // This checks transport continuity and original provenance, not accounting.
+  let covered = from;
+  const additions = [];
+  for (const interval of delta.intervals) {
+    const start = energyIntervalTime(interval?.started_at),
+      end = energyIntervalTime(interval?.ended_at),
+      validSource =
+        (interval?.source === "unknown" && interval.power_kw === null) ||
+        (["measured", "estimated"].includes(interval?.source) &&
+          typeof interval.power_kw === "number" &&
+          Number.isFinite(interval.power_kw));
+    if (
+      !start ||
+      !end ||
+      !validSource ||
+      compareEnergyIntervalTimes(start, covered) !== 0 ||
+      compareEnergyIntervalTimes(end, start) <= 0 ||
+      compareEnergyIntervalTimes(end, to) > 0
+    )
+      return retry();
+    covered = end;
+    if (!bootstrap && compareEnergyIntervalTimes(end, horizon) <= 0) continue;
+    additions.push({
+      started_at:
+        !bootstrap && compareEnergyIntervalTimes(start, horizon) < 0
+          ? transport.horizon
+          : interval.started_at,
+      ended_at: interval.ended_at,
+      source: interval.source,
+      power_kw: interval.power_kw,
+    });
+  }
+  if (
+    compareEnergyIntervalTimes(covered, to) !== 0 ||
+    (bootstrap &&
+      !delta.intervals.length &&
+      ["measured_seconds", "estimated_seconds", "unknown_seconds"].some(
+        (key) => incoming[key] !== 0,
+      ))
+  )
+    return retry();
+  // A delayed, older snapshot cannot roll a confirmed series back. Archive
+  // and status streams own separate arrays, including across current/last IDs.
+  if (horizon && compareEnergyIntervalTimes(to, horizon) < 0) {
+    transport.bootstrapNeeded = !!previous.bootstrapNeeded;
+    return finish();
+  }
+  if (bootstrap) transport.intervals = [];
+  for (const interval of additions) {
+    const tail = transport.intervals.at(-1);
+    if (
+      tail &&
+      compareEnergyIntervalTimes(
+        energyIntervalTime(tail.ended_at),
+        energyIntervalTime(interval.started_at),
+      ) === 0 &&
+      tail.source === interval.source &&
+      tail.power_kw === interval.power_kw
+    )
+      transport.intervals[transport.intervals.length - 1] = {
+        ...tail,
+        ended_at: interval.ended_at,
+      };
+    else transport.intervals.push(interval);
+  }
+  if (bootstrap || !horizon || compareEnergyIntervalTimes(to, horizon) > 0)
+    transport.revision++;
+  transport.horizon = delta.to;
+  // A suffix cannot settle an earlier discontinuity: only a bootstrap can.
+  transport.bootstrapNeeded = !bootstrap && !!previous?.bootstrapNeeded;
+  return finish();
+};
 const orderedHistoryEvents = (items = []) =>
   items
     .map((event, index) => ({ event, index, at: stamp(event.effective_at) }))
@@ -22,7 +167,6 @@ const orderedHistoryEvents = (items = []) =>
       return left === right ? a.index - b.index : left - right;
     })
     .map(({ event }) => event);
-const timestampFormatterLimit = 12;
 const timestampFormatOptions = Object.freeze({
   when: Object.freeze({
     day: "2-digit",
@@ -40,17 +184,29 @@ const timestampFormatOptions = Object.freeze({
     timeZoneName: "shortOffset",
   }),
   clock: Object.freeze({ hour: "2-digit", minute: "2-digit" }),
+  clockSeconds: Object.freeze({
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+  }),
 });
 const timestampFormatters = new Map();
 // Resolve once for a tooltip/axis batch. Zone names matter: two zones with the
 // same current offset can have different rules at the measurement's timestamp.
 const localTimeZone = () => new Intl.DateTimeFormat().resolvedOptions().timeZone;
-const timestampFormatter = (style, timeZone = localTimeZone()) => {
+const timestampFormatter = (style, timeZone = localTimeZone(), limit) => {
   const key = `${style}:${timeZone || "default"}`;
+  if (!Number.isInteger(limit) || limit <= 0)
+    return new Intl.DateTimeFormat("de-DE", {
+      ...timestampFormatOptions[style],
+      ...(timeZone ? { timeZone } : {}),
+    });
   let formatter = timestampFormatters.get(key);
   if (formatter) {
     timestampFormatters.delete(key);
     timestampFormatters.set(key, formatter);
+    while (timestampFormatters.size > limit)
+      timestampFormatters.delete(timestampFormatters.keys().next().value);
     return formatter;
   }
   formatter = new Intl.DateTimeFormat("de-DE", {
@@ -58,20 +214,20 @@ const timestampFormatter = (style, timeZone = localTimeZone()) => {
     ...(timeZone ? { timeZone } : {}),
   });
   timestampFormatters.set(key, formatter);
-  if (timestampFormatters.size > timestampFormatterLimit)
+  while (timestampFormatters.size > limit)
     timestampFormatters.delete(timestampFormatters.keys().next().value);
   return formatter;
 };
-const when = (v, timeZone) => {
+const when = (v, timeZone, limit) => {
   if (!v) return "–";
   const date = new Date(v);
   // Intl.DateTimeFormat#format throws for an invalid date, while the original
   // Date#toLocaleString path returns its established fallback text.
   return Number.isFinite(date.getTime())
-    ? timestampFormatter("when", timeZone).format(date)
+    ? timestampFormatter("when", timeZone, limit).format(date)
     : date.toLocaleString("de-DE", timestampFormatOptions.when);
 };
-const tooltipWhen = (v, timeZone) => {
+const tooltipWhen = (v, timeZone, limit) => {
   if (
     (typeof v !== "string" && (typeof v !== "number" || !Number.isFinite(v))) ||
     (typeof v === "string" && !v.trim())
@@ -81,21 +237,25 @@ const tooltipWhen = (v, timeZone) => {
   if (!Number.isFinite(date.getTime())) return null;
   const fraction =
     typeof v === "string" ? v.match(/\.(\d+)(?:Z|[+-]\d\d:\d\d)?$/i)?.[1] : null;
-  return timestampFormatter("tooltip", timeZone)
+  return timestampFormatter("tooltip", timeZone, limit)
     .formatToParts(date)
     .map((part) =>
       part.type === "second" && fraction ? `${part.value}.${fraction}` : part.value,
     )
     .join("");
 };
-const clock = (v, timeZone) => {
+const clock = (v, timeZone, limit) => {
   const date = new Date(v);
   return Number.isFinite(date.getTime())
-    ? timestampFormatter("clock", timeZone).format(date)
+    ? timestampFormatter("clock", timeZone, limit).format(date)
     : date.toLocaleTimeString("de-DE", timestampFormatOptions.clock);
 };
-const num = (v, d = 1) =>
-  v == null ? "–" : Number(v).toLocaleString("de-DE", { maximumFractionDigits: d });
+const num = (v, d) =>
+  v == null
+    ? "–"
+    : Number.isInteger(d)
+      ? Number(v).toLocaleString("de-DE", { maximumFractionDigits: d })
+      : String(v);
 const duration = (seconds, mode = "elapsed") => {
   if (!Number.isFinite(seconds)) return "–";
   if (seconds > 0 && seconds < 60) return "unter 1 Minute";
@@ -134,6 +294,7 @@ const events = {
   presence_confirmed: "Gangbeginn · Präsenz nach Türvorgang",
   presence_ended: "Gangende · Abwesenheit und Durchlüften",
 };
+const historyEventMarkerKinds = new Set(["door_open", "door_close", "infusion"]);
 const gangConfirmed = (g) =>
   g.recognition_kind === "presence_confirmed" || !!g.infusion_events?.length;
 const signalText = {
@@ -249,7 +410,7 @@ const appearanceContrastRatio = (left, right) => {
     b = luminance(right);
   return (Math.max(a, b) + 0.05) / (Math.min(a, b) + 0.05);
 };
-const appearanceTickValues = (bounds) => {
+const appearanceTickValues = (bounds, target, maximum, tolerance, precision) => {
   if (
     !bounds ||
     !Number.isFinite(bounds.minimum) ||
@@ -259,22 +420,23 @@ const appearanceTickValues = (bounds) => {
   )
     return [];
   const span = bounds.maximum - bounds.minimum;
-  const rough = span / 5;
+  const rough = span / target;
   const power = 10 ** Math.floor(Math.log10(rough));
   const step =
-    [1, 2, 5, 10].map((unit) => unit * power).find((value) => span / value <= 7) ||
-    10 * power;
+    [1, 2, 5, 10]
+      .map((unit) => unit * power)
+      .find((value) => span / value <= maximum) || 10 * power;
   if (!Number.isFinite(step) || step <= 0) return [bounds.minimum, bounds.maximum];
   const values = [bounds.minimum];
   for (
     let index = Math.ceil(bounds.minimum / step), count = 0;
-    count < 7;
+    count < maximum;
     index++, count++
   ) {
     const value = index * step;
-    if (value >= bounds.maximum - step * 1e-9) break;
-    if (value > bounds.minimum + step * 1e-9)
-      values.push(Number(value.toPrecision(12)));
+    if (value >= bounds.maximum - step * tolerance) break;
+    if (value > bounds.minimum + step * tolerance)
+      values.push(Number(value.toPrecision(precision)));
   }
   values.push(bounds.maximum);
   return values;
@@ -367,14 +529,14 @@ const nearestHistoryPoint = (values, time, start, end) => {
         ? before
         : next;
 };
-const roundHistoryCoordinate = (value) => Number(value.toFixed(2));
+const roundHistoryCoordinate = (value, precision) => Number(value.toFixed(precision));
 
 // Return numeric Canvas commands, not SVG text.  The equations and the
-// two-decimal rounding intentionally match monotoneHistoryPath exactly.
-const monotoneHistoryCommands = (points, x, y, target) => {
+// shared coordinate precision keep Canvas and SVG geometry consistent.
+const monotoneHistoryCommands = (points, x, y, target, precision) => {
   const commands = [];
   if (!points.length) return [];
-  const at = (value) => roundHistoryCoordinate(value);
+  const at = (value) => roundHistoryCoordinate(value, precision);
   const firstPoint = points[0];
   let x0 = x(firstPoint.time ?? stamp(firstPoint.received_at)),
     y0 = y(firstPoint.value);
@@ -449,9 +611,8 @@ class HistoryCurves {
   curveStyle(position, quantity, supplied = {}) {
     const defaultStyle = {
       stroke: this.styles[`${position}:${quantity}`]?.stroke,
-      lineWidth: 3.5,
       globalAlpha: 1,
-      lineDash: position === "lower" ? [8, 5] : [],
+      lineDash: [],
     };
     return {
       ...defaultStyle,
@@ -504,7 +665,13 @@ class HistoryCurves {
       snapshot.end,
       snapshot.ttl,
     ))
-      monotoneHistoryCommands(reduceHistorySegment(segment, x), x, y, path);
+      monotoneHistoryCommands(
+        reduceHistorySegment(segment, x),
+        x,
+        y,
+        path,
+        snapshot.coordinatePrecision,
+      );
     return { path };
   }
 
@@ -523,12 +690,13 @@ class HistoryCurves {
       snapshot.width,
       snapshot.height,
       snapshot.ttl,
+      snapshot.coordinatePrecision,
       position,
       quantity,
       historyStyleKey(style),
       ...(quantity === "temperature"
         ? [snapshot.low, snapshot.high]
-        : [snapshot.humidityHigh]),
+        : [snapshot.humidityHigh, snapshot.humidityMode]),
     ];
   }
 
@@ -572,8 +740,8 @@ class HistoryCurves {
   paintMain(visible, geometry, snapshot) {
     const context = this.canvas?.getContext?.("2d");
     if (!context) return;
-    const width = snapshot.width ?? 1200,
-      height = snapshot.height ?? 480;
+    const width = snapshot.width,
+      height = snapshot.height;
     context.setTransform(
       geometry.dpr * (geometry.width / width),
       0,
@@ -638,6 +806,9 @@ class HistoryCurves {
 function HistoryInteraction(panel, surface, wrap, tooltip, cursor, overview) {
   const view = surface?.ownerDocument?.defaultView || globalThis;
   const document = surface?.ownerDocument || view.document;
+  const snapHalo =
+    surface?.querySelector?.("[data-history-snap-halo]") ||
+    (panel.shadowRoot ? panel.$?.("[data-history-snap-halo]") : null);
   const listeners = [];
   const scrollTargets = new Set();
   const state = {
@@ -655,26 +826,22 @@ function HistoryInteraction(panel, surface, wrap, tooltip, cursor, overview) {
     rowTextCache: new WeakMap(),
   };
 
-  const number = (value, digits) =>
-    typeof num === "function"
-      ? num(value, digits)
-      : Number(value).toLocaleString("de-DE", { maximumFractionDigits: digits });
-  const dateLabel = (value, timeZone) =>
-    typeof clock === "function"
-      ? clock(value, timeZone)
-      : new Date(value).toLocaleTimeString("de-DE", {
-          hour: "2-digit",
-          minute: "2-digit",
-        });
+  const number = (value, digits) => panel.num(value, digits);
+  const dateLabel = (value, timeZone) => panel.clock(value, timeZone);
   const sourceValue = (value) => `${typeof value}:${String(value)}`;
   const rowText = (nearest, quantity) => {
     const source = nearest.source;
     const cacheable = source && typeof source === "object";
-    const key = [quantity, sourceValue(nearest.value)].join("|");
+    const humidity = panel.historyHumidityDisplay?.(),
+      unit = quantity === "temperature" ? "°C" : humidity?.unit || "%",
+      precision =
+        quantity === "humidity" && humidity
+          ? humidity.precision
+          : panel.preference("value_precision");
+    const key = [quantity, unit, precision, sourceValue(nearest.value)].join("|");
     const cached = cacheable ? state.rowTextCache.get(source) : null;
     if (cached?.key === key) return cached.value;
-    const unit = quantity === "temperature" ? "°C" : "%";
-    const value = `${number(nearest.value, 1)} ${unit}`;
+    const value = `${number(nearest.value, precision)} ${unit}`;
     if (cacheable) state.rowTextCache.set(source, { key, value });
     return value;
   };
@@ -700,6 +867,8 @@ function HistoryInteraction(panel, surface, wrap, tooltip, cursor, overview) {
   };
   const invalidateGeometry = (reason = "geometry", scheduleRender = true) => {
     if (state.disposed) return;
+    if (["scroll", "viewport-scroll"].includes(reason))
+      for (const pointer of panel.chartPointers?.values() || []) pointer.tap = false;
     state.dirty = true;
     if (scheduleRender && !state.invalidationScheduled) {
       state.invalidationScheduled = true;
@@ -758,8 +927,9 @@ function HistoryInteraction(panel, surface, wrap, tooltip, cursor, overview) {
   const coordinatesForGeometry = (geometry, target, clientX, clientY = 0) => {
     const isOverview = target === overview;
     const rect = isOverview ? geometry.rects.overview : geometry.rects.surface;
-    const logicalWidth = 1200;
-    const logicalHeight = isOverview ? 46 : 480;
+    const plot = panel.historyGeometry();
+    const logicalWidth = plot.width;
+    const logicalHeight = isOverview ? plot.overviewHeight : plot.height;
     return {
       x: ((clientX - rect.left) / (rect.width || 1)) * logicalWidth,
       y: ((clientY - rect.top) / (rect.height || 1)) * logicalHeight,
@@ -771,34 +941,61 @@ function HistoryInteraction(panel, surface, wrap, tooltip, cursor, overview) {
     if (!tooltip || state.tooltip) return state.tooltip;
     const heading = document.createElement("strong");
     const rows = document.createElement("div");
+    const endRows = document.createElement("div");
     const status = document.createElement("div");
     const eventList = document.createElement("div");
     heading.className = "history-tooltip-time";
     rows.className = "history-tooltip-values";
+    endRows.className = "history-tooltip-values";
+    endRows.hidden = true;
     status.className = "history-tooltip-status";
     eventList.className = "history-tooltip-events";
     heading.textContent = "–";
     status.textContent = "Saunastatus · –";
     eventList.hidden = true;
-    const series = new Map();
-    for (const position of ["upper", "lower"])
-      for (const quantity of ["temperature", "humidity"]) {
-        const row = document.createElement("div");
-        const label = document.createElement("span");
-        const value = document.createElement("span");
-        label.style.color = "var(--sauna-card-text, inherit)";
-        label.setAttribute("data-quantity", quantity);
-        label.textContent = `${quantity === "temperature" ? "Temperatur" : "Luftfeuchte"}${panel.historyDetail ? ` ${position === "upper" ? "oben" : "unten"}` : ""}: `;
-        value.textContent = "–";
-        row.append(label, value);
-        row.hidden = !new Set(panel.positions || ["upper"]).has(position);
-        rows.append(row);
-        series.set(`${position}:${quantity}`, { row, label, value });
-      }
+    const makeSeries = (container) => {
+      const series = new Map();
+      for (const position of ["upper", "lower"])
+        for (const quantity of ["temperature", "humidity"]) {
+          const row = document.createElement("div");
+          const label = document.createElement("span");
+          const value = document.createElement("span");
+          label.style.color = "var(--sauna-card-text, inherit)";
+          label.setAttribute("data-quantity", quantity);
+          label.textContent = `${quantity === "temperature" ? "Temperatur" : "Luftfeuchte"}${panel.historyDetail ? ` ${position === "upper" ? "oben" : "unten"}` : ""}: `;
+          value.textContent = "–";
+          row.append(label, value);
+          row.hidden = !new Set(panel.positions || ["upper"]).has(position);
+          container.append(row);
+          series.set(`${position}:${quantity}`, { row, label, value });
+        }
+      return series;
+    };
+    const series = makeSeries(rows),
+      endSeries = makeSeries(endRows);
+    const snap = document.createElement("div");
+    snap.className = "history-tooltip-snap";
+    snap.hidden = true;
+    const startLabel = document.createElement("strong"),
+      endLabel = document.createElement("strong");
+    startLabel.className = endLabel.className = "history-tooltip-boundary";
+    startLabel.hidden = endLabel.hidden = true;
     tooltip.replaceChildren(heading, rows, status, eventList);
     tooltip.setAttribute("data-phase", "");
+    tooltip.setAttribute("data-selection", "");
     tooltip.hidden = true;
-    state.tooltip = { heading, series, status, eventList };
+    state.tooltip = {
+      heading,
+      rows,
+      endRows,
+      series,
+      endSeries,
+      startLabel,
+      endLabel,
+      status,
+      eventList,
+      snap,
+    };
     return state.tooltip;
   };
   const setText = (node, text) => {
@@ -806,22 +1003,32 @@ function HistoryInteraction(panel, surface, wrap, tooltip, cursor, overview) {
   };
   const hide = () => {
     if (state.disposed) return;
+    if (panel.historyValueSelection) return refreshSelection();
+    if (
+      Number.isFinite(stamp(panel.historyInspectedEvent?.()?.effective_at)) &&
+      panel.historyChart?.model
+    )
+      return refreshHover();
     if (tooltip) {
       tooltip.hidden = true;
       tooltip.setAttribute("data-phase", "");
+      tooltip.setAttribute("data-selection", "");
+      showSnap([]);
     }
     if (cursor && state.cursorVisible) cursor.setAttribute("visibility", "hidden");
     state.tooltipVisible = false;
     state.cursorVisible = false;
     state.cursorX = null;
+    cursor?.setAttribute("data-snap", "false");
+    snapHalo?.setAttribute("visibility", "hidden");
   };
-  const hover = (event, snapshotTransform) => {
+  const timeAt = (event, snapshotTransform, snapshotGeometry) => {
     if (state.disposed || !event) return;
     // Geometry is read before any tooltip or cursor mutation in this turn.
     // The root renders after its own read phase.  Reuse that rectangle even
     // when a scroll/resize invalidation is pending: a hover must never force
     // layout after the root has written canvas or SVG pixels in this frame.
-    const geometry = state.geometry || readGeometry();
+    const geometry = snapshotGeometry || state.geometry || readGeometry();
     const point = coordinatesForGeometry(
       geometry,
       event.svg || surface,
@@ -831,44 +1038,60 @@ function HistoryInteraction(panel, surface, wrap, tooltip, cursor, overview) {
     const chartWindow = snapshotTransform?.window || panel.window;
     const start = snapshotTransform?.start ?? chartWindow?.[0];
     const end = snapshotTransform?.end ?? chartWindow?.[1];
-    const left = snapshotTransform?.left ?? 65;
-    const right = snapshotTransform?.right ?? 1135;
-    if (!Number.isFinite(start) || !Number.isFinite(end) || right <= left)
-      return hide();
-    if (point.x < left || point.x > right || point.y < 18 || point.y > 435)
-      return hide();
+    const plot = panel.historyGeometry();
+    const left = snapshotTransform?.left ?? plot.left;
+    const right = snapshotTransform?.right ?? plot.right;
+    if (!Number.isFinite(start) || !Number.isFinite(end) || right <= left) return null;
+    if (
+      point.x < left ||
+      point.x > right ||
+      point.y < (snapshotTransform?.top ?? plot.top) ||
+      point.y > (snapshotTransform?.bottom ?? plot.bottom)
+    )
+      return null;
     const time = start + ((point.x - left) / (right - left)) * (end - start);
+    return { point, time, geometry, start, end, left, right };
+  };
+  const readValues = (series, time, pinned) => {
     const ttl = historyMeasurementTtlSeconds(panel, panel.shown?.session) * 1000;
-    const nodes = tooltipNodes();
-    const timeZone = localTimeZone();
+    const humidity = panel.historyHumidityDisplay?.();
     const visible = new Set();
     for (const position of panel.positions || ["upper"])
       for (const quantity of ["temperature", "humidity"]) {
-        const nearest = panel.nearestMeasurement?.(position, quantity, time);
-        if (nearest?.value == null || (ttl && Math.abs(nearest.time - time) > ttl))
-          continue;
+        const absolute = quantity === "humidity" && humidity?.mode === "absolute",
+          nearest = panel.nearestMeasurement?.(
+            position,
+            absolute ? "absolute_humidity" : quantity,
+            time,
+            pinned,
+          );
+        const available =
+          nearest?.value != null &&
+          (absolute
+            ? nearest.time <= time &&
+              Number.isFinite(nearest.validUntil) &&
+              time <= nearest.validUntil
+            : !ttl || Math.abs(nearest.time - time) <= ttl);
+        if (!available && !pinned && !absolute) continue;
         const key = `${position}:${quantity}`;
-        const row = nodes.series.get(key);
+        const row = series.get(key);
         if (!row) continue;
         setText(
           row.label,
           `${quantity === "temperature" ? "Temperatur" : "Luftfeuchte"}${panel.historyDetail ? ` ${position === "upper" ? "oben" : "unten"}` : ""}: `,
         );
-        setText(row.value, rowText(nearest, quantity));
+        setText(row.value, available ? rowText(nearest, quantity) : "–");
         if (row.row.hidden) row.row.hidden = false;
         visible.add(key);
       }
-    for (const [key, row] of nodes.series)
+    for (const [key, row] of series)
       if (!visible.has(key) && !row.row.hidden) row.row.hidden = true;
-    setText(nodes.heading, dateLabel(time, timeZone));
-    const phase = panel.historyPhaseAt?.(time);
-    setText(nodes.status, `Saunastatus · ${phases[phase?.phase] || "Unbekannt"}`);
-    tooltip.setAttribute("data-phase", phase?.phase || "");
-    // Match the cursor to event markers within six physical screen pixels.
-    const eventTolerance =
-      ((end - start) / (right - left)) *
-      ((6 * 1200) / Math.max(1, geometry.rects.surface.width));
-    const nearbyEvents = panel.historyEventsAt?.(time, eventTolerance) || [];
+  };
+  const showEvents = (nearbyEvents, timeZone) => {
+    const nodes = tooltipNodes();
+    const inspected = panel.historyInspectedEvent?.();
+    if (inspected && !nearbyEvents.some((item) => item.event_id === inspected.event_id))
+      nearbyEvents = [...nearbyEvents, inspected];
     const eventKey = JSON.stringify([
       timeZone,
       nearbyEvents.map((item) => [item.event_id, item.effective_at, item.kind]),
@@ -878,7 +1101,7 @@ function HistoryInteraction(panel, surface, wrap, tooltip, cursor, overview) {
         const row = document.createElement("div");
         row.className = "history-tooltip-event";
         const at = document.createElement("time");
-        at.textContent = clock(item.effective_at, timeZone);
+        at.textContent = panel.clock(item.effective_at, timeZone);
         const label = document.createElement("span");
         label.textContent = events[item.kind] || item.kind;
         row.append(at, label);
@@ -888,16 +1111,232 @@ function HistoryInteraction(panel, surface, wrap, tooltip, cursor, overview) {
       nodes.eventKey = eventKey;
     }
     nodes.eventList.hidden = nearbyEvents.length === 0;
+  };
+  const showSnap = (targets, timeZone) => {
+    const nodes = tooltipNodes(),
+      unique = [
+        ...new Map(targets.filter(Boolean).map((snap) => [snap.time, snap])).values(),
+      ];
+    nodes.snap.hidden = unique.length === 0;
+    if (unique.length && nodes.snap.parentNode !== nodes.rows)
+      nodes.rows.append(nodes.snap);
+    else if (!unique.length) nodes.snap.remove?.();
+    setText(
+      nodes.snap,
+      unique.length
+        ? unique
+            .map(
+              (snap) =>
+                `${snap.boundary === "end" ? "Sitzung beendet" : phases[snap.phase] || "Unbekannt"} · ${panel.tooltipWhen?.(snap.time, timeZone) || dateLabel(snap.time, timeZone)}`,
+            )
+            .join(" · ")
+        : "",
+    );
+    tooltip.setAttribute("data-snap", String(unique.length > 0));
+  };
+  const hideCursor = () => {
+    if (cursor && state.cursorVisible) cursor.setAttribute("visibility", "hidden");
+    state.cursorVisible = false;
+    state.cursorX = null;
+    cursor?.setAttribute("data-snap", "false");
+    snapHalo?.setAttribute("visibility", "hidden");
+  };
+  const showCursor = (pointX, snap, model, geometry = state.geometry) => {
     if (!state.tooltipVisible) tooltip.hidden = false;
     state.tooltipVisible = true;
-    if (cursor && state.cursorX !== point.x) {
-      cursor.setAttribute("x1", String(point.x));
-      cursor.setAttribute("x2", String(point.x));
-      state.cursorX = point.x;
+    if (cursor && state.cursorX !== pointX) {
+      cursor.setAttribute("x1", String(pointX));
+      cursor.setAttribute("x2", String(pointX));
+      state.cursorX = pointX;
     }
     if (cursor && !state.cursorVisible) cursor.setAttribute("visibility", "visible");
     state.cursorVisible = true;
-    return { point, time, geometry };
+    cursor?.setAttribute("data-snap", String(!!snap));
+    const halo = snapHalo;
+    halo?.setAttribute("visibility", snap && model ? "visible" : "hidden");
+    if (halo && snap && model) {
+      const radius = panel.preference("event_marker_size_px") / 2,
+        rx = radius * (model.width / Math.max(1, geometry.rects.surface.width)),
+        ry = radius * (model.height / Math.max(1, geometry.rects.surface.height));
+      for (const [name, value] of Object.entries({
+        cx: pointX,
+        cy: model.top + ry,
+        rx,
+        ry,
+      }))
+        halo.setAttribute(name, String(value));
+    }
+  };
+  const refreshSelection = (model = panel.historyChart?.model) => {
+    if (state.disposed || !panel.historyValueSelection) return false;
+    const selection = panel.historyValueSelection,
+      nodes = tooltipNodes(),
+      timeZone = localTimeZone(),
+      range = selection.kind === "range",
+      phase = range
+        ? panel.historySelectionPhase?.()
+        : panel.historyPhaseAt?.(selection.start),
+      label = (time) => dateLabel(time, timeZone),
+      exactLabel = (time) => panel.tooltipWhen?.(time, timeZone) || label(time);
+    setText(
+      nodes.heading,
+      range
+        ? `${phases[phase?.phase] || "Ausgewählter Zeitraum"} · ${label(selection.start)} – ${label(selection.end)}`
+        : `Punkt · ${label(selection.start)}`,
+    );
+    nodes.startLabel.hidden = nodes.endLabel.hidden = !range;
+    nodes.endRows.hidden = !range;
+    if (range) {
+      if (nodes.startLabel.parentNode !== nodes.rows)
+        nodes.rows.prepend(nodes.startLabel);
+      if (nodes.endLabel.parentNode !== nodes.endRows)
+        nodes.endRows.prepend(nodes.endLabel);
+      if (nodes.endRows.parentNode !== tooltip)
+        tooltip.insertBefore(nodes.endRows, nodes.status);
+      setText(nodes.startLabel, "Beginn");
+      setText(nodes.endLabel, "Ende");
+      readValues(nodes.endSeries, selection.end, true);
+    } else {
+      nodes.startLabel.remove?.();
+      nodes.endRows.remove?.();
+    }
+    readValues(nodes.series, selection.start, true);
+    setText(nodes.status, `Saunastatus · ${phases[phase?.phase] || "Unbekannt"}`);
+    nodes.status.hidden = range;
+    tooltip.setAttribute("data-phase", phase?.phase || "");
+    tooltip.setAttribute("data-selection", selection.kind);
+    tooltip.setAttribute(
+      "aria-label",
+      range
+        ? `Werte an den Grenzen des ausgewählten Zeitraums · ${exactLabel(selection.start)} bis ${exactLabel(selection.end)}`
+        : `Werte am ausgewählten Zeitpunkt · ${exactLabel(selection.start)}`,
+    );
+    showEvents(
+      panel.historySelectionEvents?.() ||
+        panel.historyEventsAt?.(selection.start) ||
+        [],
+      timeZone,
+    );
+    const preview = panel.historyKeyboardPreview
+      ? panel.historyKeyboardTarget || { time: panel.historyKeyboardTime }
+      : panel.historyHoverPreview;
+    showSnap(
+      [selection.startSnap, selection.endSnap, preview?.snap].map(
+        (snap) => panel.historyCurrentSnap?.(snap) || null,
+      ),
+      timeZone,
+    );
+    if (!state.tooltipVisible) tooltip.hidden = false;
+    state.tooltipVisible = true;
+    if (preview && model && preview.time >= model.start && preview.time <= model.end)
+      showCursor(
+        model.x(preview.time),
+        panel.historyCurrentSnap?.(preview.snap),
+        model,
+      );
+    else hideCursor();
+    return true;
+  };
+  const previewTime = (time, model = panel.historyChart?.model) => {
+    if (!model) return;
+    if (panel.historyValueSelection) return refreshSelection(model);
+    return hover(
+      {
+        hit: { time, geometry: state.geometry || readGeometry() },
+        preview: panel.historyKeyboardTarget,
+      },
+      model,
+    );
+  };
+  const paintHover = (preview, model, geometry = state.geometry) => {
+    if (
+      !preview ||
+      !model ||
+      (!preview.eventId && (preview.time < model.start || preview.time > model.end))
+    )
+      return hide();
+    const time = preview.time,
+      snap = panel.historyCurrentSnap?.(preview.snap) || null,
+      nodes = tooltipNodes(),
+      timeZone = localTimeZone(),
+      plot = panel.historyGeometry();
+    nodes.startLabel.hidden = nodes.endLabel.hidden = nodes.endRows.hidden = true;
+    nodes.startLabel.remove?.();
+    nodes.endRows.remove?.();
+    readValues(nodes.series, time, !!preview.eventId);
+    const label = preview.eventId
+      ? panel.tooltipWhen?.(time, timeZone) || dateLabel(time, timeZone)
+      : dateLabel(time, timeZone);
+    setText(nodes.heading, label);
+    const phase = panel.historyPhaseAt?.(time);
+    setText(nodes.status, `Saunastatus · ${phases[phase?.phase] || "Unbekannt"}`);
+    nodes.status.hidden = false;
+    tooltip.setAttribute("data-phase", phase?.phase || "");
+    tooltip.setAttribute("data-selection", "");
+    tooltip.setAttribute(
+      "aria-label",
+      preview.eventId
+        ? `Werte am Ereigniszeitpunkt · ${label}`
+        : "Werte am markierten Zeitpunkt",
+    );
+    showSnap([snap], timeZone);
+    const eventTolerance = preview.eventId
+      ? 0
+      : ((model.end - model.start) / (model.right - model.left)) *
+        ((panel.preference("history_hover_radius_px") * plot.width) /
+          Math.max(1, geometry.rects.surface.width));
+    showEvents(panel.historyEventsAt?.(time, eventTolerance) || [], timeZone);
+    if (time >= model.start && time <= model.end)
+      showCursor(model.x(time), snap, model, geometry);
+    else hideCursor();
+  };
+  const refreshHover = (model = panel.historyChart?.model) => {
+    if (state.disposed) return;
+    if (panel.historyValueSelection) return refreshSelection(model);
+    const event = panel.historyInspectedEvent?.(),
+      time = stamp(event?.effective_at);
+    if (event && Number.isFinite(time))
+      panel.historyHoverPreview = { time, snap: null, eventId: event.event_id };
+    else if (panel.historyHoverPreview?.eventId) panel.historyHoverPreview = null;
+    return paintHover(panel.historyHoverPreview, model);
+  };
+  const hover = (event, snapshotTransform = panel.historyChart?.model) => {
+    if (state.disposed) return;
+    if (!panel.historyValueSelection && panel.historyInspectedEvent?.())
+      return refreshHover(snapshotTransform);
+    if (panel.historyValueSelection?.kind === "range")
+      return refreshSelection(snapshotTransform);
+    const hit = event?.resolved
+      ? event.hit
+      : event?.hit || timeAt(event, event?.model || snapshotTransform, event?.geometry);
+    if (!hit) {
+      panel.historyHoverPreview = null;
+      if (panel.historyValueSelection) return refreshSelection(snapshotTransform);
+      return hide();
+    }
+    const inputModel = event?.model || snapshotTransform,
+      plot = panel.historyGeometry(),
+      model = panel.historyChart?.model || {
+        ...plot,
+        ...inputModel,
+        start: inputModel?.start ?? hit.start,
+        end: inputModel?.end ?? hit.end,
+        x: (time) =>
+          (inputModel?.left ?? hit.left) +
+          ((time - (inputModel?.start ?? hit.start)) /
+            ((inputModel?.end ?? hit.end) - (inputModel?.start ?? hit.start))) *
+            ((inputModel?.right ?? hit.right) - (inputModel?.left ?? hit.left)),
+      },
+      target = event?.preview ||
+        panel.historySnapTarget?.(hit.time, inputModel, hit.geometry) || {
+          time: hit.time,
+          snap: null,
+        };
+    panel.historyHoverPreview = target;
+    if (panel.historyValueSelection) refreshSelection(model);
+    else paintHover(target, model, hit.geometry);
+    if (panel.shadowRoot) panel.syncHistorySelection?.(model);
+    return hit;
   };
   const listenForScroll = (target) => {
     if (!target || scrollTargets.has(target)) return;
@@ -947,10 +1386,17 @@ function HistoryInteraction(panel, surface, wrap, tooltip, cursor, overview) {
     readGeometry,
     coordinates,
     hover,
+    refreshHover,
+    timeAt,
+    refreshSelection,
+    previewTime,
     hide,
     invalidateGeometry,
     get geometry() {
       return readGeometry();
+    },
+    get cachedGeometry() {
+      return state.geometry;
     },
     dispose() {
       if (state.disposed) return;
@@ -979,7 +1425,7 @@ class HistoryChart {
     this.domain = panel.historyDomain();
     panel.$("#plots").innerHTML = panel.historyMarkup(panel.shown.session);
     const overview = panel.$("#history-overview");
-    overview.innerHTML = `<svg viewBox="0 0 ${HISTORY_PLOT.width} 46" preserveAspectRatio="none" role="slider" tabindex="0" aria-label="Zeitausschnitt der Saunasitzung" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"><rect class="overview-window" data-history-window x="${HISTORY_PLOT.left}" y="5" height="34" rx="4"/><rect class="overview-handle" data-history-handle="start" x="${HISTORY_PLOT.left - 4}" y="2" width="8" height="40" rx="3"/><rect class="overview-handle" data-history-handle="end" x="${HISTORY_PLOT.right - 4}" y="2" width="8" height="40" rx="3"/></svg>`;
+    overview.innerHTML = `<svg preserveAspectRatio="none" role="slider" tabindex="0" aria-label="Zeitausschnitt der Saunasitzung" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"><rect class="overview-window" data-history-window/><rect class="overview-handle" data-history-handle="start"/><rect class="overview-handle" data-history-handle="end"/></svg>`;
     this.surface = panel.$("svg.session-chart");
     this.curves = new HistoryCurves(panel.$("canvas.history-curves"), {
       styles: panel.historyCurveStyles(),
@@ -997,22 +1443,24 @@ class HistoryChart {
     // All client geometry is read before any tooltip, layer or canvas writes.
     const geometry = this.interaction.readGeometry();
     if (
+      !this.panel.historyInputSnapshot &&
       [...reasons].some((reason) => ["initial", "archive", "viewport"].includes(reason))
     )
       this.domain = this.panel.historyDomain();
     const panel = this.panel,
       model = panel.historyModel(this, session, geometry.canvas.cssWidth);
     this.model = model;
+    panel.syncHistoryGeometry(model, geometry);
     panel.historyDetail = false;
     const chromeKey = panel.historyTitle(session);
     const chromeChanged = this.chromeKey !== chromeKey;
     this.chromeKey = chromeKey;
     this.surface.setAttribute(
       "aria-label",
-      `Sitzungsverlauf: Temperatur und Luftfeuchte${panel.historyDetail ? " beider Messhöhen" : ""}`,
+      `Sitzungsverlauf: Temperatur und ${model.humidityMode === "absolute" ? "absolute" : "relative"} Luftfeuchte`,
     );
     const timeZone = localTimeZone();
-    const axisKey = `${model.start}:${model.end}:${model.low}:${model.high}:${model.humidityHigh}:${timeZone}:${geometry.canvas.cssWidth}:${geometry.canvas.cssHeight}`;
+    const axisKey = `${JSON.stringify(panel.appearanceValue())}:${model.width}:${model.height}:${model.left}:${model.right}:${model.top}:${model.bottom}:${model.start}:${model.end}:${model.low}:${model.high}:${model.humidityHigh}:${model.humidityMode}:${model.humidityPrecision}:${timeZone}:${geometry.canvas.cssWidth}:${geometry.canvas.cssHeight}`;
     if (axisKey !== this.axisKey) {
       panel.$("[data-history-axes]").innerHTML = panel.historyAxes(model, {
         width: geometry.canvas.cssWidth,
@@ -1020,7 +1468,7 @@ class HistoryChart {
       });
       this.axisKey = axisKey;
     }
-    const phaseKey = `${model.start}:${model.end}:${panel.historyTimelineRevision}:${panel.historyRecords("phase").length}:${session.ended_at || panel.state.now}:${JSON.stringify(panel.shown.phase_projection || null)}:${timeZone}`;
+    const phaseKey = `${model.width}:${model.height}:${model.left}:${model.right}:${model.top}:${model.bottom}:${panel.preference("history_axis_max_ticks")}:${model.start}:${model.end}:${panel.historyTimelineRevision}:${panel.historyRecords("phase").length}:${session.ended_at || panel.state.now}:${JSON.stringify(panel.shown.phase_projection || null)}:${timeZone}`;
     if (phaseKey !== this.phaseKey) {
       panel.$("[data-history-annotations]").innerHTML = panel.historyAnnotations(
         model,
@@ -1032,8 +1480,14 @@ class HistoryChart {
     const legend = panel.$("#history-legends");
     const legendMarkup = panel.historyLegendMarkup();
     if (legend && legendMarkup !== this.legendMarkup) {
+      const humidityFocused =
+        panel.shadowRoot?.activeElement?.dataset?.action === "history-humidity";
       legend.innerHTML = legendMarkup;
       this.legendMarkup = legendMarkup;
+      if (humidityFocused)
+        legend.querySelector('[data-action="history-humidity"]')?.focus?.({
+          preventScroll: true,
+        });
     }
     // Revealing the height controls or changing a wrapped heading can move
     // the plot without resizing it. Read the new position in the next frame.
@@ -1043,15 +1497,28 @@ class HistoryChart {
       height: geometry.canvas.cssHeight,
       dpr: geometry.dpr,
     });
-    panel.syncHistoryOverview();
+    panel.syncHistoryOverview(geometry);
+    panel.syncHistorySelection(model);
+    panel.syncHistoryEventInspection();
+    if (panel.historyValueSelection) this.interaction.refreshSelection(model);
+    const markersKey = `${model.start}:${model.end}:${model.top}:${model.bottom}:${geometry.canvas.cssWidth}:${geometry.canvas.cssHeight}:${panel.preference("event_marker_size_px")}:${panel.preference("event_marker_gap_px")}:${panel.historyTimelineRevision}:${timeZone}`;
+    if (this.markersKey !== markersKey) {
+      panel.updateMarkup(
+        "[data-history-events]",
+        panel.historyEventMarkers(model, geometry),
+      );
+      this.markersKey = markersKey;
+      panel.syncHistoryEventInspection();
+    }
     if (
-      !chromeChanged &&
-      panel.lastHistoryPointer &&
-      !panel.chartPointers.size &&
       !panel.webkitHistoryGesture &&
-      !panel.historyGesture
+      !panel.historyGesture &&
+      panel.chartPointers.size < 2 &&
+      reasons.has("cursor") &&
+      panel.pendingHover
     )
-      this.interaction.hover({ ...panel.lastHistoryPointer, svg: this.surface }, model);
+      this.interaction.hover(panel.pendingHover, model);
+    else this.interaction.refreshHover(model);
   }
   destroy() {
     this.interaction.dispose();
@@ -1364,7 +1831,7 @@ class SaunaSelectMenu {
       height = viewport?.height || this.window.innerHeight,
       left = viewport?.offsetLeft || 0,
       top = viewport?.offsetTop || 0;
-    const gap = 4,
+    const gap = this.panel.preference("select_menu_gap_px"),
       below = top + height - rect.bottom - gap,
       above = rect.top - top - gap;
     const menuWidth = Math.min(
@@ -1438,7 +1905,9 @@ class SaunaSelectMenu {
     else if (typing) {
       const now = Date.now();
       this.search =
-        now - (this.searchAt || 0) > 700 ? event.key : this.search + event.key;
+        now - (this.searchAt || 0) > this.panel.preference("typeahead_reset_ms")
+          ? event.key
+          : this.search + event.key;
       this.searchAt = now;
       const query = this.search.toLocaleLowerCase();
       const match = indexes.find((index) =>
@@ -1463,7 +1932,13 @@ class SaunaPanel extends HTMLElement {
     this.generation = 0;
     this.positions = new Set(["upper"]);
     this.historyDetail = false;
+    this.historyHumidityMode = "relative";
     this.chartPointers = new Map();
+    this.historyValueSelection = null;
+    this.historyHoverPreview = null;
+    this.historyKeyboardTime = null;
+    this.inspectedHistoryEventId = null;
+    this.historyInputSnapshot = null;
     this.chartDataIndex = null;
     this.historyDatasetRevision = 0;
     this.historyWindowRevision = 0;
@@ -1478,6 +1953,7 @@ class SaunaPanel extends HTMLElement {
     this.fullscreenChangeHandler = () => {
       this.syncFullscreenNavigation();
       this.historyChart?.interaction.invalidateGeometry("size");
+      this.scheduleHistoryRender("size");
       this.fitInstrumentReadouts();
     };
     this.visibilityHandler = () => {
@@ -1491,6 +1967,13 @@ class SaunaPanel extends HTMLElement {
       if (this.isConnected && this._hass) this.start();
     };
   }
+  set panel(value) {
+    this._panel = value;
+    if (this.isConnected && this._hass && !this.timer && !this.busy) this.start();
+  }
+  get panel() {
+    return this._panel;
+  }
   set hass(value) {
     this._hass = value;
     if (this.isConnected && this._hass && !this.timer && !this.busy) this.start();
@@ -1500,6 +1983,14 @@ class SaunaPanel extends HTMLElement {
   }
   connectedCallback() {
     if (!this.$("main")) this.shell();
+    const Resize =
+      this.ownerDocument?.defaultView?.ResizeObserver || globalThis.ResizeObserver;
+    if (Resize && !this.diagnosticsResizeObserver) {
+      this.diagnosticsResizeObserver = new Resize(() => {
+        if (this.view === "diagnostics") this.scheduleHistoryRender("size");
+      });
+      this.diagnosticsResizeObserver.observe(this.$("#detection-plots"));
+    }
     this.selectMenu ??= new SaunaSelectMenu(this);
     this.selectMenu.connect();
     this.infoOutsideHandler ??= (event) => {
@@ -1545,6 +2036,8 @@ class SaunaPanel extends HTMLElement {
     if (this._hass) this.start();
   }
   disconnectedCallback() {
+    this.diagnosticsResizeObserver?.disconnect();
+    this.diagnosticsResizeObserver = null;
     this.selectMenu?.disconnect();
     this.ownerDocument?.removeEventListener("click", this.infoOutsideHandler, true);
     this.shadowRoot?.removeEventListener?.("scroll", this.infoGeometryHandler, true);
@@ -1602,8 +2095,10 @@ class SaunaPanel extends HTMLElement {
       this.webkitHistoryGesture =
       this.pendingHover =
       this.lastHistoryPointer =
+      this.historyHoverPreview =
         null;
     this.historyInputMode = null;
+    this.historyInputSnapshot = null;
   }
   start() {
     clearTimeout(this.timer);
@@ -1620,8 +2115,8 @@ class SaunaPanel extends HTMLElement {
       lightAfterRun > now ||
       state?.configuration?.control_mode === "manual" ||
       Object.keys(this.controlCommands || {}).length
-      ? 2000
-      : 10000;
+      ? this.preference("status_active_poll_ms")
+      : this.preference("status_idle_poll_ms");
   }
   scheduleRefresh() {
     clearTimeout(this.timer);
@@ -1632,10 +2127,14 @@ class SaunaPanel extends HTMLElement {
       (typeof document !== "undefined" && document.hidden)
     )
       return;
+    const interval = this.statusPollInterval();
+    // The HA panel config supplies the factory catalog before the first API
+    // response. Never turn a missing catalog into an immediate retry loop.
+    if (!Number.isFinite(interval) || interval <= 0) return;
     this.timer = setTimeout(() => {
       this.timer = null;
       void this.refresh();
-    }, this.statusPollInterval());
+    }, interval);
   }
   $(selector) {
     return this.shadowRoot.querySelector(selector);
@@ -1646,7 +2145,13 @@ class SaunaPanel extends HTMLElement {
       ? `id:${node.id}`
       : node.dataset?.action
         ? `action:${node.dataset.action}`
-        : null;
+        : node.dataset?.key
+          ? `key:${node.dataset.key}`
+          : node.dataset?.detailKey
+            ? `detail:${node.dataset.detailKey}`
+            : node.dataset?.recordId
+              ? `record:${node.dataset.recordId}`
+              : null;
   }
   sameNode(current, next) {
     if (current.nodeType !== next.nodeType) return false;
@@ -1660,7 +2165,11 @@ class SaunaPanel extends HTMLElement {
   }
   patchAttributes(current, next) {
     for (const attribute of [...current.attributes])
-      if (!next.hasAttribute(attribute.name)) current.removeAttribute(attribute.name);
+      if (
+        !next.hasAttribute(attribute.name) &&
+        !(current.nodeName === "DETAILS" && attribute.name === "open")
+      )
+        current.removeAttribute(attribute.name);
     for (const attribute of [...next.attributes])
       if (current.getAttribute(attribute.name) !== attribute.value)
         current.setAttribute(attribute.name, attribute.value);
@@ -1673,7 +2182,24 @@ class SaunaPanel extends HTMLElement {
   }
   patchNode(current, next) {
     if (current.nodeType === 3) {
-      if (current.data !== next.data) current.data = next.data;
+      if (current.data !== next.data) {
+        const selection =
+            this.shadowRoot?.getSelection?.() || this.ownerDocument?.getSelection?.(),
+          anchor = selection?.anchorNode === current ? selection.anchorOffset : null,
+          focus = selection?.focusNode === current ? selection.focusOffset : null,
+          anchorNode = selection?.anchorNode,
+          focusNode = selection?.focusNode,
+          anchorOffset = selection?.anchorOffset,
+          focusOffset = selection?.focusOffset;
+        current.data = next.data;
+        if (anchor !== null || focus !== null)
+          selection?.setBaseAndExtent?.(
+            anchorNode,
+            anchor === null ? anchorOffset : Math.min(anchor, current.length),
+            focusNode,
+            focus === null ? focusOffset : Math.min(focus, current.length),
+          );
+      }
       return current;
     }
     const focused =
@@ -1742,17 +2268,83 @@ class SaunaPanel extends HTMLElement {
       target.innerHTML = markup;
       return;
     }
+    // insertBefore can transiently detach a retained keyed subtree. Browsers
+    // then clear its focus and adjust native selection even though the same
+    // nodes are reinserted. Save identities, not selectors or live Ranges.
+    const focused = this.shadowRoot.activeElement,
+      ownedFocus = focused && target.contains(focused),
+      inputSelection =
+        ownedFocus && Number.isInteger(focused.selectionStart)
+          ? [focused.selectionStart, focused.selectionEnd, focused.selectionDirection]
+          : null,
+      selection =
+        this.shadowRoot.getSelection?.() || this.ownerDocument?.getSelection?.(),
+      endpoint = (node, offset) => ({
+        node,
+        offset,
+        before: node?.childNodes?.[offset],
+        after: node?.childNodes?.[offset - 1],
+      }),
+      selected =
+        selection &&
+        (target.contains(selection.anchorNode) || target.contains(selection.focusNode))
+          ? {
+              anchor: endpoint(selection.anchorNode, selection.anchorOffset),
+              focus: endpoint(selection.focusNode, selection.focusOffset),
+            }
+          : null;
     const next = target.cloneNode(false);
     next.innerHTML = markup;
     this.patchNode(target, next);
     this.selectMenu?.sync();
     this.syncInfo();
+    if (
+      ownedFocus &&
+      focused.isConnected &&
+      target.contains(focused) &&
+      !focused.disabled &&
+      !focused.matches?.(":disabled") &&
+      !focused.closest?.("[hidden], [inert]") &&
+      (!focused.getClientRects || focused.getClientRects().length)
+    ) {
+      if (this.shadowRoot.activeElement !== focused)
+        focused.focus?.({ preventScroll: true });
+      if (inputSelection && Number.isInteger(focused.selectionStart))
+        focused.setSelectionRange?.(...inputSelection);
+    }
+    if (
+      selected &&
+      selected.anchor.node?.isConnected &&
+      selected.focus.node?.isConnected &&
+      (target.contains(selected.anchor.node) || target.contains(selected.focus.node))
+    ) {
+      const offset = ({ node, offset: saved, before, after }) => {
+        if (node.nodeType === 3) return Math.min(saved, node.length);
+        const children = [...node.childNodes];
+        if (before?.parentNode === node) return children.indexOf(before);
+        if (after?.parentNode === node) return children.indexOf(after) + 1;
+        return Math.min(saved, children.length);
+      };
+      selection.setBaseAndExtent?.(
+        selected.anchor.node,
+        offset(selected.anchor),
+        selected.focus.node,
+        offset(selected.focus),
+      );
+    }
   }
   async api(path, method = "GET", body) {
     return this.hass.callApi(method, `ha_sauna${path}`, body);
   }
   appearanceCatalog() {
-    return this.state?.appearance_catalog || { colors: [], scales: {} };
+    return (
+      this.state?.appearance_catalog ||
+      this.panel?.config?.appearance_catalog || {
+        colors: [],
+        scales: {},
+        preferences: {},
+      }
+    );
   }
   savedAppearance() {
     return (
@@ -1762,6 +2354,105 @@ class SaunaPanel extends HTMLElement {
   }
   appearanceValue() {
     return this.appearanceDraft || this.savedAppearance();
+  }
+  num(value, digits = this.preference("value_precision")) {
+    return num(value, digits);
+  }
+  when(value, timeZone) {
+    return when(value, timeZone, this.preference("timestamp_formatter_cache_entries"));
+  }
+  clock(value, timeZone) {
+    return clock(value, timeZone, this.preference("timestamp_formatter_cache_entries"));
+  }
+  tooltipWhen(value, timeZone) {
+    return tooltipWhen(
+      value,
+      timeZone,
+      this.preference("timestamp_formatter_cache_entries"),
+    );
+  }
+  preferenceDefaults() {
+    return Object.fromEntries(
+      Object.entries(this.appearanceCatalog().preferences || {})
+        .filter(([, definition]) => definition.configuration_surface === "panel")
+        .map(([key, definition]) => [key, definition.default]),
+    );
+  }
+  effectivePreferences(overrides = this.appearanceValue().preferences || {}) {
+    return Object.fromEntries(
+      Object.entries(this.appearanceCatalog().preferences || {}).map(
+        ([key, definition]) => [
+          key,
+          definition.configuration_surface === "panel"
+            ? (overrides[key] ?? definition.default)
+            : definition.default,
+        ],
+      ),
+    );
+  }
+  preference(key) {
+    const definition = this.appearanceCatalog().preferences?.[key];
+    const value =
+      definition?.configuration_surface === "panel"
+        ? (this.appearanceValue().preferences?.[key] ?? definition.default)
+        : definition?.default;
+    return Number.isFinite(value) ? value : undefined;
+  }
+  validPreferenceRelations(values) {
+    return (
+      values.history_axis_min_ticks <= values.history_axis_max_ticks &&
+      values.instrument_tick_target <= values.instrument_tick_maximum &&
+      values.history_plot_width_px > values.history_plot_side_padding_px * 2 &&
+      values.history_plot_height_px >
+        values.history_plot_top_padding_px + values.history_plot_bottom_padding_px &&
+      values.detail_plot_width_px >
+        values.detail_plot_side_padding_px + values.detail_plot_right_padding_px &&
+      values.detail_plot_height_px >
+        values.detail_plot_top_padding_px + values.detail_plot_bottom_padding_px &&
+      values.detail_plot_height_px >
+        Math.max(
+          values.detail_axis_top_padding_px,
+          values.detail_value_label_top_padding_px,
+        ) +
+          values.detail_axis_bottom_padding_px &&
+      values.detail_plot_height_px > values.detail_time_label_bottom_padding_px &&
+      values.diagnostic_min_plot_width_px >
+        values.diagnostic_axis_left_padding_px +
+          values.diagnostic_axis_right_padding_px &&
+      values.diagnostic_plot_height_px >
+        values.diagnostic_axis_top_padding_px +
+          values.diagnostic_axis_bottom_padding_px &&
+      values.diagnostic_plot_height_px >
+        values.diagnostic_guide_top_padding_px +
+          values.diagnostic_axis_bottom_padding_px &&
+      values.diagnostic_plot_height_px > values.diagnostic_time_label_bottom_padding_px
+    );
+  }
+  rangeGeometry(kind) {
+    const control = kind === "control",
+      thumb = this.preference(control ? "size_16_0_px" : "size_17_0_px"),
+      track = this.preference(control ? "size_4_0_px" : "size_5_0_px"),
+      border = control ? 0 : this.preference("border_2_0_px");
+    return {
+      thumb,
+      track,
+      offset: (track - thumb) / 2,
+      inset: thumb / 2,
+      content: Math.max(0, thumb - border * 2),
+    };
+  }
+  historyGeometry() {
+    const width = this.preference("history_plot_width_px"),
+      height = this.preference("history_plot_height_px");
+    return {
+      width,
+      height,
+      left: this.preference("history_plot_side_padding_px"),
+      right: width - this.preference("history_plot_side_padding_px"),
+      top: this.preference("history_plot_top_padding_px"),
+      bottom: height - this.preference("history_plot_bottom_padding_px"),
+      overviewHeight: this.preference("history_overview_height_px"),
+    };
   }
   instrumentSelection(name) {
     return (
@@ -1821,20 +2512,45 @@ class SaunaPanel extends HTMLElement {
       Number.isFinite(maximum) &&
       minimum < maximum &&
       Number.isFinite(maximum - minimum) &&
-      (quantity !== "humidity" || (minimum >= 0 && maximum <= 100));
+      (this.appearanceCatalog().scales?.[quantity]?.minimum == null ||
+        minimum >= this.appearanceCatalog().scales[quantity].minimum) &&
+      (this.appearanceCatalog().scales?.[quantity]?.maximum == null ||
+        maximum <= this.appearanceCatalog().scales[quantity].maximum);
     return valid ? { minimum, maximum } : defaultScale ? { ...defaultScale } : null;
   }
   historyCurveStyles() {
     const temperature = this.appearanceColor("series_temperature"),
       humidity = this.appearanceColor("series_humidity");
     return {
-      "upper:temperature": { stroke: temperature, lineDash: [] },
-      "lower:temperature": { stroke: temperature, lineDash: [] },
-      "upper:humidity": { stroke: humidity, lineDash: [] },
-      "lower:humidity": { stroke: humidity, lineDash: [] },
+      "upper:temperature": {
+        stroke: temperature,
+        lineWidth: this.preference("chart_curve_width_px"),
+        lineDash: [],
+      },
+      "lower:temperature": {
+        stroke: temperature,
+        lineWidth: this.preference("chart_curve_width_px"),
+        lineDash: [],
+      },
+      "upper:humidity": {
+        stroke: humidity,
+        lineWidth: this.preference("chart_curve_width_px"),
+        lineDash: [],
+      },
+      "lower:humidity": {
+        stroke: humidity,
+        lineWidth: this.preference("chart_curve_width_px"),
+        lineDash: [],
+      },
     };
   }
   applyAppearance() {
+    const stylesheet = this.shadowRoot?.querySelector?.("#panel-appearance-style"),
+      stylesheetKey = JSON.stringify(this.effectivePreferences());
+    if (stylesheet && this.appearanceStylesKey !== stylesheetKey) {
+      stylesheet.textContent = this.appearanceStyles();
+      this.appearanceStylesKey = stylesheetKey;
+    }
     const style = this.style;
     if (!style?.setProperty) return;
     for (const [key, property] of Object.entries({
@@ -1846,8 +2562,8 @@ class SaunaPanel extends HTMLElement {
       surface_padding_px: "--sauna-surface-padding",
       control_group_gap_px: "--sauna-control-gap",
     })) {
-      const value = this.state?.frontend_defaults?.[key];
-      if (Number.isFinite(value) && value > 0)
+      const value = this.preference(key);
+      if (Number.isFinite(value) && value >= 0)
         style.setProperty(property, `${value}px`);
     }
     for (const definition of this.appearanceCatalog().colors || []) {
@@ -1871,18 +2587,28 @@ class SaunaPanel extends HTMLElement {
     const raisedSurface = appearanceBlend(
       surfaces.card,
       "#FFFFFF",
-      darkSurface ? 0.02 : 0,
+      darkSurface
+        ? this.preference("raised_surface_lightening_dark")
+        : this.preference("raised_surface_lightening_light"),
     );
     const sectionSurface = appearanceBlend(
       surfaces.card,
       "#FFFFFF",
-      darkSurface ? 0.075 : 0.55,
+      darkSurface
+        ? this.preference("section_surface_lightening_dark")
+        : this.preference("section_surface_lightening_light"),
     );
-    const recessedSurface = appearanceBlend(surfaces.page, surfaces.card, 0.4);
+    const recessedSurface = appearanceBlend(
+      surfaces.page,
+      surfaces.card,
+      this.preference("recessed_surface_blend"),
+    );
     const controlSurface = appearanceBlend(
       surfaces.card,
       "#FFFFFF",
-      darkSurface ? 0.2 : 0.85,
+      darkSurface
+        ? this.preference("control_surface_lightening_dark")
+        : this.preference("control_surface_lightening_light"),
     );
     for (const [name, value] of Object.entries({
       raised: raisedSurface,
@@ -1909,12 +2635,12 @@ class SaunaPanel extends HTMLElement {
     const tintedSurface = (base, role, amount) =>
       appearanceBlend(base, this.appearanceColor(role), amount);
     for (const [name, role, amount] of [
-      ["info", "status_info", 0.12],
-      ["warning", "status_warning", 0.12],
-      ["error", "status_error", 0.12],
-      ["unknown", "status_unknown", 0.12],
-      ["heater-on", "ui_heater_on", 0.16],
-      ["heater-off", "ui_heater_off", 0.16],
+      ["info", "status_info", this.preference("notice_tint")],
+      ["warning", "status_warning", this.preference("notice_tint")],
+      ["error", "status_error", this.preference("notice_tint")],
+      ["unknown", "status_unknown", this.preference("notice_tint")],
+      ["heater-on", "ui_heater_on", this.preference("heater_tint")],
+      ["heater-off", "ui_heater_off", this.preference("heater_tint")],
     ]) {
       const surface = tintedSurface(surfaces.card, role, amount);
       if (surface) style.setProperty(`--sauna-tint-${name}-background`, surface);
@@ -2020,16 +2746,19 @@ class SaunaPanel extends HTMLElement {
         ? phaseAppearance[this.state.phase]?.color
         : null;
     const tint = phase && this.appearanceColor(phase);
-    const mainSurface = tint && appearanceBlend(surfaces.card, tint, 0.24);
+    const mainSurface =
+      tint && appearanceBlend(surfaces.card, tint, this.preference("main_phase_tint"));
     if (mainSurface) style.setProperty("--sauna-main-background", mainSurface);
     else style.removeProperty?.("--sauna-main-background");
-    const mainSection = tint && appearanceBlend(sectionSurface, tint, 0.18);
+    const mainSection =
+      tint &&
+      appearanceBlend(sectionSurface, tint, this.preference("section_phase_tint"));
     if (mainSection) style.setProperty("--sauna-main-section", mainSection);
     else style.removeProperty?.("--sauna-main-section");
     const pendingSurface = tintedSurface(
       mainSurface || surfaces.card,
       "status_info",
-      0.06,
+      this.preference("pending_command_tint"),
     );
     if (pendingSurface) style.setProperty("--sauna-pending-background", pendingSurface);
     else style.removeProperty?.("--sauna-pending-background");
@@ -2098,7 +2827,32 @@ class SaunaPanel extends HTMLElement {
           `<label>${esc(definition.label)}<select data-appearance-instrument="${esc(name)}">${definition.options.map((option) => `<option value="${esc(option)}" ${this.instrumentSelection(name) === option ? "selected" : ""}>${{ round: "Rund", linear: "Gerade", inherit: "Gemeinsame Vorgabe" }[option]}</option>`).join("")}</select></label>`,
       )
       .join("");
-    return `<div class="card appearance-settings" id="appearance-settings"><h2>Instrumente, Farben und Skalen</h2><div class="appearance-instruments">${instrumentFields}</div><h3>Messgrößen</h3><div class="appearance-colors">${rows(true)}</div><h3>Anzeigeskalen</h3><div class="appearance-scales">${scaleFields}</div><details class="settings-group appearance-advanced"><summary>Erweiterte Farben</summary>${groups.map((group) => `<details class="expert-group"><summary>${esc(group)}</summary><div class="appearance-colors">${rows(false, group)}</div></details>`).join("")}</details><div class="row"><button type="button" class="confirm" data-action="appearance-save">Darstellung speichern</button><button type="button" data-action="appearance-discard">Änderungen verwerfen</button><button type="button" data-action="appearance-default">Standarddarstellung wiederherstellen</button></div><p id="appearance-status" role="status" class="muted"></p></div>`;
+    const preferenceGroups = [
+      ...new Set(
+        Object.values(catalog.preferences || {})
+          .filter((definition) => definition.configuration_surface === "panel")
+          .map((definition) => definition.group),
+      ),
+    ];
+    const preferences = preferenceGroups
+      .map(
+        (group) =>
+          `<details class="settings-group appearance-preferences"><summary>${esc(group)}</summary><div class="appearance-preference-fields">${Object.entries(
+            catalog.preferences,
+          )
+            .filter(
+              ([, definition]) =>
+                definition.configuration_surface === "panel" &&
+                definition.group === group,
+            )
+            .map(
+              ([key, definition]) =>
+                `<label>${esc(definition.label)}${unitInput(`<input type="number" data-appearance-preference="${esc(key)}" aria-label="${esc(definition.label)}" min="${definition.minimum}" max="${definition.maximum}" step="${definition.step}" value="${esc(this.appearanceRaw?.[`preference.${key}`] ?? this.preference(key))}">`, definition.unit)}<small>${esc(definition.description)}</small></label>`,
+            )
+            .join("")}</div></details>`,
+      )
+      .join("");
+    return `<div class="card appearance-settings" id="appearance-settings"><h2>Darstellung und Bedienung</h2><div class="appearance-instruments">${instrumentFields}</div><h3>Messgrößen</h3><div class="appearance-colors">${rows(true)}</div><h3>Anzeigeskalen</h3><div class="appearance-scales">${scaleFields}</div><details class="settings-group appearance-advanced"><summary>Erweiterte Farben</summary>${groups.map((group) => `<details class="expert-group"><summary>${esc(group)}</summary><div class="appearance-colors">${rows(false, group)}</div></details>`).join("")}</details>${preferences}<div class="row"><button type="button" class="confirm" data-action="appearance-save">Darstellung speichern</button><button type="button" data-action="appearance-discard">Änderungen verwerfen</button><button type="button" data-action="appearance-default">Standarddarstellung wiederherstellen</button></div><p id="appearance-status" role="status" class="muted"></p></div>`;
   }
   updateAppearanceField(input) {
     if (!this.state?.permissions?.admin || this.appearanceRequest) return;
@@ -2106,6 +2860,12 @@ class SaunaPanel extends HTMLElement {
       const saved = this.savedAppearance();
       this.appearanceDraft = {
         colors: { ...(saved.colors || {}) },
+        preferences: Object.fromEntries(
+          Object.keys(this.preferenceDefaults()).map((key) => [
+            key,
+            saved.preferences?.[key] ?? this.preferenceDefaults()[key],
+          ]),
+        ),
         instruments: { ...this.instrumentDefaults(), ...(saved.instruments || {}) },
         scales: Object.fromEntries(
           Object.entries(this.appearanceCatalog().scales || {}).map(([name, spec]) => [
@@ -2131,6 +2891,26 @@ class SaunaPanel extends HTMLElement {
       const name = input.dataset.appearanceInstrument;
       if (this.appearanceCatalog().instruments?.[name]?.options.includes(input.value))
         this.appearanceDraft.instruments[name] = input.value;
+    } else if (input.dataset.appearancePreference) {
+      const key = input.dataset.appearancePreference,
+        value = Number(input.value),
+        definition = this.appearanceCatalog().preferences?.[key];
+      this.appearanceRaw[`preference.${key}`] = input.value;
+      if (
+        definition?.configuration_surface === "panel" &&
+        input.value.trim() &&
+        Number.isFinite(value) &&
+        value >= definition.minimum &&
+        value <= definition.maximum &&
+        (!definition.integer || Number.isInteger(value)) &&
+        this.validPreferenceRelations(
+          this.effectivePreferences({
+            ...this.appearanceDraft.preferences,
+            [key]: value,
+          }),
+        )
+      )
+        this.appearanceDraft.preferences[key] = value;
     } else if (input.dataset.appearanceScale) {
       const [name, end] = input.dataset.appearanceScale.split(".");
       this.appearanceRaw[input.dataset.appearanceScale] = input.value;
@@ -2141,7 +2921,11 @@ class SaunaPanel extends HTMLElement {
     this.appearanceStatus = "Vorschau – noch nicht gespeichert";
     this.appearanceStatusKind = "pending";
     this.applyAppearance();
-    if (role && this.historyChart) this.scheduleHistoryRender("appearance");
+    if (
+      (role || input.dataset.appearancePreference || input.dataset.appearanceScale) &&
+      this.shown
+    )
+      this.scheduleHistoryRender("appearance");
     this.drawCurrent();
     this.drawAppearanceStatus();
   }
@@ -2178,6 +2962,11 @@ class SaunaPanel extends HTMLElement {
       if (picker && picker !== this.shadowRoot.activeElement)
         picker.value = this.appearancePickerColor(definition.id);
     }
+    for (const key of Object.keys(this.appearanceCatalog().preferences || {})) {
+      const input = this.$(`[data-appearance-preference="${key}"]`);
+      if (input && input !== this.shadowRoot.activeElement)
+        input.value = this.preference(key);
+    }
     for (const name of ["temperature", "humidity"])
       for (const end of ["minimum", "maximum"]) {
         const input = this.$(`[data-appearance-scale="${name}.${end}"]`);
@@ -2199,8 +2988,16 @@ class SaunaPanel extends HTMLElement {
       )
     )
       throw Error("Anzeigeskalen benötigen endliche Zahlen");
-    const payload = this.appearanceDraft;
-    if (!payload) return null;
+    if (!this.appearanceDraft) return null;
+    const payload = {
+      ...this.appearanceDraft,
+      preferences: Object.fromEntries(
+        Object.keys(this.preferenceDefaults()).map((key) => [
+          key,
+          this.appearanceDraft.preferences?.[key] ?? this.preferenceDefaults()[key],
+        ]),
+      ),
+    };
     for (const [name, spec] of Object.entries(this.appearanceCatalog().scales || {})) {
       const bounds = payload.scales[name];
       if (
@@ -2208,14 +3005,34 @@ class SaunaPanel extends HTMLElement {
         !Number.isFinite(bounds?.maximum) ||
         bounds.minimum >= bounds.maximum ||
         !Number.isFinite(bounds.maximum - bounds.minimum) ||
-        (name === "humidity" &&
-          (bounds.minimum < (spec.minimum ?? 0) ||
-            bounds.maximum > (spec.maximum ?? 100)))
+        (spec.minimum != null && bounds.minimum < spec.minimum) ||
+        (spec.maximum != null && bounds.maximum > spec.maximum)
       )
         throw Error(
           `${name === "temperature" ? "Temperatur" : "Luftfeuchte"}: Minimum muss kleiner als Maximum sein`,
         );
     }
+    for (const [key, definition] of Object.entries(
+      this.appearanceCatalog().preferences || {},
+    ).filter(([, definition]) => definition.configuration_surface === "panel")) {
+      const raw = this.appearanceRaw?.[`preference.${key}`],
+        value = raw === undefined ? payload.preferences?.[key] : Number(raw);
+      if (
+        raw?.trim() === "" ||
+        !Number.isFinite(value) ||
+        value < definition.minimum ||
+        value > definition.maximum ||
+        (definition.integer && !Number.isInteger(value))
+      )
+        throw Error(
+          `${definition.label}: Wert innerhalb der zulässigen Grenzen eingeben`,
+        );
+      payload.preferences[key] = value;
+    }
+    if (!this.validPreferenceRelations(this.effectivePreferences(payload.preferences)))
+      throw Error(
+        "Achsenabstände müssen Platz für das Diagramm lassen; Mindestteilungen dürfen Höchstteilungen nicht überschreiten",
+      );
     return payload;
   }
   async saveAppearance() {
@@ -2279,6 +3096,7 @@ class SaunaPanel extends HTMLElement {
     this.appearanceDraft = defaults
       ? {
           colors: {},
+          preferences: this.preferenceDefaults(),
           instruments: this.instrumentDefaults(),
           scales: Object.fromEntries(
             Object.entries(this.appearanceCatalog().scales || {}).map(
@@ -2310,8 +3128,8 @@ class SaunaPanel extends HTMLElement {
     this.drawAppearanceStatus();
     this.scheduleHistoryRender("appearance");
   }
-  shell() {
-    this.shadowRoot.innerHTML = `<style>
+  appearanceStyles() {
+    return `
       :host {
         display: block;
         height: calc(100dvh - var(--safe-area-inset-top, 0px) - var(--safe-area-inset-bottom, 0px));
@@ -2321,8 +3139,7 @@ class SaunaPanel extends HTMLElement {
         color: var(--sauna-page-text, var(--sauna-color-text, var(--primary-text-color)));
         background: var(--sauna-color-page-background, var(--primary-background-color));
         font:
-          15px/1.5 system-ui,
-          sans-serif;
+          ${this.preference("font_size_body_emphasis_px")}px/${this.preference("body_line_height")} var(--primary-font-family, sans-serif);
         --accent: var(--sauna-color-ui-accent);
         --accent-ink: var(--sauna-accent-ink);
         --confirm: var(--sauna-color-ui-command, var(--sauna-color-card-background, var(--card-background-color)));
@@ -2330,41 +3147,43 @@ class SaunaPanel extends HTMLElement {
         --danger-text: var(--sauna-danger-text, var(--danger));
         --warm: var(--sauna-color-phase-warmup);
         --sauna-focus-current: var(--sauna-page-focus, var(--accent));
-        --sauna-shadow-card: 0 3px 5px rgb(0 0 0 / .32), 0 14px 30px -8px rgb(0 0 0 / .48);
-        --sauna-shadow-section: 0 2px 3px rgb(0 0 0 / .26), 0 7px 14px -5px rgb(0 0 0 / .36);
-        --sauna-shadow-control: 0 2px 2px rgb(0 0 0 / .35), 0 4px 7px -2px rgb(0 0 0 / .30);
+        --sauna-shadow-card: 0 ${this.preference("shadow_3_0_px")}px ${this.preference("shadow_5_0_px")}px rgb(0 0 0 / ${this.preference("opacity_0_32_ratio")}), 0 ${this.preference("shadow_14_0_px")}px ${this.preference("shadow_30_0_px")}px -${this.preference("shadow_8_0_px")}px rgb(0 0 0 / ${this.preference("opacity_0_48_ratio")});
+        --sauna-shadow-section: 0 ${this.preference("shadow_2_0_px")}px ${this.preference("shadow_3_0_px")}px rgb(0 0 0 / ${this.preference("opacity_0_26_ratio")}), 0 ${this.preference("shadow_7_0_px")}px ${this.preference("shadow_14_0_px")}px -${this.preference("shadow_5_0_px")}px rgb(0 0 0 / ${this.preference("opacity_0_36_ratio")});
+        --sauna-shadow-control: 0 ${this.preference("shadow_2_0_px")}px ${this.preference("shadow_2_0_px")}px rgb(0 0 0 / ${this.preference("opacity_0_35_ratio")}), 0 ${this.preference("shadow_4_0_px")}px ${this.preference("shadow_7_0_px")}px -${this.preference("shadow_2_0_px")}px rgb(0 0 0 / ${this.preference("opacity_0_3_ratio")});
       }
       * {
         box-sizing: border-box;
       }
+      :host { cursor: default; }
+      input:not([type="range"]):not([type="checkbox"]):not([type="radio"]), textarea { cursor: text; }
       main {
-        max-width: 1280px;
+        max-width: ${this.preference("size_1280_0_px")}px;
         height: 100%;
         min-height: 0;
         display: flex;
         flex-direction: column;
         margin: auto;
-        padding: 28px 32px 16px;
+        padding: ${this.preference("layout_space_33_px")}px ${this.preference("layout_space_36_px")}px ${this.preference("layout_space_22_px")}px;
       }
       main > header, main > .detail-tabs, main > #message { flex: 0 0 auto; }
-      main > section { flex: 1 1 0; min-height: 0; min-width: 0; overflow: auto; overscroll-behavior: contain; scrollbar-gutter: stable; padding: 4px; }
+      main > section { flex: 1 1 0; min-height: 0; min-width: 0; overflow: auto; overscroll-behavior: contain; scrollbar-gutter: stable; padding: ${this.preference("layout_space_09_px")}px; }
       header {
         display: grid;
         grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
         align-items: center;
-        gap: 18px;
-        margin-bottom: 24px;
+        gap: ${this.preference("layout_space_24_px")}px;
+        margin-bottom: ${this.preference("surface_gap_px")}px;
         color: var(--sauna-page-text, var(--sauna-color-text, var(--primary-text-color)));
       }
       .header-brand {
         display: flex;
         align-items: center;
-        gap: 14px;
+        gap: ${this.preference("layout_space_20_px")}px;
       }
       .header-context {
         display: flex;
         align-items: center;
-        gap: 10px;
+        gap: ${this.preference("layout_space_16_px")}px;
         justify-self: end;
         min-width: 0;
       }
@@ -2372,33 +3191,33 @@ class SaunaPanel extends HTMLElement {
         display: inline-flex;
         align-items: center;
         justify-content: center;
-        padding: 10px;
+        padding: ${this.preference("layout_space_16_px")}px;
         flex: 0 0 auto;
       }
-      .header-icon svg { width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; }
+      .header-icon svg { width: ${this.preference("size_20_0_px")}px; height: ${this.preference("size_20_0_px")}px; fill: none; stroke: currentColor; stroke-width: ${this.preference("stroke_1_7_ratio")}; stroke-linecap: round; stroke-linejoin: round; }
       .header-context :is(select, .sauna-select-trigger) {
         max-width: 100%;
       }
       h1 {
-        font-size: 28px;
-        letter-spacing: -0.6px;
+        font-size: ${this.preference("font_size_phase_px")}px;
+        letter-spacing: -${this.preference("tracking_0_6_px")}px;
         margin: 0;
       }
       h2 {
-        font-size: 19px;
-        margin: 0 0 12px;
+        font-size: ${this.preference("font_size_heading_emphasis_px")}px;
+        margin: 0 0 ${this.preference("layout_space_18_px")}px;
       }
       h3 {
-        font-size: 14px;
-        margin: 12px 0 8px;
+        font-size: ${this.preference("font_size_body_px")}px;
+        margin: ${this.preference("layout_space_18_px")}px 0 ${this.preference("layout_space_13_px")}px;
       }
       p {
-        margin: 8px 0;
+        margin: ${this.preference("layout_space_13_px")}px 0;
       }
       small,
       .muted {
         color: var(--sauna-page-muted-text, var(--sauna-color-muted-text, var(--secondary-text-color)));
-        font-size: 13px;
+        font-size: ${this.preference("font_size_compact_px")}px;
       }
       .grow {
         flex: 1;
@@ -2414,16 +3233,16 @@ class SaunaPanel extends HTMLElement {
       input,
       .number-input {
         font: inherit;
-        border: 1px solid var(--sauna-color-border, var(--divider-color));
+        border: ${this.preference("border_1_0_px")}px solid var(--sauna-color-border, var(--divider-color));
         border-radius: var(--sauna-control-radius);
-        padding: 9px 13px;
+        padding: ${this.preference("layout_space_15_px")}px ${this.preference("layout_space_19_px")}px;
         background: var(--sauna-color-card-background, var(--card-background-color));
         color: var(--sauna-card-text, var(--sauna-color-text, var(--primary-text-color)));
       }
       .number-input { display: flex; align-items: center; min-width: 0; padding: 0; }
       .number-input input { flex: 1 1 0; min-width: 0; width: 100%; border: 0; background: transparent; }
-      .input-unit { flex: 0 0 auto; padding-inline-end: 13px; color: var(--sauna-card-muted-text, var(--secondary-text-color)); white-space: nowrap; }
-      .number-input:has(input:focus-visible) { outline: 2px solid var(--sauna-focus-current); outline-offset: 3px; }
+      .input-unit { flex: 0 0 auto; padding-inline-end: ${this.preference("layout_space_19_px")}px; color: var(--sauna-card-muted-text, var(--secondary-text-color)); white-space: nowrap; }
+      .number-input:has(input:focus-visible) { outline: ${this.preference("border_2_0_px")}px solid var(--sauna-focus-current); outline-offset: ${this.preference("layout_space_08_px")}px; }
       .number-input input:focus-visible { outline: none; }
       #session, #session + .sauna-select-trigger {
         min-width: 0;
@@ -2431,10 +3250,10 @@ class SaunaPanel extends HTMLElement {
       }
       select, .sauna-select-trigger {
         appearance: none;
-        padding-inline-end: 40px;
+        padding-inline-end: ${this.preference("layout_space_37_px")}px;
         background-image: linear-gradient(45deg, transparent 50%, currentColor 50%), linear-gradient(135deg, currentColor 50%, transparent 50%);
-        background-position: right 21px center, right 16px center;
-        background-size: 5px 5px;
+        background-position: right ${this.preference("size_21_0_px")}px center, right ${this.preference("size_16_0_px")}px center;
+        background-size: ${this.preference("size_5_0_px")}px ${this.preference("size_5_0_px")}px;
         background-repeat: no-repeat;
       }
       select[data-sauna-select-model] { display: none !important; }
@@ -2450,12 +3269,12 @@ class SaunaPanel extends HTMLElement {
         position: fixed;
         inset: auto;
         margin: 0;
-        padding: 4px;
+        padding: ${this.preference("layout_space_09_px")}px;
         z-index: 100;
         overflow: auto;
         overscroll-behavior: contain;
         box-sizing: border-box;
-        border: 1px solid var(--sauna-color-border, var(--divider-color));
+        border: ${this.preference("border_1_0_px")}px solid var(--sauna-color-border, var(--divider-color));
         border-radius: var(--sauna-control-radius);
         background: var(--sauna-surface-raised, var(--sauna-color-card-background));
         color: var(--sauna-card-text, var(--primary-text-color));
@@ -2463,32 +3282,32 @@ class SaunaPanel extends HTMLElement {
         font: inherit;
       }
       .sauna-select-menu [role="option"] {
-        padding: 9px 13px;
+        padding: ${this.preference("layout_space_15_px")}px ${this.preference("layout_space_19_px")}px;
         border-radius: var(--sauna-control-radius);
         min-height: var(--sauna-button-height);
         overflow-wrap: anywhere;
         cursor: pointer;
       }
       .sauna-select-menu [aria-selected="true"] {
-        font-weight: 600;
+        font-weight: ${this.preference("font_weight_600_0_ratio")};
         background: var(--sauna-surface-control, var(--sauna-color-card-background));
       }
       .sauna-select-menu [data-active="true"],
       .sauna-select-menu [role="option"]:hover:not([aria-disabled="true"]) {
-        outline: 2px solid var(--sauna-card-focus, var(--sauna-color-focus));
-        outline-offset: -2px;
+        outline: ${this.preference("border_2_0_px")}px solid var(--sauna-card-focus, var(--sauna-color-focus));
+        outline-offset: -${this.preference("layout_space_07_px")}px;
       }
-      .sauna-select-menu [aria-disabled="true"] { opacity: 0.5; cursor: default; }
-      .sauna-select-group { padding: 6px 13px; color: var(--sauna-card-muted-text); font-size: 13px; }
+      .sauna-select-menu [aria-disabled="true"] { opacity: ${this.preference("opacity_0_5_ratio")}; cursor: default; }
+      .sauna-select-group { padding: ${this.preference("control_group_gap_px")}px ${this.preference("layout_space_19_px")}px; color: var(--sauna-card-muted-text); font-size: ${this.preference("font_size_compact_px")}px; }
       button {
         cursor: pointer;
         min-height: var(--sauna-button-height);
-        font-weight: 600;
-        line-height: 1.3;
+        font-weight: ${this.preference("font_weight_600_0_ratio")};
+        line-height: ${this.preference("line_height_1_3_ratio")};
         background: var(--sauna-surface-control, var(--sauna-color-card-background));
-        border-color: color-mix(in srgb, var(--sauna-surface-control) 72%, white);
+        border-color: color-mix(in srgb, var(--sauna-surface-control) ${this.preference("color_mix_72_0_percent")}%, white);
         box-shadow: var(--sauna-shadow-control);
-        transition: background-color 140ms ease, border-color 140ms ease, box-shadow 140ms ease;
+        transition: background-color ${this.preference("transition_140_0_ms")}ms ease, border-color ${this.preference("transition_140_0_ms")}ms ease, box-shadow ${this.preference("transition_140_0_ms")}ms ease;
         --sauna-button-hover: var(--sauna-card-focus, var(--sauna-focus-current));
       }
       button:hover:not(:disabled):not(:focus-visible) {
@@ -2498,15 +3317,15 @@ class SaunaPanel extends HTMLElement {
       button:focus-visible,
       select:focus-visible,
       input:focus-visible {
-        outline: 2px solid var(--sauna-focus-current);
-        outline-offset: 3px;
+        outline: ${this.preference("border_2_0_px")}px solid var(--sauna-focus-current);
+        outline-offset: ${this.preference("layout_space_08_px")}px;
       }
       button:disabled {
-        opacity: 0.5;
+        opacity: ${this.preference("opacity_0_5_ratio")};
         cursor: default;
         box-shadow: none;
       }
-      button:active:not(:disabled) { box-shadow: 0 1px 2px rgb(0 0 0 / .25); }
+      button:active:not(:disabled) { box-shadow: 0 ${this.preference("shadow_1_0_px")}px ${this.preference("shadow_2_0_px")}px rgb(0 0 0 / ${this.preference("opacity_0_25_ratio")}); }
       button.primary,
       button.confirm {
         background: var(--confirm);
@@ -2525,7 +3344,7 @@ class SaunaPanel extends HTMLElement {
         background: var(--accent);
         color: var(--accent-ink);
         border-color: var(--accent);
-        font-weight: 700;
+        font-weight: ${this.preference("font_weight_700_0_ratio")};
         --sauna-button-hover: var(--sauna-accent-focus, var(--sauna-card-focus));
       }
       a {
@@ -2535,11 +3354,11 @@ class SaunaPanel extends HTMLElement {
         display: flex;
         flex-wrap: wrap;
         gap: var(--sauna-control-gap);
-        margin: 8px 0 12px;
+        margin: ${this.preference("layout_space_13_px")}px 0 ${this.preference("layout_space_18_px")}px;
       }
       .card {
         background: var(--sauna-surface-raised, var(--sauna-color-card-background, var(--card-background-color)));
-        border: 1px solid var(--sauna-color-border, var(--divider-color));
+        border: ${this.preference("border_1_0_px")}px solid var(--sauna-color-border, var(--divider-color));
         border-radius: var(--sauna-surface-radius);
         padding: var(--sauna-surface-padding);
         margin: var(--sauna-surface-gap) 0;
@@ -2553,41 +3372,44 @@ class SaunaPanel extends HTMLElement {
       .card h2,
       .card h3 { color: inherit; }
       .hero {
-        border-left: 4px solid var(--accent);
+        border-left: ${this.preference("border_4_0_px")}px solid var(--accent);
       }
       .control-main {
         background: var(--sauna-main-background, var(--sauna-surface-raised, var(--sauna-color-card-background, var(--card-background-color))));
         color: var(--sauna-main-text, var(--sauna-card-text, inherit));
         --sauna-focus-current: var(--sauna-main-focus, var(--sauna-card-focus, var(--accent)));
-        transition: background-color 350ms ease;
+        transition: background-color ${this.preference("transition_350_0_ms")}ms ease;
       }
       .control-main small,
       .control-main .muted { color: var(--sauna-main-muted-text, var(--sauna-card-muted-text, inherit)); }
       .control-main button small { color: inherit; }
-      .oven-feedback { margin: 4px 0 10px; }
-      .program-current { display: flex; align-items: center; gap: 16px; }
-      .program-current-value { flex: 1; min-width: 0; display: grid; gap: 4px; }
-      .program-active-label { overflow-wrap: anywhere; font-size: 17px; font-weight: 600; }
+      .oven-feedback { margin: ${this.preference("layout_space_09_px")}px 0 ${this.preference("layout_space_16_px")}px; }
+      .program-current { display: flex; align-items: center; gap: ${this.preference("layout_space_22_px")}px; }
+      .program-current-value { flex: 1; min-width: 0; display: grid; gap: ${this.preference("layout_space_09_px")}px; }
+      .program-active-label { overflow-wrap: anywhere; font-size: ${this.preference("font_size_subtitle_px")}px; font-weight: ${this.preference("font_weight_600_0_ratio")}; }
       [data-action="program-toggle"] { flex: 0 0 auto; }
-      #program-choice-body { margin-top: 16px; }
-      .program-disclosure { margin-top: 12px; }
-      .scale-hint { fill: var(--sauna-ink-status-warning, var(--sauna-card-text, inherit)); color: var(--sauna-ink-status-warning, var(--sauna-card-text, inherit)); font-size: 11px; margin: 2px 0 0; }
+      #program-choice-body { margin-top: ${this.preference("layout_space_22_px")}px; }
+      .program-disclosure { margin-top: ${this.preference("layout_space_18_px")}px; }
+      .scale-hint { fill: var(--sauna-ink-status-warning, var(--sauna-card-text, inherit)); color: var(--sauna-ink-status-warning, var(--sauna-card-text, inherit)); font-size: ${this.preference("font_size_caption_px")}px; margin: ${this.preference("layout_space_07_px")}px 0 0; }
       .control-main .scale-hint { fill: var(--sauna-main-ink-status-warning, var(--sauna-ink-status-warning, inherit)); color: var(--sauna-main-ink-status-warning, var(--sauna-ink-status-warning, inherit)); }
-      .appearance-colors { display: grid; gap: 9px; }
-      .appearance-color-row { display: grid; grid-template-columns: minmax(130px, 1fr) 48px minmax(96px, 118px) auto; gap: 8px; align-items: center; }
-      .appearance-color-row input[type="color"] { padding: 2px; width: 48px; height: 40px; }
+      .appearance-colors { display: grid; gap: ${this.preference("layout_space_15_px")}px; }
+      .appearance-color-row { display: grid; grid-template-columns: minmax(${this.preference("size_130_0_px")}px, 1fr) ${this.preference("size_48_0_px")}px minmax(${this.preference("size_96_0_px")}px, ${this.preference("size_118_0_px")}px) auto; gap: ${this.preference("layout_space_13_px")}px; align-items: center; }
+      .appearance-color-row input[type="color"] { padding: ${this.preference("layout_space_07_px")}px; width: ${this.preference("size_48_0_px")}px; height: ${this.preference("size_40_0_px")}px; }
       .appearance-color-row input:not([type="color"]) { min-width: 0; width: 100%; }
-      .appearance-color-row button { padding: 7px 9px; }
-      .appearance-scales { display: flex; flex-wrap: wrap; gap: 16px; }
-      .appearance-scale { display: flex; gap: 9px; align-items: end; border-top: 1px solid var(--sauna-color-border, var(--divider-color)); padding-top: 12px; }
-      .appearance-scale legend { font-weight: 600; }
-      .appearance-scale label { display: grid; gap: 4px; font-size: 13px; }
-      .appearance-scale .number-input { width: 110px; }
+      .appearance-color-row button { padding: ${this.preference("layout_space_12_px")}px ${this.preference("layout_space_15_px")}px; }
+      .appearance-scales { display: flex; flex-wrap: wrap; gap: ${this.preference("layout_space_22_px")}px; }
+      .appearance-scale { display: flex; gap: ${this.preference("layout_space_15_px")}px; align-items: end; border-top: ${this.preference("border_1_0_px")}px solid var(--sauna-color-border, var(--divider-color)); padding-top: ${this.preference("layout_space_18_px")}px; }
+      .appearance-scale legend { font-weight: ${this.preference("font_weight_600_0_ratio")}; }
+      .appearance-preference-fields { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, ${this.preference("size_18_0_em")}em), 1fr)); gap: var(--sauna-control-gap); }
+      .appearance-preference-fields label { display: grid; gap: var(--sauna-control-gap); }
+      .appearance-preference-fields small { color: var(--sauna-card-muted-text); }
+      .appearance-scale label { display: grid; gap: ${this.preference("layout_space_09_px")}px; font-size: ${this.preference("font_size_compact_px")}px; }
+      .appearance-scale .number-input { width: ${this.preference("size_110_0_px")}px; }
       #appearance-status[data-kind="success"] { color: var(--sauna-ink-status-success, var(--sauna-color-status-success)); }
       #appearance-status[data-kind="error"] { color: var(--sauna-ink-status-error, var(--sauna-color-status-error)); }
-      #appearance-status[data-kind="pending"] { border-left: 3px solid var(--sauna-color-status-info); padding-left: 8px; }
-      @media (max-width: 540px) {
-        .appearance-color-row { grid-template-columns: 48px minmax(0, 1fr) auto; }
+      #appearance-status[data-kind="pending"] { border-left: ${this.preference("border_3_0_px")}px solid var(--sauna-color-status-info); padding-left: ${this.preference("layout_space_13_px")}px; }
+      @media (max-width: ${this.preference("breakpoint_540_0_px")}px) {
+        .appearance-color-row { grid-template-columns: ${this.preference("size_48_0_px")}px minmax(0, 1fr) auto; }
         .appearance-color-row label { grid-column: 1 / -1; }
         .appearance-color-row input[type="color"] { grid-column: 1; }
         .appearance-color-row input:not([type="color"]) { grid-column: 2; }
@@ -2595,26 +3417,26 @@ class SaunaPanel extends HTMLElement {
         .appearance-scale { flex-wrap: wrap; }
       }
       .phase {
-        font-size: 28px;
-        font-weight: 650;
-        letter-spacing: -0.5px;
+        font-size: ${this.preference("font_size_phase_px")}px;
+        font-weight: ${this.preference("font_weight_650_0_ratio")};
+        letter-spacing: -${this.preference("tracking_0_5_px")}px;
       }
       .badge {
         display: inline-block;
-        border-radius: 20px;
-        padding: 3px 11px;
+        border-radius: ${this.preference("radius_20_0_px")}px;
+        padding: ${this.preference("layout_space_08_px")}px ${this.preference("layout_space_17_px")}px;
         background: var(--sauna-tint-info-background, var(--sauna-color-card-background, var(--card-background-color)));
         color: var(--sauna-tint-info-text, var(--sauna-card-text, inherit));
-        font-size: 13px;
+        font-size: ${this.preference("font_size_compact_px")}px;
       }
       .notice {
         background: var(--sauna-tint-warning-background, var(--sauna-color-card-background, var(--card-background-color)));
         color: var(--sauna-tint-warning-text, var(--sauna-card-text, inherit));
         --sauna-focus-current: var(--sauna-tint-warning-focus, var(--sauna-card-focus, var(--accent)));
-        border-left: 4px solid var(--sauna-color-status-warning);
-        padding: 12px 16px;
-        border-radius: 8px;
-        margin: 10px 0;
+        border-left: ${this.preference("border_4_0_px")}px solid var(--sauna-color-status-warning);
+        padding: ${this.preference("layout_space_18_px")}px ${this.preference("layout_space_22_px")}px;
+        border-radius: ${this.preference("radius_8_0_px")}px;
+        margin: ${this.preference("layout_space_16_px")}px 0;
       }
       .error {
         background: var(--sauna-tint-error-background, var(--sauna-color-card-background, var(--card-background-color)));
@@ -2623,28 +3445,30 @@ class SaunaPanel extends HTMLElement {
       }
       .legend {
         display: flex;
-        gap: 18px;
+        gap: ${this.preference("layout_space_24_px")}px;
         flex-wrap: wrap;
-        font-size: 13px;
+        font-size: ${this.preference("font_size_compact_px")}px;
       }
-      .history-legend { display: grid; grid-template-columns: 76px minmax(0, 1fr); align-items: baseline; gap: 12px; }
-      .history-legend > strong { font-size: 12px; font-weight: 500; color: var(--sauna-card-muted-text); }
-      .history-legend .legend { display: grid; grid-template-columns: repeat(auto-fit, minmax(108px, 1fr)); gap: 6px; margin: 0; }
-      .history-legend .legend > span { display: flex; align-items: center; gap: 6px; min-width: 0; padding: 4px 6px; border: 1px solid transparent; border-radius: calc(var(--sauna-control-radius) / 2); }
-      .history-legend-groups { display: grid; gap: 8px; padding-top: 12px; margin-top: 10px; border-top: 1px solid var(--sauna-color-border); font-size: 12px; }
-      @container (max-width: 500px) {
-        .history-legend { grid-template-columns: 1fr; gap: 4px; }
-        .history-legend .legend { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+      .history-legend { display: grid; grid-template-columns: ${this.preference("size_76_0_px")}px minmax(0, 1fr); align-items: baseline; gap: ${this.preference("layout_space_18_px")}px; }
+      .history-legend > strong { font-size: ${this.preference("font_size_small_px")}px; font-weight: ${this.preference("font_weight_500_0_ratio")}; color: var(--sauna-card-muted-text); }
+      .history-legend .legend { display: flex; flex-wrap: wrap; justify-content: flex-start; gap: ${this.preference("control_group_gap_px")}px; margin: 0; }
+      .history-legend .legend > span { display: flex; align-items: center; gap: ${this.preference("control_group_gap_px")}px; min-width: 0; padding: ${this.preference("layout_space_09_px")}px ${this.preference("control_group_gap_px")}px; border: ${this.preference("border_1_0_px")}px solid transparent; border-radius: calc(var(--sauna-control-radius) / 2); }
+      .history-legend [data-legend-phase] { background: color-mix(in srgb, var(--history-legend-color) ${this.preference("color_mix_16_0_percent")}%, transparent); }
+      .history-humidity-toggle { justify-self: start; min-height: ${this.preference("size_32_0_px")}px; padding: ${this.preference("layout_space_09_px")}px ${this.preference("layout_space_13_px")}px; font-size: ${this.preference("font_size_small_px")}px; color: var(--sauna-color-series-humidity); }
+      .history-legend-groups { display: grid; gap: ${this.preference("layout_space_13_px")}px; padding-top: ${this.preference("layout_space_18_px")}px; margin-top: ${this.preference("layout_space_16_px")}px; border-top: ${this.preference("border_1_0_px")}px solid var(--sauna-color-border); font-size: ${this.preference("font_size_small_px")}px; }
+      @container (max-width: ${this.preference("breakpoint_500_0_px")}px) {
+        .history-legend { grid-template-columns: 1fr; gap: ${this.preference("layout_space_09_px")}px; }
       }
-      .history-legend .legend-swatch { width: 22px; height: 12px; display: block; flex: 0 0 auto; background: transparent; }
-      .legend-swatch .temperature { stroke: var(--sauna-color-series-temperature); stroke-width: 3.5; }
-      .legend-swatch .humidity { stroke: var(--sauna-color-series-humidity); stroke-width: 3.5; }
+      .history-legend .legend-swatch { width: ${this.preference("size_22_0_px")}px; height: ${this.preference("size_12_0_px")}px; display: block; flex: 0 0 auto; background: transparent; }
+      .legend-swatch .temperature { stroke: var(--sauna-color-series-temperature); stroke-width: ${this.preference("chart_curve_width_px")}; }
+      .legend-swatch .humidity { stroke: var(--sauna-color-series-humidity); stroke-width: ${this.preference("chart_curve_width_px")}; }
+      .legend-swatch .history-event-marker { cursor: default; }
       .dot {
         display: inline-block;
-        width: 10px;
-        height: 10px;
+        width: ${this.preference("size_10_0_px")}px;
+        height: ${this.preference("size_10_0_px")}px;
         border-radius: 50%;
-        margin-right: 6px;
+        margin-right: ${this.preference("control_group_gap_px")}px;
       }
       .chart {
         width: 100%;
@@ -2654,35 +3478,35 @@ class SaunaPanel extends HTMLElement {
       }
       .chart text {
         fill: var(--sauna-chart-ink, var(--sauna-color-chart-text));
-        font: 12px system-ui;
+        font: ${this.preference("font_size_small_px")}px var(--primary-font-family, sans-serif);
       }
       .chart .gridline {
         stroke: var(--sauna-color-border, var(--divider-color));
-        stroke-width: 1;
+        stroke-width: ${this.preference("stroke_1_0_ratio")};
       }
-      .chart rect { stroke-width: 1; }
+      .chart rect { stroke-width: ${this.preference("stroke_1_0_ratio")}; }
       .chart .gang {
-        fill: color-mix(in srgb, var(--sauna-color-phase-session) 20%, transparent);
+        fill: color-mix(in srgb, var(--sauna-color-phase-session) ${this.preference("color_mix_20_0_percent")}%, transparent);
         stroke: var(--sauna-color-phase-session);
       }
       .chart .provisional {
-        fill: color-mix(in srgb, var(--sauna-color-status-warning) 13%, transparent);
+        fill: color-mix(in srgb, var(--sauna-color-status-warning) ${this.preference("color_mix_13_0_percent")}%, transparent);
         stroke: var(--sauna-color-status-warning);
       }
       .chart .heat {
         stroke: var(--sauna-color-phase-warmup);
-        fill: color-mix(in srgb, var(--sauna-color-phase-warmup) 20%, transparent);
+        fill: color-mix(in srgb, var(--sauna-color-phase-warmup) ${this.preference("color_mix_20_0_percent")}%, transparent);
       }
       .chart .event {
         stroke: var(--sauna-color-chart-event);
-        stroke-dasharray: 3 5;
+        stroke-dasharray: ${this.preference("event_line_dash_length_px")} ${this.preference("event_line_dash_gap_px")};
       }
       .chart .infusion {
         stroke: var(--sauna-color-event-infusion);
       }
       .chart path {
         fill: none;
-        stroke-width: 2;
+        stroke-width: ${this.preference("stroke_2_0_ratio")};
       }
       .scroll {
         overflow: auto;
@@ -2690,35 +3514,35 @@ class SaunaPanel extends HTMLElement {
       table {
         border-collapse: collapse;
         width: 100%;
-        font-size: 13px;
+        font-size: ${this.preference("font_size_compact_px")}px;
       }
       td,
       th {
         text-align: left;
-        padding: 10px 12px;
-        border-bottom: 1px solid var(--sauna-color-border, var(--divider-color));
+        padding: ${this.preference("layout_space_16_px")}px ${this.preference("layout_space_18_px")}px;
+        border-bottom: ${this.preference("border_1_0_px")}px solid var(--sauna-color-border, var(--divider-color));
         white-space: nowrap;
       }
       th {
-        font-weight: 600;
+        font-weight: ${this.preference("font_weight_600_0_ratio")};
       }
       .toolbar {
-        margin: 18px 0 8px;
+        margin: ${this.preference("layout_space_24_px")}px 0 ${this.preference("layout_space_13_px")}px;
       }
       input[type="range"] {
         padding: 0;
-        max-width: 180px;
+        max-width: ${this.preference("size_180_0_px")}px;
       }
       .forms {
         display: grid;
         grid-template-columns: repeat(3, minmax(0, 1fr));
-        gap: 16px;
+        gap: ${this.preference("layout_space_22_px")}px;
       }
       .field {
         display: flex;
         flex-direction: column;
-        gap: 6px;
-        font-size: 13px;
+        gap: ${this.preference("control_group_gap_px")}px;
+        font-size: ${this.preference("font_size_compact_px")}px;
       }
       .field input {
         width: 100%;
@@ -2729,12 +3553,12 @@ class SaunaPanel extends HTMLElement {
         margin: 0;
       }
       details {
-        margin: 18px 0;
+        margin: ${this.preference("layout_space_24_px")}px 0;
       }
       summary {
         cursor: pointer;
-        font-weight: 600;
-        margin-bottom: 14px;
+        font-weight: ${this.preference("font_weight_600_0_ratio")};
+        margin-bottom: ${this.preference("layout_space_20_px")}px;
       }
       [hidden] {
         display: none !important;
@@ -2743,42 +3567,42 @@ class SaunaPanel extends HTMLElement {
         display: none;
       }
       #settings .row {
-        margin: 18px 0;
+        margin: ${this.preference("layout_space_24_px")}px 0;
       }
       .empty {
-        padding: 45px;
+        padding: ${this.preference("layout_space_38_px")}px;
         text-align: center;
         color: var(--sauna-card-muted-text, var(--sauna-color-muted-text, var(--secondary-text-color)));
       }
-      @media (max-width: 800px) {
+      @media (max-width: ${this.preference("breakpoint_800_0_px")}px) {
         main {
-          padding: 18px 16px 16px;
+          padding: ${this.preference("layout_space_24_px")}px ${this.preference("layout_space_22_px")}px ${this.preference("layout_space_22_px")}px;
         }
         .forms {
           grid-template-columns: repeat(2, 1fr);
         }
         header {
-          gap: 10px;
+          gap: ${this.preference("layout_space_16_px")}px;
         }
         h1 {
-          font-size: 23px;
+          font-size: ${this.preference("font_size_display_small_px")}px;
         }
         .card {
-          padding: 16px;
+          padding: ${this.preference("layout_space_22_px")}px;
         }
         header :is(select, .sauna-select-trigger) {
-          max-width: 180px;
+          max-width: ${this.preference("size_180_0_px")}px;
         }
       }
-      @media (max-width: 450px) {
+      @media (max-width: ${this.preference("breakpoint_450_0_px")}px) {
         .forms {
           grid-template-columns: 1fr;
         }
         .phase {
-          font-size: 24px;
+          font-size: ${this.preference("font_size_display_px")}px;
         }
         .legend {
-          gap: 12px;
+          gap: ${this.preference("layout_space_18_px")}px;
         }
       }
       :host {
@@ -2788,73 +3612,74 @@ class SaunaPanel extends HTMLElement {
         max-width: none;
       }
       header {
-        margin-bottom: 12px;
+        margin-bottom: ${this.preference("layout_space_18_px")}px;
       }
       .plot-panel {
         padding: var(--sauna-surface-padding);
         background: var(--sauna-surface-raised, var(--sauna-color-card-background));
         color: var(--sauna-card-text);
         --sauna-focus-current: var(--sauna-card-focus);
-        border: 1px solid var(--sauna-color-border);
+        border: ${this.preference("border_1_0_px")}px solid var(--sauna-color-border);
         border-radius: var(--sauna-surface-radius);
         box-shadow: var(--sauna-shadow-card);
       }
       .plot-title {
         text-align: left;
         color: var(--sauna-card-text);
-        font-weight: 600;
-        font-size: 18px;
+        font-weight: ${this.preference("font_weight_600_0_ratio")};
+        font-size: ${this.preference("font_size_heading_px")}px;
       }
       .legend {
         justify-content: center;
-        margin: 18px 0;
+        margin: ${this.preference("layout_space_24_px")}px 0;
       }
       .legend i {
         display: inline-block;
-        width: 32px;
-        height: 5px;
-        margin-right: 6px;
+        width: ${this.preference("size_32_0_px")}px;
+        height: ${this.preference("size_5_0_px")}px;
+        margin-right: ${this.preference("control_group_gap_px")}px;
         vertical-align: middle;
       }
       .top-legend {
-        margin: 24px 0 0;
+        margin: ${this.preference("surface_gap_px")}px 0 0;
       }
       .position-select {
         justify-content: center;
-        font-size: 12px;
-        gap: 8px;
+        font-size: ${this.preference("font_size_small_px")}px;
+        gap: ${this.preference("layout_space_13_px")}px;
       }
       .position-select button {
         color: var(--sauna-card-text);
-        padding: 8px 12px;
+        padding: ${this.preference("layout_space_13_px")}px ${this.preference("layout_space_18_px")}px;
       }
       .position-select button[aria-pressed="true"] {
-        font-weight: 700;
+        font-weight: ${this.preference("font_weight_700_0_ratio")};
         text-decoration: underline;
-        text-underline-offset: 4px;
+        text-underline-offset: ${this.preference("layout_space_09_px")}px;
       }
       .plot-wrap {
         position: relative;
       }
       .chart {
-        height: clamp(280px, 44dvh, 400px);
+        height: clamp(${this.preference("size_280_0_px")}px, ${this.preference("history_plot_viewport_height_percent")}dvh, ${this.preference("size_400_0_px")}px);
         width: 100%;
         touch-action: pan-y;
         user-select: none;
+        cursor: default;
       }
       .chart text {
         fill: var(--sauna-chart-ink, var(--sauna-color-chart-text));
       }
       .detector-chart {
-        height: 220px;
+        height: ${this.preference("size_220_0_px")}px;
       }
       .main-tabs {
         justify-content: center;
         justify-self: center;
         width: max-content;
         margin: 0;
-        padding: 4px;
-        border: 1px solid var(--sauna-color-border, var(--divider-color));
+        padding: ${this.preference("layout_space_09_px")}px;
+        border: ${this.preference("border_1_0_px")}px solid var(--sauna-color-border, var(--divider-color));
         border-radius: var(--sauna-control-radius);
         background: var(--sauna-surface-recessed);
         max-width: 100%;
@@ -2863,19 +3688,19 @@ class SaunaPanel extends HTMLElement {
         scrollbar-width: thin;
       }
       .main-tabs button {
-        padding: 8px 12px;
-        font-size: 13px;
+        padding: ${this.preference("layout_space_13_px")}px ${this.preference("layout_space_18_px")}px;
+        font-size: ${this.preference("font_size_compact_px")}px;
         border-color: transparent;
         flex: 0 0 auto;
       }
       .detail-tabs {
-        font-size: 13px;
+        font-size: ${this.preference("font_size_compact_px")}px;
       }
       .chart .gridline {
-        stroke: color-mix(in srgb, var(--sauna-color-chart-grid) 10%, transparent);
+        stroke: color-mix(in srgb, var(--sauna-color-chart-grid) ${this.preference("color_mix_10_0_percent")}%, transparent);
       }
       .chart .gang {
-        fill: color-mix(in srgb, var(--sauna-color-phase-session) 22%, transparent);
+        fill: color-mix(in srgb, var(--sauna-color-phase-session) ${this.preference("color_mix_22_0_percent")}%, transparent);
         stroke: var(--sauna-color-phase-session);
       }
       .chart .provisional {
@@ -2883,40 +3708,40 @@ class SaunaPanel extends HTMLElement {
       }
       .chart .heat {
         stroke: var(--sauna-color-phase-warmup);
-        fill: color-mix(in srgb, var(--sauna-color-phase-warmup) 16%, transparent);
+        fill: color-mix(in srgb, var(--sauna-color-phase-warmup) ${this.preference("color_mix_16_0_percent")}%, transparent);
       }
       .chart .ready {
         stroke: var(--sauna-color-phase-ready);
-        fill: color-mix(in srgb, var(--sauna-color-phase-ready) 16%, transparent);
+        fill: color-mix(in srgb, var(--sauna-color-phase-ready) ${this.preference("color_mix_16_0_percent")}%, transparent);
       }
       .chart .vent {
         stroke: var(--sauna-color-activity-ventilation);
-        stroke-width: 2;
-        stroke-dasharray: 8 4;
+        stroke-width: ${this.preference("stroke_2_0_ratio")};
+        stroke-dasharray: ${this.preference("ventilation_dash_length_px")} ${this.preference("ventilation_dash_gap_px")};
       }
       .chart .cool {
         stroke: var(--sauna-color-phase-forced-cooling);
-        fill: color-mix(in srgb, var(--sauna-color-phase-forced-cooling) 16%, transparent);
+        fill: color-mix(in srgb, var(--sauna-color-phase-forced-cooling) ${this.preference("color_mix_16_0_percent")}%, transparent);
       }
       .chart .after {
         stroke: var(--sauna-color-phase-cooling);
-        fill: color-mix(in srgb, var(--sauna-color-phase-cooling) 16%, transparent);
+        fill: color-mix(in srgb, var(--sauna-color-phase-cooling) ${this.preference("color_mix_16_0_percent")}%, transparent);
       }
       .chart .phase-other {
         stroke: var(--sauna-color-phase-idle);
-        fill: color-mix(in srgb, var(--sauna-color-phase-idle) 22%, transparent);
+        fill: color-mix(in srgb, var(--sauna-color-phase-idle) ${this.preference("color_mix_22_0_percent")}%, transparent);
       }
       .chart .door {
         stroke: var(--sauna-color-event-door);
-        stroke-width: 1;
-        fill: color-mix(in srgb, var(--sauna-color-event-door) 20%, transparent);
+        stroke-width: ${this.preference("stroke_1_0_ratio")};
+        fill: color-mix(in srgb, var(--sauna-color-event-door) ${this.preference("color_mix_20_0_percent")}%, transparent);
       }
       .chart .infusion {
         stroke: var(--sauna-color-event-infusion);
-        stroke-width: 2;
+        stroke-width: ${this.preference("stroke_2_0_ratio")};
       }
       .chart path {
-        stroke-width: 3.5;
+        stroke-width: ${this.preference("chart_curve_width_px")};
       }
       .chart path.temperature {
         stroke: var(--sauna-color-series-temperature);
@@ -2925,7 +3750,7 @@ class SaunaPanel extends HTMLElement {
         stroke: var(--sauna-color-series-humidity);
       }
       .chart path.lower {
-        stroke-dasharray: 8 5;
+        stroke-dasharray: ${this.preference("curve_dash_length_px")} ${this.preference("curve_dash_gap_px")};
       }
       .chart .axis-temperature {
         fill: var(--sauna-color-series-temperature);
@@ -2946,65 +3771,87 @@ class SaunaPanel extends HTMLElement {
       #tooltip { box-sizing: border-box;
         display: grid;
         grid-template-columns: auto minmax(0, 1fr);
-        gap: 8px 20px;
+        gap: ${this.preference("layout_space_13_px")}px ${this.preference("surface_padding_px")}px;
         background: transparent;
         color: var(--sauna-card-text, var(--sauna-color-text, var(--primary-text-color)));
         padding: 0;
-        font: 13px/1.5 system-ui;
+        font: ${this.preference("font_size_compact_px")}px/${this.preference("body_line_height")} var(--primary-font-family, sans-serif);
       }
-      .history-readout { block-size: 5rem; overflow: auto; scrollbar-gutter: stable; }
-      @container (max-width: 500px) { .history-readout { block-size: 6rem; } }
-      .history-inspection { margin-top: 12px; padding: 14px; border: 1px solid var(--sauna-color-border); border-radius: var(--sauna-control-radius); background: color-mix(in srgb, var(--history-phase-color, var(--sauna-surface-section)) 20%, var(--sauna-surface-section)); box-shadow: var(--sauna-shadow-section); }
+      .history-readout { block-size: ${this.preference("size_5_0_rem")}rem; overflow: auto; scrollbar-gutter: stable; }
+      @container (max-width: ${this.preference("breakpoint_500_0_px")}px) { .history-readout { block-size: ${this.preference("size_6_0_rem")}rem; } }
+      .history-readout:has(#tooltip[data-selection="range"]) { block-size: ${this.preference("size_14_0_rem")}rem; }
+      .history-inspection-actions { display: flex; justify-content: flex-end; margin-bottom: ${this.preference("control_group_gap_px")}px; }
+      .history-inspection-actions button { min-height: ${this.preference("size_32_0_px")}px; padding: ${this.preference("layout_space_09_px")}px ${this.preference("layout_space_13_px")}px; font-size: ${this.preference("font_size_small_px")}px; }
+      .history-inspection { margin-top: ${this.preference("layout_space_18_px")}px; padding: ${this.preference("layout_space_20_px")}px; border: ${this.preference("border_1_0_px")}px solid var(--sauna-color-border); border-radius: var(--sauna-control-radius); background: color-mix(in srgb, var(--history-phase-color, var(--sauna-surface-section)) ${this.preference("color_mix_20_0_percent")}%, var(--sauna-surface-section)); box-shadow: var(--sauna-shadow-section); }
       ${Object.entries(phaseAppearance)
         .map(
           ([phase, style]) => `
         .history-inspection:has(#tooltip[data-phase="${phase}"]) { --history-phase-color: var(--sauna-color-${style.color.replaceAll("_", "-")}); }
-        .history-inspection:has(#tooltip[data-phase="${phase}"]) [data-legend-phase="${phase}"] { border-color: var(--history-phase-color); background: color-mix(in srgb, var(--history-phase-color) 16%, transparent); font-weight: 600; }
+        .history-inspection:has(#tooltip[data-phase="${phase}"]) [data-legend-phase="${phase}"] { border-color: var(--history-phase-color); background: color-mix(in srgb, var(--history-phase-color) ${this.preference("color_mix_16_0_percent")}%, transparent); font-weight: ${this.preference("font_weight_600_0_ratio")}; }
       `,
         )
         .join("")}
       .history-readout > #tooltip { min-block-size: 100%; align-content: start; }
       #tooltip[hidden] { display: none; }
-      .history-tooltip-time { color: var(--sauna-card-muted-text); font-weight: 500; font-size: 12px; font-variant-numeric: tabular-nums; }
-      .history-tooltip-values { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 14rem), 1fr)); gap: 6px 24px; }
-      .history-tooltip-values > div { display: grid; grid-template-columns: minmax(0, 1fr) max-content; min-width: 0; align-items: baseline; gap: 12px; }
+      .history-tooltip-time { color: var(--sauna-card-muted-text); font-weight: ${this.preference("font_weight_500_0_ratio")}; font-size: ${this.preference("font_size_small_px")}px; font-variant-numeric: tabular-nums; }
+      .history-tooltip-values { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, ${this.preference("size_14_0_rem")}rem), 1fr)); gap: ${this.preference("control_group_gap_px")}px ${this.preference("surface_gap_px")}px; }
+      .history-tooltip-values > div { display: grid; grid-template-columns: minmax(0, 1fr) max-content; min-width: 0; align-items: baseline; gap: ${this.preference("layout_space_18_px")}px; }
       .history-tooltip-values > div[hidden] { display: none; }
-      .history-tooltip-values [data-quantity] { display: inline-flex; align-items: center; gap: 7px; }
-      .history-tooltip-values [data-quantity]::before { content: ""; width: 22px; height: 3px; flex: 0 0 auto; background: var(--sauna-color-series-temperature); }
+      .history-tooltip-values[hidden] { display: none; }
+      .history-tooltip-boundary { grid-column: 1 / -1; color: var(--sauna-card-muted-text); font-size: ${this.preference("font_size_small_px")}px; font-variant-numeric: tabular-nums; }
+      #tooltip[data-selection="range"] { grid-template-columns: minmax(0, 1fr); }
+      #tooltip[data-selection="range"] > * { grid-column: 1; }
+      @container (max-width: ${this.preference("breakpoint_500_0_px")}px) {
+        #tooltip { grid-template-columns: minmax(0, 1fr); }
+        #tooltip > * { grid-column: 1; }
+      }
+      #history-event-inspection { margin: ${this.preference("control_group_gap_px")}px 0 0; font-size: ${this.preference("font_size_compact_px")}px; color: var(--sauna-card-text); }
+      .history-selection-band { fill: var(--sauna-chart-focus, var(--accent)); opacity: ${this.preference("opacity_0_12_ratio")}; pointer-events: none; }
+      .history-selection-guide { stroke: var(--sauna-chart-focus, var(--accent)); stroke-width: ${this.preference("stroke_2_0_ratio")}; pointer-events: none; }
+      #cursor[data-snap="true"] { stroke: var(--sauna-chart-focus, var(--accent)); stroke-width: ${this.preference("stroke_2_0_ratio")}; }
+      .history-snap-halo { fill: var(--sauna-color-chart-background); stroke: var(--sauna-chart-focus, var(--accent)); stroke-width: ${this.preference("stroke_2_0_ratio")}; pointer-events: none; }
+      .history-tooltip-values > .history-tooltip-snap { grid-column: 1 / -1; display: block; color: var(--sauna-chart-focus, var(--accent)); font-size: ${this.preference("font_size_small_px")}px; }
+      .history-event-marker { cursor: pointer; fill: var(--sauna-color-chart-event); stroke: var(--sauna-color-chart-event); }
+      .history-event-guide { stroke: var(--sauna-color-chart-event); stroke-width: ${this.preference("stroke_1_0_ratio")}; stroke-dasharray: ${this.preference("guide_dash_length_px")} ${this.preference("guide_dash_gap_px")}; pointer-events: none; }
+      .history-event-marker ellipse { stroke: var(--sauna-color-chart-background); stroke-width: ${this.preference("stroke_1_0_ratio")}; }
+      .history-event-marker[data-selected="true"], .history-event-marker:focus-visible { fill: var(--sauna-chart-focus, var(--accent)); stroke: var(--sauna-chart-focus, var(--accent)); outline: none; }
+      .history-event-marker[data-selected="true"] ellipse, .history-event-marker:focus-visible ellipse { stroke-width: ${this.preference("stroke_2_0_ratio")}; stroke: var(--sauna-chart-focus, var(--accent)); }
+      .history-tooltip-values [data-quantity] { display: inline-flex; align-items: center; gap: ${this.preference("layout_space_12_px")}px; }
+      .history-tooltip-values [data-quantity]::before { content: ""; width: ${this.preference("size_22_0_px")}px; height: ${this.preference("size_3_0_px")}px; flex: 0 0 auto; background: var(--sauna-color-series-temperature); }
       .history-tooltip-values [data-quantity="humidity"]::before { background: var(--sauna-color-series-humidity); }
-      .history-tooltip-values > div > span:last-child { font-weight: 650; font-size: 16px; font-variant-numeric: tabular-nums; white-space: nowrap; }
-      .history-tooltip-status { grid-column: 2; font-weight: 600; }
+      .history-tooltip-values > div > span:last-child { font-weight: ${this.preference("font_weight_650_0_ratio")}; font-size: ${this.preference("font_size_large_px")}px; font-variant-numeric: tabular-nums; white-space: nowrap; }
+      .history-tooltip-status { grid-column: 2; font-weight: ${this.preference("font_weight_600_0_ratio")}; }
       .history-tooltip-events { grid-column: 2; color: var(--sauna-card-text); }
-      .history-tooltip-event { display: grid; grid-template-columns: auto 1fr; gap: 10px; padding: 3px 0; align-items: baseline; }
-      .history-tooltip-event time { color: var(--sauna-card-muted-text); font-size: 12px; font-variant-numeric: tabular-nums; }
-      .history-event-groups { list-style: none; margin: 16px 0 0; padding: 0; }
-      .history-event-group { display: grid; grid-template-columns: 64px minmax(0, 1fr); column-gap: 16px; margin-top: 16px; }
-      .history-event-time { padding-top: 14px; color: var(--sauna-card-muted-text); font-variant-numeric: tabular-nums; }
-      .history-event-items { list-style: none; margin: 0; padding: 4px 14px; border: 1px solid var(--sauna-color-border); border-radius: var(--sauna-control-radius); background: var(--sauna-surface-section); box-shadow: var(--sauna-shadow-section); }
-      .history-event-items .event-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 10px 0; }
-      .history-event-items .event-row + .event-row { border-top: 1px solid var(--sauna-color-border); }
+      .history-tooltip-event { display: grid; grid-template-columns: auto 1fr; gap: ${this.preference("layout_space_16_px")}px; padding: ${this.preference("layout_space_08_px")}px 0; align-items: baseline; }
+      .history-tooltip-event time { color: var(--sauna-card-muted-text); font-size: ${this.preference("font_size_small_px")}px; font-variant-numeric: tabular-nums; }
+      .history-event-groups { list-style: none; margin: ${this.preference("layout_space_22_px")}px 0 0; padding: 0; }
+      .history-event-group { display: grid; grid-template-columns: ${this.preference("size_64_0_px")}px minmax(0, 1fr); column-gap: ${this.preference("layout_space_22_px")}px; margin-top: ${this.preference("layout_space_22_px")}px; }
+      .history-event-time { padding-top: ${this.preference("layout_space_20_px")}px; color: var(--sauna-card-muted-text); font-variant-numeric: tabular-nums; }
+      .history-event-items { list-style: none; margin: 0; padding: ${this.preference("layout_space_09_px")}px ${this.preference("layout_space_20_px")}px; border: ${this.preference("border_1_0_px")}px solid var(--sauna-color-border); border-radius: var(--sauna-control-radius); background: var(--sauna-surface-section); box-shadow: var(--sauna-shadow-section); }
+      .history-event-items .event-row { display: flex; align-items: center; justify-content: space-between; gap: ${this.preference("layout_space_18_px")}px; padding: ${this.preference("layout_space_16_px")}px 0; }
+      .history-event-items .event-row + .event-row { border-top: ${this.preference("border_1_0_px")}px solid var(--sauna-color-border); }
       .history-event-items .event-row button { flex: 0 0 auto; }
-      .control-overview { max-width: 1280px; margin-inline: auto; }
+      .control-overview { max-width: ${this.preference("size_1280_0_px")}px; margin-inline: auto; }
       .dashboard {
         display: grid;
-        grid-template-columns: minmax(300px, 2fr) minmax(0, 3fr);
+        grid-template-columns: minmax(${this.preference("size_300_0_px")}px, 2fr) minmax(0, 3fr);
         gap: var(--sauna-surface-gap);
-        max-width: 1280px;
+        max-width: ${this.preference("size_1280_0_px")}px;
         margin: 0 auto;
         align-items: start;
       }
-      @container (max-width: 800px) {
+      @container (max-width: ${this.preference("breakpoint_800_0_px")}px) {
         .dashboard { grid-template-columns: 1fr; }
       }
       .tiles {
         display: grid;
         grid-template-columns: 1fr 1fr;
-        gap: 12px;
+        gap: ${this.preference("layout_space_18_px")}px;
       }
       .tile {
-        padding: 12px;
+        padding: ${this.preference("layout_space_18_px")}px;
         text-align: left;
-        min-height: 54px;
+        min-height: ${this.preference("size_54_0_px")}px;
       }
       .tile.full {
         grid-column: 1/-1;
@@ -3017,7 +3864,7 @@ class SaunaPanel extends HTMLElement {
         text-align: center;
       }
       .operation-control > button + button {
-        margin-top: 8px;
+        margin-top: ${this.preference("layout_space_13_px")}px;
       }
       .operation-control.split { display: flex; }
       .operation-control.split > button { flex: 1 1 50%; width: 50%; min-width: 0; margin: 0; border-radius: 0; }
@@ -3028,11 +3875,11 @@ class SaunaPanel extends HTMLElement {
       }
       .session-status {
         display: block;
-        margin-top: 7px;
+        margin-top: ${this.preference("layout_space_12_px")}px;
         text-align: center;
       }
       .dial {
-        max-width: 240px;
+        max-width: ${this.preference("size_240_0_px")}px;
         display: block;
         margin: auto;
       }
@@ -3040,20 +3887,20 @@ class SaunaPanel extends HTMLElement {
         fill: var(--sauna-card-text, var(--sauna-color-text, var(--primary-text-color)));
       }
       .dial .reading {
-        font-size: 28px;
+        font-size: ${this.preference("font_size_phase_px")}px;
         fill: var(--measurement-color);
       }
       .dial .caption {
-        font-size: 13px;
+        font-size: ${this.preference("font_size_compact_px")}px;
         fill: var(--sauna-card-muted-text, var(--sauna-color-muted-text, var(--secondary-text-color)));
       }
       .dial .target-reading {
-        font-size: 16px;
-        font-weight: 650;
+        font-size: ${this.preference("font_size_large_px")}px;
+        font-weight: ${this.preference("font_weight_650_0_ratio")};
         fill: var(--sauna-accent-readable, var(--accent));
       }
       .dial .tick {
-        font-size: 14px;
+        font-size: ${this.preference("font_size_body_px")}px;
         fill: var(--measurement-color);
       }
       .dashboard .card {
@@ -3062,25 +3909,25 @@ class SaunaPanel extends HTMLElement {
       .gauge-card h2 {
         text-align: center;
       }
-      @media (max-width: 800px) {
+      @media (max-width: ${this.preference("breakpoint_800_0_px")}px) {
         .chart {
-          height: clamp(280px, 42dvh, 340px);
+          height: clamp(${this.preference("size_280_0_px")}px, ${this.preference("history_compact_viewport_height_percent")}dvh, ${this.preference("size_340_0_px")}px);
         }
         .detector-chart {
-          height: 180px;
+          height: ${this.preference("size_180_0_px")}px;
         }
         .plot-panel {
-          padding: 16px;
+          padding: ${this.preference("layout_space_22_px")}px;
         }
         .legend {
-          font-size: 12px;
-          gap: 12px;
+          font-size: ${this.preference("font_size_small_px")}px;
+          gap: ${this.preference("layout_space_18_px")}px;
         }
         .legend i {
-          width: 22px;
+          width: ${this.preference("size_22_0_px")}px;
         }
         main {
-          padding: 14px;
+          padding: ${this.preference("layout_space_20_px")}px;
         }
       }
 
@@ -3103,19 +3950,19 @@ class SaunaPanel extends HTMLElement {
       .gauges {
         display: grid;
         grid-template-columns: 1fr 1fr;
-        gap: 12px;
+        gap: ${this.preference("layout_space_18_px")}px;
         text-align: center;
       }
       .gauge-card h2 {
-        font-size: 16px;
+        font-size: ${this.preference("font_size_large_px")}px;
       }
       .tiles {
-        gap: 10px;
+        gap: ${this.preference("layout_space_16_px")}px;
       }
       .detail-grid {
         display: grid;
         grid-template-columns: 1fr 1fr;
-        gap: 18px;
+        gap: ${this.preference("layout_space_24_px")}px;
       }
       .detail-grid .card {
         margin: 0;
@@ -3127,51 +3974,51 @@ class SaunaPanel extends HTMLElement {
         margin: 0;
       }
       dt {
-        font-size: 13px;
+        font-size: ${this.preference("font_size_compact_px")}px;
         color: var(--sauna-card-muted-text, var(--sauna-color-muted-text, var(--secondary-text-color)));
-        margin-top: 12px;
+        margin-top: ${this.preference("layout_space_18_px")}px;
       }
       dd {
-        margin: 2px 0 8px;
+        margin: ${this.preference("layout_space_07_px")}px 0 ${this.preference("layout_space_13_px")}px;
       }
       .forms {
         grid-template-columns: repeat(2, minmax(0, 1fr));
-        gap: 22px;
+        gap: ${this.preference("layout_space_28_px")}px;
       }
       .settings-group {
-        margin: 12px 0;
-        border: 1px solid var(--sauna-color-border, var(--divider-color));
-        border-radius: 10px;
-        padding: 0 16px;
+        margin: ${this.preference("layout_space_18_px")}px 0;
+        border: ${this.preference("border_1_0_px")}px solid var(--sauna-color-border, var(--divider-color));
+        border-radius: ${this.preference("control_radius_px")}px;
+        padding: 0 ${this.preference("layout_space_22_px")}px;
         background: var(--sauna-surface-section);
         box-shadow: var(--sauna-shadow-section);
       }
       .settings-group summary {
-        padding: 14px 0;
+        padding: ${this.preference("layout_space_20_px")}px 0;
         margin: 0;
-        font-size: 16px;
+        font-size: ${this.preference("font_size_large_px")}px;
       }
       .settings-group[open] summary {
-        border-bottom: 1px solid var(--sauna-color-border, var(--divider-color));
-        margin-bottom: 16px;
+        border-bottom: ${this.preference("border_1_0_px")}px solid var(--sauna-color-border, var(--divider-color));
+        margin-bottom: ${this.preference("layout_space_22_px")}px;
       }
       .settings-group .forms {
-        padding-bottom: 18px;
+        padding-bottom: ${this.preference("layout_space_24_px")}px;
       }
       .parameter-section + .parameter-section,
       .parameter-section + .expert-group {
         margin-top: var(--sauna-surface-gap);
         padding-top: var(--sauna-surface-gap);
-        border-top: 1px solid var(--sauna-color-border, var(--divider-color));
+        border-top: ${this.preference("border_1_0_px")}px solid var(--sauna-color-border, var(--divider-color));
       }
-      .parameter-section h3 { margin: 0 0 18px; }
+      .parameter-section h3 { margin: 0 0 ${this.preference("layout_space_24_px")}px; }
       .settings-parameters-card .field > .number-input { margin-top: auto; }
       .settings-parameters-card > button { margin-top: var(--sauna-surface-gap); }
       .settings-layout {
         display: grid;
-        --settings-navigation-width: 210px;
+        --settings-navigation-width: ${this.preference("size_210_0_px")}px;
         grid-template-columns: var(--settings-navigation-width) minmax(0, 1fr);
-        gap: 24px;
+        gap: ${this.preference("surface_gap_px")}px;
         align-items: start;
         height: 100%;
         min-height: 0;
@@ -3181,38 +4028,38 @@ class SaunaPanel extends HTMLElement {
       .settings-menu-toggle, .settings-menu-backdrop { display: none; }
       .settings-navigation {
         display: grid;
-        gap: 8px;
-        padding-top: 4px;
+        gap: ${this.preference("layout_space_13_px")}px;
+        padding-top: ${this.preference("layout_space_09_px")}px;
       }
       .settings-navigation button { text-align: left; }
-      .settings-configuration-link { display: flex; justify-content: space-between; align-items: center; gap: 8px; padding: 12px; margin-top: 8px; color: inherit; border-top: 1px solid var(--sauna-color-border); text-decoration: none; font-size: 13px; }
+      .settings-configuration-link { display: flex; justify-content: space-between; align-items: center; gap: ${this.preference("layout_space_13_px")}px; padding: ${this.preference("layout_space_18_px")}px; margin-top: ${this.preference("layout_space_13_px")}px; color: inherit; border-top: ${this.preference("border_1_0_px")}px solid var(--sauna-color-border); text-decoration: none; font-size: ${this.preference("font_size_compact_px")}px; }
       .settings-configuration-link:hover, .settings-configuration-link:focus-visible { text-decoration: underline; }
-      .settings-content { min-width: 0; min-height: 0; height: 100%; overflow: auto; scrollbar-gutter: stable; overscroll-behavior: contain; padding: 4px; }
+      .settings-content { min-width: 0; min-height: 0; height: 100%; overflow: auto; scrollbar-gutter: stable; overscroll-behavior: contain; padding: ${this.preference("layout_space_09_px")}px; }
       .settings-content > section > h2 { margin-top: 0; }
       .settings-content .card:first-of-type { margin-top: 0; }
-      .settings-content .card { padding: 20px; }
-      .light-feedback { font-size: 13px; }
-      .oven-feedback { display: flex; gap: 16px; flex-wrap: wrap; align-items: center; }
-      @container (max-width: 700px) {
-        .settings-layout { grid-template-columns: minmax(0, 1fr); grid-template-rows: auto minmax(0, 1fr); gap: 8px; }
-        .settings-menu-toggle { display: inline-flex; justify-self: start; align-items: center; gap: 8px; margin: 0 4px; }
-        .settings-menu-toggle svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; }
-        .settings-navigation { color: var(--sauna-card-text, inherit); display: none; position: absolute; grid-area: 2 / 1; top: 0; bottom: 4px; left: 4px; width: min(var(--settings-navigation-width), calc(100% - 8px)); align-content: start; overflow: auto; z-index: 6; padding: 8px; border: 1px solid var(--sauna-color-border); border-radius: var(--sauna-control-radius); background: var(--sauna-surface-raised); box-shadow: var(--sauna-shadow-card); }
+      .settings-content .card { padding: ${this.preference("surface_padding_px")}px; }
+      .light-feedback { font-size: ${this.preference("font_size_compact_px")}px; }
+      .oven-feedback { display: flex; gap: ${this.preference("layout_space_22_px")}px; flex-wrap: wrap; align-items: center; }
+      @container (max-width: ${this.preference("breakpoint_700_0_px")}px) {
+        .settings-layout { grid-template-columns: minmax(0, 1fr); grid-template-rows: auto minmax(0, 1fr); gap: ${this.preference("layout_space_13_px")}px; }
+        .settings-menu-toggle { display: inline-flex; justify-self: start; align-items: center; gap: ${this.preference("layout_space_13_px")}px; margin: 0 ${this.preference("layout_space_09_px")}px; }
+        .settings-menu-toggle svg { width: ${this.preference("size_18_0_px")}px; height: ${this.preference("size_18_0_px")}px; fill: none; stroke: currentColor; stroke-width: ${this.preference("stroke_1_7_ratio")}; stroke-linecap: round; }
+        .settings-navigation { color: var(--sauna-card-text, inherit); display: none; position: absolute; grid-area: 2 / 1; top: 0; bottom: ${this.preference("layout_space_09_px")}px; left: ${this.preference("layout_space_09_px")}px; width: min(var(--settings-navigation-width), calc(100% - ${this.preference("size_8_0_px")}px)); align-content: start; overflow: auto; z-index: 6; padding: ${this.preference("layout_space_13_px")}px; border: ${this.preference("border_1_0_px")}px solid var(--sauna-color-border); border-radius: var(--sauna-control-radius); background: var(--sauna-surface-raised); box-shadow: var(--sauna-shadow-card); }
         .settings-layout[data-menu-open] .settings-navigation { display: grid; }
         .settings-layout[data-menu-open] .settings-menu-backdrop { display: block; position: absolute; grid-area: 2 / 1; inset: 0; z-index: 5; padding: 0; border: 0; border-radius: 0; background: transparent; box-shadow: none; }
         .settings-content { grid-column: 1; grid-row: 2; }
-        .settings-content .card { padding: 16px; }
+        .settings-content .card { padding: ${this.preference("layout_space_22_px")}px; }
       }
       .expert-group + .expert-group {
-        border-top: 1px solid var(--sauna-color-border, var(--divider-color));
-        margin-top: 20px;
-        padding-top: 12px;
+        border-top: ${this.preference("border_1_0_px")}px solid var(--sauna-color-border, var(--divider-color));
+        margin-top: ${this.preference("surface_padding_px")}px;
+        padding-top: ${this.preference("layout_space_18_px")}px;
       }
       .field small {
-        font-size: 12px;
+        font-size: ${this.preference("font_size_small_px")}px;
       }
       .feedback {
-        font-weight: 650;
+        font-weight: ${this.preference("font_weight_650_0_ratio")};
       }
       .feedback.on {
         color: var(--sauna-ink-ui-heater-on, var(--sauna-color-ui-heater-on));
@@ -3227,13 +4074,13 @@ class SaunaPanel extends HTMLElement {
       .control-main .feedback.off { color: var(--sauna-main-ink-ui-heater-off, var(--sauna-ink-ui-heater-off)); }
       .control-main .feedback.unknown { color: var(--sauna-main-ink-ui-heater-unknown, var(--sauna-ink-ui-heater-unknown)); }
       .light-controls {
-        margin-top: 14px;
+        margin-top: ${this.preference("layout_space_20_px")}px;
       }
       .program-buttons {
         grid-column: 1/-1;
         display: grid;
         grid-template-columns: 1fr 1fr;
-        gap: 8px;
+        gap: ${this.preference("layout_space_13_px")}px;
       }
       .dial-temperature, .dial-light {
         touch-action: none;
@@ -3241,7 +4088,7 @@ class SaunaPanel extends HTMLElement {
       .target-temperature-track, .instrument-arc-track {
         fill: none;
         stroke: var(--accent);
-        stroke-width: 22;
+        stroke-width: ${this.preference("stroke_22_0_ratio")};
         stroke-linecap: round;
         opacity: 0;
         cursor: pointer;
@@ -3249,25 +4096,25 @@ class SaunaPanel extends HTMLElement {
       .target-temperature-handle, .instrument-arc-handle {
         fill: var(--accent);
         stroke: var(--sauna-color-card-background, var(--card-background-color));
-        stroke-width: 4;
+        stroke-width: ${this.preference("stroke_4_0_ratio")};
         cursor: pointer;
       }
       .target-temperature-handle[data-inert-target] { cursor: default; }
       .target-temperature-track:focus, .instrument-arc-track:focus {
         outline: none;
         stroke: var(--accent);
-        opacity: 0.35;
+        opacity: ${this.preference("opacity_0_35_ratio")};
       }
       .target-temperature-track:focus + .target-temperature-handle, .instrument-arc-track:focus + .instrument-arc-handle {
         stroke: var(--sauna-card-focus, var(--sauna-focus-current));
-        stroke-width: 6;
+        stroke-width: ${this.preference("stroke_6_0_ratio")};
       }
       .manual-status {
         display: inline-block;
-        border-radius: 20px;
-        padding: 3px 10px;
-        font-size: 13px;
-        font-weight: 650;
+        border-radius: ${this.preference("radius_20_0_px")}px;
+        padding: ${this.preference("layout_space_08_px")}px ${this.preference("layout_space_16_px")}px;
+        font-size: ${this.preference("font_size_compact_px")}px;
+        font-weight: ${this.preference("font_weight_650_0_ratio")};
         background: var(--sauna-tint-unknown-background, var(--sauna-color-card-background, var(--card-background-color)));
         color: var(--sauna-tint-unknown-text, var(--sauna-card-text, inherit));
       }
@@ -3281,120 +4128,133 @@ class SaunaPanel extends HTMLElement {
       }
       .diagnostic-grid {
         display: grid;
-        grid-template-columns: repeat(2, minmax(0, 1fr));
-        gap: 14px;
+        grid-template-columns: repeat(${this.preference("diagnostic_wide_columns")}, minmax(0, 1fr));
+        gap: ${this.preference("diagnostic_plot_gap_px")}px;
       }
+      #detection-plots { container-type: inline-size; }
+      @container (max-width: ${this.preference("diagnostic_columns_breakpoint_px")}px) { .diagnostic-grid { grid-template-columns: 1fr; } }
+      [data-diagnostic-metric][data-selected="true"] { outline: ${this.preference("border_2_0_px")}px solid var(--sauna-chart-focus, var(--accent)); outline-offset: -${this.preference("layout_space_07_px")}px; }
+      .diagnostic-selection-band { fill: var(--sauna-color-detector-marker); opacity: ${this.preference("opacity_0_12_ratio")}; pointer-events: none; }
+      .diagnostic-selection-guide { stroke: var(--sauna-chart-focus, var(--accent)); stroke-width: ${this.preference("stroke_2_0_ratio")}; stroke-dasharray: ${this.preference("guide_dash_length_px")} ${this.preference("guide_dash_gap_px")}; pointer-events: none; }
+      .diagnostic-selection-context { margin: ${this.preference("layout_space_18_px")}px 0; padding: ${this.preference("layout_space_18_px")}px; border: ${this.preference("border_1_0_px")}px solid var(--sauna-color-border); border-radius: var(--sauna-control-radius); }
+      .diagnostic-selection-context dl { display: grid; grid-template-columns: minmax(${this.preference("size_6_0_rem")}rem, 1fr) minmax(0, 2fr); gap: ${this.preference("layout_space_09_px")}px ${this.preference("layout_space_18_px")}px; overflow-wrap: anywhere; }
+      .diagnostic-selection-context dd { margin: 0; }
+      .diagnostic-trace-navigation { display: flex; align-items: center; flex-wrap: wrap; gap: ${this.preference("layout_space_13_px")}px; }
+      .diagnostic-trace-navigation input { flex: 1 1 ${this.preference("size_120_0_px")}px; min-width: 0; }
+      .diagnostic-chart-context { font-size: ${this.preference("font_size_compact_px")}px; margin: ${this.preference("layout_space_13_px")}px 0; }
       .diagnostic-grid .plot-panel {
         margin: 0;
-        padding: 14px 10px;
+        padding: ${this.preference("layout_space_20_px")}px ${this.preference("diagnostic_plot_padding_px") / 2}px;
       }
       .event-marker {
         position: absolute;
-        bottom: var(--event-marker-bottom, -6px);
+        bottom: var(--event-marker-bottom, -${this.preference("control_group_gap_px")}px);
         width: var(--event-marker-size);
         height: var(--event-marker-size);
         padding: 0;
         border-radius: 50%;
-        border: 2px solid var(--sauna-color-event-infusion);
+        border: ${this.preference("border_2_0_px")}px solid var(--sauna-color-event-infusion);
         background: var(--accent);
         color: var(--accent-ink);
-        font-size: 10px;
-        font-weight: 700;
-        line-height: 13px;
+        font-size: ${this.preference("font_size_fine_px")}px;
+        font-weight: ${this.preference("font_weight_700_0_ratio")};
+        line-height: ${this.preference("size_13_0_px")}px;
         transform: translateX(-50%);
       }
       .event-marker[data-selected="true"],
       .event-row[data-selected="true"] {
-        outline: 3px solid var(--accent);
-        outline-offset: 2px;
+        outline: ${this.preference("border_3_0_px")}px solid var(--accent);
+        outline-offset: ${this.preference("layout_space_07_px")}px;
         background: var(--sauna-tint-warning-background, var(--sauna-color-card-background, var(--card-background-color)));
       }
       .event-marker[data-selected="true"] {
         color: var(--sauna-tint-warning-text, var(--sauna-card-text, inherit));
       }
       .event-row button {
-        padding: 3px 7px;
+        padding: ${this.preference("layout_space_08_px")}px ${this.preference("layout_space_12_px")}px;
         white-space: nowrap;
       }
       .temperature-presets {
         grid-column: 1/-1;
         display: grid;
         grid-template-columns: repeat(var(--preset-columns-wide), minmax(0, 1fr));
-        gap: 6px;
-        margin-top: 10px;
+        gap: ${this.preference("control_group_gap_px")}px;
+        margin-top: ${this.preference("layout_space_16_px")}px;
       }
       .temperature-presets .tile {
         min-width: 0;
-        min-height: 40px;
-        padding: 8px 10px;
+        min-height: ${this.preference("size_40_0_px")}px;
+        padding: ${this.preference("layout_space_13_px")}px ${this.preference("layout_space_16_px")}px;
         text-align: center;
         white-space: nowrap;
       }
       #program-choice-body { container: program-choice / inline-size; }
-      @container program-choice (width < 420px) {
+      @container program-choice (width < ${this.preference("breakpoint_420_0_px")}px) {
         .temperature-presets { grid-template-columns: repeat(var(--preset-columns-medium), minmax(0, 1fr)); }
       }
-      @container program-choice (width < 240px) {
+      @container program-choice (width < ${this.preference("breakpoint_240_0_px")}px) {
         .temperature-presets { grid-template-columns: repeat(var(--preset-columns-narrow), minmax(0, 1fr)); }
       }
       .program-buttons button {
         white-space: nowrap;
-        font-size: 13px;
-        padding: 8px 10px;
+        font-size: ${this.preference("font_size_compact_px")}px;
+        padding: ${this.preference("layout_space_13_px")}px ${this.preference("layout_space_16_px")}px;
       }
       .compact-times {
         display: grid;
-        grid-template-columns: minmax(150px, 1fr) minmax(180px, 2fr);
-        column-gap: 16px;
+        grid-template-columns: minmax(${this.preference("size_150_0_px")}px, 1fr) minmax(${this.preference("size_180_0_px")}px, 2fr);
+        column-gap: ${this.preference("layout_space_22_px")}px;
         align-items: baseline;
       }
       .compact-times dt,
       .compact-times dd {
-        margin-top: 8px;
+        margin-top: ${this.preference("layout_space_13_px")}px;
         margin-bottom: 0;
       }
-      .history-plot-frame { background: var(--sauna-color-chart-background); border: 1px solid var(--sauna-color-border); border-radius: var(--sauna-control-radius); box-shadow: 0 2px 3px rgb(0 0 0 / .3), 0 7px 16px -5px rgb(0 0 0 / .45); overflow: hidden; }
+      .history-plot-frame { background: var(--sauna-color-chart-background); border: ${this.preference("border_1_0_px")}px solid var(--sauna-color-border); border-radius: var(--sauna-control-radius); box-shadow: 0 ${this.preference("shadow_2_0_px")}px ${this.preference("shadow_3_0_px")}px rgb(0 0 0 / ${this.preference("opacity_0_3_ratio")}), 0 ${this.preference("shadow_7_0_px")}px ${this.preference("shadow_16_0_px")}px -${this.preference("shadow_5_0_px")}px rgb(0 0 0 / ${this.preference("opacity_0_45_ratio")}); overflow: hidden; }
       .history-plot-frame .history-stack { border: 0; border-radius: 0; box-shadow: none; }
       .history-background [data-history-annotations] rect { stroke: none; }
       #history-navigation {
         --sauna-focus-current: var(--sauna-chart-focus, var(--sauna-chart-ink));
         display: grid;
-        grid-template-columns: minmax(0, 1fr) auto auto auto minmax(0, 1fr);
-        gap: 2px 8px;
+        grid-template-columns: auto auto minmax(0, 1fr);
+        gap: ${this.preference("layout_space_07_px")}px ${this.preference("layout_space_13_px")}px;
         align-items: center;
         margin: 0;
-        padding: 0 0 8px;
+        padding: 0 0 ${this.preference("layout_space_13_px")}px;
         color: var(--sauna-chart-ink, var(--sauna-color-chart-text));
       }
       #history-navigation > button {
         grid-row: 2;
-        min-width: 32px;
-        min-height: 32px;
-        padding: 4px;
+        min-width: ${this.preference("size_32_0_px")}px;
+        min-height: ${this.preference("size_32_0_px")}px;
+        padding: ${this.preference("layout_space_09_px")}px;
         border: 0;
         background: transparent;
         box-shadow: none;
-        font-size: 18px;
-        line-height: 1;
+        font-size: ${this.preference("font_size_heading_px")}px;
+        line-height: ${this.preference("line_height_1_0_ratio")};
         color: inherit;
       }
-      #history-navigation [data-action="zoom-out"] { grid-column: 2; }
-      #history-navigation [data-action="zoom-in"] { grid-column: 4; }
+      #history-navigation [data-action="zoom-out"] { grid-column: 1; }
+      #history-navigation [data-action="zoom-in"] { grid-column: 2; }
       #history-navigation .history-overview { grid-column: 1 / -1; grid-row: 1; }
       .history-window-caption {
         grid-column: 3;
         grid-row: 2;
         display: flex;
+        flex-wrap: wrap;
         align-items: center;
         justify-content: flex-end;
+        gap: ${this.preference("control_group_gap_px")}px;
         color: inherit;
-        font-size: 12px;
+        font-size: ${this.preference("font_size_small_px")}px;
         font-variant-numeric: tabular-nums;
       }
       .history-window-caption button {
-        min-height: 24px;
-        min-width: 32px;
-        padding: 0 4px;
+        min-height: ${this.preference("size_24_0_px")}px;
+        min-width: ${this.preference("size_32_0_px")}px;
+        padding: 0 ${this.preference("layout_space_09_px")}px;
         border: 0;
         background: transparent;
         box-shadow: none;
@@ -3402,8 +4262,8 @@ class SaunaPanel extends HTMLElement {
         font: inherit;
       }
       #history-navigation button:hover:not(:disabled):not(:focus-visible) {
-        outline: 1px solid var(--sauna-focus-current);
-        outline-offset: -1px;
+        outline: ${this.preference("border_1_0_px")}px solid var(--sauna-focus-current);
+        outline-offset: -${this.preference("layout_space_05_px")}px;
       }
       .history-overview {
         grid-column: 1/-1;
@@ -3412,7 +4272,7 @@ class SaunaPanel extends HTMLElement {
       }
       .history-overview svg {
         width: 100%;
-        height: 24px;
+        height: ${this.preference("size_24_0_px")}px;
         display: block;
         touch-action: none;
         cursor: grab;
@@ -3420,7 +4280,7 @@ class SaunaPanel extends HTMLElement {
       .history-overview .overview-window {
         fill: transparent;
         stroke: var(--sauna-color-chart-minimap-track);
-        stroke-width: 1;
+        stroke-width: ${this.preference("stroke_1_0_ratio")};
         cursor: grab;
       }
       .history-overview .overview-handle {
@@ -3459,40 +4319,40 @@ class SaunaPanel extends HTMLElement {
       .diagnostic-marker .event-marker-dot {
         fill: var(--sauna-color-detector-marker);
         stroke: var(--sauna-color-chart-background);
-        stroke-width: 2;
+        stroke-width: ${this.preference("stroke_2_0_ratio")};
       }
       .diagnostic-marker .event-marker-point {
         fill: var(--sauna-color-detector-marker);
         stroke: var(--sauna-color-chart-background);
-        stroke-width: 1;
+        stroke-width: ${this.preference("stroke_1_0_ratio")};
       }
       .diagnostic-marker .event-marker-link {
         stroke: var(--sauna-color-detector-marker);
-        stroke-width: 1.5;
-        stroke-dasharray: 2 2;
+        stroke-width: ${this.preference("stroke_1_5_ratio")};
+        stroke-dasharray: ${this.preference("marker_link_dash_length_px")} ${this.preference("marker_link_dash_gap_px")};
       }
       .diagnostic-marker .event-marker-label {
         fill: var(--sauna-color-chart-background);
-        font: 700 11px system-ui;
+        font: ${this.preference("font_weight_700_0_ratio")} ${this.preference("font_size_caption_px")}px var(--primary-font-family, sans-serif);
         paint-order: stroke;
         stroke: var(--sauna-chart-ink, var(--sauna-color-chart-text));
-        stroke-width: 3px;
+        stroke-width: ${this.preference("stroke_3_0_px")}px;
         stroke-linejoin: round;
       }
       .diagnostic-marker[data-selected="true"] .event-marker-dot {
-        fill: color-mix(in srgb, var(--sauna-color-status-warning) 12%, var(--sauna-color-chart-background));
+        fill: color-mix(in srgb, var(--sauna-color-status-warning) ${this.preference("color_mix_12_0_percent")}%, var(--sauna-color-chart-background));
         stroke: var(--sauna-chart-focus, var(--sauna-chart-ink));
-        stroke-width: 3;
+        stroke-width: ${this.preference("stroke_3_0_ratio")};
       }
       .diagnostic-marker:focus-visible .event-marker-dot {
         stroke: var(--sauna-chart-focus, var(--sauna-chart-ink));
-        stroke-width: 4;
+        stroke-width: ${this.preference("stroke_4_0_ratio")};
       }
       .event-row[data-selected="true"] {
         background: var(--sauna-tint-warning-background, var(--sauna-color-card-background, var(--card-background-color)));
         color: var(--sauna-tint-warning-text, var(--sauna-card-text, var(--sauna-color-text, var(--primary-text-color))));
-        outline: 3px solid var(--sauna-tint-warning-focus, var(--sauna-card-focus, var(--accent)));
-        outline-offset: -3px;
+        outline: ${this.preference("border_3_0_px")}px solid var(--sauna-tint-warning-focus, var(--sauna-card-focus, var(--accent)));
+        outline-offset: -${this.preference("layout_space_08_px")}px;
       }
       .event-row[data-selected="true"] button {
         --sauna-focus-current: var(--sauna-tint-warning-focus, var(--sauna-card-focus, var(--accent)));
@@ -3504,13 +4364,13 @@ class SaunaPanel extends HTMLElement {
         display: flex;
         flex-wrap: wrap;
         align-items: baseline;
-        gap: 10px 15px;
+        gap: ${this.preference("layout_space_16_px")}px ${this.preference("layout_space_21_px")}px;
       }
       .state-line {
         display: grid;
         grid-template-columns: minmax(0, 1fr) auto;
         align-items: baseline;
-        gap: 12px;
+        gap: ${this.preference("layout_space_18_px")}px;
       }
       .state-line .badge {
         align-self: start;
@@ -3520,22 +4380,22 @@ class SaunaPanel extends HTMLElement {
       .availability-line {
         min-width: 0;
         text-align: left;
-        font-weight: 600;
+        font-weight: ${this.preference("font_weight_600_0_ratio")};
         font-variant-numeric: tabular-nums;
         overflow-wrap: anywhere;
       }
       .availability-line.wait {
         color: inherit;
       }
-      @media (max-width: 1000px) {
+      @media (max-width: ${this.preference("breakpoint_1000_0_px")}px) {
         .dashboard .gauge-card {
           max-width: none;
         }
         .dial {
-          max-width: 210px;
+          max-width: ${this.preference("size_210_0_px")}px;
         }
       }
-      @media (max-width: 600px) {
+      @media (max-width: ${this.preference("diagnostic_columns_breakpoint_px")}px) {
         .detail-grid,
         .forms,
         .diagnostic-grid {
@@ -3545,16 +4405,16 @@ class SaunaPanel extends HTMLElement {
           grid-template-columns: 1fr;
         }
         .gauges {
-          gap: 4px;
+          gap: ${this.preference("layout_space_09_px")}px;
         }
         .gauges h2 {
-          font-size: 14px;
+          font-size: ${this.preference("font_size_body_px")}px;
         }
         .card {
-          padding: 14px;
+          padding: ${this.preference("layout_space_20_px")}px;
         }
         header :is(select, .sauna-select-trigger) {
-          max-width: 110px;
+          max-width: ${this.preference("size_110_0_px")}px;
         }
         .state-line,
         .state-summary {
@@ -3565,7 +4425,7 @@ class SaunaPanel extends HTMLElement {
         background: var(--accent);
         color: var(--accent-ink);
         border-color: var(--accent);
-        font-weight: 700;
+        font-weight: ${this.preference("font_weight_700_0_ratio")};
         --sauna-button-hover: var(--sauna-accent-focus, var(--sauna-card-focus));
       }
       button[aria-current="page"]:disabled,
@@ -3575,7 +4435,7 @@ class SaunaPanel extends HTMLElement {
       }
       button[data-action^="heater:"]:disabled:not([aria-pressed="true"]),
       button[data-action^="light:"]:disabled:not([aria-pressed="true"]) {
-        opacity: 0.5;
+        opacity: ${this.preference("opacity_0_5_ratio")};
       }
       button[data-action^="program-remove:"] {
         background: transparent;
@@ -3585,22 +4445,22 @@ class SaunaPanel extends HTMLElement {
       .control-status-row .state-line { grid-column: 1; min-width: 0; }
       .control-status-row .control-mode { grid-column: 2; justify-self: center; max-width: 100%; }
       .manual-controls {
-        margin-top: 16px;
+        margin-top: ${this.preference("layout_space_22_px")}px;
       }
       .phase-time {
         display: flex;
         flex-wrap: wrap;
         align-items: baseline;
-        gap: 6px 10px;
+        gap: ${this.preference("control_group_gap_px")}px ${this.preference("layout_space_16_px")}px;
         min-width: 0;
       }
       .control-section {
-        margin-top: 16px;
-        padding-top: 16px;
-        border-top: 1px solid var(--sauna-color-border, var(--divider-color));
+        margin-top: ${this.preference("layout_space_22_px")}px;
+        padding-top: ${this.preference("layout_space_22_px")}px;
+        border-top: ${this.preference("border_1_0_px")}px solid var(--sauna-color-border, var(--divider-color));
       }
       .control-section h3 {
-        margin: 0 0 10px;
+        margin: 0 0 ${this.preference("layout_space_16_px")}px;
       }
       .control-section .row,
       .program-form .row {
@@ -3610,49 +4470,49 @@ class SaunaPanel extends HTMLElement {
         display: grid;
         grid-template-columns: repeat(3, minmax(0, 1fr));
         gap: var(--sauna-control-gap);
-        padding: 4px;
+        padding: ${this.preference("layout_space_09_px")}px;
         border-radius: var(--sauna-control-radius);
         background: var(--sauna-surface-recessed);
-        margin: 16px 0 20px;
+        margin: ${this.preference("layout_space_22_px")}px 0 ${this.preference("surface_padding_px")}px;
       }
       .program-named-list {
         display: grid;
-        gap: 6px;
-        margin: 10px 0;
+        gap: ${this.preference("control_group_gap_px")}px;
+        margin: ${this.preference("layout_space_16_px")}px 0;
       }
       .program-named-choice {
         display: flex;
         align-items: baseline;
         justify-content: space-between;
-        gap: 10px;
+        gap: ${this.preference("layout_space_16_px")}px;
         width: 100%;
         text-align: left;
       }
       .program-choice-summary,
       .program-choice-details { grid-area: choice; align-self: center; }
-      .program-choice-summary { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; }
-      .program-choice-summary > span { font-weight: 650; }
-      .program-choice-summary small { white-space: nowrap; font-weight: 400; }
-      .program-choice-details { opacity: 0; font-weight: 400; white-space: normal; line-height: 1.4; }
+      .program-choice-summary { display: flex; align-items: baseline; justify-content: space-between; gap: ${this.preference("layout_space_16_px")}px; }
+      .program-choice-summary > span { font-weight: ${this.preference("font_weight_650_0_ratio")}; }
+      .program-choice-summary small { white-space: nowrap; font-weight: ${this.preference("font_weight_400_0_ratio")}; }
+      .program-choice-details { opacity: 0; font-weight: ${this.preference("font_weight_400_0_ratio")}; white-space: normal; line-height: ${this.preference("line_height_1_4_ratio")}; }
       .program-named-choice:not(.program-feedback):is(:hover, :focus-visible) .program-choice-summary { opacity: 0; }
       .program-named-choice:not(.program-feedback):is(:hover, :focus-visible) .program-choice-details { opacity: 1; }
       .program-types button,
       .program-named-choice {
         position: relative;
-        font-weight: 700;
+        font-weight: ${this.preference("font_weight_700_0_ratio")};
       }
       .program-feedback > .program-choice-content {
         visibility: hidden;
       }
       .program-save-label {
         position: absolute;
-        inset: 2px;
+        inset: ${this.preference("layout_space_07_px")}px;
         display: flex;
         align-items: center;
         justify-content: center;
         color: inherit;
-        font-size: 12px;
-        line-height: 1.2;
+        font-size: ${this.preference("font_size_small_px")}px;
+        line-height: ${this.preference("line_height_1_2_ratio")};
         white-space: normal;
         text-align: center;
         pointer-events: none;
@@ -3665,10 +4525,10 @@ class SaunaPanel extends HTMLElement {
       .program-actions {
         display: flex;
         flex-wrap: wrap;
-        gap: 8px;
-        margin-top: 16px;
-        padding-top: 14px;
-        border-top: 1px solid var(--sauna-color-border, var(--divider-color));
+        gap: ${this.preference("layout_space_13_px")}px;
+        margin-top: ${this.preference("layout_space_22_px")}px;
+        padding-top: ${this.preference("layout_space_20_px")}px;
+        border-top: ${this.preference("border_1_0_px")}px solid var(--sauna-color-border, var(--divider-color));
       }
       .program-actions > button { flex: 1 1 100%; min-width: 0; }
       .program-saved,
@@ -3684,11 +4544,11 @@ class SaunaPanel extends HTMLElement {
       .program-pending {
         display: flex;
         align-items: center;
-        gap: 10px;
-        margin-top: 10px;
-        padding: 8px 10px;
+        gap: ${this.preference("layout_space_16_px")}px;
+        margin-top: ${this.preference("layout_space_16_px")}px;
+        padding: ${this.preference("layout_space_13_px")}px ${this.preference("layout_space_16_px")}px;
         background: var(--sauna-pending-background, transparent);
-        border-radius: 8px;
+        border-radius: ${this.preference("radius_8_0_px")}px;
         color: var(--sauna-pending-text, var(--sauna-main-text, var(--sauna-card-text, var(--sauna-color-text, var(--primary-text-color)))));
         --sauna-focus-current: var(--sauna-pending-focus, var(--sauna-main-focus, var(--sauna-card-focus, var(--accent))));
       }
@@ -3696,63 +4556,63 @@ class SaunaPanel extends HTMLElement {
       .program-kind.segmented-mode {
         display: grid;
         grid-template-columns: repeat(2, minmax(0, 1fr));
-        margin: 0 0 16px;
+        margin: 0 0 ${this.preference("layout_space_22_px")}px;
       }
       .program-kind button {
         min-width: 0;
       }
       .program-form {
         margin: 0;
-        padding: 12px;
-        border: 1px solid var(--sauna-color-border, var(--divider-color));
-        border-radius: 8px;
+        padding: ${this.preference("layout_space_18_px")}px;
+        border: ${this.preference("border_1_0_px")}px solid var(--sauna-color-border, var(--divider-color));
+        border-radius: ${this.preference("radius_8_0_px")}px;
       }
       .temperature-automation .program-form {
         padding: 0;
         border: 0;
       }
       .program-row .program-form {
-        max-width: 36rem;
+        max-width: ${this.preference("size_36_0_rem")}rem;
       }
       .program-form > .field:first-child {
-        margin-bottom: 14px;
+        margin-bottom: ${this.preference("layout_space_20_px")}px;
       }
       .program-temperature-fields {
         display: grid;
         grid-template-columns: repeat(2, minmax(0, 1fr));
-        gap: 12px;
-        margin-bottom: 14px;
+        gap: ${this.preference("layout_space_18_px")}px;
+        margin-bottom: ${this.preference("layout_space_20_px")}px;
       }
       .program-form .program-count-field {
         display: grid;
-        grid-template-columns: minmax(0, 1fr) 5.5rem;
+        grid-template-columns: minmax(0, 1fr) ${this.preference("size_5_5_rem")}rem;
         align-items: center;
-        gap: 12px;
+        gap: ${this.preference("layout_space_18_px")}px;
       }
       .program-count-field > span {
         display: flex;
         align-items: center;
-        gap: 6px;
+        gap: ${this.preference("control_group_gap_px")}px;
       }
       .program-count-field > input {
-        width: 5.5rem;
+        width: ${this.preference("size_5_5_rem")}rem;
         text-align: center;
       }
       .program-count-field .program-info {
         flex: 0 0 auto;
       }
       .program-row + .program-row {
-        border-top: 1px solid var(--sauna-color-border, var(--divider-color));
+        border-top: ${this.preference("border_1_0_px")}px solid var(--sauna-color-border, var(--divider-color));
       }
       .program-row-summary {
         display: flex;
         align-items: center;
-        gap: 8px;
-        padding: 9px 0;
+        gap: ${this.preference("layout_space_13_px")}px;
+        padding: ${this.preference("layout_space_15_px")}px 0;
       }
       .program-row-label {
         display: grid;
-        gap: 3px;
+        gap: ${this.preference("layout_space_08_px")}px;
         min-width: 0;
         flex: 1;
       }
@@ -3766,18 +4626,18 @@ class SaunaPanel extends HTMLElement {
         flex: 0 0 auto;
       }
       .program-edit-button {
-        padding: 5px 8px;
-        font-size: 12px;
+        padding: ${this.preference("layout_space_10_px")}px ${this.preference("layout_space_13_px")}px;
+        font-size: ${this.preference("font_size_small_px")}px;
         flex: 0 0 auto;
       }
-      .program-row[data-drop-position="before"] { border-top: 3px solid var(--sauna-card-focus, var(--accent)); }
-      .program-row[data-drop-position="after"] { border-bottom: 3px solid var(--sauna-card-focus, var(--accent)); }
+      .program-row[data-drop-position="before"] { border-top: ${this.preference("border_3_0_px")}px solid var(--sauna-card-focus, var(--accent)); }
+      .program-row[data-drop-position="after"] { border-bottom: ${this.preference("border_3_0_px")}px solid var(--sauna-card-focus, var(--accent)); }
       .settings-footer {
         display: flex;
         align-items: center;
         flex-wrap: wrap;
-        gap: 8px 12px;
-        margin-top: 24px;
+        gap: ${this.preference("layout_space_13_px")}px ${this.preference("layout_space_18_px")}px;
+        margin-top: ${this.preference("surface_gap_px")}px;
       }
       .settings-footer p {
         flex-basis: 100%;
@@ -3785,21 +4645,21 @@ class SaunaPanel extends HTMLElement {
       }
       .program-form .field {
         position: relative;
-        flex: 1 1 105px;
+        flex: 1 1 ${this.preference("size_105_0_px")}px;
       }
       .program-step-fields {
         display: grid;
-        grid-template-columns: repeat(auto-fill, minmax(105px, 1fr));
-        gap: 8px;
-        margin-top: 10px;
+        grid-template-columns: repeat(auto-fill, minmax(${this.preference("size_105_0_px")}px, 1fr));
+        gap: ${this.preference("layout_space_13_px")}px;
+        margin-top: ${this.preference("layout_space_16_px")}px;
       }
       .program-info {
         display: inline;
       }
       .program-info button {
-        width: 25px;
-        height: 25px;
-        min-height: 25px;
+        width: ${this.preference("size_25_0_px")}px;
+        height: ${this.preference("size_25_0_px")}px;
+        min-height: ${this.preference("size_25_0_px")}px;
         border-radius: 50%;
         padding: 0;
       }
@@ -3810,87 +4670,87 @@ class SaunaPanel extends HTMLElement {
         box-sizing: border-box;
         margin: 0;
         min-width: 0;
-        width: 320px;
-        max-width: 320px;
+        width: ${this.preference("size_320_0_px")}px;
+        max-width: ${this.preference("size_320_0_px")}px;
         overflow: auto;
         overscroll-behavior: contain;
-        padding: 9px 11px;
-        border: 1px solid var(--sauna-color-border, var(--divider-color));
-        border-radius: 8px;
+        padding: ${this.preference("layout_space_15_px")}px ${this.preference("layout_space_17_px")}px;
+        border: ${this.preference("border_1_0_px")}px solid var(--sauna-color-border, var(--divider-color));
+        border-radius: ${this.preference("radius_8_0_px")}px;
         background: var(--sauna-color-card-background, var(--card-background-color));
         color: var(--sauna-card-text, var(--sauna-color-text, var(--primary-text-color)));
         --sauna-focus-current: var(--sauna-card-focus, var(--accent));
-        box-shadow: 0 4px 14px color-mix(in srgb, var(--sauna-color-text, var(--primary-text-color)) 20%, transparent);
-        font-size: 12px;
-        line-height: 1.4;
+        box-shadow: 0 ${this.preference("shadow_4_0_px")}px ${this.preference("shadow_14_0_px")}px color-mix(in srgb, var(--sauna-color-text, var(--primary-text-color)) ${this.preference("color_mix_20_0_percent")}%, transparent);
+        font-size: ${this.preference("font_size_small_px")}px;
+        line-height: ${this.preference("line_height_1_4_ratio")};
         overflow-wrap: anywhere;
       }
       .program-info-popup[hidden] { display: none; }
       .manual-section h3 {
         margin: 0;
       }
-      @container (max-width: 600px) {
+      @container (max-width: ${this.preference("diagnostic_columns_breakpoint_px")}px) {
         header {
           grid-template-columns: 1fr auto;
-          gap: 12px;
-          margin-bottom: 16px;
+          gap: ${this.preference("layout_space_18_px")}px;
+          margin-bottom: ${this.preference("layout_space_22_px")}px;
         }
         .main-tabs {
           grid-row: 2;
           grid-column: 1 / -1;
         }
         .phase-time {
-          gap: 3px 8px;
+          gap: ${this.preference("layout_space_08_px")}px ${this.preference("layout_space_13_px")}px;
         }
         .temperature-automation .row {
           align-items: stretch;
         }
         .temperature-automation .field {
-          flex: 1 1 110px;
+          flex: 1 1 ${this.preference("size_110_0_px")}px;
         }
       }
-      @media (max-width: 420px) {
+      @media (max-width: ${this.preference("breakpoint_420_0_px")}px) {
         .gauges {
           grid-template-columns: 1fr;
-          gap: 16px;
+          gap: ${this.preference("layout_space_22_px")}px;
         }
         .dial {
-          max-width: 270px;
+          max-width: ${this.preference("size_270_0_px")}px;
         }
         .dial .tick {
-          font-size: 14px;
+          font-size: ${this.preference("font_size_body_px")}px;
         }
       }
 
-      .control-main .phase { font-weight: 600; letter-spacing: -.025em; }
+      .control-main .phase { font-weight: ${this.preference("font_weight_600_0_ratio")}; letter-spacing: -${this.preference("tracking_0_025_em")}em; }
       .control-main .control-section, .control-main .manual-controls {
         margin-top: var(--sauna-surface-gap);
         padding: var(--sauna-surface-padding);
-        border: 1px solid var(--sauna-color-border);
+        border: ${this.preference("border_1_0_px")}px solid var(--sauna-color-border);
         border-radius: var(--sauna-control-radius);
         background: var(--sauna-main-section, var(--sauna-surface-section));
         box-shadow: var(--sauna-shadow-section);
-        transition: background-color 350ms ease;
+        transition: background-color ${this.preference("transition_350_0_ms")}ms ease;
         color: var(--sauna-page-text);
       }
       .control-main button:focus-visible {
-        outline: 2px solid var(--sauna-focus-current);
-        outline-offset: 4px;
+        outline: ${this.preference("border_2_0_px")}px solid var(--sauna-focus-current);
+        outline-offset: ${this.preference("layout_space_09_px")}px;
       }
       .control-main .operation-control > button, .control-main [data-action="program-apply"] {
         display: flex;
         align-items: center;
         justify-content: center;
         min-height: var(--sauna-action-height);
-        padding: 6px 12px;
-        font-size: 16px;
-        line-height: 20px;
-        font-weight: 600;
+        padding: ${this.preference("control_group_gap_px")}px ${this.preference("layout_space_18_px")}px;
+        font-size: ${this.preference("font_size_large_px")}px;
+        line-height: ${this.preference("size_20_0_px")}px;
+        font-weight: ${this.preference("font_weight_600_0_ratio")};
         text-align: center;
       }
       .program-current:has([aria-expanded="true"]) {
-        padding: 0 0 16px;
-        border-bottom: 1px solid var(--sauna-color-border);
+        padding: 0 0 ${this.preference("layout_space_22_px")}px;
+        border-bottom: ${this.preference("border_1_0_px")}px solid var(--sauna-color-border);
       }
       .main-tabs button, .program-types button, .segmented-mode button, .control-auto button {
         position: relative;
@@ -3898,11 +4758,11 @@ class SaunaPanel extends HTMLElement {
         background: transparent;
         box-shadow: none;
         border-color: transparent;
-        border-radius: calc(var(--sauna-control-radius) - 3px);
+        border-radius: calc(var(--sauna-control-radius) - ${this.preference("radius_3_0_px")}px);
         color: var(--sauna-card-muted-text);
-        font-size: 14px;
-        font-weight: 600;
-        padding: 8px 12px;
+        font-size: ${this.preference("font_size_body_px")}px;
+        font-weight: ${this.preference("font_weight_600_0_ratio")};
+        padding: ${this.preference("layout_space_13_px")}px ${this.preference("layout_space_18_px")}px;
       }
       .main-tabs button[aria-current="page"], .program-types button[aria-pressed="true"], .segmented-mode button[aria-pressed="true"], .control-auto button[aria-pressed="true"] {
         color: var(--sauna-card-text);
@@ -3912,185 +4772,228 @@ class SaunaPanel extends HTMLElement {
       .main-tabs button[aria-current="page"]::after, .program-types button[aria-pressed="true"]::after, .segmented-mode button[aria-pressed="true"]::after, .control-auto button[aria-pressed="true"]::after {
         content: "";
         position: absolute;
-        bottom: 3px;
+        bottom: ${this.preference("layout_space_08_px")}px;
         left: 30%;
         right: 30%;
-        height: 2px;
-        border-radius: 2px;
+        height: ${this.preference("size_2_0_px")}px;
+        border-radius: ${this.preference("radius_2_0_px")}px;
         background: var(--accent);
       }
-      .segmented-mode { display: flex; gap: var(--sauna-control-gap); padding: 4px; background: var(--sauna-surface-recessed); border-radius: var(--sauna-control-radius); }
+      .segmented-mode { display: flex; gap: var(--sauna-control-gap); padding: ${this.preference("layout_space_09_px")}px; background: var(--sauna-surface-recessed); border-radius: var(--sauna-control-radius); }
       .temperature-presets { gap: var(--sauna-control-gap); }
       .program-named-list { gap: var(--sauna-control-gap); }
-      .program-named-choice { padding: 12px 14px; }
-      .program-pending { background: transparent; padding: 12px 0 0; }
-      .program-actions { margin-top: 12px; border-top: 0; padding-top: 0; }
-      .history-controls { display: flex; align-items: center; gap: 12px; min-width: 0; margin: 0 0 16px; }
-      #history-loading { margin-left: auto; font-size: 12px; color: var(--sauna-card-muted-text); white-space: nowrap; }
-      .history-controls :is(select, .sauna-select-trigger) { max-width: 100%; font-weight: 600; }
-      .history-stack, .detector-chart { background: var(--sauna-color-chart-background); border: 1px solid var(--sauna-color-border); border-radius: var(--sauna-control-radius); box-shadow: 0 2px 3px rgb(0 0 0 / .3), 0 7px 16px -5px rgb(0 0 0 / .45); }
+      .program-named-choice { padding: ${this.preference("layout_space_18_px")}px ${this.preference("layout_space_20_px")}px; }
+      .program-pending { background: transparent; padding: ${this.preference("layout_space_18_px")}px 0 0; }
+      .program-actions { margin-top: ${this.preference("layout_space_18_px")}px; border-top: 0; padding-top: 0; }
+      .history-controls { display: flex; align-items: center; gap: ${this.preference("layout_space_18_px")}px; min-width: 0; margin: 0 0 ${this.preference("layout_space_22_px")}px; }
+      #history-loading { margin-left: auto; font-size: ${this.preference("font_size_small_px")}px; color: var(--sauna-card-muted-text); white-space: nowrap; }
+      .history-controls :is(select, .sauna-select-trigger) { max-width: 100%; font-weight: ${this.preference("font_weight_600_0_ratio")}; }
+      .history-stack, .detector-chart { background: var(--sauna-color-chart-background); border: ${this.preference("border_1_0_px")}px solid var(--sauna-color-border); border-radius: var(--sauna-control-radius); box-shadow: 0 ${this.preference("shadow_2_0_px")}px ${this.preference("shadow_3_0_px")}px rgb(0 0 0 / ${this.preference("opacity_0_3_ratio")}), 0 ${this.preference("shadow_7_0_px")}px ${this.preference("shadow_16_0_px")}px -${this.preference("shadow_5_0_px")}px rgb(0 0 0 / ${this.preference("opacity_0_45_ratio")}); }
       .history-overview { background: transparent; border-radius: var(--sauna-control-radius); }
-      .control-history-inspection > div { padding: 16px; border-radius: var(--sauna-control-radius); border: 1px solid var(--sauna-color-border); background: var(--sauna-surface-section); box-shadow: var(--sauna-shadow-section); }
+      .control-history-inspection > div { padding: ${this.preference("layout_space_22_px")}px; border-radius: var(--sauna-control-radius); border: ${this.preference("border_1_0_px")}px solid var(--sauna-color-border); background: var(--sauna-surface-section); box-shadow: var(--sauna-shadow-section); }
       #control-history { margin-top: var(--sauna-surface-gap); }
       #plots { margin: 0; }
       .card, .plot-panel { isolation: isolate; }
-      @container (max-width: 450px) {
-        .main-tabs { min-width: 0; gap: 2px; }
-        .program-types button, .main-tabs button, .segmented-mode button { padding-inline: 7px; font-size: 13px; }
+      @container (max-width: ${this.preference("breakpoint_450_0_px")}px) {
+        .main-tabs { min-width: 0; gap: ${this.preference("layout_space_07_px")}px; }
+        .program-types button, .main-tabs button, .segmented-mode button { padding-inline: ${this.preference("layout_space_12_px")}px; font-size: ${this.preference("font_size_compact_px")}px; }
         .main-tabs button { flex: 0 1 auto; white-space: nowrap; }
-        .control-main .control-section, .control-main .manual-controls { padding: 12px; }
+        .control-main .control-section, .control-main .manual-controls { padding: ${this.preference("layout_space_18_px")}px; }
       }
-      .manual-controls:not(.manual-entry) { container: output-controls / inline-size; display: grid; grid-template-columns: minmax(0, 1fr); gap: 14px; }
-      .manual-controls .manual-section { display: grid; grid-template-columns: 4em minmax(0, 1fr); align-items: center; min-width: 0; }
-      .manual-controls .manual-section + .manual-section { border-top: 1px solid var(--sauna-color-border); padding-top: 14px; }
-      .manual-heading h3 { font-size: 15px; font-weight: 600; }
-      .manual-selection { display: grid; grid-template-columns: 7.5em minmax(0, 1fr); align-items: center; gap: 12px; min-width: 0; width: min(100%, 20em); justify-self: center; font-size: 14px; }
-      .manual-selection:not(:has(.control-auto)) { grid-template-columns: minmax(0, 1fr); max-width: 12em; }
-      .control-auto, .output-toggle { padding: 4px; background: var(--sauna-surface-recessed); border-radius: var(--sauna-control-radius); }
-      .control-auto button, .output-toggle button { width: 100%; min-width: 0; padding-inline: 10px; font-size: 14px; font-weight: 600; white-space: nowrap; }
-      .output-toggle { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 4px; }
-      .output-toggle button { background: transparent; border-color: transparent; border-radius: calc(var(--sauna-control-radius) - 3px); color: var(--sauna-card-muted-text); box-shadow: none; }
+      .manual-controls:not(.manual-entry) { container: output-controls / inline-size; display: grid; grid-template-columns: minmax(0, 1fr); gap: ${this.preference("layout_space_20_px")}px; }
+      .manual-controls .manual-section { display: grid; grid-template-columns: ${this.preference("size_4_0_em")}em minmax(0, 1fr); align-items: center; min-width: 0; }
+      .manual-controls .manual-section + .manual-section { border-top: ${this.preference("border_1_0_px")}px solid var(--sauna-color-border); padding-top: ${this.preference("layout_space_20_px")}px; }
+      .manual-heading h3 { font-size: ${this.preference("font_size_body_emphasis_px")}px; font-weight: ${this.preference("font_weight_600_0_ratio")}; }
+      .manual-selection { display: grid; grid-template-columns: ${this.preference("size_7_5_em")}em minmax(0, 1fr); align-items: center; gap: ${this.preference("layout_space_18_px")}px; min-width: 0; width: min(100%, ${this.preference("size_20_0_em")}em); justify-self: center; font-size: ${this.preference("font_size_body_px")}px; }
+      .manual-selection:not(:has(.control-auto)) { grid-template-columns: minmax(0, 1fr); max-width: ${this.preference("size_12_0_em")}em; }
+      .control-auto, .output-toggle { padding: ${this.preference("layout_space_09_px")}px; background: var(--sauna-surface-recessed); border-radius: var(--sauna-control-radius); }
+      .control-auto button, .output-toggle button { width: 100%; min-width: 0; padding-inline: ${this.preference("layout_space_16_px")}px; font-size: ${this.preference("font_size_body_px")}px; font-weight: ${this.preference("font_weight_600_0_ratio")}; white-space: nowrap; }
+      .output-toggle { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: ${this.preference("layout_space_09_px")}px; }
+      .output-toggle button { background: transparent; border-color: transparent; border-radius: calc(var(--sauna-control-radius) - ${this.preference("radius_3_0_px")}px); color: var(--sauna-card-muted-text); box-shadow: none; }
       .output-toggle button[aria-pressed="true"] { box-shadow: var(--sauna-shadow-control); }
-      .output-toggle button[data-regulation-selected="true"] { outline: 2px solid var(--sauna-card-muted-text); outline-offset: -3px; }
-      @container output-controls (max-width: 280px) {
-        .manual-controls .manual-section { grid-template-columns: minmax(0, 1fr); gap: 8px; }
-        .manual-selection { gap: 8px; }
+      .output-toggle button[data-regulation-selected="true"] { outline: ${this.preference("border_2_0_px")}px solid var(--sauna-card-muted-text); outline-offset: -${this.preference("layout_space_08_px")}px; }
+      @container output-controls (max-width: ${this.preference("breakpoint_280_0_px")}px) {
+        .manual-controls .manual-section { grid-template-columns: minmax(0, 1fr); gap: ${this.preference("layout_space_13_px")}px; }
+        .manual-selection { gap: ${this.preference("layout_space_13_px")}px; }
         .manual-selection:not(:has(.control-auto)) { max-width: none; }
       }
       .output-toggle button[data-action$=":true"] { --output-surface: var(--sauna-feedback-on-surface); --output-ink: var(--sauna-feedback-on-ink); --output-focus: var(--sauna-feedback-on-focus); }
       .output-toggle button[data-action$=":false"] { --output-surface: var(--sauna-feedback-off-surface); --output-ink: var(--sauna-feedback-off-ink); --output-focus: var(--sauna-feedback-off-focus); }
       .output-toggle button[aria-pressed="true"] { background: var(--output-surface); border-color: var(--output-surface); color: var(--output-ink); --sauna-button-hover: var(--output-focus); --sauna-focus-current: var(--output-focus); }
       .instrument-arc-track[aria-disabled="true"], .instrument-arc-track[aria-disabled="true"] + .instrument-arc-handle { cursor: default; }
-      .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; border: 0; }
+      .sr-only { position: absolute; width: ${this.preference("size_1_0_px")}px; height: ${this.preference("size_1_0_px")}px; padding: 0; margin: -${this.preference("layout_space_05_px")}px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; border: 0; }
       button[data-command-pending] { position: relative; }
-      button[data-command-pending]::after { content: ""; position: absolute; inset: auto 8px 5px; height: 2px; background: currentColor; opacity: .65; animation: command-wait 1.2s ease-in-out infinite alternate; }
-      @keyframes command-wait { from { opacity: .25; transform: scaleX(.45); } to { opacity: .8; transform: scaleX(1); } }
+      button[data-command-pending]::after { content: ""; position: absolute; inset: auto ${this.preference("layout_space_13_px")}px ${this.preference("layout_space_10_px")}px; height: ${this.preference("size_2_0_px")}px; background: currentColor; opacity: ${this.preference("opacity_0_65_ratio")}; animation: command-wait ${this.preference("transition_1_2_s")}s ease-in-out infinite alternate; }
+      @keyframes command-wait { from { opacity: ${this.preference("opacity_0_25_ratio")}; transform: scaleX(${this.preference("command_wait_minimum_scale")}); } to { opacity: ${this.preference("opacity_0_8_ratio")}; transform: scaleX(1); } }
       @media (prefers-reduced-motion: reduce) { button[data-command-pending]::after { animation: none; } }
-      .manual-entry { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
-      .control-history-lanes { min-width: 660px; }
-      .control-track { display: grid; grid-template-columns: 130px 1fr; align-items: center; gap: 18px; margin: 16px 0; font-size: 13px; }
+      .manual-entry { display: flex; align-items: center; justify-content: space-between; gap: ${this.preference("layout_space_18_px")}px; }
+      #control-history { container-type: inline-size; }
+      .control-history-lanes { min-width: 0; }
+      .control-track { display: grid; grid-template-columns: ${this.preference("size_130_0_px")}px minmax(0, 1fr); align-items: center; gap: ${this.preference("layout_space_18_px")}px; margin: ${this.preference("layout_space_15_px")}px 0; font-size: ${this.preference("font_size_small_px")}px; }
       .control-track > span { color: var(--sauna-card-muted-text); }
-      .control-track-bar { height: 25px; position: relative; border-radius: 5px; overflow: hidden; background: repeating-linear-gradient(135deg,transparent,transparent 4px,var(--sauna-color-border, var(--divider-color)) 4px,var(--sauna-color-border, var(--divider-color)) 5px); }
-      .control-track-bar button { position: absolute; top: 0; bottom: 0; padding: 0; border: 0; border-radius: 0; min-width: 1px; box-shadow: none; }
-      .control-track-bar button:hover { outline: 2px solid var(--sauna-card-text); z-index: 1; }
-      .control-track-bar i { position: absolute; top: 0; bottom: 0; border-left: 2px solid var(--sauna-card-text); pointer-events: none; }
-      .control-time-axis { display: flex; justify-content: space-between; margin-left: 148px; font-size: 12px; color: var(--sauna-card-muted-text); }
-      .control-history-inspection { display: grid; grid-template-columns: 1fr 1fr; gap: 24px; }
-      .control-history-inspection dl { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin: 0; font-size: 13px; }
+      .control-track-bar { height: ${this.preference("size_17_0_px")}px; position: relative; border-radius: ${this.preference("radius_3_0_px")}px; overflow: hidden; background: repeating-linear-gradient(135deg,transparent,transparent ${this.preference("size_4_0_px")}px,var(--sauna-color-border, var(--divider-color)) ${this.preference("size_4_0_px")}px,var(--sauna-color-border, var(--divider-color)) ${this.preference("size_5_0_px")}px); }
+      .control-track-bar button { position: absolute; top: 0; bottom: 0; padding: 0; border: 0; border-radius: 0; min-width: ${this.preference("size_1_0_px")}px; box-shadow: none; }
+      .control-track-bar button:hover { outline: ${this.preference("border_2_0_px")}px solid var(--sauna-card-text); z-index: 1; }
+      .control-track-bar i { position: absolute; top: 0; bottom: 0; border-left: ${this.preference("border_2_0_px")}px solid var(--sauna-card-text); pointer-events: none; }
+      .control-time-axis { display: flex; justify-content: space-between; margin-left: ${this.preference("size_130_0_px") + this.preference("layout_space_18_px")}px; font-size: ${this.preference("font_size_small_px")}px; color: var(--sauna-card-muted-text); }
+      .control-history-inspection { display: grid; grid-template-columns: 1fr 1fr; gap: ${this.preference("surface_gap_px")}px; }
+      .control-history-inspection dl { display: grid; grid-template-columns: 1fr 1fr; gap: ${this.preference("layout_space_13_px")}px; margin: 0; font-size: ${this.preference("font_size_compact_px")}px; }
       .control-history-inspection dd { margin: 0; text-align: right; }
-      .control-cursor-row { margin: 8px 0 16px 148px; }
-      input.control-cursor { appearance: none; display: block; width: calc(100% + 16px); max-width: none; height: 24px; border: 0; border-radius: 0; padding: 0; margin: 0 0 0 -8px; background: transparent; cursor: pointer; }
-      input.control-cursor::-webkit-slider-runnable-track { height: 4px; background: var(--sauna-color-border, var(--divider-color)); border-radius: 2px; }
-      input.control-cursor::-webkit-slider-thumb { appearance: none; width: 16px; height: 16px; border: 0; border-radius: 50%; margin-top: -6px; background: var(--accent); }
-      input.control-cursor::-moz-range-track { height: 4px; background: var(--sauna-color-border, var(--divider-color)); border-radius: 2px; }
-      input.control-cursor::-moz-range-thumb { width: 16px; height: 16px; border: 0; border-radius: 50%; background: var(--accent); }
-      .control-history-events td { vertical-align: top; font-size: 13px; }
+      .control-cursor-row { margin: ${this.preference("layout_space_13_px")}px 0 ${this.preference("layout_space_22_px")}px ${this.preference("size_130_0_px") + this.preference("layout_space_18_px")}px; }
+      input.control-cursor { appearance: none; display: block; width: calc(100% + ${this.rangeGeometry("control").thumb}px); max-width: none; height: ${this.preference("size_24_0_px")}px; border: 0; border-radius: 0; padding: 0; margin: 0 0 0 -${this.rangeGeometry("control").inset}px; background: transparent; cursor: pointer; }
+      input.control-cursor::-webkit-slider-runnable-track { height: ${this.rangeGeometry("control").track}px; background: var(--sauna-color-border, var(--divider-color)); border-radius: ${this.preference("radius_2_0_px")}px; }
+      input.control-cursor::-webkit-slider-thumb { appearance: none; width: ${this.rangeGeometry("control").thumb}px; height: ${this.rangeGeometry("control").thumb}px; border: 0; border-radius: 50%; margin-top: ${this.rangeGeometry("control").offset}px; background: var(--accent); }
+      input.control-cursor::-moz-range-track { height: ${this.rangeGeometry("control").track}px; background: var(--sauna-color-border, var(--divider-color)); border-radius: ${this.preference("radius_2_0_px")}px; }
+      input.control-cursor::-moz-range-thumb { width: ${this.rangeGeometry("control").thumb}px; height: ${this.rangeGeometry("control").thumb}px; border: 0; border-radius: 50%; background: var(--accent); }
+      .control-history-events td { vertical-align: top; font-size: ${this.preference("font_size_compact_px")}px; }
       .control-history-events td:first-child { white-space: nowrap; }
-      .control-history-events button { padding: 3px 7px; font-variant-numeric: tabular-nums; }
-      .control-history-events tr[data-selected="true"] { background: color-mix(in srgb, var(--accent) 10%, transparent); }
-      @media (max-width: 700px) { .control-history-inspection { grid-template-columns: 1fr; gap: 12px; } }
-      .gauge-card { padding: 26px 20px 20px; }
-      .gauge-card h2 { font-size: 13px; font-weight: 500; letter-spacing: .035em; color: var(--sauna-card-muted-text); margin-bottom: 10px; }
-      .gauges { gap: 10px; grid-template-columns: repeat(var(--round-count, 3), minmax(0, 1fr)); align-items: start; }
+      .control-history-events button { padding: ${this.preference("layout_space_08_px")}px ${this.preference("layout_space_12_px")}px; font-variant-numeric: tabular-nums; }
+      .control-history-events tr[data-selected="true"] { background: color-mix(in srgb, var(--accent) ${this.preference("color_mix_10_0_percent")}%, transparent); }
+      .control-history-events tr[data-error="true"] { box-shadow: inset ${this.preference("shadow_3_0_px")}px 0 var(--sauna-color-error, var(--error-color)); }
+      .detail-data { margin: ${this.preference("layout_space_13_px")}px 0; font-size: ${this.preference("font_size_compact_px")}px; }
+      .detail-data > div { display: grid; grid-template-columns: minmax(${this.preference("size_8_0_em")}em, 1fr) minmax(0, 2fr); gap: ${this.preference("layout_space_18_px")}px; padding: ${this.preference("layout_space_10_px")}px 0; border-bottom: ${this.preference("border_1_0_px")}px solid var(--sauna-color-border, var(--divider-color)); }
+      .detail-data dt { color: var(--sauna-card-muted-text); overflow-wrap: anywhere; }
+      .detail-data dd { margin: 0; min-width: 0; overflow-wrap: anywhere; }
+      .detail-data details { margin: 0; }
+      .detail-data details > summary { font-weight: ${this.preference("font_weight_500_0_ratio")}; }
+      .detail-record-list > details { padding: ${this.preference("layout_space_13_px")}px 0; border-bottom: ${this.preference("border_1_0_px")}px solid var(--sauna-color-border, var(--divider-color)); }
+      .detail-value-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: ${this.preference("layout_space_18_px")}px; }
+      .detail-value-plot { min-width: 0; }
+      .detail-value-plot h3 { font-size: ${this.preference("font_size_compact_px")}px; margin: ${this.preference("layout_space_13_px")}px 0 ${this.preference("layout_space_08_px")}px; }
+      .detail-value-plot svg { width: 100%; display: block; }
+      .detail-value-plot text { font-size: ${this.preference("font_size_fine_px")}px; fill: var(--sauna-card-muted-text); }
+      .detail-event-list { padding-left: ${this.preference("layout_space_24_px")}px; font-size: ${this.preference("font_size_compact_px")}px; }
+      .detail-event-list li { padding: ${this.preference("layout_space_10_px")}px 0; }
+      #control-session-evidence > details, .detail-evidence > details { border-top: ${this.preference("border_1_0_px")}px solid var(--sauna-color-border, var(--divider-color)); padding: ${this.preference("layout_space_16_px")}px 0; }
+      @container (max-width: ${this.preference("breakpoint_520_0_px")}px) {
+        .control-track { grid-template-columns: ${this.preference("size_94_0_px")}px minmax(0, 1fr); gap: ${this.preference("layout_space_13_px")}px; }
+        .control-time-axis, .control-cursor-row { margin-left: ${this.preference("size_94_0_px") + this.preference("layout_space_13_px")}px; }
+        .control-time-axis { font-size: ${this.preference("font_size_fine_px")}px; }
+        .control-history-inspection { grid-template-columns: 1fr; gap: ${this.preference("layout_space_18_px")}px; }
+        .detail-value-grid { grid-template-columns: 1fr; }
+        .detail-data > div { grid-template-columns: minmax(${this.preference("size_7_0_em")}em, 1fr) minmax(0, 1.3fr); gap: ${this.preference("layout_space_13_px")}px; }
+      }
+      @media (max-width: ${this.preference("breakpoint_700_0_px")}px) { .control-history-inspection { grid-template-columns: 1fr; gap: ${this.preference("layout_space_18_px")}px; } }
+      .gauge-card { padding: ${this.preference("layout_space_32_px")}px ${this.preference("surface_padding_px")}px ${this.preference("surface_padding_px")}px; }
+      .gauge-card h2 { font-size: ${this.preference("font_size_compact_px")}px; font-weight: ${this.preference("font_weight_500_0_ratio")}; letter-spacing: ${this.preference("tracking_0_035_em")}em; color: var(--sauna-card-muted-text); margin-bottom: ${this.preference("layout_space_16_px")}px; }
+      .gauges { gap: ${this.preference("layout_space_16_px")}px; grid-template-columns: repeat(var(--round-count, 3), minmax(0, 1fr)); align-items: start; }
       .gauges > * { min-width: 0; }
       .gauges > [data-instrument-style="linear"] { grid-column: 1 / -1; }
-      .dial { width: 100%; max-width: 320px; }
-      .instrument-face { stroke: var(--sauna-color-border, var(--divider-color)); stroke-width: .7; filter: drop-shadow(0 3px 3px rgb(0 0 0 / .25)); }
-      .instrument-rim { fill: none; stroke-width: 1; pointer-events: none; }
-      .instrument-readout { fill: var(--sauna-color-card-background, var(--card-background-color)); stroke: color-mix(in srgb, var(--measurement-color) 24%, transparent); stroke-width: 1; }
-      .dial .reading { font-size: 31px; font-weight: 550; letter-spacing: -.8px; font-variant-numeric: tabular-nums; }
-      .dial .reading-unit { font-size: 15px; font-weight: 400; letter-spacing: 0; }
-      .dial .target-caption { font-size: 8px; font-weight: 500; letter-spacing: 1.5px; fill: var(--sauna-card-muted-text); }
-      .dial .target-caption-next { letter-spacing: .45px; }
-      .dial .target-reading { font-size: 18px; font-weight: 450; fill: var(--sauna-card-text); font-variant-numeric: tabular-nums; }
-      .dial .target-reading .reading-unit { font-size: 11px; }
-      .dial .tick { font-size: 11px; font-weight: 450; opacity: .85; }
-      .humidity-symbol { fill: color-mix(in srgb, var(--measurement-color) 12%, transparent); stroke: var(--measurement-color); stroke-width: 1.2; opacity: .75; }
-      .light-symbol { fill: none; stroke: var(--measurement-color); stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; opacity: .75; }
+      .dial { width: 100%; max-width: ${this.preference("size_320_0_px")}px; }
+      .instrument-face { stroke: var(--sauna-color-border, var(--divider-color)); stroke-width: ${this.preference("stroke_0_7_ratio")}; filter: drop-shadow(0 ${this.preference("shadow_3_0_px")}px ${this.preference("shadow_3_0_px")}px rgb(0 0 0 / ${this.preference("opacity_0_25_ratio")})); }
+      .instrument-rim { fill: none; stroke-width: ${this.preference("stroke_1_0_ratio")}; pointer-events: none; }
+      .instrument-readout { fill: var(--sauna-color-card-background, var(--card-background-color)); stroke: color-mix(in srgb, var(--measurement-color) ${this.preference("color_mix_24_0_percent")}%, transparent); stroke-width: ${this.preference("stroke_1_0_ratio")}; }
+      .dial .reading { font-size: ${this.preference("font_size_instrument_px")}px; font-weight: ${this.preference("font_weight_550_0_ratio")}; letter-spacing: -${this.preference("tracking_0_8_px")}px; font-variant-numeric: tabular-nums; }
+      .dial .reading-unit { font-size: ${this.preference("font_size_body_emphasis_px")}px; font-weight: ${this.preference("font_weight_400_0_ratio")}; letter-spacing: 0; }
+      .dial .target-caption { font-size: ${this.preference("font_size_micro_px")}px; font-weight: ${this.preference("font_weight_500_0_ratio")}; letter-spacing: ${this.preference("tracking_1_5_px")}px; fill: var(--sauna-card-muted-text); }
+      .dial .target-caption-next { letter-spacing: ${this.preference("tracking_0_45_px")}px; }
+      .dial .target-reading { font-size: ${this.preference("font_size_heading_px")}px; font-weight: ${this.preference("font_weight_450_0_ratio")}; fill: var(--sauna-card-text); font-variant-numeric: tabular-nums; }
+      .dial .target-reading .reading-unit { font-size: ${this.preference("font_size_caption_px")}px; }
+      .dial .tick { font-size: ${this.preference("font_size_caption_px")}px; font-weight: ${this.preference("font_weight_450_0_ratio")}; opacity: ${this.preference("opacity_0_85_ratio")}; }
+      .humidity-symbol { fill: color-mix(in srgb, var(--measurement-color) ${this.preference("color_mix_12_0_percent")}%, transparent); stroke: var(--measurement-color); stroke-width: ${this.preference("stroke_1_2_ratio")}; opacity: ${this.preference("opacity_0_75_ratio")}; }
+      .light-symbol { fill: none; stroke: var(--measurement-color); stroke-width: ${this.preference("stroke_1_5_ratio")}; stroke-linecap: round; stroke-linejoin: round; opacity: ${this.preference("opacity_0_75_ratio")}; }
       .light-instrument { --accent: var(--sauna-color-series-light); }
       .measurement-instrument { min-width: 0; text-align: center; }
-      .measurement-instrument[data-instrument-style="linear"] { padding: 12px 16px; border: 1px solid var(--sauna-color-border, var(--divider-color)); border-radius: var(--sauna-control-radius); background: linear-gradient(135deg, var(--sauna-color-card-background, var(--card-background-color)), var(--sauna-color-page-background, var(--primary-background-color))); box-shadow: var(--sauna-shadow-section); }
-      .measurement-instrument[data-instrument-style="linear"] > h2 { margin: 0 0 2px; text-align: left; }
-      .linear-instrument { display: grid; grid-template-columns: 100px minmax(0, 1fr) 22px; align-items: center; gap: 16px; }
-      .linear-reading { margin: 0; color: var(--measurement-color); text-align: left; white-space: nowrap; font-size: 31px; font-weight: 550; letter-spacing: -.8px; font-variant-numeric: tabular-nums; line-height: 1.25; }
-      .linear-symbol { width: 22px; height: 22px; fill: none; stroke: var(--measurement-color); stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; opacity: .75; }
-      .linear-reading > span { font-size: 15px; font-weight: 400; letter-spacing: 0; }
-      .linear-scale { container: linear-scale / inline-size; display: grid; grid-template-areas: "caption" "track" "ticks"; grid-template-columns: minmax(0, 1fr); grid-template-rows: 17px 28px 18px; align-items: center; min-width: 0; }
-      .linear-rail { grid-area: track; height: 8px; border-radius: 10px; background: var(--sauna-color-border); overflow: hidden; }
+      .measurement-instrument[data-instrument-style="linear"] { padding: ${this.preference("layout_space_18_px")}px ${this.preference("layout_space_22_px")}px; border: ${this.preference("border_1_0_px")}px solid var(--sauna-color-border, var(--divider-color)); border-radius: var(--sauna-control-radius); background: linear-gradient(135deg, var(--sauna-color-card-background, var(--card-background-color)), var(--sauna-color-page-background, var(--primary-background-color))); box-shadow: var(--sauna-shadow-section); }
+      .measurement-instrument[data-instrument-style="linear"] > h2 { margin: 0 0 ${this.preference("layout_space_07_px")}px; text-align: left; }
+      .linear-instrument { display: grid; grid-template-columns: ${this.preference("size_100_0_px")}px minmax(0, 1fr) ${this.preference("size_22_0_px")}px; align-items: center; gap: ${this.preference("layout_space_22_px")}px; }
+      .linear-reading { margin: 0; color: var(--measurement-color); text-align: left; white-space: nowrap; font-size: ${this.preference("font_size_instrument_px")}px; font-weight: ${this.preference("font_weight_550_0_ratio")}; letter-spacing: -${this.preference("tracking_0_8_px")}px; font-variant-numeric: tabular-nums; line-height: ${this.preference("line_height_1_25_ratio")}; }
+      .linear-symbol { width: ${this.preference("size_22_0_px")}px; height: ${this.preference("size_22_0_px")}px; fill: none; stroke: var(--measurement-color); stroke-width: ${this.preference("stroke_1_5_ratio")}; stroke-linecap: round; stroke-linejoin: round; opacity: ${this.preference("opacity_0_75_ratio")}; }
+      .linear-reading > span { font-size: ${this.preference("font_size_body_emphasis_px")}px; font-weight: ${this.preference("font_weight_400_0_ratio")}; letter-spacing: 0; }
+      .linear-scale { container: linear-scale / inline-size; display: grid; grid-template-areas: "caption" "track" "ticks"; grid-template-columns: minmax(0, 1fr); grid-template-rows: ${this.preference("size_17_0_px")}px ${this.preference("size_28_0_px")}px ${this.preference("size_18_0_px")}px; align-items: center; min-width: 0; }
+      .linear-rail { grid-area: track; height: ${this.preference("size_8_0_px")}px; border-radius: ${this.preference("control_radius_px")}px; background: var(--sauna-color-border); overflow: hidden; }
       .linear-rail i { display: block; height: 100%; border-radius: inherit; background: var(--measurement-color); }
-      .linear-ticks { grid-area: ticks; position: relative; height: 18px; margin-top: 0; color: var(--sauna-card-muted-text); font-size: 10px; font-variant-numeric: tabular-nums; }
+      .linear-ticks { grid-area: ticks; position: relative; height: ${this.preference("size_18_0_px")}px; margin-top: 0; color: var(--sauna-card-muted-text); font-size: ${this.preference("font_size_fine_px")}px; font-variant-numeric: tabular-nums; }
       .linear-ticks span { position: absolute; transform: translateX(-50%); }
       .linear-ticks [data-tick-density="middle"] { display: none; }
-      @container linear-scale (max-width: 220px) {
+      @container linear-scale (max-width: ${this.preference("breakpoint_220_0_px")}px) {
         .linear-ticks [data-tick-density="detail"] { display: none; }
         .linear-ticks [data-tick-density="middle"] { display: inline; }
       }
-      @container linear-scale (max-width: 110px) {
+      @container linear-scale (max-width: ${this.preference("breakpoint_110_0_px")}px) {
         .linear-ticks [data-tick-density="middle"] { display: none; }
       }
-      .instrument-slider { margin: 4px auto 0; max-width: 240px; width: 100%; }
+      .instrument-slider { margin: ${this.preference("layout_space_09_px")}px auto 0; max-width: ${this.preference("size_240_0_px")}px; width: 100%; }
       .linear-scale .instrument-slider { display: contents; }
-      .linear-scale .instrument-slider label { grid-area: caption; justify-content: flex-end; gap: 6px; margin: 0; font-size: 11px; }
-      .linear-scale .instrument-slider output { font-size: 12px; }
-      .instrument-slider label { display: flex; justify-content: space-between; align-items: baseline; margin: 0 0 6px; color: var(--sauna-card-muted-text); font-size: 12px; }
-      .instrument-slider output { color: var(--sauna-card-text); font-size: 14px; font-variant-numeric: tabular-nums; }
-      input.instrument-range { display: block; appearance: none; box-sizing: border-box; width: 100%; max-width: none; min-width: 0; padding: 0; margin: 0; height: 28px; border: 0; background: transparent; cursor: pointer; }
-      input.instrument-range::-webkit-slider-runnable-track { height: 5px; border-radius: 5px; background: var(--sauna-color-border); }
-      input.instrument-range::-webkit-slider-thumb { appearance: none; width: 17px; height: 17px; margin-top: -6px; border-radius: 50%; background: var(--accent); border: 2px solid var(--sauna-color-card-background); box-shadow: var(--sauna-shadow-control); }
-      input.instrument-range::-moz-range-track { height: 5px; border-radius: 5px; background: var(--sauna-color-border); }
-      input.instrument-range::-moz-range-thumb { width: 13px; height: 13px; border-radius: 50%; background: var(--accent); border: 2px solid var(--sauna-color-card-background); }
-      .linear-scale input.instrument-range { grid-area: track; z-index: 1; width: calc(100% + 17px); margin-inline: -8.5px; }
+      .linear-scale .instrument-slider label { grid-area: caption; justify-content: flex-end; gap: ${this.preference("control_group_gap_px")}px; margin: 0; font-size: ${this.preference("font_size_caption_px")}px; }
+      .linear-scale .instrument-slider output { font-size: ${this.preference("font_size_small_px")}px; }
+      .instrument-slider label { display: flex; justify-content: space-between; align-items: baseline; margin: 0 0 ${this.preference("control_group_gap_px")}px; color: var(--sauna-card-muted-text); font-size: ${this.preference("font_size_small_px")}px; }
+      .instrument-slider output { color: var(--sauna-card-text); font-size: ${this.preference("font_size_body_px")}px; font-variant-numeric: tabular-nums; }
+      input.instrument-range { display: block; appearance: none; box-sizing: border-box; width: 100%; max-width: none; min-width: 0; padding: 0; margin: 0; height: ${this.preference("size_28_0_px")}px; border: 0; background: transparent; cursor: pointer; }
+      input.instrument-range::-webkit-slider-runnable-track { height: ${this.rangeGeometry("instrument").track}px; border-radius: ${this.preference("radius_5_0_px")}px; background: var(--sauna-color-border); }
+      input.instrument-range::-webkit-slider-thumb { appearance: none; width: ${this.rangeGeometry("instrument").thumb}px; height: ${this.rangeGeometry("instrument").thumb}px; margin-top: ${this.rangeGeometry("instrument").offset}px; border-radius: 50%; background: var(--accent); border: ${this.preference("border_2_0_px")}px solid var(--sauna-color-card-background); box-shadow: var(--sauna-shadow-control); }
+      input.instrument-range::-moz-range-track { height: ${this.rangeGeometry("instrument").track}px; border-radius: ${this.preference("radius_5_0_px")}px; background: var(--sauna-color-border); }
+      input.instrument-range::-moz-range-thumb { width: ${this.rangeGeometry("instrument").content}px; height: ${this.rangeGeometry("instrument").content}px; border-radius: 50%; background: var(--accent); border: ${this.preference("border_2_0_px")}px solid var(--sauna-color-card-background); }
+      .linear-scale input.instrument-range { grid-area: track; z-index: 1; width: calc(100% + ${this.rangeGeometry("instrument").thumb}px); margin-inline: -${this.rangeGeometry("instrument").inset}px; }
       .linear-scale input.instrument-range::-webkit-slider-runnable-track { background: transparent; }
       .linear-scale input.instrument-range::-moz-range-track { background: transparent; }
-      input.instrument-range:disabled { opacity: .45; cursor: default; }
-      .instrument-notice { display: block; margin-top: 5px; color: var(--sauna-card-muted-text); font-size: 12px; }
-      .weather-instrument { display: grid; grid-template-columns: auto minmax(0, 1fr); grid-template-areas: "heading heading" "condition values"; gap: 10px 20px; align-items: center; margin-top: 16px; padding: 12px 14px; border-radius: var(--sauna-control-radius); background: var(--sauna-surface-section); box-shadow: var(--sauna-shadow-section); }
-      .weather-heading { grid-area: heading; display: flex; align-items: baseline; flex-wrap: wrap; gap: 4px 8px; }
-      .weather-heading > span { color: var(--sauna-card-muted-text); font-size: 10px; letter-spacing: .08em; }
-      .weather-heading h2 { margin: 0; font-size: 14px; color: var(--sauna-card-text); letter-spacing: 0; }
-      .weather-condition { grid-area: condition; display: flex; flex-direction: column; align-items: center; gap: 0; margin: 0; color: var(--sauna-card-muted-text); font-size: 11px; }
-      .weather-picture { width: 60px; flex: 0 0 auto; overflow: visible; fill: none; stroke: var(--sauna-card-muted-text); stroke-width: 3; stroke-linecap: round; stroke-linejoin: round; }
+      input.instrument-range:disabled { opacity: ${this.preference("opacity_0_45_ratio")}; cursor: default; }
+      .instrument-notice { display: block; margin-top: ${this.preference("layout_space_10_px")}px; color: var(--sauna-card-muted-text); font-size: ${this.preference("font_size_small_px")}px; }
+      .weather-instrument { display: grid; grid-template-columns: auto minmax(0, 1fr); grid-template-areas: "heading heading" "condition values"; gap: ${this.preference("layout_space_16_px")}px ${this.preference("surface_padding_px")}px; align-items: center; margin-top: ${this.preference("layout_space_22_px")}px; padding: ${this.preference("layout_space_18_px")}px ${this.preference("layout_space_20_px")}px; border-radius: var(--sauna-control-radius); background: var(--sauna-surface-section); box-shadow: var(--sauna-shadow-section); }
+      .weather-heading { grid-area: heading; display: flex; align-items: baseline; flex-wrap: wrap; gap: ${this.preference("layout_space_09_px")}px ${this.preference("layout_space_13_px")}px; }
+      .weather-heading > span { color: var(--sauna-card-muted-text); font-size: ${this.preference("font_size_fine_px")}px; letter-spacing: ${this.preference("tracking_0_08_em")}em; }
+      .weather-heading h2 { margin: 0; font-size: ${this.preference("font_size_body_px")}px; color: var(--sauna-card-text); letter-spacing: 0; }
+      .weather-condition { grid-area: condition; display: flex; flex-direction: column; align-items: center; gap: 0; margin: 0; color: var(--sauna-card-muted-text); font-size: ${this.preference("font_size_caption_px")}px; }
+      .weather-picture { width: ${this.preference("size_60_0_px")}px; flex: 0 0 auto; overflow: visible; fill: none; stroke: var(--sauna-card-muted-text); stroke-width: ${this.preference("stroke_3_0_ratio")}; stroke-linecap: round; stroke-linejoin: round; }
       .weather-sun, .weather-moon, .weather-lightning { color: var(--accent); stroke: currentColor; }
-      .weather-sun circle, .weather-moon { fill: color-mix(in srgb, var(--accent) 18%, transparent); }
+      .weather-sun circle, .weather-moon { fill: color-mix(in srgb, var(--accent) ${this.preference("color_mix_18_0_percent")}%, transparent); }
       .weather-cloud { fill: var(--sauna-surface-control); }
       .weather-rain, .weather-snow { stroke: var(--sauna-color-series-humidity); }
-      .weather-values { grid-area: values; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px 16px; margin: 0; }
-      .weather-values dt { margin: 0; font-size: 11px; color: var(--sauna-card-muted-text); overflow-wrap: anywhere; }
-      .weather-values dd { margin: 2px 0 0; font-size: 17px; font-variant-numeric: tabular-nums; white-space: nowrap; }
-      .weather-values dd span { font-size: 11px; color: var(--sauna-card-muted-text); }
-      .weather-instrument time { margin-inline-start: auto; color: var(--sauna-card-muted-text); font-size: 11px; white-space: nowrap; }
-      .appearance-instruments { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 14px; margin-bottom: 24px; }
-      .appearance-instruments label { display: grid; gap: 7px; font-size: 13px; }
+      .weather-values { grid-area: values; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: ${this.preference("layout_space_13_px")}px ${this.preference("layout_space_22_px")}px; margin: 0; }
+      .weather-values dt { margin: 0; font-size: ${this.preference("font_size_caption_px")}px; color: var(--sauna-card-muted-text); overflow-wrap: anywhere; }
+      .weather-values dd { margin: ${this.preference("layout_space_07_px")}px 0 0; font-size: ${this.preference("font_size_subtitle_px")}px; font-variant-numeric: tabular-nums; white-space: nowrap; }
+      .weather-values dd span { font-size: ${this.preference("font_size_caption_px")}px; color: var(--sauna-card-muted-text); }
+      .weather-instrument time { margin-inline-start: auto; color: var(--sauna-card-muted-text); font-size: ${this.preference("font_size_caption_px")}px; white-space: nowrap; }
+      .appearance-instruments { display: grid; grid-template-columns: repeat(auto-fit, minmax(${this.preference("size_180_0_px")}px, 1fr)); gap: ${this.preference("layout_space_20_px")}px; margin-bottom: ${this.preference("surface_gap_px")}px; }
+      .appearance-instruments label { display: grid; gap: ${this.preference("layout_space_12_px")}px; font-size: ${this.preference("font_size_compact_px")}px; }
       .appearance-instruments :is(select, .sauna-select-trigger) { width: 100%; min-width: 0; }
-      @container (max-width: 450px) {
+      @container (max-width: ${this.preference("breakpoint_450_0_px")}px) {
         .gauges { grid-template-columns: minmax(0, 1fr); }
-        .weather-instrument { grid-template-columns: 70px minmax(0, 1fr); gap: 8px 12px; padding: 12px; }
-        .measurement-instrument[data-instrument-style="linear"] { padding: 10px 12px; }
-        .linear-instrument { grid-template-columns: 88px minmax(0, 1fr) 18px; gap: 12px; }
-        .linear-reading { font-size: 25px; }
-        .linear-reading > span { font-size: 13px; }
-        .linear-symbol { width: 18px; height: 18px; }
-        .weather-values { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; margin: 0; }
-        .weather-values dd { font-size: 16px; }
+        .weather-instrument { grid-template-columns: ${this.preference("size_70_0_px")}px minmax(0, 1fr); gap: ${this.preference("layout_space_13_px")}px ${this.preference("layout_space_18_px")}px; padding: ${this.preference("layout_space_18_px")}px; }
+        .measurement-instrument[data-instrument-style="linear"] { padding: ${this.preference("layout_space_16_px")}px ${this.preference("layout_space_18_px")}px; }
+        .linear-instrument { grid-template-columns: ${this.preference("size_88_0_px")}px minmax(0, 1fr) ${this.preference("size_18_0_px")}px; gap: ${this.preference("layout_space_18_px")}px; }
+        .linear-reading { font-size: ${this.preference("font_size_display_emphasis_px")}px; }
+        .linear-reading > span { font-size: ${this.preference("font_size_compact_px")}px; }
+        .linear-symbol { width: ${this.preference("size_18_0_px")}px; height: ${this.preference("size_18_0_px")}px; }
+        .weather-values { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: ${this.preference("layout_space_13_px")}px; margin: 0; }
+        .weather-values dd { font-size: ${this.preference("font_size_large_px")}px; }
       }
-    </style><main>
+    `;
+  }
+  shell() {
+    this.shadowRoot.innerHTML = `<style id="panel-appearance-style">${this.appearanceStyles()}</style><main>
       <header><div class="header-brand"><button class="header-icon" data-action="menu" aria-label="Home-Assistant-Seitenleiste umschalten" title="Home-Assistant-Seitenleiste umschalten" hidden><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h16M4 12h16M4 18h16"/></svg></button><h1 id="instance-title">Sauna</h1></div><nav class="tabs main-tabs" id="main-navigation" aria-label="Ansicht"><button data-action="overview" aria-current="page">Steuerung</button><button data-action="history">Verlauf</button><button data-action="details">Details</button><button data-action="settings">Einstellungen</button></nav><div class="header-context"><select id="instance" aria-label="Sauna auswählen"></select><button class="header-icon" data-action="fullscreen" aria-label="Vollbild" title="Vollbild" hidden><svg data-fullscreen-icon="enter" viewBox="0 0 24 24" aria-hidden="true"><path d="M8 3H3v5m13-5h5v5M3 16v5h5m13-5v5h-5"/></svg><svg data-fullscreen-icon="exit" viewBox="0 0 24 24" aria-hidden="true" hidden><path d="M3 8h5V3m8 0v5h5M8 21v-5H3m18 0h-5v5"/></svg></button></div></header>
       <nav class="tabs detail-tabs" aria-label="Detailansicht" hidden><button data-action="detail" aria-current="page">Betrieb & Fristen</button><button data-action="detail-history">Detailverlauf</button><button data-action="diagnostics">Erkennungskontrolle</button></nav>
       <div id="message" role="alert"></div><section id="current" aria-live="polite"><p>Lade Saunadaten …</p></section><section id="details" hidden></section>
-      <section id="history" hidden><div class="plot-panel history-panel"><div class="history-controls"><select id="session" aria-label="Saunasitzung auswählen"><option value="live">Letzte Sitzung</option></select><span id="history-loading" role="status" hidden></span></div><div class="history-plot-frame"><div id="plots"></div><div id="history-navigation"><button data-action="zoom-out" aria-label="Verkleinern">−</button><div id="history-overview" class="history-overview" aria-label="Übersicht der gesamten Saunasitzung"></div><button data-action="zoom-in" aria-label="Vergrößern">＋</button><div class="history-window-caption"><button data-action="reset-zoom" aria-label="Gesamte Saunasitzung" title="Gesamte Sitzung anzeigen">1×</button></div></div></div>
-        <div class="history-inspection" id="history-inspection"><div class="history-readout"><div id="tooltip" role="group" aria-label="Werte am markierten Zeitpunkt" hidden></div></div><div id="history-legends">${this.historyLegendMarkup()}</div></div></div><div id="control-history" hidden></div><div id="detection-plots" hidden></div><div id="gangs"></div><div id="event-list"></div>
+      <section id="history" hidden><div class="plot-panel history-panel"><div class="history-controls"><select id="session" aria-label="Saunasitzung auswählen"><option value="live">Letzte Sitzung</option></select><span id="history-loading" role="status" hidden></span></div><div class="history-plot-frame"><div id="plots"></div><div id="history-navigation"><button data-action="zoom-out" aria-label="Verkleinern">−</button><div id="history-overview" class="history-overview" aria-label="Übersicht der gesamten Saunasitzung"></div><button data-action="zoom-in" aria-label="Vergrößern">＋</button><div class="history-window-caption"><span id="history-zoom-value">1×</span><button data-action="reset-zoom">Gesamter Zeitraum</button><button data-action="history-to-selection" disabled>Zur Auswahl</button></div></div></div>
+        <div class="history-inspection" id="history-inspection"><div class="history-inspection-actions"><button data-action="clear-history-selection" disabled>Auswahl aufheben</button></div><div class="history-readout"><div id="tooltip" role="group" aria-label="Werte am markierten Zeitpunkt" hidden></div></div><p id="history-event-inspection" role="status" hidden></p><div id="history-legends">${this.historyLegendMarkup()}</div></div></div><div id="control-history" hidden></div><div id="detection-plots" hidden></div><div id="gangs"></div><div id="event-list"></div>
       </section><section id="settings" hidden></section>
     </main>`;
     this.shadowRoot.addEventListener("click", (e) => {
       const moment = e.target.closest("[data-control-time]");
       if (moment) {
         this.controlHistoryCursor = Number(moment.dataset.controlTime);
+        this.controlHistoryEnd = Math.max(
+          this.controlHistoryEnd || 0,
+          this.controlHistoryCursor,
+        );
         this.renderControlHistory();
       }
       const b = e.target.closest("[data-action]");
       if (b) this.runPanelAction(() => this.action(b.dataset.action));
     });
     this.shadowRoot.addEventListener("change", (e) => {
+      if (e.target.id === "diagnostic-trace-index") {
+        const trace = this.diagnosticData().traces[Number(e.target.value)];
+        if (trace) {
+          this.selectedDiagnosticTrace = trace;
+          this.selectedDiagnosticTraceAt = trace.at;
+          this.highlightedEventId = null;
+          this.pendingEventFocus = null;
+          this.drawDiagnostics();
+        }
+        return;
+      }
       if (e.target.id === "control-history-cursor") {
         this.controlHistoryCursor =
           stamp(this.shown.session.timeline.session_started_at) +
@@ -4100,6 +5003,9 @@ class SaunaPanel extends HTMLElement {
       }
       if (e.target.id !== "instance" && !this.state) return;
       if (e.target.id === "instance") {
+        this.clearHistorySelection();
+        this.cancelHistoryInput();
+        this.inspectedHistoryEventId = null;
         this.entry = e.target.value;
         this.syncInstanceTitle();
         this.controlCommands = {};
@@ -4161,6 +5067,8 @@ class SaunaPanel extends HTMLElement {
         this.refresh(true);
       }
       if (e.target.id === "session") {
+        this.clearHistorySelection();
+        this.cancelHistoryInput();
         this.selected = e.target.value;
         this.historySelectionGeneration = (this.historySelectionGeneration || 0) + 1;
         this.historyLoad = null;
@@ -4175,7 +5083,7 @@ class SaunaPanel extends HTMLElement {
         this.window = null;
         this.showHistoryCache();
         this.drawHistory("archive");
-        this.startHistoryLoad();
+        this.startHistoryLoad(true);
       }
       if (e.target.id === "button-program")
         this.runPanelAction(() => this.action("button-program"));
@@ -4186,7 +5094,7 @@ class SaunaPanel extends HTMLElement {
       if (!this.state) return;
       if (
         e.target.matches(
-          "[data-appearance-color],[data-appearance-picker],[data-appearance-scale]",
+          "[data-appearance-color],[data-appearance-picker],[data-appearance-scale],[data-appearance-preference]",
         )
       )
         this.updateAppearanceField(e.target);
@@ -4225,7 +5133,7 @@ class SaunaPanel extends HTMLElement {
         e.target.value = this.linearTargetDraft;
         this.linearTargetRevision = (this.linearTargetRevision || 0) + 1;
         const output = this.$("[data-linear-target]");
-        if (output) output.textContent = `${num(this.linearTargetDraft)} °C`;
+        if (output) output.textContent = `${this.num(this.linearTargetDraft)} °C`;
       }
     });
     this.shadowRoot.addEventListener("change", (e) => {
@@ -4271,12 +5179,29 @@ class SaunaPanel extends HTMLElement {
         return;
       }
       if (
-        e.target.matches(".diagnostic-marker[data-action]") &&
+        e.target.matches(
+          ".diagnostic-marker[data-action], .history-event-marker[data-action]",
+        ) &&
         ["Enter", " "].includes(e.key)
       ) {
         e.preventDefault();
         this.runPanelAction(() => this.action(e.target.dataset.action));
         return;
+      }
+      if (
+        e.key === "Escape" &&
+        e.target.closest("#history") &&
+        (this.historyValueSelection ||
+          this.inspectedHistoryEventId ||
+          this.historyHoverPreview)
+      ) {
+        e.preventDefault();
+        this.clearHistorySelection();
+        return;
+      }
+      if (e.target.closest("svg.session-chart")) {
+        this.keyHistorySelection(e);
+        if (e.defaultPrevented) return;
       }
       if (e.target.matches("[data-program-drag]")) {
         if (["ArrowUp", "ArrowDown"].includes(e.key)) {
@@ -4297,11 +5222,18 @@ class SaunaPanel extends HTMLElement {
             this.zoom = 1;
             this.window = null;
           } else if (e.key === "ArrowLeft" || e.key === "ArrowRight") {
-            const offset = width * (e.key === "ArrowLeft" ? -0.1 : 0.1);
+            const offset =
+              width *
+              (e.key === "ArrowLeft" ? -1 : 1) *
+              this.preference("history_keyboard_pan_fraction");
             this.setHistoryWindow(this.window[0] + offset, this.window[1] + offset);
           } else {
             const middle = (this.window[0] + this.window[1]) / 2,
-              next = width * (e.key === "-" ? 2 : 0.5);
+              next =
+                width *
+                (e.key === "-"
+                  ? this.preference("history_zoom_factor")
+                  : 1 / this.preference("history_zoom_factor"));
             this.setHistoryWindow(middle - next / 2, middle + next / 2);
           }
           this.scheduleHistoryRender("viewport");
@@ -4334,8 +5266,14 @@ class SaunaPanel extends HTMLElement {
       if (target) return this.beginTemperatureDrag(e, target.closest("svg"), target);
       const svg = this.eventElement(e, "svg.session-chart");
       if (svg) {
-        if (e.pointerType !== "mouse") this.beginChartPointer(e, svg);
-        this.scheduleHover({ svg, clientX: e.clientX, clientY: e.clientY });
+        if (this.eventElement(e, ".history-event-marker")) return;
+        this.beginChartPointer(e, svg);
+        this.scheduleHover({
+          svg,
+          pointerId: e.pointerId,
+          clientX: e.clientX,
+          clientY: e.clientY,
+        });
       }
     });
     this.shadowRoot.addEventListener("pointerup", (e) => {
@@ -4358,12 +5296,14 @@ class SaunaPanel extends HTMLElement {
         return this.cancelTemperatureDrag(e);
       if (this.historyGesture?.pointerId === e.pointerId)
         return this.endHistoryGesture(e);
-      this.endChartPointer(e);
+      this.endChartPointer(e, true);
     });
     this.shadowRoot.addEventListener("lostpointercapture", (e) => {
       if (this.lightInteraction?.pointerId === e.pointerId) this.cancelLightDrag();
       if (this.temperatureInteraction?.pointerId === e.pointerId)
         this.cancelTemperatureDrag(e);
+      if (this.historyGesture?.pointerId === e.pointerId) this.endHistoryGesture(e);
+      this.endChartPointer(e, true);
     });
     this.shadowRoot.addEventListener("pointermove", (e) => {
       if (this.lightInteraction?.pointerId === e.pointerId)
@@ -4374,15 +5314,21 @@ class SaunaPanel extends HTMLElement {
         return this.updateHistoryGesture(e);
       const svg = this.eventElement(e, "svg.session-chart");
       if (!svg) return;
-      if (this.chartPointers.has(e.pointerId))
-        this.chartPointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
-      if (this.chartPointers.size === 2) {
+      this.updateChartPointer(e);
+      if (this.chartPointers.size === 2 && this.chartPointers.has(e.pointerId)) {
         e.preventDefault();
         this.pinchZoom(svg);
         return;
       }
       if (this.historyInputMode !== "webkit")
-        this.scheduleHover({ svg, clientX: e.clientX, clientY: e.clientY });
+        this.scheduleHover({
+          svg,
+          historyEventId: this.eventElement(e, ".history-event-marker")?.dataset
+            .historyEventId,
+          pointerId: e.pointerId,
+          clientX: e.clientX,
+          clientY: e.clientY,
+        });
     });
     this.shadowRoot.addEventListener("pointerout", (e) => {
       if (
@@ -4391,7 +5337,9 @@ class SaunaPanel extends HTMLElement {
       ) {
         this.pendingHover = null;
         this.lastHistoryPointer = null;
+        this.historyHoverPreview = null;
         this.historyChart?.interaction.hide();
+        this.syncHistorySelection();
       }
     });
     this.shadowRoot.addEventListener(
@@ -4485,6 +5433,22 @@ class SaunaPanel extends HTMLElement {
     this.archiveRevision = revision;
     const previousSessionId = this.state?.session?.timeline?.session_id || null,
       previousLastSessionId = this.state?.last_session?.timeline?.session_id || null;
+    for (const key of ["session", "last_session"]) {
+      const session = state[key],
+        id = session?.timeline?.session_id,
+        previous =
+          !archiveChanged && id
+            ? [this.state?.session, this.state?.last_session].find(
+                (candidate) => candidate?.timeline?.session_id === id,
+              )
+            : null;
+      if (session)
+        session.energy = mergeEnergyIntervals(
+          previous?.energy,
+          session.energy,
+          session.timeline?.session_started_at,
+        );
+    }
     this.state = state;
     if (state.title !== undefined || state.instances)
       this.syncInstanceTitle(state.title, state.instances);
@@ -4547,6 +5511,27 @@ class SaunaPanel extends HTMLElement {
     this.invalidateHistoryIndex();
     this.clearHistoryDisplay();
   }
+  stateRequestPath(entry, includeEnergyIntervals = true) {
+    const query = [];
+    if (this.panel?.config?.appearance_catalog) query.push("include_catalog=false");
+    if (!includeEnergyIntervals) query.push("include_energy_intervals=false");
+    else if (entry === this.entry) {
+      for (const [key, idKey, afterKey] of [
+        ["session", "energy_session_id", "energy_after"],
+        ["last_session", "last_energy_session_id", "last_energy_after"],
+      ]) {
+        const session = this.state?.[key],
+          id = session?.timeline?.session_id,
+          transport = energyIntervalTransport(session?.energy);
+        if (id && transport?.horizon && !transport.bootstrapNeeded)
+          query.push(
+            `${idKey}=${encodeURIComponent(id)}`,
+            `${afterKey}=${encodeURIComponent(transport.horizon)}`,
+          );
+      }
+    }
+    return `/${entry}/state${query.length ? `?${query.join("&")}` : ""}`;
+  }
   async refresh(requested = false) {
     if (this.busy) {
       if (requested) this.refreshPending = true;
@@ -4574,7 +5559,7 @@ class SaunaPanel extends HTMLElement {
         this.syncInstanceTitle();
       }
       const entry = this.entry;
-      const state = await this.api(`/${entry}/state`);
+      const state = await this.api(this.stateRequestPath(entry));
       if (
         generation !== this.generation ||
         entry !== this.entry ||
@@ -4612,7 +5597,7 @@ class SaunaPanel extends HTMLElement {
         this.syncHistorySessions();
         this.showHistoryCache();
         this.drawHistory("status");
-        this.startHistoryLoad();
+        this.startHistoryLoad(requested);
       }
       this.drawSettings();
       this.syncAppearanceEditor();
@@ -4684,12 +5669,19 @@ class SaunaPanel extends HTMLElement {
     if (cache?.accessProjection && cache.accessProjection !== accessProjection)
       cache = null;
     if (!cache) {
-      cache = { records: [], after: 0, pageRunLoaded: false, finalSynced: false };
+      cache = {
+        sessionId: id,
+        records: [],
+        after: 0,
+        pageRunLoaded: false,
+        finalSynced: false,
+      };
       this.cache.set(id, cache);
     }
     // Map order is the most recent access order, including warm selections.
     this.cache.delete(id);
     this.cache.set(id, cache);
+    cache.sessionId ??= id;
     cache.accessProjection = accessProjection;
     cache.records ??= [];
     cache.after ??= 0;
@@ -4709,7 +5701,7 @@ class SaunaPanel extends HTMLElement {
     return cache;
   }
   trimHistoryCaches() {
-    const configured = this.state?.frontend_defaults?.history_cache_records,
+    const configured = this.preference("history_cache_records"),
       budget = Number.isSafeInteger(configured) && configured >= 0 ? configured : 0,
       protectedIds = new Set([
         this.historySelectionId(),
@@ -4730,16 +5722,38 @@ class SaunaPanel extends HTMLElement {
     }
   }
   updateHistoryCacheMetadata(cache, page) {
+    const incomingSession = page.session;
+    if (
+      incomingSession &&
+      cache.sessionId &&
+      incomingSession.timeline?.session_id !== cache.sessionId
+    )
+      throw Error("Archivantwort für eine andere Sitzung.");
+    cache.sessionId ??= incomingSession?.timeline?.session_id;
     const measurementWindowSignature = JSON.stringify(page.measurement_window || null);
     if (cache.measurementWindowSignature !== measurementWindowSignature) {
       cache.measurement_window = page.measurement_window;
       cache.measurementWindowSignature = measurementWindowSignature;
       cache.metadataRevision = (cache.metadataRevision || 0) + 1;
     }
-    const session = page.session,
+    const session = incomingSession
+        ? {
+            ...incomingSession,
+            energy: mergeEnergyIntervals(
+              cache.energy,
+              incomingSession.energy,
+              incomingSession.timeline?.session_started_at,
+            ),
+          }
+        : incomingSession,
       projection = page.phase_projection,
-      sessionSignature = JSON.stringify(session || null),
+      sessionSignature = JSON.stringify(
+        session
+          ? { ...session, energy: energyIntervalSignature(session.energy) }
+          : null,
+      ),
       projectionSignature = JSON.stringify(projection || null);
+    cache.energy = session?.energy;
     if (cache.sessionSignature !== sessionSignature) {
       cache.session = session;
       cache.sessionSignature = sessionSignature;
@@ -4780,14 +5794,22 @@ class SaunaPanel extends HTMLElement {
     return (
       !cache.pageRunLoaded ||
       !cache.finalSynced ||
-      cache.measurement_window?.complete === false
+      cache.measurement_window?.complete === false ||
+      !!energyIntervalTransport(cache.energy)?.bootstrapNeeded
     );
   }
   showHistoryCache() {
     const id = this.historySelectionId();
     if (id !== this.historySessionId) {
+      this.clearHistorySelection();
+      this.cancelHistoryInput();
+      this.inspectedHistoryEventId = null;
       this.historySessionId = id;
       this.window = null;
+      this.selectedDiagnosticTraceAt = null;
+      this.selectedDiagnosticTrace = null;
+      this.highlightedEventId = null;
+      this.pendingEventFocus = null;
       this.invalidateHistoryIndex();
       this.historyTimelineSignature = null;
     }
@@ -4811,17 +5833,19 @@ class SaunaPanel extends HTMLElement {
     if (!select || !this.sessions || !this.state) return;
     const liveId = this.state.session?.timeline.session_id,
       timeZone = localTimeZone(),
-      liveLabel =
-        this.state.operation_enabled && this.state.session
-          ? "Laufende Sitzung"
-          : "Letzte Sitzung",
+      latest =
+        this.state.session ||
+        this.sessions.find(
+          (session) => session.session_id === this.historySelectionId(),
+        ),
+      liveLabel = latest ? this.sessionLabel(latest, timeZone) : "Letzte Sitzung",
       options =
         `<option value="live">${liveLabel}</option>` +
         this.sessions
           .filter((session) => session.session_id !== liveId)
           .map(
             (session) =>
-              `<option value="${esc(session.session_id)}">Sitzung vom ${esc(when(session.started_at, timeZone))}${session.ended_at ? " · beendet" : " · unterbrochen"}</option>`,
+              `<option value="${esc(session.session_id)}">${esc(this.sessionLabel(session, timeZone))}</option>`,
           )
           .join("");
     if (this.historyOptionsSignature !== options) {
@@ -4834,11 +5858,12 @@ class SaunaPanel extends HTMLElement {
   syncHistoryLoading() {
     const node = this.$("#history-loading");
     if (!node) return;
-    node.hidden = !this.historyLoad;
-    node.textContent = this.historyLoad ? "Wird geladen …" : "";
-    this.$("#plots")?.setAttribute?.("aria-busy", String(!!this.historyLoad));
+    const initial = !!this.historyLoad?.initial;
+    node.hidden = !initial;
+    node.textContent = initial ? "Wird geladen …" : "";
+    this.$("#plots")?.setAttribute?.("aria-busy", String(initial));
   }
-  startHistoryLoad() {
+  startHistoryLoad(force = false) {
     this.syncHistoryLoading();
     if (
       !this.state ||
@@ -4864,9 +5889,28 @@ class SaunaPanel extends HTMLElement {
         : false;
     if (!listNeeded && !pageNeeded) return;
     if (this.historyLoad?.key === key) return this.historyLoad.promise;
-    const load = { key, count: 0, sessionId: initialId };
+    const initialCache = initialId ? this.historyCache(initialId) : null,
+      completedSinceLastRead =
+        initialCache?.lastReadLive &&
+        (liveId !== initialId || !!this.state?.session?.ended_at),
+      now = Date.now();
+    if (
+      !force &&
+      !listNeeded &&
+      initialCache?.pageRunLoaded &&
+      !initialCache.session?.ended_at &&
+      !completedSinceLastRead &&
+      now - (initialCache.lastFetchedAt || 0) < this.preference("history_live_poll_ms")
+    )
+      return;
+    const load = {
+      key,
+      count: 0,
+      sessionId: initialId,
+      initial: !initialCache?.pageRunLoaded && !initialCache?.records.length,
+    };
     this.historyLoad = load;
-    this.message(null, "history");
+    if (load.initial) this.message(null, "history");
     this.syncHistoryLoading();
     const current = () =>
       this.historyLoad === load &&
@@ -4913,8 +5957,13 @@ class SaunaPanel extends HTMLElement {
           let more;
           do {
             const after = cache.after,
+              transport = energyIntervalTransport(cache.energy),
+              energyAfter =
+                transport?.horizon && !transport.bootstrapNeeded
+                  ? `&energy_after=${encodeURIComponent(transport.horizon)}`
+                  : "",
               page = await this.api(
-                `/${entry}/archive?session_id=${encodeURIComponent(id)}&projection=history&after=${after}`,
+                `/${entry}/archive?session_id=${encodeURIComponent(id)}&projection=history&after=${after}${energyAfter}`,
               );
             if (!currentFor(id)) return;
             // Persist each complete page before the next request. A failed
@@ -4939,6 +5988,10 @@ class SaunaPanel extends HTMLElement {
             more = continuation != null;
             cache.pageRunLoaded = !more;
             cache.loaded = cache.pageRunLoaded;
+            if (!more) {
+              cache.lastFetchedAt = Date.now();
+              cache.lastReadLive = id === liveId && !cache.session?.ended_at;
+            }
             // A page run can be complete for an open snapshot.  Only a
             // closed final snapshot plus its last page settles the session.
             cache.finalSynced =
@@ -5003,10 +6056,12 @@ class SaunaPanel extends HTMLElement {
         validity_unconfigured: "Gültigkeit noch nicht eingestellt",
       })[quality(position, quantity)] || "Messwert fehlt";
     const measurementPosition =
-      s.regulation_temperature_position || s.measurement_positions?.[0] || "upper";
+      s.regulation_temperature_position ||
+      s.configuration_model?.measurement_positions?.[0] ||
+      "upper";
     const measurementHeight = measurementPosition === "lower" ? "unten" : "oben";
     const formatValue = (position, quantity, unit) =>
-      `${num(value(position, quantity), 1)} ${unit}`;
+      `${this.num(value(position, quantity), this.preference("value_precision"))} ${unit}`;
     const energyLabel = {
       measured: "Gemessen",
       estimated: "Geschätzt",
@@ -5014,7 +6069,7 @@ class SaunaPanel extends HTMLElement {
       incomplete: "Unvollständig",
     };
     const energy = latest?.energy;
-    const energyText = `${num(session ? s.energy_kwh : energy ? energy.measured_kwh + energy.estimated_kwh : 0, 3)} kWh · ${energyLabel[session ? s.energy_source : energy?.unknown_seconds ? "incomplete" : energy?.measured_seconds ? (energy.estimated_seconds ? "mixed" : "measured") : "estimated"]}`;
+    const energyText = `${this.num(session ? s.energy_kwh : energy ? energy.measured_kwh + energy.estimated_kwh : 0, this.preference("energy_precision"))} kWh · ${energyLabel[session ? s.energy_source : energy?.unknown_seconds ? "incomplete" : energy?.measured_seconds ? (energy.estimated_seconds ? "mixed" : "measured") : "estimated"]}`;
     const heatCaption =
       s.heating_feedback === true
         ? "Ofen · Ein"
@@ -5030,7 +6085,8 @@ class SaunaPanel extends HTMLElement {
       }[s.heating_observation?.source] || "Rückmeldung fehlt";
     const permissions = s.permissions || {};
     const manualMode = s.configuration.control_mode === "manual";
-    const modeLocked = !!s.configuration_locked && !manualMode;
+    const modeLocked = !s.control_mode_change_allowed;
+    const lightAfterRun = s.light_after_run && stamp(s.light_after_run.ends_at) > now;
     const canStart =
       permissions.control && (s.operation_enabled || !s.start_errors.length);
     const sessionGap = !s.operation_enabled
@@ -5061,8 +6117,8 @@ class SaunaPanel extends HTMLElement {
       const minutes = Math.max(0, Number(seconds) || 0) / 60;
       const step = this.frontendStep("warmup_minutes_step");
       if (!step) return "unbekannte Zeit";
-      if (minutes < step) return `unter ${num(step)} Minuten`;
-      return `${num(Math.max(step, Math.round(minutes / step) * step))} Minuten`;
+      if (minutes < step) return `unter ${this.num(step)} Minuten`;
+      return `${this.num(Math.max(step, Math.round(minutes / step) * step))} Minuten`;
     };
     const timerLine = s.phase_timer;
     const phaseTimerText =
@@ -5104,7 +6160,7 @@ class SaunaPanel extends HTMLElement {
     const operation = manualMode
       ? ""
       : sessionGap
-        ? `<div class="operation-control split"><button class="tile operation stop" data-action="finish-session:${esc(encodeURIComponent(sessionGap.token))}" ${permissions.control ? "" : "disabled"}>Endgültig beenden</button><button class="tile operation primary" data-action="operation"${this.controlCommandAttributes("operation", !s.operation_enabled)} ${canStart ? "" : "disabled"}>${this.controlCommandLabel("operation", true, "Fortsetzen")}</button></div>`
+        ? `<div class="operation-control${lightAfterRun ? " split" : ""}">${lightAfterRun ? `<button class="tile operation stop" data-action="finish-session:${esc(encodeURIComponent(sessionGap.token))}" ${permissions.control ? "" : "disabled"}>Lichtnachlauf beenden</button>` : ""}<button class="tile operation primary" data-action="operation"${this.controlCommandAttributes("operation", !s.operation_enabled)} ${canStart ? "" : "disabled"}>${this.controlCommandLabel("operation", true, "Fortsetzen")}</button></div>`
         : `<div class="operation-control${finishPhase ? " split" : ""}"><button class="tile operation ${s.operation_enabled ? "stop" : "primary"}" data-action="operation"${this.controlCommandAttributes("operation", !s.operation_enabled)} ${canStart ? "" : "disabled"}>${this.controlCommandLabel("operation", !s.operation_enabled, s.operation_enabled ? "Ausschalten" : "Einschalten")}</button>${finishPhase}</div>`;
     const phaseLabel =
       s.phase === "aufheizen" ? "Heizen" : phases[s.phase] || "Unbekannt";
@@ -5123,9 +6179,10 @@ class SaunaPanel extends HTMLElement {
     ) =>
       !Number.isFinite(minimum) || !Number.isFinite(maximum)
         ? '<p class="muted">Anzeigeskala nicht verfügbar</p>'
-        : `<svg class="dial ${control ? `dial-${key}` : ""}" style="--measurement-color:${color}" viewBox="25 5 250 250" role="${control ? "group" : "img"}" aria-label="${esc(key === "temperature" && control ? "Temperatur und Solltemperatur" : `${caption}: ${num(reading, key === "light" ? 0 : 1)} ${unit}`)}"><defs><linearGradient id="instrument-face-${key}" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="var(--sauna-color-card-background, var(--card-background-color))"/><stop offset="1" stop-color="var(--sauna-color-page-background, var(--primary-background-color))"/></linearGradient><linearGradient id="instrument-rim-${key}" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="white" stop-opacity=".16"/><stop offset=".5" stop-color="white" stop-opacity=".025"/><stop offset="1" stop-color="black" stop-opacity=".28"/></linearGradient></defs><circle class="instrument-face" cx="150" cy="130" r="119" fill="url(#instrument-face-${key})"/><circle class="instrument-rim" cx="150" cy="130" r="119" stroke="url(#instrument-rim-${key})"/><path d="${temperatureDial.path}" fill="none" stroke="var(--sauna-color-border, var(--divider-color))" stroke-width="10" stroke-linecap="round"/>${Number.isFinite(reading) && reading > minimum ? `<path class="instrument-value-arc" d="${temperatureDial.path}" fill="none" stroke="${valid ? color : this.appearanceColor("status_unknown")}" stroke-width="10" stroke-linecap="round" pathLength="100" stroke-dasharray="${Math.max(0, Math.min(100, ((reading - minimum) / (maximum - minimum || 1)) * 100))} 100"/>` : ""}${this.temperatureTickMarks({ minimum, maximum })}<rect class="instrument-readout" width="0" height="0" rx="6"/><text class="reading" ${key === "light" ? "data-light-observation" : ""} x="150" y="130" text-anchor="middle" dominant-baseline="central"><tspan>${num(reading, key === "light" ? 0 : 1)}</tspan><tspan class="reading-unit" dx="5"> ${unit}</tspan></text>${control || (unit === "%" ? '<path class="humidity-symbol" transform="translate(150 210) scale(.58) translate(-150 -126)" d="M150 104 C146 113 135 121 135 132 A15 15 0 0 0 165 132 C165 121 154 113 150 104 Z"/>' : "")}</svg>`;
+        : `<svg class="dial ${control ? `dial-${key}` : ""}" style="--measurement-color:${color}" viewBox="25 5 250 250" role="${control ? "group" : "img"}" aria-label="${esc(key === "temperature" && control ? "Temperatur und Solltemperatur" : `${caption}: ${this.num(reading, key === "light" ? this.preference("percentage_precision") : this.preference("value_precision"))} ${unit}`)}"><defs><linearGradient id="instrument-face-${key}" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="var(--sauna-color-card-background, var(--card-background-color))"/><stop offset="1" stop-color="var(--sauna-color-page-background, var(--primary-background-color))"/></linearGradient><linearGradient id="instrument-rim-${key}" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="white" stop-opacity="${this.preference("instrument_rim_highlight_opacity")}"/><stop offset=".5" stop-color="white" stop-opacity="${this.preference("instrument_rim_mid_opacity")}"/><stop offset="1" stop-color="black" stop-opacity="${this.preference("instrument_rim_shade_opacity")}"/></linearGradient></defs><circle class="instrument-face" cx="150" cy="130" r="119" fill="url(#instrument-face-${key})"/><circle class="instrument-rim" cx="150" cy="130" r="119" stroke="url(#instrument-rim-${key})"/><path d="${temperatureDial.path}" fill="none" stroke="var(--sauna-color-border, var(--divider-color))" stroke-width="${this.preference("instrument_value_arc_width_px")}" stroke-linecap="round"/>${Number.isFinite(reading) && reading > minimum ? `<path class="instrument-value-arc" d="${temperatureDial.path}" fill="none" stroke="${valid ? color : this.appearanceColor("status_unknown")}" stroke-width="${this.preference("instrument_value_arc_width_px")}" stroke-linecap="round" pathLength="100" stroke-dasharray="${Math.max(0, Math.min(100, ((reading - minimum) / (maximum - minimum || 1)) * 100))} 100"/>` : ""}${this.temperatureTickMarks({ minimum, maximum })}<rect class="instrument-readout" width="0" height="0" rx="6"/><text class="reading" ${key === "light" ? "data-light-observation" : ""} x="150" y="130" text-anchor="middle" dominant-baseline="central"><tspan>${this.num(reading, key === "light" ? this.preference("percentage_precision") : this.preference("value_precision"))}</tspan><tspan class="reading-unit" dx="5"> ${unit}</tspan></text>${control || (unit === "%" ? '<path class="humidity-symbol" transform="translate(150 210) scale(.58) translate(-150 -126)" d="M150 104 C146 113 135 121 135 132 A15 15 0 0 0 165 132 C165 121 154 113 150 104 Z"/>' : "")}</svg>`;
     const deadlineLabels = { confirmation: "Aufgussbestätigung" };
     const phaseRemaining = (phase) =>
+      phase.remaining_seconds ??
       Math.max(
         0,
         (phase.duration_seconds ?? 0) -
@@ -5154,7 +6211,6 @@ class SaunaPanel extends HTMLElement {
       if (!deadlineLabels[deadline.purpose]) continue;
       timerRows.push([deadlineLabels[deadline.purpose], remaining(deadline.due_at)]);
     }
-    const lightAfterRun = s.light_after_run && stamp(s.light_after_run.ends_at) > now;
     if (sessionGap)
       timerRows.push([
         lightAfterRun ? "Wiederaufnahme und Lichtnachlauf" : "Wiederaufnahme",
@@ -5188,7 +6244,7 @@ class SaunaPanel extends HTMLElement {
       targetPoint =
         temperatureScale && this.temperatureArcPoint(targetValue, temperatureScale);
     const targetControl = temperatureScale
-      ? `${arcBounds ? `<path class="target-temperature-track" data-target-arc="true" d="${temperatureDial.path}" role="slider" tabindex="${permissions.temperature && !this.programRequest ? 0 : -1}" aria-label="${this.temperatureControlsNextGang() ? "Temperatur für den nächsten Gang einstellen" : "Solltemperatur einstellen"}" aria-valuemin="${arcBounds.minimum}" aria-valuemax="${arcBounds.maximum}" aria-valuenow="${Math.max(arcBounds.minimum, Math.min(arcBounds.maximum, targetValue))}" aria-valuetext="${this.temperatureControlsNextGang() ? "Nächster Gang" : "Soll"} ${num(targetValue, 1)} °C" aria-disabled="${!permissions.temperature || !!this.programRequest}"/>` : ""}<circle class="target-temperature-handle" ${arcBounds ? 'data-target-arc="true"' : 'data-inert-target="true"'} cx="${targetPoint.x}" cy="${targetPoint.y}" r="9"/><text class="target-caption${this.temperatureControlsNextGang() ? " target-caption-next" : ""}" x="150" y="193" text-anchor="middle">${this.temperatureControlsNextGang() ? "NÄCHSTER GANG" : "SOLL"}</text><text class="target-reading" x="150" y="211" text-anchor="middle" dominant-baseline="central">${num(targetValue, 1)}<tspan class="reading-unit" dx="4">°C</tspan></text>`
+      ? `${arcBounds ? `<path class="target-temperature-track" data-target-arc="true" d="${temperatureDial.path}" role="slider" tabindex="${permissions.temperature && !this.programRequest ? 0 : -1}" aria-label="${this.temperatureControlsNextGang() ? "Temperatur für den nächsten Gang einstellen" : "Solltemperatur einstellen"}" aria-valuemin="${arcBounds.minimum}" aria-valuemax="${arcBounds.maximum}" aria-valuenow="${Math.max(arcBounds.minimum, Math.min(arcBounds.maximum, targetValue))}" aria-valuetext="${this.temperatureControlsNextGang() ? "Nächster Gang" : "Soll"} ${this.num(targetValue, this.preference("value_precision"))} °C" aria-disabled="${!permissions.temperature || !!this.programRequest}"/>` : ""}<circle class="target-temperature-handle" ${arcBounds ? 'data-target-arc="true"' : 'data-inert-target="true"'} cx="${targetPoint.x}" cy="${targetPoint.y}" r="${this.preference("instrument_handle_radius_px")}"/><text class="target-caption${this.temperatureControlsNextGang() ? " target-caption-next" : ""}" x="150" y="193" text-anchor="middle">${this.temperatureControlsNextGang() ? "NÄCHSTER GANG" : "SOLL"}</text><text class="target-reading" x="150" y="211" text-anchor="middle" dominant-baseline="central">${this.num(targetValue, this.preference("value_precision"))}<tspan class="reading-unit" dx="4">°C</tspan></text>`
       : "";
     const programs = Array.isArray(s.configuration.temperature_programs)
       ? s.configuration.temperature_programs
@@ -5225,7 +6281,7 @@ class SaunaPanel extends HTMLElement {
         ? `<div class="program-named-list">${programs
             .map((program) => {
               const feedback = programFeedback({ mode: "program", id: program.id });
-              return `<button type="button" class="program-named-choice ${feedback ? `program-feedback program-${this.programSaveState}` : ""}" data-action="program-select:${esc(program.id)}" aria-pressed="${program.id === programChoice.id}" aria-label="${esc(program.name)}${feedback ? `: ${feedback}` : ""}" ${programChoiceAvailable ? "" : "disabled"}>${choiceContent(`<span class="program-choice-summary"><span>${esc(program.name)}</span><small>${num(program.start_c, 0)} → ${num(program.end_c, 0)} °C</small></span><small class="program-choice-details">${esc(this.programSteps(program))}</small>`, feedback)}</button>`;
+              return `<button type="button" class="program-named-choice ${feedback ? `program-feedback program-${this.programSaveState}` : ""}" data-action="program-select:${esc(program.id)}" aria-pressed="${program.id === programChoice.id}" aria-label="${esc(program.name)}${feedback ? `: ${feedback}` : ""}" ${programChoiceAvailable ? "" : "disabled"}>${choiceContent(`<span class="program-choice-summary"><span>${esc(program.name)}</span><small>${this.num(program.start_c, 0)} → ${this.num(program.end_c, 0)} °C</small></span><small class="program-choice-details">${esc(this.programSteps(program))}</small>`, feedback)}</button>`;
             })
             .join("")}</div>`
         : "";
@@ -5241,14 +6297,13 @@ class SaunaPanel extends HTMLElement {
         ? manualMode
           ? "Keine Lichtwahl"
           : "Automatik"
-        : `Manuell · ${num(light.manual, 0)} %`;
+        : `Manuell · ${this.num(light.manual, this.preference("percentage_precision"))} %`;
     const manualControls = this.manualControlAvailability(),
       canManualHeater = manualControls.heater,
       canManualLight = manualControls.brightness;
-    const modeControls =
-      session && !manualMode
-        ? ""
-        : `<div class="segmented-mode control-mode" role="group" aria-label="Betriebsmodus"><button data-action="control-mode:automatic" aria-pressed="${!manualMode}"${this.controlCommandAttributes("control-mode", "automatic")} ${permissions.control && !modeLocked ? "" : "disabled"}>${this.controlCommandLabel("control-mode", "automatic", "Automatik")}</button><button data-action="control-mode:manual" aria-pressed="${manualMode}"${this.controlCommandAttributes("control-mode", "manual")} ${permissions.control && !modeLocked ? "" : "disabled"}>${this.controlCommandLabel("control-mode", "manual", "Manuell")}</button></div>`;
+    const modeControls = modeLocked
+      ? ""
+      : `<div class="segmented-mode control-mode" role="group" aria-label="Betriebsmodus"><button data-action="control-mode:automatic" aria-pressed="${!manualMode}"${this.controlCommandAttributes("control-mode", "automatic")} ${permissions.control && !modeLocked ? "" : "disabled"}>${this.controlCommandLabel("control-mode", "automatic", "Automatik")}</button><button data-action="control-mode:manual" aria-pressed="${manualMode}"${this.controlCommandAttributes("control-mode", "manual")} ${permissions.control && !modeLocked ? "" : "disabled"}>${this.controlCommandLabel("control-mode", "manual", "Manuell")}</button></div>`;
     const outputControls = (
       key,
       title,
@@ -5294,8 +6349,8 @@ class SaunaPanel extends HTMLElement {
     const activeProgramSteps = activeProgram
       ? this.programSteps(activeProgram)
       : Array.isArray(s.configuration.temperature_steps)
-        ? `${s.configuration.temperature_steps.map((value) => num(value, 1)).join(" → ")} °C`
-        : `${num(p.target_temperature_c, 1)} → ${num(p.final_temperature_c, 1)} °C`;
+        ? `${s.configuration.temperature_steps.map((value) => this.num(value, this.preference("value_precision"))).join(" → ")} °C`
+        : `${this.num(p.target_temperature_c, this.preference("value_precision"))} → ${this.num(p.final_temperature_c, this.preference("value_precision"))} °C`;
     // Temperaturautomatik stays the internal CSS/API term; the control uses the shorter label.
     const programEditorOpen =
       !session ||
@@ -5307,7 +6362,7 @@ class SaunaPanel extends HTMLElement {
       ? this.programDirty() || this.programSaveState
       : this.programDirty() && !this.programRequest;
     const temperatureAutomation = !manualMode
-      ? `<section class="control-section temperature-automation"><h3>Temperaturwahl</h3>${session ? `<div class="program-current"><div class="program-current-value"><strong class="program-active-label">${esc(activeProgramLabel)}</strong><small>${activeMode === "constant" ? `${num(s.target_temperature, 1)} °C` : esc(activeProgramSteps)}</small></div><button type="button" data-action="program-toggle" aria-expanded="${programEditorOpen}" aria-controls="program-choice-body" ${programEditorLocked ? "disabled" : ""}>${programEditorOpen ? "Schließen" : "Ändern"}</button></div>` : ""}<div id="program-choice-body" ${programEditorOpen ? "" : "hidden"}>${programTypes}${namedPrograms}${programMode === "individual" ? this.freeProgramForm(programBounds) : ""}${programMode === "constant" ? `<div class="temperature-presets" style="--preset-columns-wide:${equalPresetColumns(presets.length, 6)};--preset-columns-medium:${equalPresetColumns(presets.length, 3)};--preset-columns-narrow:${equalPresetColumns(presets.length, 2)}">${presets.map((v) => `<button type="button" class="tile" data-action="preset:${v}" aria-pressed="${Math.abs(v - (programChoice.temperature ?? (this.programSelectionDraft?.mode === "constant" ? p.standard_temperature_c : s.target_temperature))) < 0.01}" ${permissions.temperature && (!session || permissions.program) && !programBusy ? "" : "disabled"}>${num(v, 1)} °C</button>`).join("")}</div>` : ""}${programActionsVisible ? `<div class="program-pending"${this.programDirty() ? "" : ' aria-hidden="true" inert'}><span>Noch nicht übernommen: ${esc(this.programChoiceLabel(programChoice, programs))}</span><button type="button" data-action="program-cancel-draft" ${programBusy ? "disabled" : ""}>Abbrechen</button></div>` : ""}${programActionsVisible ? `<div class="program-actions">${this.programApplyButton(permissions)}</div>` : ""}</div></section>`
+      ? `<section class="control-section temperature-automation"><h3>Temperaturwahl</h3>${session ? `<div class="program-current"><div class="program-current-value"><strong class="program-active-label">${esc(activeProgramLabel)}</strong><small>${activeMode === "constant" ? `${this.num(s.target_temperature, this.preference("value_precision"))} °C` : esc(activeProgramSteps)}</small></div><button type="button" data-action="program-toggle" aria-expanded="${programEditorOpen}" aria-controls="program-choice-body" ${programEditorLocked ? "disabled" : ""}>${programEditorOpen ? "Schließen" : "Ändern"}</button></div>` : ""}<div id="program-choice-body" ${programEditorOpen ? "" : "hidden"}>${programTypes}${namedPrograms}${programMode === "individual" ? this.freeProgramForm(programBounds) : ""}${programMode === "constant" ? `<div class="temperature-presets" style="--preset-columns-wide:${equalPresetColumns(presets.length, this.preference("preset_columns_wide"))};--preset-columns-medium:${equalPresetColumns(presets.length, this.preference("preset_columns_medium"))};--preset-columns-narrow:${equalPresetColumns(presets.length, this.preference("preset_columns_narrow"))}">${presets.map((v) => `<button type="button" class="tile" data-action="preset:${v}" aria-pressed="${v === (programChoice.temperature ?? (this.programSelectionDraft?.mode === "constant" ? p.standard_temperature_c : s.target_temperature))}" ${permissions.temperature && (!session || permissions.program) && !programBusy ? "" : "disabled"}>${this.num(v, this.preference("value_precision"))} °C</button>`).join("")}</div>` : ""}${programActionsVisible ? `<div class="program-pending"${this.programDirty() ? "" : ' aria-hidden="true" inert'}><span>Noch nicht übernommen: ${esc(this.programChoiceLabel(programChoice, programs))}</span><button type="button" data-action="program-cancel-draft" ${programBusy ? "disabled" : ""}>Abbrechen</button></div>` : ""}${programActionsVisible ? `<div class="program-actions">${this.programApplyButton(permissions)}</div>` : ""}</div></section>`
       : "";
     this.updateMarkup(
       "#current",
@@ -5323,7 +6378,7 @@ class SaunaPanel extends HTMLElement {
         heaterControls,
         lightControls,
         manualEntry,
-        overrideLimitMinutes: num(p.manual_override_minutes, 0),
+        overrideLimitMinutes: this.num(p.manual_override_minutes, 0),
         heaterOverrideRemaining: overrideRemaining(heater.override_ends_at),
         lightOverrideRemaining: overrideRemaining(light.override_ends_at),
         alert,
@@ -5375,17 +6430,17 @@ class SaunaPanel extends HTMLElement {
       s.configuration.program_mode === "progressive"
         ? Array.isArray(s.configuration.temperature_steps)
           ? s.configuration.temperature_steps
-              .map((value) => num(value, 1))
+              .map((value) => this.num(value, this.preference("value_precision")))
               .join(" → ") + " °C"
           : p.final_temperature_c != null
-            ? `${num(p.target_temperature_c)} → ${num(p.final_temperature_c)} °C`
+            ? `${this.num(p.target_temperature_c)} → ${this.num(p.final_temperature_c)} °C`
             : "Konstant"
         : "Konstant";
     const power = s.heating_observation?.power_w;
     const powerText =
       power == null
-        ? `${num(p.nominal_power_kw, 2)} kW · Nennleistung für die Verbrauchsschätzung`
-        : `${num(power, 0)} W · gemessen`;
+        ? `${this.num(p.nominal_power_kw, this.preference("detail_value_precision"))} kW · Nennleistung für die Verbrauchsschätzung`
+        : `${this.num(power, 0)} W · gemessen`;
     const detectionText = session
       ? `Erkennung mit: ${(s.detection_channels || []).map((position) => (position === "upper" ? "oberer Messposition" : "unterer Messposition")).join(" und ") || "noch keiner Messposition"}.`
       : "Außerhalb einer Saunasitzung werden keine Türbewegungen ausgewertet.";
@@ -5395,9 +6450,24 @@ class SaunaPanel extends HTMLElement {
         stateLine,
         timers,
         presence: this.presenceDetails(),
-        targetTemperature: num(s.target_temperature, 1),
-        thermostatTarget: num(s.thermostat_target, 1),
-        restartThreshold: num(s.thermostat_restart_temperature, 1),
+        targetTemperature: this.num(
+          s.temperature_control?.current_target,
+          this.preference("value_precision"),
+        ),
+        nextGangTemperature: this.temperatureControlsNextGang()
+          ? this.num(
+              s.temperature_control?.next_target,
+              this.preference("value_precision"),
+            )
+          : null,
+        thermostatTarget: this.num(
+          s.thermostat_target,
+          this.preference("value_precision"),
+        ),
+        restartThreshold: this.num(
+          s.thermostat_restart_temperature,
+          this.preference("value_precision"),
+        ),
         temperatureProgram,
         heatCaption,
         heatSource,
@@ -5410,7 +6480,7 @@ class SaunaPanel extends HTMLElement {
         lightManual: light.manual,
         lightOverrideRemaining: overrideRemaining(light.override_ends_at),
         doorText,
-        measurements: ["upper", "lower"]
+        measurements: (s.configuration_model?.measurement_positions || [])
           .map(
             (pos) =>
               `<h3>${pos === "upper" ? "Obere" : "Untere"} Messposition</h3><p style="color:var(--sauna-color-series-temperature)">${formatValue(pos, "temperature", "°C")} · ${qualityText(pos, "temperature")}</p><p style="color:var(--sauna-color-series-humidity)">${formatValue(pos, "humidity", "% relative Luftfeuchte")} · ${qualityText(pos, "humidity")}</p>`,
@@ -5438,22 +6508,22 @@ class SaunaPanel extends HTMLElement {
         humidity: '<path d="M12 3C10 7 5 11 5 15a7 7 0 0 0 14 0c0-4-5-8-7-12Z"/>',
         light: '<path d="M9 18h6m-5 3h4M8 15a6 6 0 1 1 8 0v3H8Z"/>',
       }[key];
-    return `<div class="linear-instrument" style="--measurement-color:${this.appearanceColor(valid ? color : "status_unknown")}"><div class="linear-reading" ${key === "light" ? "data-light-observation" : ""}>${num(reading, key === "light" ? 0 : 1)} <span>${unit}</span></div><div class="linear-scale"><div class="linear-rail" aria-hidden="true"><i style="width:${fraction}%"></i></div><div class="linear-ticks" aria-hidden="true">${appearanceTickValues(
+    return `<div class="linear-instrument" style="--measurement-color:${this.appearanceColor(valid ? color : "status_unknown")}"><div class="linear-reading" ${key === "light" ? "data-light-observation" : ""}>${this.num(reading, key === "light" ? this.preference("percentage_precision") : this.preference("value_precision"))} <span>${unit}</span></div><div class="linear-scale"><div class="linear-rail" aria-hidden="true"><i style="width:${fraction}%"></i></div><div class="linear-ticks" aria-hidden="true">${this.temperatureTickValues(
       bounds,
     )
       .map(
         (value, index, ticks) =>
-          `<span data-tick-density="${index === 0 || index === ticks.length - 1 ? "edge" : "detail"}" style="left:${((value - bounds.minimum) / (bounds.maximum - bounds.minimum)) * 100}%">${num(value)}</span>`,
+          `<span data-tick-density="${index === 0 || index === ticks.length - 1 ? "edge" : "detail"}" style="left:${((value - bounds.minimum) / (bounds.maximum - bounds.minimum)) * 100}%">${this.num(value)}</span>`,
       )
       .join(
         "",
-      )}<span data-tick-density="middle" style="left:50%">${num((bounds.minimum + bounds.maximum) / 2)}</span></div>${control}</div><svg class="linear-symbol" viewBox="0 0 24 24" aria-hidden="true">${symbol}</svg></div>`;
+      )}<span data-tick-density="middle" style="left:50%">${this.num((bounds.minimum + bounds.maximum) / 2)}</span></div>${control}</div><svg class="linear-symbol" viewBox="0 0 24 24" aria-hidden="true">${symbol}</svg></div>`;
   }
   linearTargetControl(value, bounds) {
     if (!bounds) return "";
     const allowed = this.state.permissions?.temperature && !this.programRequest,
       scale = this.appearanceScale("temperature") || bounds;
-    return `<div class="instrument-slider"><label for="linear-target-temperature">${this.temperatureControlsNextGang() ? "Nächster Gang" : "Soll"} <output data-linear-target>${num(value)} °C</output></label><input id="linear-target-temperature" class="instrument-range" type="range" min="${scale.minimum}" max="${scale.maximum}" step="${this.temperatureStep("temperature_dial_step_c")}" value="${Math.max(bounds.minimum, Math.min(bounds.maximum, value))}" aria-label="${this.temperatureControlsNextGang() ? "Temperatur für den nächsten Gang einstellen" : "Solltemperatur einstellen"}" ${allowed ? "" : "disabled"}></div>`;
+    return `<div class="instrument-slider"><label for="linear-target-temperature">${this.temperatureControlsNextGang() ? "Nächster Gang" : "Soll"} <output data-linear-target>${this.num(value)} °C</output></label><input id="linear-target-temperature" class="instrument-range" type="range" min="${scale.minimum}" max="${scale.maximum}" step="${this.temperatureStep("temperature_dial_step_c")}" value="${Math.max(bounds.minimum, Math.min(bounds.maximum, value))}" aria-label="${this.temperatureControlsNextGang() ? "Temperatur für den nächsten Gang einstellen" : "Solltemperatur einstellen"}" ${allowed ? "" : "disabled"}></div>`;
   }
   async commitLinearTarget(value) {
     const entry = this.entry,
@@ -5483,7 +6553,7 @@ class SaunaPanel extends HTMLElement {
       style = this.instrumentStyle("light"),
       point = this.temperatureArcPoint(sliderValue, { minimum: 0, maximum: 100 }),
       symbol = '<path d="M9 18h6m-5 3h4M8 15a6 6 0 1 1 8 0v3H8Z"/>',
-      arc = `<path class="instrument-arc-track" data-light-arc="true" d="${temperatureDial.path}" role="slider" tabindex="${allowed ? 0 : -1}" aria-label="Lichthelligkeit einstellen" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${sliderValue}" aria-valuetext="${num(target, 0)} %" aria-disabled="${!allowed}"/><circle class="instrument-arc-handle" data-light-arc="true" cx="${point.x}" cy="${point.y}" r="9"/><g class="light-symbol" transform="translate(138 198)" aria-hidden="true">${symbol}</g>`,
+      arc = `<path class="instrument-arc-track" data-light-arc="true" d="${temperatureDial.path}" role="slider" tabindex="${allowed ? 0 : -1}" aria-label="Lichthelligkeit einstellen" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${sliderValue}" aria-valuetext="${this.num(target, this.preference("percentage_precision"))} %" aria-disabled="${!allowed}"/><circle class="instrument-arc-handle" data-light-arc="true" cx="${point.x}" cy="${point.y}" r="${this.preference("instrument_handle_radius_px")}"/><g class="light-symbol" transform="translate(138 198)" aria-hidden="true">${symbol}</g>`,
       graphic =
         style === "linear"
           ? this.linearInstrument({
@@ -5544,10 +6614,10 @@ class SaunaPanel extends HTMLElement {
       shown = (metric) =>
         metric.available
           ? Number.isFinite(metric.value)
-            ? num(metric.value, 1)
+            ? this.num(metric.value, this.preference("value_precision"))
             : esc(metric.state)
           : "–";
-    return `<section class="weather-instrument" aria-label="Umgebungswetter"><div class="weather-heading"><span>DWD</span><h2>${esc(environment.station?.name || "Umgebungswetter")}</h2>${environment.measurement_time ? `<time datetime="${esc(environment.measurement_time)}" title="Messzeit">${esc(new Date(environment.measurement_time).toLocaleString("de-DE", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" }))}</time>` : ""}</div><div class="weather-condition">${graphic}<span>${esc(label)}</span></div><dl class="weather-values">${metrics.map((metric) => `<div data-weather-quantity="${esc(metric.key)}"><dt>${esc(metric.label)}</dt><dd>${shown(metric)} <span>${esc(metric.unit || "")}</span></dd></div>`).join("")}</dl></section>`;
+    return `<section class="weather-instrument" aria-label="Umgebungswetter"><div class="weather-heading"><span>Umgebungswetter</span><h2>${esc(environment.station?.name || "Umgebungswetter")}</h2>${environment.measurement_time ? `<time datetime="${esc(environment.measurement_time)}" title="Messzeit">${esc(new Date(environment.measurement_time).toLocaleString("de-DE", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" }))}</time>` : ""}</div><div class="weather-condition">${graphic}<span>${esc(label)}</span></div><dl class="weather-values">${metrics.map((metric) => `<div data-weather-quantity="${esc(metric.key)}"><dt>${esc(metric.label)}</dt><dd>${shown(metric)} <span>${esc(metric.unit || "")}</span></dd></div>`).join("")}</dl></section>`;
   }
   fitInstrumentReadouts() {
     for (const dial of this.shadowRoot?.querySelectorAll?.("#current .dial") || []) {
@@ -5555,10 +6625,10 @@ class SaunaPanel extends HTMLElement {
       const readout = dial.querySelector(".instrument-readout");
       if (!readout || !bounds?.width || !bounds?.height) continue;
       for (const [name, value] of Object.entries({
-        x: bounds.x - 8,
-        y: bounds.y - 4,
-        width: bounds.width + 16,
-        height: bounds.height + 8,
+        x: bounds.x - this.preference("layout_space_13_px"),
+        y: bounds.y - this.preference("layout_space_09_px"),
+        width: bounds.width + this.preference("layout_space_13_px") * 2,
+        height: bounds.height + this.preference("layout_space_09_px") * 2,
       }))
         readout.setAttribute(name, value);
     }
@@ -5592,11 +6662,19 @@ class SaunaPanel extends HTMLElement {
     return `<div class="control-overview"><div class="dashboard"><div class="card control-main">${status}${overviewLightTimer}${actions}${temperatureAutomation}${controls}${alert}</div><div class="card gauge-card"><div class="gauges" style="--round-count:${Math.max(1, roundCount)}"><div class="measurement-instrument" data-instrument="temperature" data-instrument-style="${this.instrumentStyle("temperature")}"><h2>Temperatur</h2>${temperatureGauge}</div><div class="measurement-instrument" data-instrument="humidity" data-instrument-style="${this.instrumentStyle("humidity")}"><h2>Luftfeuchte</h2>${humidityGauge}</div>${lightGauge}</div>${weather}</div></div></div>`;
   }
   renderDetailView(view) {
+    if (this.state?.configuration_model?.regulation_causes?.length === 0) {
+      view = {
+        ...view,
+        nextGangTemperature: null,
+        temperatureProgram: "Konstante Temperaturregelung (manuell)",
+      };
+    }
     const {
       stateLine,
       timers,
       presence,
       targetTemperature,
+      nextGangTemperature,
       thermostatTarget,
       restartThreshold,
       temperatureProgram,
@@ -5614,11 +6692,91 @@ class SaunaPanel extends HTMLElement {
       measurements,
       detectionText,
     } = view;
-    return `<div class="card hero">${stateLine}${timers}</div><div class="detail-grid"><div class="card"><h2>Ofen</h2><dl><dt>Aktuelle Solltemperatur</dt><dd>${targetTemperature} °C</dd><dt>Obere Regeltemperatur</dt><dd data-readiness>${thermostatTarget} °C</dd><dt>Wiedereinschaltschwelle</dt><dd>${restartThreshold} °C</dd><dt>Temperaturprogramm</dt><dd>${temperatureProgram}</dd><dt>Heizzustand</dt><dd>${heatCaption}</dd><dt>Ermittlung der Heizzeit</dt><dd>${heatSource}</dd><dt>Energieverbrauch</dt><dd>${energyText}</dd><dt>Ofenleistung</dt><dd>${powerText}</dd></dl><p>${decisionText}</p></div><div class="card"><h2>Licht</h2><p class="manual-status ${lightMode}" data-light-status="${lightMode}">${lightStatus}</p><dl><dt>Automatischer Wert</dt><dd>${num(lightAutomatic, 0)} %</dd><dt>Manuelle Vorgabe</dt><dd>${lightManual == null ? "Keine" : `${num(lightManual, 0)} %`}</dd><dt>Übersteuerung</dt><dd>${lightOverrideRemaining}</dd></dl></div><div class="card"><h2>Messung</h2><p data-door-status>${doorText}</p>${measurements}<p class="muted">${detectionText}</p></div></div>${presence}`;
+    return `<div class="card hero">${stateLine}${timers}</div><div class="detail-grid"><div class="card"><h2>Ofen</h2><dl><dt>Aktuelle Solltemperatur</dt><dd>${targetTemperature} °C</dd>${nextGangTemperature == null ? "" : `<dt>Solltemperatur des nächsten Gangs</dt><dd>${nextGangTemperature} °C</dd>`}<dt>Obere Regeltemperatur</dt><dd data-readiness>${thermostatTarget} °C</dd><dt>Wiedereinschaltschwelle</dt><dd>${restartThreshold} °C</dd><dt>Temperaturprogramm</dt><dd>${temperatureProgram}</dd><dt>Heizzustand</dt><dd>${heatCaption}</dd><dt>Ermittlung der Heizzeit</dt><dd>${heatSource}</dd><dt>Energieverbrauch</dt><dd>${energyText}</dd><dt>Ofenleistung</dt><dd>${powerText}</dd></dl><p>${decisionText}</p></div><div class="card"><h2>Licht</h2><p class="manual-status ${lightMode}" data-light-status="${lightMode}">${lightStatus}</p><dl><dt>Automatischer Wert</dt><dd>${this.num(lightAutomatic, this.preference("percentage_precision"))} %</dd><dt>Manuelle Vorgabe</dt><dd>${lightManual == null ? "Keine" : `${this.num(lightManual, this.preference("percentage_precision"))} %`}</dd><dt>Übersteuerung</dt><dd>${lightOverrideRemaining}</dd></dl></div><div class="card"><h2>Messung</h2><p data-door-status>${doorText}</p>${measurements}<p class="muted">${detectionText}</p></div></div>${presence}${this.renderLiveEvidence()}`;
+  }
+  renderLiveEvidence() {
+    const state = this.state;
+    if (!state?.permissions?.admin) return "";
+    const model = state.configuration_model;
+    const ruleKeys = {
+      gang_heat: "gang_heat_demand",
+      provisional_door_heat: "temporary_door_heat",
+      cooling: "cooling",
+    };
+    const rules = model
+      ? Object.fromEntries(
+          (model.regulation_causes || []).flatMap((cause) =>
+            ruleKeys[cause]
+              ? [[ruleKeys[cause], state.rule_inputs?.[ruleKeys[cause]]]]
+              : [],
+          ),
+        )
+      : state.rule_inputs;
+    const heatingObservation =
+      state.heating_observation &&
+      Object.fromEntries(
+        Object.entries(state.heating_observation).filter(
+          ([key]) => key !== "power_w" || !model || model.power_sensor_configured,
+        ),
+      );
+    const measurements = (state.measurements || []).filter(
+      (measurement) =>
+        !model || (model.measurement_positions || []).includes(measurement.position),
+    );
+    const groups = [
+      [
+        "regulation",
+        "Regelung und Schutz",
+        {
+          decision: state.decision,
+          ...(Object.keys(rules || {}).length ? { rule_inputs: rules } : {}),
+          protection: state.protection,
+          inhibits: state.inhibits,
+          faults: state.faults,
+          temperature_control: state.temperature_control,
+          thermostat: state.session?.thermostat,
+        },
+      ],
+      [
+        "inputs",
+        "Messquellen und Eingaben",
+        {
+          measurements,
+          measurement_status: state.measurement_status,
+          regulation_temperature_position: state.regulation_temperature_position,
+          presence: state.presence,
+          environment: state.environment,
+        },
+      ],
+      [
+        "outputs",
+        "Geräteausgabe und Rückmeldungen",
+        {
+          heater: state.manual_controls?.heater,
+          light: state.manual_controls?.light,
+          heating_observation: heatingObservation,
+          ...(state.light_after_run ? { light_after_run: state.light_after_run } : {}),
+        },
+      ],
+      [
+        "session",
+        "Sitzung, Energie und Fristen",
+        {
+          heating: state.session?.heating,
+          energy: state.session?.energy,
+          after_run: state.session?.after_run,
+          after_run_history: state.session?.after_run_history,
+          deadlines: state.session?.deadlines,
+          start_availability: state.start_availability,
+        },
+      ],
+    ];
+    return `<div class="card detail-evidence"><h2>Aktuelle Daten im Detail</h2>${groups.map(([key, label, fields]) => `<details id="detail-${key}"><summary>${label}</summary>${this.detailFields(fields, `live-${key}`)}</details>`).join("")}</div>`;
   }
   presenceDetails() {
     const presence = this.state?.presence;
     const rules = this.state?.rule_inputs;
+    const model = this.state?.configuration_model;
     if (!presence && !rules) return "";
     const report = (item) => {
       if (!item) return "Noch keine Meldung";
@@ -5643,20 +6801,32 @@ class SaunaPanel extends HTMLElement {
         gang_ended: "Gang beendet",
         ...events,
       }[item.reason];
-      return `${occupancy} · ${assertion} · Ereignis ${when(item.effective_at)} · empfangen ${when(item.received_at)}${reason ? ` · ${reason}` : ""}`;
+      return `${occupancy} · ${assertion} · Ereignis ${this.when(item.effective_at)} · empfangen ${this.when(item.received_at)}${reason ? ` · ${reason}` : ""}`;
     };
-    return `<div class="card"><h2>Präsenz und Regelursache</h2><dl><dt>Eingestellte Personenerkennung</dt><dd>${(this.state.configuration?.presence_source || presence?.configured_source) === "ha_presence" ? "Präsenzsensor" : "Temperatur und Feuchte"}</dd><dt>Wirksame Personenerkennung</dt><dd>${presence?.effective_source === "ha_presence" ? "Präsenzsensor mit Türereignis" : "Temperatur und Feuchte"}</dd><dt>Aktuelle Belegung</dt><dd>${esc(report(presence?.current))}</dd>${Object.entries(
-      presence?.external || {},
-    )
-      .map(([source, item]) => {
-        const leading =
-          presence?.effective_source === "ha_presence" &&
-          source === this.state.configuration?.bindings?.presence;
-        return `<dt>${leading ? "Führender Präsenzsensor" : "Beobachtete Quelle"} · ${esc(source)}</dt><dd>${esc(report(item))}</dd>`;
+    const observers = model?.presence?.observer
+      ? Object.entries(presence?.external || {})
+          .map(
+            ([source, item]) =>
+              `<dt>Beobachtete Quelle · ${esc(source)}</dt><dd>${esc(report(item))}</dd>`,
+          )
+          .join("")
+      : "";
+    const causeLabels = {
+      gang_heat: ["Heizanforderung im Saunagang", rules?.gang_heat_demand],
+      provisional_door_heat: [
+        "Vorläufige Heizanforderung nach Türschluss",
+        rules?.temporary_door_heat,
+      ],
+      cooling: ["Ofenkühlung", rules?.cooling],
+    };
+    const causes = (model?.regulation_causes || [])
+      .filter((cause) => causeLabels[cause])
+      .map((cause) => {
+        const [label, active] = causeLabels[cause];
+        return `<dt>${label}</dt><dd>${active ? "Aktiv" : "Inaktiv"}</dd>`;
       })
-      .join(
-        "",
-      )}<dt>Heizanforderung im Saunagang</dt><dd>${rules?.gang_heat_demand ? "Aktiv" : "Inaktiv"}</dd><dt>Temporäres Heizen nach Türschluss</dt><dd>${rules?.temporary_door_heat ? "Aktiv" : "Inaktiv"}</dd><dt>Ofenkühlung</dt><dd>${rules?.cooling ? "Aktiv" : "Inaktiv"}</dd></dl></div>`;
+      .join("");
+    return `<div class="card"><h2>${causes ? "Präsenz und Regelursache" : "Präsenz"}</h2><dl><dt>Personenerkennung</dt><dd>${model?.presence?.direct ? "Präsenzsensor mit Türereignis" : "Temperatur und Feuchte"}</dd><dt>Aktuelle Belegung</dt><dd>${esc(report(presence?.current))}</dd>${observers}${causes}</dl></div>`;
   }
   async changeTarget(value) {
     if (!this.state?.permissions?.temperature) return;
@@ -5687,28 +6857,23 @@ class SaunaPanel extends HTMLElement {
       if (this.entry !== entry || this.generation !== generation) return;
       this.state.configuration = {
         ...this.state.configuration,
-        program_mode:
-          saved?.program_mode ||
-          (nextGang ? this.state.configuration.program_mode : "constant"),
+        program_mode: saved?.program_mode || this.state.configuration.program_mode,
         selected_program_id: Object.hasOwn(saved || {}, "selected_program_id")
           ? saved.selected_program_id
-          : nextGang
-            ? this.state.configuration.selected_program_id
-            : null,
+          : this.state.configuration.selected_program_id,
         temperature_steps: Object.hasOwn(saved || {}, "temperature_steps")
           ? saved.temperature_steps
-          : nextGang
-            ? this.state.configuration.temperature_steps
-            : null,
+          : this.state.configuration.temperature_steps,
         parameters: {
           ...this.state.configuration.parameters,
-          ...(saved?.parameters || (nextGang ? {} : { target_temperature_c: value })),
+          ...(saved?.parameters || {}),
         },
       };
-      this.state.target_temperature =
-        saved?.target_temperature ?? (nextGang ? this.state.target_temperature : value);
-      this.state.next_gang_temperature =
-        saved?.next_gang_temperature ?? (nextGang ? value : null);
+      if (saved?.temperature_control) {
+        this.state.temperature_control = saved.temperature_control;
+        this.state.target_temperature = saved.temperature_control.current_target;
+        this.state.next_gang_temperature = saved.temperature_control.next_target;
+      }
       this.programRevision = (this.programRevision || 0) + 1;
       if (!nextGang) {
         if (this.programSelectionDraft?.mode === "constant")
@@ -5727,33 +6892,26 @@ class SaunaPanel extends HTMLElement {
     }
   }
   temperatureControlsNextGang() {
-    return (
-      !!this.state?.session &&
-      this.state.configuration?.control_mode !== "manual" &&
-      (this.state.session.temperature_program_mode ||
-        this.state.configuration?.program_mode) === "progressive"
-    );
+    return this.state?.temperature_control?.scope === "next_gang";
   }
   temperatureControlValue() {
-    return this.temperatureControlsNextGang()
-      ? (this.state.next_gang_temperature ?? this.state.target_temperature)
-      : this.state?.target_temperature;
+    return this.state?.temperature_control?.value;
   }
   temperatureDefinition() {
     return this.state?.parameters?.find((d) => d.key === "target_temperature_c");
   }
   frontendStep(key) {
-    const value = this.state?.frontend_defaults?.[key];
+    const value = this.preference(key);
     return Number.isFinite(value) && value > 0 ? value : null;
   }
   lightFeedback() {
     const light = this.state?.manual_controls?.light || {};
     const observation = light.observation;
     if (observation?.available && Number.isFinite(observation.brightness_percent))
-      return `Licht ${num(observation.brightness_percent, 0)} %`;
+      return `Licht ${this.num(observation.brightness_percent, this.preference("percentage_precision"))} %`;
     const target = light.manual ?? light.automatic;
     return Number.isFinite(target)
-      ? `Lichtvorgabe ${num(target, 0)} % · Rückmeldung nicht verfügbar`
+      ? `Lichtvorgabe ${this.num(target, this.preference("percentage_precision"))} % · Rückmeldung nicht verfügbar`
       : "Licht unbekannt · Rückmeldung nicht verfügbar";
   }
   temperatureBounds() {
@@ -5805,7 +6963,9 @@ class SaunaPanel extends HTMLElement {
   programSteps(program) {
     if (Array.isArray(program?.temperature_steps))
       return (
-        program.temperature_steps.map((value) => num(value, 1)).join(" → ") + " °C"
+        program.temperature_steps
+          .map((value) => this.num(value, this.preference("value_precision")))
+          .join(" → ") + " °C"
       );
     const start = Number(program?.start_c),
       end = Number(program?.end_c),
@@ -5819,7 +6979,7 @@ class SaunaPanel extends HTMLElement {
       return "";
     return (
       this.distributedSteps(start, end, gangs)
-        .map((value) => num(value, 1))
+        .map((value) => this.num(value, this.preference("value_precision")))
         .join(" → ") + " °C"
     );
   }
@@ -6153,7 +7313,7 @@ class SaunaPanel extends HTMLElement {
           if (this.state?.session && !this.programDirty())
             this.programChoiceOpen = false;
           this.drawCurrent();
-        }, 2000);
+        }, this.preference("program_saved_feedback_ms"));
     } catch (error) {
       if (
         this.programRequest !== request ||
@@ -6323,7 +7483,7 @@ class SaunaPanel extends HTMLElement {
   }
   distributionInfo(id, steps) {
     const text = steps?.length
-      ? `${steps.length} Temperaturstufen: ${steps.map((value) => num(value, 1)).join(" → ")} °C`
+      ? `${steps.length} Temperaturstufen: ${steps.map((value) => this.num(value, this.preference("value_precision"))).join(" → ")} °C`
       : "Start, Ende und Verteilung innerhalb der zulässigen Grenzen eingeben";
     return this.infoButton(id, "Verteilung erklären", text);
   }
@@ -6348,7 +7508,7 @@ class SaunaPanel extends HTMLElement {
       left = viewport?.offsetLeft || 0,
       top = viewport?.offsetTop || 0,
       rect = button.getBoundingClientRect(),
-      gap = 6,
+      gap = this.preference("info_popup_gap_px"),
       below = top + height - rect.bottom - gap,
       above = rect.top - top - gap;
     popup.style.maxWidth = `${Math.max(0, width - gap * 2)}px`;
@@ -6501,36 +7661,65 @@ class SaunaPanel extends HTMLElement {
         Math.PI) /
       180;
     return {
-      x: (temperatureDial.centerX + radius * Math.cos(angle)).toFixed(2),
-      y: (temperatureDial.centerY + radius * Math.sin(angle)).toFixed(2),
+      x: (temperatureDial.centerX + radius * Math.cos(angle)).toFixed(
+        this.preference("chart_coordinate_precision"),
+      ),
+      y: (temperatureDial.centerY + radius * Math.sin(angle)).toFixed(
+        this.preference("chart_coordinate_precision"),
+      ),
     };
   }
   temperatureTickValues(bounds = this.appearanceScale("temperature")) {
-    return appearanceTickValues(bounds);
+    return appearanceTickValues(
+      bounds,
+      this.preference("instrument_tick_target"),
+      this.preference("instrument_tick_maximum"),
+      this.preference("tick_epsilon"),
+      this.preference("tick_precision"),
+    );
   }
   temperatureTickMarks(bounds = this.appearanceScale("temperature")) {
     const span = bounds?.maximum - bounds?.minimum;
     const formatTick = (value) =>
-      span < 0.01
-        ? Number(value).toPrecision(3)
-        : num(value, span < 1 ? 2 : span < 10 ? 1 : 0);
+      span < 10 ** -this.preference("detail_value_precision")
+        ? Number(value).toPrecision(
+            this.preference("instrument_tick_significant_digits"),
+          )
+        : this.num(
+            value,
+            Math.max(
+              0,
+              Math.min(
+                this.preference("detail_value_precision"),
+                this.preference("value_precision") - Math.floor(Math.log10(span)),
+              ),
+            ),
+          );
     const values = this.temperatureTickValues(bounds);
     const minor = values
       .slice(1)
       .flatMap((value, i) =>
-        [1, 2, 3, 4].map((part) => {
-          const position = values[i] + ((value - values[i]) * part) / 5;
+        Array.from(
+          { length: this.preference("instrument_minor_ticks") },
+          (_, index) => index + 1,
+        ).map((part) => {
+          const position =
+            values[i] +
+            ((value - values[i]) * part) /
+              (this.preference("instrument_minor_ticks") + 1);
           const a = this.temperatureArcPoint(
             position,
             bounds,
-            temperatureDial.radius - 12,
+            temperatureDial.radius - this.preference("instrument_tick_inset_px"),
           );
           const b = this.temperatureArcPoint(
             position,
             bounds,
-            temperatureDial.radius - 16,
+            temperatureDial.radius -
+              this.preference("instrument_tick_inset_px") -
+              this.preference("instrument_minor_tick_length_px"),
           );
-          return `<line x1="${a.x}" y1="${a.y}" x2="${b.x}" y2="${b.y}" stroke="var(--measurement-color)" opacity=".45" stroke-width="1"/>`;
+          return `<line x1="${a.x}" y1="${a.y}" x2="${b.x}" y2="${b.y}" stroke="var(--measurement-color)" opacity="${this.preference("instrument_minor_tick_opacity")}" stroke-width="${this.preference("stroke_1_0_ratio")}"/>`;
         }),
       )
       .join("");
@@ -6541,14 +7730,15 @@ class SaunaPanel extends HTMLElement {
           const tick = this.temperatureArcPoint(
               value,
               bounds,
-              temperatureDial.radius - 12,
+              temperatureDial.radius - this.preference("instrument_tick_inset_px"),
             ),
             label = this.temperatureArcPoint(
               value,
               bounds,
-              temperatureDial.radius - 29,
+              temperatureDial.radius -
+                this.preference("instrument_tick_label_inset_px"),
             );
-          return `<line x1="${tick.x}" y1="${tick.y}" x2="${this.temperatureArcPoint(value, bounds, temperatureDial.radius - 20).x}" y2="${this.temperatureArcPoint(value, bounds, temperatureDial.radius - 20).y}" stroke="var(--sauna-card-muted-text, var(--sauna-color-muted-text, var(--secondary-text-color)))" stroke-width="2"/><text class="tick" x="${label.x}" y="${Number(label.y) + 4}" text-anchor="middle">${formatTick(value)}</text>`;
+          return `<line x1="${tick.x}" y1="${tick.y}" x2="${this.temperatureArcPoint(value, bounds, temperatureDial.radius - this.preference("instrument_tick_inset_px") - this.preference("instrument_major_tick_length_px")).x}" y2="${this.temperatureArcPoint(value, bounds, temperatureDial.radius - this.preference("instrument_tick_inset_px") - this.preference("instrument_major_tick_length_px")).y}" stroke="var(--sauna-card-muted-text, var(--sauna-color-muted-text, var(--secondary-text-color)))" stroke-width="${this.preference("stroke_2_0_ratio")}"/><text class="tick" x="${label.x}" y="${Number(label.y) + this.preference("font_size_caption_px") / 3}" text-anchor="middle">${formatTick(value)}</text>`;
         })
         .join("")
     );
@@ -6601,7 +7791,10 @@ class SaunaPanel extends HTMLElement {
     const bounds = this.appearanceScale("temperature"),
       point = this.temperatureArcPoint(value, bounds);
     track.setAttribute("aria-valuenow", value);
-    track.setAttribute("aria-valuetext", `${num(value, 1)} °C`);
+    track.setAttribute(
+      "aria-valuetext",
+      `${this.num(value, this.preference("value_precision"))} °C`,
+    );
     handle.setAttribute("cx", point.x);
     handle.setAttribute("cy", point.y);
   }
@@ -6741,9 +7934,13 @@ class SaunaPanel extends HTMLElement {
     // A saved parameter is loaded by HA's single options listener. Do not start
     // against the previous runtime while reload is still in progress.
     let loaded = false;
-    for (let attempt = 0; attempt < 100; attempt++) {
+    for (
+      let attempt = 0;
+      attempt < this.preference("settings_reload_attempts");
+      attempt++
+    ) {
       try {
-        const state = await this.api(`/${entry}/state`);
+        const state = await this.api(this.stateRequestPath(entry, false));
         const current = state.configuration;
         if (
           Object.keys(current.parameters).length === Object.keys(parameters).length &&
@@ -6758,12 +7955,38 @@ class SaunaPanel extends HTMLElement {
       } catch (error) {
         if (error.status_code !== 503) throw error;
       }
-      await new Promise((resolve) => setTimeout(resolve, 100));
+      await new Promise((resolve) =>
+        setTimeout(resolve, this.preference("settings_reload_interval_ms")),
+      );
     }
     if (!loaded)
       throw Error(
         "Parameter gespeichert, Neuladen noch nicht abgeschlossen. Bitte Status prüfen.",
       );
+  }
+  sessionLabel(session, timeZone = localTimeZone()) {
+    const start = session.started_at || session.timeline?.session_started_at;
+    if (!start) return "Ohne Startzeit";
+    const date = new Intl.DateTimeFormat("de-DE", {
+      day: "2-digit",
+      month: "2-digit",
+      year: "numeric",
+      timeZone,
+    }).format(new Date(start));
+    const end = session.ended_at;
+    const running =
+      !end &&
+      this.state?.operation_enabled &&
+      session.timeline?.session_id === this.state?.session?.timeline?.session_id;
+    const sameDay =
+      end &&
+      new Intl.DateTimeFormat("de-DE", {
+        day: "2-digit",
+        month: "2-digit",
+        year: "numeric",
+        timeZone,
+      }).format(new Date(end)) === date;
+    return `${date} · ${this.clock(start, timeZone)}${end ? ` – ${sameDay ? this.clock(end, timeZone) : this.when(end, timeZone)}` : running ? " · laufend" : " · unterbrochen"}`;
   }
   historyTitle(session) {
     if (this.selected === "live")
@@ -6772,7 +7995,9 @@ class SaunaPanel extends HTMLElement {
         : "Letzte Sitzung";
     const archive = this.sessions?.find((item) => item.session_id === this.selected);
     const started = session?.timeline?.session_started_at || archive?.started_at;
-    return started ? `Sitzung vom ${when(started)}` : "Archivierte Sitzung";
+    return started
+      ? this.sessionLabel({ ...archive, ...session, started_at: started })
+      : "Archivierte Sitzung";
   }
   drawHistory(reason = "viewport") {
     this.scheduleHistoryRender(reason);
@@ -6786,6 +8011,11 @@ class SaunaPanel extends HTMLElement {
       readout.replaceChildren();
       readout.hidden = true;
       readout.setAttribute("data-phase", "");
+    }
+    const eventInspection = this.$("#history-event-inspection");
+    if (eventInspection) {
+      eventInspection.hidden = true;
+      eventInspection.textContent = "";
     }
     this.updateMarkup(
       "#plots",
@@ -6804,16 +8034,711 @@ class SaunaPanel extends HTMLElement {
       this.updateMarkup(selector, "");
     this.historyGangKey = this.historyEventKey = this.historyDiagnosticsKey = null;
   }
+  historyFaultEvents(records = this.shown?.records || []) {
+    let previous = {},
+      count = 0;
+    const events = [];
+    for (const [index, record] of records.entries()) {
+      if (record.kind !== "diagnostic") continue;
+      const payload = record.payload || {},
+        faults = payload.faults || {};
+      const messages = Object.keys(faults).map((key, i) => [
+        key,
+        payload.messages?.[i] || key,
+      ]);
+      const labels = Object.fromEntries(messages);
+      for (const [key, value] of Object.entries(faults)) {
+        if (Object.hasOwn(previous, key) && previous[key].value === value) continue;
+        const changed = Object.hasOwn(previous, key);
+        if (!changed) count++;
+        events.push({
+          id: `fault-${record.id ?? index}-${key}`,
+          at: stamp(record.received_at),
+          label: changed ? "Fehlerstatus geändert" : "Fehler aufgetreten",
+          detail: labels[key],
+          source: "Fehler",
+          error: true,
+          status: value,
+          key,
+        });
+      }
+      for (const [key, value] of Object.entries(previous)) {
+        if (Object.hasOwn(faults, key)) continue;
+        events.push({
+          id: `resolved-${record.id ?? index}-${key}`,
+          at: stamp(record.received_at),
+          label: "Entwarnung",
+          detail: value.label,
+          source: "Fehler",
+          resolved: true,
+          key,
+        });
+      }
+      previous = Object.fromEntries(
+        Object.entries(faults).map(([key, value]) => [
+          key,
+          { value, label: labels[key] },
+        ]),
+      );
+    }
+    return { count, events };
+  }
+  historyFaultMarkup(records, prefix = "history") {
+    if (this.state?.permissions?.admin === false) return "";
+    const faults = this.historyFaultEvents(records);
+    if (!faults.events.length)
+      return '<p class="muted" data-fault-count="0">Keine Fehler aufgezeichnet.</p>';
+    return `<details id="${prefix}-faults"><summary>Fehler im Sitzungsverlauf · <span data-fault-count="${faults.count}">${faults.count}</span></summary><ol class="detail-event-list">${faults.events.map((event) => `<li data-record-id="${esc(event.id)}"><time>${this.clock(event.at)}</time> <strong>${esc(event.label)}</strong> · ${esc(event.detail)}${event.status ? ` <span class="muted">(${esc(this.detailValue(event.status))})</span>` : ""}</li>`).join("")}</ol></details>`;
+  }
+  historyLightValue(record) {
+    if (record.payload.service === "turn_off") return "Aus";
+    return record.payload.brightness_pct == null
+      ? "Helligkeit nicht aufgezeichnet"
+      : `${this.num(record.payload.brightness_pct, this.preference("percentage_precision"))} %`;
+  }
+  historyLightActivity(records) {
+    const result = [];
+    let group = null;
+    const value = (record) => this.historyLightValue(record);
+    const boundary = (reason) => {
+      if (group) group.boundary = reason;
+      group = null;
+    };
+    const ordered = records
+      .map((record, index) => ({
+        record,
+        index,
+        at: stamp(
+          record.kind === "light_command"
+            ? record.payload.sent_at || record.received_at
+            : record.received_at,
+        ),
+      }))
+      .sort((left, right) => left.at - right.at || left.index - right.index);
+    for (const { index, record } of ordered) {
+      if (
+        [
+          "phase",
+          "manual_light",
+          "manual_heater",
+          "manual_phase_end",
+          "manual_session_light_end",
+          "interruption",
+        ].includes(record.kind)
+      ) {
+        boundary(
+          record.kind === "phase" ? "Phasenwechsel" : "Bedienung oder Unterbrechung",
+        );
+        continue;
+      }
+      if (record.kind !== "light_command") continue;
+      const payload = record.payload || {};
+      const at = stamp(payload.sent_at || record.received_at);
+      const key = JSON.stringify([payload.phase, payload.purpose, payload.ends_at]);
+      const isolated =
+        payload.service_error ||
+        payload.service === "turn_off" ||
+        ["manual", "button_press", "button_hold", "light_reassignment"].includes(
+          payload.phase,
+        );
+      if (isolated || group?.key !== key)
+        boundary(payload.service_error ? "Dienstfehler" : "Neuer Lichtabschnitt");
+      if (!group) {
+        group = {
+          id: `light-${record.id ?? index}`,
+          at,
+          effective: payload.sent_at || record.received_at,
+          source: "Licht",
+          key,
+          records: [],
+          first: record,
+          last: record,
+          anchorIndex: index,
+          error: !!payload.service_error,
+          label: payload.service_error
+            ? "Lichtbefehl fehlgeschlagen"
+            : payload.service === "turn_off"
+              ? "Lichtbefehl Aus"
+              : `Licht · ${phases[payload.phase] || { session_light: "Lichtnachlauf", manual: "Manuelle Wahl", button_press: "Tasterrückmeldung", button_hold: "Tasterrückmeldung", light_reassignment: "Gerätewechsel" }[payload.phase] || payload.phase || "Ausgabe"}`,
+        };
+        result.push(group);
+      }
+      // A late service completion may precede the first known command in
+      // send time. Keep the identity of the earliest received group member.
+      if (index < group.anchorIndex) {
+        group.id = `light-${record.id ?? index}`;
+        group.anchorIndex = index;
+      }
+      group.records.push(record);
+      group.last = record;
+      if (isolated)
+        boundary(
+          payload.service_error
+            ? "Dienstfehler"
+            : payload.service === "turn_off"
+              ? "AUS-Befehl abgeschlossen"
+              : "Einzelbefehl",
+        );
+    }
+    return result.map((item) => ({
+      ...item,
+      detail: item.error
+        ? `Dienstfehler: ${item.first.payload.service_error}`
+        : item.records.length === 1
+          ? `${value(item.first)} · Dienst abgeschlossen; Rückmeldung separat`
+          : `Beginn ${this.clock(item.first.payload.sent_at || item.first.received_at)}: ${value(item.first)} · letzter belegter Wert ${this.clock(item.last.payload.completed_at || item.last.received_at)}: ${value(item.last)} · ${item.records.length} Befehle${item.boundary ? ` · ${item.boundary}` : " · kein Abschluss belegt"}`,
+    }));
+  }
+  detailValue(value) {
+    if (value == null) return "Nicht aufgezeichnet";
+    if (value === true) return "Ja";
+    if (value === false) return "Nein";
+    if (typeof value === "number")
+      return Number.isFinite(value)
+        ? this.num(value, this.preference("detail_value_precision"))
+        : "Nicht verfügbar";
+    if (Array.isArray(value))
+      return value.length
+        ? value.map((item) => this.detailValue(item)).join(" · ")
+        : "Keine";
+    if (typeof value === "object")
+      return Object.entries(value)
+        .map(
+          ([key, item]) => `${this.detailFieldLabel(key)}: ${this.detailValue(item)}`,
+        )
+        .join(" · ");
+    if (/^\d{4}-\d\d-\d\dT/.test(value)) return this.when(value);
+    return (
+      {
+        on: "Ein",
+        off: "Aus",
+        unknown: "Unbekannt",
+        unavailable: "Nicht verfügbar",
+        pending: "Wird geprüft",
+        confirmed: "Bestätigt",
+        present: "Anwesend",
+        absent: "Abwesend",
+        automatic: "Automatik",
+        manual: "Manuell",
+        measured: "Gemessen",
+        estimated: "Geschätzt",
+        mixed: "Messung mit Schätzung",
+        incomplete: "Unvollständig",
+        direct_presence: "Direkte Präsenz",
+        provisional_proxy: "Vorläufiger indirekter Hinweis",
+        proxy_retraction: "Indirekter Hinweis aufgehoben",
+        power: "Leistungsmessung",
+        contactor: "Schützrückmeldung",
+        turn_on: "Einschalten",
+        turn_off: "Ausschalten",
+      }[value] || String(value)
+    );
+  }
+  detailFieldLabel(key) {
+    return (
+      this.state?.parameters?.find((definition) => definition.key === key)?.label ||
+      {
+        value: "Wert",
+        state: "Zustand",
+        source: "Quelle",
+        role: "Rolle",
+        attributes: "Quellenattribute",
+        raw_value: "Originalwert",
+        received_at: "Empfangen",
+        measured_at: "Gemessen",
+        sent_at: "Gesendet",
+        completed_at: "Dienst abgeschlossen",
+        planned_at: "Geplant",
+        effective_at: "Wirksam seit",
+        created_at: "Entschieden",
+        at: "Zeit",
+        started_at: "Beginn",
+        ended_at: "Ende",
+        ends_at: "Geplantes Ende",
+        due_at: "Fällig",
+        purpose: "Zweck",
+        heat: "Heizanforderung",
+        heating: "Heizung",
+        reason: "Grund",
+        decision: "Entscheidung",
+        power_w: "Leistung (W)",
+        available: "Verfügbar",
+        phase: "Phase",
+        service: "Dienst",
+        service_error: "Dienstfehler",
+        brightness_pct: "Helligkeit (%)",
+        transition_seconds: "Übergang (s)",
+        upper: "Oben",
+        lower: "Unten",
+        temperature: "Temperatur",
+        humidity: "Luftfeuchte",
+        position: "Messposition",
+        quantity: "Messgröße",
+        occupancy: "Belegung",
+        assertion: "Art der Präsenzmeldung",
+        confidence: "Sicherheit",
+        event_id: "Ereigniskennung",
+        report_id: "Meldungskennung",
+        session_id: "Sitzungskennung",
+        gang_id: "Gangkennung",
+        source_ref: "Quellenbezug",
+        trace_at: "Prüfzeit",
+        kind: "Art",
+        status: "Status",
+        channels: "Messpositionen",
+        payload: "Daten",
+        event: "Ereignis",
+        measured_kwh: "Gemessene Energie (kWh)",
+        estimated_kwh: "Geschätzte Energie (kWh)",
+        measured_seconds: "Messdauer (s)",
+        estimated_seconds: "Geschätzte Dauer (s)",
+        unknown_seconds: "Dauer ohne Beleg (s)",
+        elapsed_seconds: "Vergangene Dauer (s)",
+        accounted_at: "Abgerechnet bis",
+        intervals: "Intervalle",
+        reported_heating: "Rückgemeldete Heizung",
+        off_since: "Aus seit",
+        last_reset_at: "Letztes Zurücksetzen",
+        end_reason: "Endgrund",
+        demand: "Thermostatanforderung",
+        cooldown_until: "Heizpause bis",
+        protection: "Schutzabschaltungen",
+        inhibits: "Startsperren",
+        faults: "Fehlerzustände",
+        messages: "Fehlermeldungen",
+        gang_heat_demand: "Gang fordert Heizung",
+        temporary_door_heat: "Türhilfe",
+        cooling: "Ofenkühlung",
+        checks: "Aktive Prüfungen",
+        conditions: "Bedingungen",
+        holds: "Prüfpunkte",
+        signals: "Signale",
+        metrics: "Erkennungswerte",
+        automatic: "Automatischer Wert",
+        manual: "Manuelle Vorgabe",
+        observation: "Rückmeldung",
+        override_ends_at: "Übersteuerung bis",
+        command: "Befehl",
+        command_pending: "Befehl ausstehend",
+        target: "Sollwert",
+        mode: "Betriebsart",
+        current_target: "Aktueller Sollwert",
+        next_target: "Nächster Sollwert",
+        confirmation: "Bestätigung",
+        confirmation_at: "Bestätigt am",
+        duration_seconds: "Dauer (s)",
+        credited_seconds: "Angerechnete Dauer (s)",
+        pending_start: "Beginn ausstehend",
+        paused_at: "Pausiert seit",
+        phase_id: "Phasenkennung",
+        token: "Identität",
+        name: "Name",
+        unit_of_measurement: "Einheit",
+        brightness: "Helligkeit (0–255)",
+        illuminance: "Beleuchtungsstärke",
+        last_changed: "Geändert",
+        last_updated: "Aktualisiert",
+        last_reported: "Gemeldet",
+        session_start_snapshot: "Anfangswert",
+        operation_enabled: "Betrieb eingeschaltet",
+        operation_off_at: "Betrieb ausgeschaltet",
+        ready_at: "Bereit seit",
+        temperature_base_c: "Temperaturbasis (°C)",
+        temperature_program_mode: "Temperaturprogramm",
+        temperature_program_steps: "Programmstufen (°C)",
+        active_gang_temperature_c: "Sollwert aktiver Gang (°C)",
+        next_gang_temperature_c: "Nächster Sollwert (°C)",
+        next_gang_temperature_blocked_by: "Nächste Stufe gesperrt durch",
+        current: "Aktuell",
+        external: "Externe Meldungen",
+        configured_source: "Gewählte Präsenzquelle",
+        effective_source: "Wirksame Präsenzquelle",
+        external_snapshot: "Präsenzmeldungen beim Start",
+      }[key] ||
+      key.replaceAll("_", " ")
+    );
+  }
+  detailFields(value, key = "data") {
+    if (!value || typeof value !== "object")
+      return `<p>${esc(this.detailValue(value))}</p>`;
+    if (!Object.keys(value).length) return '<p class="muted">Keine Einträge.</p>';
+    return `<dl class="detail-data">${Object.entries(value)
+      .map(([field, item]) => {
+        const identity = `${key}:${field}`;
+        const label = Array.isArray(value)
+          ? `Eintrag ${Number(field) + 1}`
+          : this.detailFieldLabel(field);
+        const nested = item && typeof item === "object" && Object.keys(item).length;
+        return `<div data-detail-key="${esc(identity)}"><dt>${esc(label)}</dt><dd>${nested ? `<details id="detail-${esc(identity)}"><summary>${Array.isArray(item) ? item.length : Object.keys(item).length} ${Array.isArray(item) ? "Einträge" : "Werte"}</summary>${this.detailFields(item, identity)}</details>` : esc(this.detailValue(item))}</dd></div>`;
+      })
+      .join("")}</dl>`;
+  }
+  historyAdditionalActivity(records) {
+    const definitions = {
+      manual_light: ["Bedienung", "Lichtwahl"],
+      manual_heater: ["Bedienung", "Ofenwahl"],
+      heater_override_rejected: ["Bedienung", "Ofenwahl abgelehnt"],
+      manual_phase_end: ["Bedienung", "Ofenkühlung beendet"],
+      manual_session_light_end: ["Bedienung", "Lichtnachlauf beendet"],
+      interruption: ["Betrieb", "Sitzung unterbrochen"],
+      notice: ["Hinweis", "Betriebshinweis"],
+      consumer_event: ["Regelung", "Zustandsereignis"],
+      presence_source: ["Präsenz", "Präsenzquelle"],
+      heating_observation: ["Heizrückmeldung", "Heizbeobachtung"],
+    };
+    let programSignature = null;
+    return records.flatMap((record, index) => {
+      if (record.kind === "session") {
+        const payload = record.payload || {};
+        const program = Object.fromEntries(
+          Object.entries(payload).filter(([key]) => key.includes("temperature")),
+        );
+        const signature = JSON.stringify(program);
+        if (signature === programSignature) return [];
+        programSignature = signature;
+        return [
+          {
+            id: `program-${record.id ?? index}`,
+            at: stamp(record.received_at),
+            source: "Temperaturprogramm",
+            label: "Temperaturvorgaben",
+            detail: this.detailValue(program),
+            record,
+          },
+        ];
+      }
+      const definition = definitions[record.kind];
+      if (!definition) return [];
+      const payload = record.payload || {};
+      const selection = Object.hasOwn(payload, "value")
+        ? payload.value === null
+          ? "Automatik"
+          : payload.value === false
+            ? "Aus"
+            : payload.value === true
+              ? "Ein"
+              : typeof payload.value === "number"
+                ? `${this.num(payload.value, this.preference("percentage_precision"))} %`
+                : String(payload.value)
+        : null;
+      return [
+        {
+          id: `record-${record.id ?? index}`,
+          at: stamp(record.received_at),
+          source: definition[0],
+          label: definition[1],
+          detail: selection || this.detailValue(payload),
+          error: record.kind === "heater_override_rejected",
+          record,
+        },
+      ];
+    });
+  }
+  historyValueSeries(records) {
+    let cache = this.detailValueCache;
+    if (cache?.records !== records || cache.count > records.length) cache = null;
+    if (cache?.count === records.length) return [...cache.series.values()];
+    const series = cache?.series || new Map();
+    const number = (value) =>
+      value == null ||
+      value === "" ||
+      typeof value === "boolean" ||
+      !Number.isFinite(Number(value))
+        ? null
+        : Number(value);
+    const add = (key, label, unit, role, record, value, at = record.received_at) => {
+      const time = stamp(at);
+      if (!Number.isFinite(time)) return;
+      if (!series.has(key)) series.set(key, { key, label, unit, role, values: [] });
+      series.get(key).values.push({ time, value, source: record });
+    };
+    for (const record of records.slice(cache?.count || 0)) {
+      const p = record.payload || {};
+      if (["measurement", "source_snapshot"].includes(record.kind)) {
+        const temperature = p.quantity === "temperature";
+        add(
+          `${p.position}:${p.quantity}`,
+          `${temperature ? "Temperatur" : "Luftfeuchte"} ${p.position === "upper" ? "oben" : "unten"}`,
+          temperature ? "°C" : "%",
+          temperature ? "temperature" : "humidity",
+          record,
+          number(p.value),
+          p.received_at || record.received_at,
+        );
+      } else if (record.kind === "source_state" && p.role === "heater_power") {
+        add(
+          "power",
+          "Gemessene Leistung",
+          "W",
+          "temperature",
+          record,
+          number(record.display?.power_w),
+        );
+      } else if (record.kind === "source_state" && p.role === "light") {
+        add(
+          "light-observed",
+          "Lichtrückmeldung",
+          "%",
+          "humidity",
+          record,
+          p.state === "off"
+            ? 0
+            : p.state === "on" && number(p.attributes?.brightness) != null
+              ? (number(p.attributes.brightness) * 100) / 255
+              : null,
+        );
+      } else if (record.kind === "light_command") {
+        add(
+          "light-command",
+          "Lichtvorgabe · abgeschlossene Dienste",
+          "%",
+          "humidity",
+          record,
+          p.service_error
+            ? null
+            : p.service === "turn_off"
+              ? 0
+              : number(p.brightness_pct),
+          p.completed_at || record.received_at,
+        );
+      } else if (record.kind === "illuminance") {
+        const unit = p.attributes?.unit_of_measurement || "Einheit unbekannt";
+        add(
+          `illuminance:${unit}`,
+          "Beleuchtungsstärke",
+          unit,
+          "humidity",
+          record,
+          number(p.state),
+        );
+      } else if (record.kind === "session") {
+        for (const [key, label] of [
+          ["temperature_base_c", "Temperaturbasis"],
+          ["active_gang_temperature_c", "Sollwert des aktiven Gangs"],
+          ["next_gang_temperature_c", "Sollwert des nächsten Gangs"],
+        ]) {
+          if (Object.hasOwn(p, key))
+            add(key, label, "°C", "temperature", record, number(p[key]));
+        }
+      }
+    }
+    for (const item of series.values()) item.values.sort((a, b) => a.time - b.time);
+    this.detailValueCache = { records, count: records.length, series };
+    return [...series.values()];
+  }
+  renderHistoryValues(records, start, end, cursor) {
+    const series = this.historyValueSeries(records);
+    const rows = series
+      .map((item) => {
+        const point = item.values.filter((value) => value.time <= cursor).at(-1);
+        return `<tr data-detail-key="value-${esc(item.key)}"><th>${esc(item.label)}</th><td>${point?.value == null ? "Nicht verfügbar" : `${this.num(point.value, this.preference("detail_value_precision"))} ${esc(item.unit)}`}</td><td>${point ? this.clock(point.time) : "Nicht aufgezeichnet"}</td><td>${esc(point?.source.payload.source || (point?.source.kind === "light_command" ? "Geräteausgabe" : point?.source.kind === "session" ? "Sitzungszustand" : "Quelle nicht aufgezeichnet"))}</td></tr>`;
+      })
+      .join("");
+    const plots = series
+      .map((item) => {
+        const points = item.values.filter(
+          (point) => point.time >= start && point.time <= end,
+        );
+        const values = points.map((point) => point.value).filter(Number.isFinite);
+        if (!values.length)
+          return `<section class="detail-value-plot" data-detail-key="plot-${esc(item.key)}"><h3>${esc(item.label)}</h3><p class="muted">Keine gültigen Werte im Ausschnitt.</p></section>`;
+        const [minimum, maximum] = values.reduce(
+          ([low, high], value) => [Math.min(low, value), Math.max(high, value)],
+          [Infinity, -Infinity],
+        );
+        const range = maximum - minimum || 1;
+        const width = this.preference("detail_plot_width_px"),
+          height = this.preference("detail_plot_height_px"),
+          left = this.preference("detail_plot_side_padding_px"),
+          right = width - this.preference("detail_plot_right_padding_px"),
+          top = this.preference("detail_plot_top_padding_px"),
+          bottom = height - this.preference("detail_plot_bottom_padding_px"),
+          axisTop = this.preference("detail_axis_top_padding_px"),
+          axisBottom = height - this.preference("detail_axis_bottom_padding_px"),
+          valueLabelTop = this.preference("detail_value_label_top_padding_px"),
+          timeLabel = height - this.preference("detail_time_label_bottom_padding_px"),
+          x = (time) => left + ((right - left) * (time - start)) / (end - start),
+          y = (value) => bottom - ((bottom - top) * (value - minimum)) / range;
+        let segments = [],
+          segment = [];
+        for (const point of points) {
+          if (point.value == null) {
+            if (segment.length) segments.push(segment);
+            segment = [];
+          } else segment.push(point);
+        }
+        if (segment.length) segments.push(segment);
+        const path = segments
+          .map((values) =>
+            reduceHistorySegment(values, x)
+              .map(
+                (point, index) =>
+                  `${index ? "L" : "M"}${x(point.time).toFixed(this.preference("chart_coordinate_precision"))},${y(point.value).toFixed(this.preference("chart_coordinate_precision"))}`,
+              )
+              .join(" "),
+          )
+          .join(" ");
+        const single = segments
+          .filter((values) => values.length === 1)
+          .map(
+            ([point]) =>
+              `<circle cx="${x(point.time)}" cy="${y(point.value)}" r="${this.preference("detail_single_point_radius_px")}"/>`,
+          )
+          .join("");
+        return `<section class="detail-value-plot" data-detail-key="plot-${esc(item.key)}"><h3>${esc(item.label)} <small>${esc(item.unit)}</small></h3><svg viewBox="0 0 ${width} ${height}" role="img" aria-label="${esc(item.label)} · ${this.clock(start)} bis ${this.clock(end)}"><g fill="currentColor" stroke="currentColor" style="color:var(--sauna-color-series-${item.role})"><path d="${path}" fill="none" stroke-width="${this.preference("detail_curve_width_px")}"/>${single}</g><line x1="${x(cursor)}" x2="${x(cursor)}" y1="${axisTop}" y2="${axisBottom}" stroke="currentColor" stroke-dasharray="${this.preference("guide_dash_length_px")} ${this.preference("guide_dash_gap_px")}"/><text x="0" y="${valueLabelTop}">${this.num(maximum, this.preference("value_precision"))}</text><text x="0" y="${axisBottom}">${this.num(minimum, this.preference("value_precision"))}</text><text x="${left}" y="${timeLabel}">${this.clock(start)}</text><text x="${right}" y="${timeLabel}" text-anchor="end">${this.clock(end)}</text></svg></section>`;
+      })
+      .join("");
+    return `<div class="card" id="control-values"><h2>Messwerte und Lichtverlauf</h2><div class="detail-value-grid">${plots || '<p class="muted">Keine Messwerte aufgezeichnet.</p>'}</div><div class="scroll"><table><thead><tr><th>Wert am gewählten Zeitpunkt</th><th>Letzter Messwert</th><th>Messmeldung</th><th>Quelle</th></tr></thead><tbody>${rows}</tbody></table></div><p class="muted">Gezeigt werden aufgezeichnete Werte. Fehlende Rückmeldungen bleiben unbekannt; die Heizbeobachtung ist keine lückenlose Leistungsmessung. Lichtvorgabe und Rückmeldung sind getrennt.</p></div>`;
+  }
+  historyRecordLabel(kind) {
+    return (
+      {
+        session: "Sitzungszustand",
+        measurement: "Messung",
+        source_snapshot: "Anfangsmessung",
+        source_state: "Quellenzustand",
+        illuminance: "Beleuchtungsstärke",
+        heating_observation: "Heizbeobachtung",
+        detector_trace: "Erkennungsprüfung",
+        detection: "Erkennung",
+        diagnostic: "Fehlerzustand",
+        decision: "Heizentscheidung",
+        command: "Ofenausgabe",
+        light_command: "Lichtausgabe",
+        consumer_event: "Verbraucherereignis",
+        presence: "Präsenzmeldung",
+        presence_source: "Präsenzquelle",
+        phase: "Betriebsphase",
+        notice: "Hinweis",
+        manual_light: "Lichtwahl",
+        manual_heater: "Ofenwahl",
+        heater_override_rejected: "Ofenwahl abgelehnt",
+        manual_phase_end: "Ofenkühlung beendet",
+        manual_session_light_end: "Lichtnachlauf beendet",
+        interruption: "Unterbrechung",
+      }[kind] || this.detailFieldLabel(kind)
+    );
+  }
+  renderHistoryRecords(records) {
+    const size = this.preference("detail_records_per_page"),
+      pages = Math.max(1, Math.ceil(records.length / size));
+    const page = Math.max(0, Math.min(pages - 1, this.detailRecordPage || 0));
+    const slice = records.slice(page * size, (page + 1) * size);
+    return `<div class="card"><details id="detail-records"><summary>Einzelbelege · ${records.length} Datensätze</summary><p class="muted">Archivfelder nach Empfangsreihenfolge. Sitzungszustände sind kompakte Auszüge; der Archivexport enthält die vollständigen Originale. Messungen, Regelentscheidungen, Erkennungsprüfungen, Bedienung und Ausgaben bleiben einzeln prüfbar.</p><div class="row"><button data-action="detail-record-page:${page - 1}" ${page ? "" : "disabled"}>Zurück</button><span>Seite ${page + 1} von ${pages}</span><button data-action="detail-record-page:${page + 1}" ${page + 1 < pages ? "" : "disabled"}>Weiter</button></div><div class="detail-record-list">${slice.map((record, index) => `<details data-record-id="${record.id ?? page * size + index}"><summary>${this.clock(record.received_at)} · ${esc(this.historyRecordLabel(record.kind))}${record.projection ? " · Auszug" : ""}</summary>${this.detailFields(record.payload, `record-${record.id ?? index}`)}</details>`).join("")}</div></details></div>`;
+  }
+  renderSessionEvidence(session) {
+    return `<div class="card" id="control-session-evidence">${this.renderSessionEvidenceContents(session)}</div>`;
+  }
+  renderSessionEvidenceContents(session) {
+    const groups = [
+      [
+        "energy",
+        "Heizzeit und Energie",
+        {
+          Heizzeit: session.heating,
+          Energie: session.energy,
+          Schützverlauf: session.contactor_history,
+        },
+      ],
+      [
+        "cooling",
+        "Kühlung und Fristen",
+        {
+          Aktuelle_Ofenkühlung: session.after_run,
+          Kühlphasen: session.after_run_history,
+          Fristen: session.deadlines,
+        },
+      ],
+      [
+        "temperature",
+        "Temperaturprogramm",
+        Object.fromEntries(
+          Object.entries(session).filter(
+            ([key]) => key.includes("temperature") || key === "thermostat",
+          ),
+        ),
+      ],
+      [
+        "recognition",
+        "Gänge und Präsenz",
+        {
+          Bestätigte_Gänge: session.timeline.completed,
+          Aktiver_Gang: session.timeline.active,
+          Aufgehobene_Erkennungen: session.timeline.retracted,
+        },
+      ],
+      ["configuration", "Einstellungen dieser Sitzung", session.configuration || null],
+    ];
+    return `<h2>Sitzungsdaten</h2><p class="muted">Gespeicherter Sitzungsstand. Nicht aufgezeichnete frühere Einstellungen und Zwischenzustände lassen sich daraus nicht rekonstruieren.</p>${groups.map(([key, label, value]) => `<details id="session-evidence-${key}"><summary>${label}</summary>${this.detailFields(value, `session-${key}`)}</details>`).join("")}`;
+  }
+  renderControlEvents(activity, selected) {
+    const size = this.preference("detail_events_per_page"),
+      pages = Math.max(1, Math.ceil(activity.length / size));
+    const page = Math.max(0, Math.min(pages - 1, this.detailEventPage || 0));
+    const shown = activity.slice(page * size, (page + 1) * size);
+    const hiddenErrors = activity.filter(
+      (event) => event.error && !shown.includes(event),
+    );
+    const faults = `<div class="card">${this.historyFaultMarkup(this.shown?.records || [], "control")}${hiddenErrors.map((event) => `<p data-record-id="error-${esc(event.id)}"><strong>${this.clock(event.at)} · ${esc(event.label)}</strong> · ${esc(event.detail)}</p>`).join("")}</div><div class="row"><button data-action="detail-event-page:${page - 1}" ${page ? "" : "disabled"}>Frühere Ereignisse</button><span>Ereignisse · Seite ${page + 1} von ${pages}</span><button data-action="detail-event-page:${page + 1}" ${page + 1 < pages ? "" : "disabled"}>Spätere Ereignisse</button></div>`;
+    activity = shown;
+    return `${faults}<div class="card control-history-events"><h2>Bedienung, Regelung und Ausgaben</h2><div class="scroll"><table><thead><tr><th>Uhrzeit</th><th>Quelle</th><th>Ereignis</th><th>Status / Grund</th></tr></thead><tbody>${activity.map((event, index) => `<tr data-record-id="${esc(event.id || event.ref || `activity-${index}`)}" data-selected="${event === selected}" ${event.error ? 'data-error="true"' : ""} ${event.records ? 'data-light-section="true"' : ""}><td><button data-control-time="${event.at}">${this.clock(event.at)}</button></td><td>${esc(event.source)}</td><td>${esc(event.label)}</td><td>${esc(event.detail)}${event.records?.length > 1 ? `<details id="commands-${esc(event.id)}"><summary>${event.records.length} Einzelbefehle</summary>${event.records.map((record, i) => `<p data-record-id="light-command-${record.id ?? i}">${this.clock(record.payload.sent_at || record.received_at)} · ${esc(this.historyLightValue(record))} · ${esc(record.payload.service_error || "Dienst abgeschlossen")}</p>`).join("")}</details>` : ""}</td></tr>`).join("")}</tbody></table></div></div>`;
+  }
   renderControlHistory() {
     const { session, records, phase_projection: projection } = this.shown;
     const timeline = session.timeline;
     const start = stamp(timeline.session_started_at);
-    const end = Math.max(start + 1000, stamp(session.ended_at || this.state.now));
+    const latest = Math.max(
+      start + this.preference("history_minimum_span_ms"),
+      stamp(session.ended_at || this.state.now),
+    );
     if (this.controlHistorySession !== timeline.session_id) {
       this.controlHistorySession = timeline.session_id;
       this.controlHistoryCursor = null;
+      this.controlHistoryEnd = latest;
+      this.detailRecordPage = 0;
+      this.detailEventPage = 0;
     }
+    const end = this.controlHistoryEnd ?? latest;
     const cursor = Math.max(start, Math.min(end, this.controlHistoryCursor ?? end));
+    const renderKey = JSON.stringify([
+      timeline,
+      session.ended_at,
+      session.contactor_history,
+      (projection?.intervals || []).map((item) => [
+        item.phase,
+        item.started_at,
+        Math.min(end, stamp(item.ended_at) || end),
+      ]),
+      this.state.phase,
+      this.historyConfigurationModel(),
+      end,
+      cursor,
+      latest > end,
+      this.detailRecordPage || 0,
+      this.detailEventPage || 0,
+      this.appearanceValue(),
+    ]);
+    const retained = this.controlHistoryRenderCache;
+    const evidenceTick = Math.floor(
+      (stamp(this.state.now) || 0) / this.preference("history_live_poll_ms"),
+    );
+    if (
+      retained?.records === records &&
+      retained.count === records.length &&
+      retained.key === renderKey &&
+      (!this.shadowRoot || this.$("#control-state-history"))
+    ) {
+      if (this.shadowRoot && this.controlEvidenceTick !== evidenceTick) {
+        // Counters may change without an archive record. Refresh just their
+        // retained detail card at the archive cadence, leaving plots alone.
+        this.updateMarkup(
+          "#control-session-evidence",
+          this.renderSessionEvidenceContents(session),
+        );
+        this.controlEvidenceTick = evidenceTick;
+      }
+      return;
+    }
     const pct = (at) => (100 * (at - start)) / (end - start);
     const neutral = "var(--sauna-color-card-background, var(--card-background-color))";
     const color = (role) => `var(--sauna-color-${role})`;
@@ -6842,7 +8767,12 @@ class SaunaPanel extends HTMLElement {
         "Inaktiv",
         neutral,
       );
-    const configured = session.configuration || this.state.configuration;
+    const currentSession =
+      !session.ended_at &&
+      this.state.session?.timeline.session_id === timeline.session_id;
+    const configured =
+      session.configuration || (currentSession ? this.state.configuration : null);
+    const configurationModel = this.historyConfigurationModel();
     const entity = configured?.bindings?.presence;
     const reports = records.flatMap((r) =>
       r.kind === "presence"
@@ -6855,12 +8785,13 @@ class SaunaPanel extends HTMLElement {
       (r) => r.assertion === "direct_presence" && (!entity || r.source === entity),
     );
     const occupancy = (r) =>
-      !r.available
-        ? "Nicht verfügbar"
-        : { present: "Anwesend", absent: "Abwesend" }[r.occupancy] || "Unbekannt";
-    const decisions = records
-      .filter((r) => r.kind === "decision")
-      .map((r) => r.payload);
+      r.assertion === "proxy_retraction"
+        ? "Hinweis aufgehoben"
+        : !r.available
+          ? "Nicht verfügbar"
+          : { present: "Anwesend", absent: "Abwesend" }[r.occupancy] || "Unbekannt";
+    const decisionRecords = records.filter((r) => r.kind === "decision");
+    const decisions = decisionRecords.map((r) => r.payload);
     const cause = (reason) => {
       if (reason?.startsWith("protection:")) return "Bestätigte technische Störung";
       if (reason?.startsWith("inhibit:")) return "Einrichtung unvollständig";
@@ -6909,7 +8840,7 @@ class SaunaPanel extends HTMLElement {
       !session.ended_at &&
       this.state.session?.timeline?.session_id === timeline.session_id
     ) {
-      coolingChanges.push(coolingState(this.state.phase, end));
+      coolingChanges.push(coolingState(this.state.phase, latest));
     }
     const lanes = [
       [
@@ -6968,22 +8899,66 @@ class SaunaPanel extends HTMLElement {
       ],
       ["Ofenkühlung", changes(coolingChanges)],
     ];
+    const observations = records.filter(
+      (record) => record.kind === "heating_observation",
+    );
+    if (observations.length)
+      lanes.splice(5, 0, [
+        "Heizrückmeldung",
+        changes(
+          observations.map((record) => ({
+            at: stamp(record.received_at),
+            label:
+              record.payload.heating === true
+                ? "Heizt"
+                : record.payload.heating === false
+                  ? "Heizt nicht"
+                  : "Unbekannt",
+            color:
+              record.payload.heating == null
+                ? null
+                : record.payload.heating
+                  ? color("ui-heater-on")
+                  : neutral,
+          })),
+        ),
+      ]);
+    const proxyReports = reports.filter((report) =>
+      ["provisional_proxy", "proxy_retraction"].includes(report.assertion),
+    );
+    if (proxyReports.length)
+      lanes.push([
+        "Indirekte Präsenz",
+        changes(
+          proxyReports.map((report) => ({
+            at: stamp(report.effective_at),
+            label: occupancy(report),
+            color:
+              report.assertion === "proxy_retraction" || !report.available
+                ? null
+                : color("phase-ready"),
+          })),
+        ),
+      ]);
     const activity = [
       ...records
-        .filter((r) => r.kind === "command" || r.kind === "light_command")
+        .filter((r) => r.kind === "command")
         .map((r) => ({
+          id: `command-${r.id ?? r.received_at}`,
           at: stamp(r.received_at),
           effective: r.payload.sent_at || r.received_at,
-          label:
-            r.kind === "command"
-              ? `Ofenbefehl ${r.payload.heat ? "Ein" : "Aus"}`
-              : `Lichtbefehl ${r.payload.brightness_pct == null ? "Aus" : `${num(r.payload.brightness_pct, 0)} %`}`,
+          label: `Ofenbefehl ${r.payload.heat ? "Ein" : "Aus"}`,
           source: "Geräteausgabe",
+          error: !!r.payload.service_error,
           detail: r.payload.service_error
             ? `Dienstfehler: ${r.payload.service_error}`
             : "Dienst abgeschlossen; Rückmeldung separat",
         })),
+      ...this.historyLightActivity(records),
+      ...this.historyAdditionalActivity(records),
+      ...this.historyFaultEvents(records).events,
       ...(timeline.processed || []).map((e) => ({
+        id: e.event_id,
         at: stamp(e.detected_at),
         effective: e.effective_at,
         label: events[e.kind] || e.kind,
@@ -7001,13 +8976,15 @@ class SaunaPanel extends HTMLElement {
         ref: e.event_id,
       })),
       ...direct.map((r) => ({
+        id: r.report_id,
         at: stamp(r.received_at),
         effective: r.effective_at,
         label: occupancy(r),
         source: "Präsenzsensor",
         detail: r.source,
       })),
-      ...decisions.map((d) => ({
+      ...decisions.map((d, index) => ({
+        id: `decision-${decisionRecords[index].id ?? index}`,
         at: stamp(d.created_at || d.at),
         effective: d.at,
         label: `Heizanforderung ${d.heat ? "Ein" : "Aus"}`,
@@ -7015,6 +8992,7 @@ class SaunaPanel extends HTMLElement {
         detail: cause(d.reason),
       })),
       ...(session.contactor_history || []).map((m) => ({
+        id: `contactor-${m.at}`,
         at: stamp(m.at),
         effective: m.at,
         label: `Ofenschalter ${m.state === true ? "Ein" : m.state === false ? "Aus" : "unbekannt"}`,
@@ -7025,13 +9003,45 @@ class SaunaPanel extends HTMLElement {
       .filter((e) => Number.isFinite(e.at))
       .sort((a, b) => a.at - b.at);
     const selected = activity.filter((e) => e.at <= cursor).at(-1);
-    const laneMarkup = lanes
+    const signature = (spans) => {
+      const values = [];
+      for (const span of spans) {
+        const status = span.label.startsWith("Ein")
+          ? "Ein"
+          : span.label.startsWith("Aus")
+            ? "Aus"
+            : "Unbekannt";
+        if (values.at(-1)?.status !== status) values.push({ at: span.at, status });
+      }
+      return JSON.stringify(values);
+    };
+    const sameHeaterEvidence = signature(lanes[3][1]) === signature(lanes[4][1]);
+    const combinedLanes = sameHeaterEvidence
+      ? lanes
+          .filter((_, index) => index !== 4)
+          .map((lane, index) =>
+            index === 3 ? ["Anforderung / Schütz", lane[1]] : lane,
+          )
+      : lanes;
+    const visibleLanes = combinedLanes.filter(
+      ([name]) =>
+        name !== "Präsenzsensor" ||
+        direct.length ||
+        configurationModel?.presence?.sensor_configured,
+    );
+    const laneMarkup = visibleLanes
       .map(
         ([name, spans]) =>
-          `<div class="control-track"><span>${esc(name)}</span><div class="control-track-bar">${spans.map((v) => `<button type="button" data-control-time="${v.at}" style="left:${pct(v.at)}%;width:${pct(v.end) - pct(v.at)}%;${v.color ? `background:${v.color}` : "background:transparent"}" title="${esc(`${name}: ${v.label} · ${clock(v.at)} – ${clock(v.end)}`)}" aria-label="${esc(`${name}: ${v.label} ab ${clock(v.at)}`)}"></button>`).join("")}<i style="left:${pct(cursor)}%"></i></div></div>`,
+          `<div class="control-track" data-detail-key="lane-${esc(name)}"><span>${esc(name)}</span><div class="control-track-bar">${spans.map((v) => `<button type="button" data-control-time="${v.at}" style="left:${pct(v.at)}%;width:${pct(v.end) - pct(v.at)}%;${v.color ? `background:${v.color}` : "background:transparent"}" title="${esc(`${name}: ${v.label} · ${this.clock(v.at)} – ${this.clock(v.end)}`)}" aria-label="${esc(`${name}: ${v.label} ab ${this.clock(v.at)}`)}"></button>`).join("")}<i style="left:${pct(cursor)}%"></i></div></div>`,
       )
       .join("");
     const stateMarkup = lanes
+      .filter(
+        ([name]) =>
+          name !== "Präsenzsensor" ||
+          direct.length ||
+          configurationModel?.presence?.sensor_configured,
+      )
       .map(
         ([name, spans]) =>
           `<dt>${esc(name)}</dt><dd>${esc(
@@ -7048,8 +9058,10 @@ class SaunaPanel extends HTMLElement {
       .join("");
     this.updateMarkup(
       "#control-history",
-      `<div class="card"><div class="row"><span class="muted">${clock(start)} – ${clock(end)}</span></div><div class="scroll"><div class="control-history-lanes">${laneMarkup}<div class="control-time-axis">${[0, 0.25, 0.5, 0.75, 1].map((f) => `<span>${clock(start + (end - start) * f)}</span>`).join("")}</div><div class="control-cursor-row"><input id="control-history-cursor" class="control-cursor" type="range" min="0" max="${end - start}" step="1" value="${cursor - start}" aria-label="Zeitpunkt im Betriebsverlauf" aria-valuetext="${clock(cursor)}"></div></div></div><p class="muted">Schraffiert: kein belegter Zustand.</p><div class="control-history-inspection"><div><h3>Status · ${clock(cursor)}</h3><dl>${stateMarkup}</dl></div><div><h3>Letztes Ereignis${selected ? ` · ${clock(selected.at)}` : ""}</h3>${selected ? `<p>${esc(selected.label)}</p><p class="muted">${esc(selected.detail)}</p>` : '<p class="muted">Noch kein Ereignis.</p>'}</div></div></div><div class="card control-history-events"><h2>Ereignisse</h2><div class="scroll"><table><thead><tr><th>Uhrzeit</th><th>Quelle</th><th>Ereignis</th><th>Status / Grund</th></tr></thead><tbody>${activity.map((e) => `<tr data-selected="${e === selected}"><td><button data-control-time="${e.at}">${clock(e.at)}</button></td><td>${esc(e.source)}</td><td>${esc(e.label)}</td><td title="${esc(e.ref || e.detail)}">${esc(e.detail)}</td></tr>`).join("")}</tbody></table></div></div>`,
+      `<div class="card" id="control-state-history"><div class="row"><h2>Betriebsverlauf</h2><span class="muted">${this.clock(start)} – ${this.clock(end)}</span><button data-action="detail-follow" ${latest > end ? "" : "disabled"}>Bis zum neuesten Stand</button></div><div class="control-history-lanes">${laneMarkup}<div class="control-time-axis">${[0, 0.25, 0.5, 0.75, 1].map((f) => `<span>${this.clock(start + (end - start) * f)}</span>`).join("")}</div><div class="control-cursor-row"><input id="control-history-cursor" class="control-cursor" type="range" min="0" max="${end - start}" step="1" value="${cursor - start}" aria-label="Zeitpunkt im Betriebsverlauf" aria-valuetext="${this.clock(cursor)}"></div></div><p class="muted">Schraffiert: kein belegter Zustand.${sameHeaterEvidence ? " Anforderung und Schütz haben hier denselben Verlauf." : " Anforderung und Schütz sind getrennte Belege."}</p><div class="control-history-inspection"><div><h3>Status · ${this.clock(cursor)}</h3><dl>${stateMarkup}</dl></div><div><h3>Letztes Ereignis${selected ? ` · ${this.clock(selected.at)}` : ""}</h3>${selected ? `<p>${esc(selected.label)}</p><p class="muted">${esc(selected.detail)}</p>` : '<p class="muted">Noch kein Ereignis.</p>'}</div></div></div>${this.renderHistoryValues(records, start, end, cursor)}${this.renderControlEvents(activity, selected)}${this.renderSessionEvidence(session)}${this.renderHistoryRecords(records)}`,
     );
+    this.controlHistoryRenderCache = { records, count: records.length, key: renderKey };
+    this.controlEvidenceTick = evidenceTick;
   }
   renderHistory(reasons = new Set(["viewport"])) {
     if (!this.isConnected || this.$("#history")?.hidden) return;
@@ -7092,7 +9104,9 @@ class SaunaPanel extends HTMLElement {
       return;
     }
     const identity = `${this.entry}:${t.session_id}`;
+    this.syncHistoryValueIdentity();
     if (this.historyChart?.identity !== identity) {
+      if (this.historyChart) this.clearHistorySelection();
       this.historyChart?.destroy();
       this.historyChart = new HistoryChart(this, identity);
       this.scheduleHistoryRender("initial");
@@ -7115,11 +9129,11 @@ class SaunaPanel extends HTMLElement {
       this.historyGangKey = gangKey;
       const e = session.energy,
         energySummary = e
-          ? `<p class="muted" data-history-energy>Energieverbrauch: ${num(e.measured_kwh + e.estimated_kwh, 3)} kWh · ${e.unknown_seconds ? "Unvollständig" : e.measured_seconds ? (e.estimated_seconds ? "Messung mit geschätzten Anteilen" : "Aus gemessener Leistung") : "Geschätzt"}</p>`
+          ? `<p class="muted" data-history-energy>Energieverbrauch: ${this.num(e.measured_kwh + e.estimated_kwh, this.preference("energy_precision"))} kWh · ${e.unknown_seconds ? "Unvollständig" : e.measured_seconds ? (e.estimated_seconds ? "Messung mit geschätzten Anteilen" : "Aus gemessener Leistung") : "Geschätzt"}</p>`
           : "";
       this.updateMarkup(
         "#gangs",
-        `<div class="card"><h2>Saunagänge</h2>${energySummary}${gangs.length ? `<div class="scroll"><table><thead><tr><th>Gang</th><th>Status</th><th>Beginn</th><th>Dauer</th><th>Ende</th></tr></thead><tbody>${gangs.map((g, i) => `<tr data-gang-id="${esc(g.gang_id)}" data-start="${esc(g.started_at)}"><td>${i + 1}</td><td>${gangConfirmed(g) ? "Bestätigt" : "Vorläufig"}</td><td>${clock(g.started_at)}</td><td>${duration((stamp(g.ended_at || session.ended_at || this.state.now) - stamp(g.started_at)) / 1000)}</td><td>${g.ended_at ? clock(g.ended_at) : "–"}</td></tr>`).join("")}</tbody></table></div>` : '<p class="muted">Keine Saunagänge erkannt.</p>'}</div>`,
+        `<div class="card"><h2>Saunagänge</h2>${energySummary}${gangs.length ? `<div class="scroll"><table><thead><tr><th>Gang</th><th>Status</th><th>Beginn</th><th>Dauer</th><th>Ende</th></tr></thead><tbody>${gangs.map((g, i) => `<tr data-gang-id="${esc(g.gang_id)}" data-start="${esc(g.started_at)}"><td>${i + 1}</td><td>${gangConfirmed(g) ? "Bestätigt" : "Vorläufig"}</td><td>${this.clock(g.started_at)}</td><td>${duration((stamp(g.ended_at || session.ended_at || this.state.now) - stamp(g.started_at)) / 1000)}</td><td>${g.ended_at ? this.clock(g.ended_at) : "–"}</td></tr>`).join("")}</tbody></table></div>` : '<p class="muted">Keine Saunagänge erkannt.</p>'}</div>`,
       );
     }
     const eventKey = `${this.historyProjection()}:${this.historyTimelineRevision}:${this.historyEventRevision || 0}:${timeZone}`;
@@ -7128,18 +9142,19 @@ class SaunaPanel extends HTMLElement {
       const openEvents = [
         ...this.shadowRoot.querySelectorAll("#event-list details"),
       ].map((d) => d.open);
-      const diagnostics = this.historyRecords("diagnostic"),
-        traces = this.diagnosticData().traces;
+      const traces = this.diagnosticData().traces;
       const eventRows = orderedHistoryEvents(this.normalHistoryEvents());
       const eventGroups = [];
       for (const event of eventRows) {
         const at = stamp(event.effective_at);
-        const minute = Number.isFinite(at) ? Math.floor(at / 60000) : null;
+        const minute = Number.isFinite(at)
+          ? Math.floor(at / this.preference("history_event_group_interval_ms"))
+          : null;
         let group = eventGroups.at(-1);
         if (!group || group.minute !== minute) {
           group = {
             minute,
-            label: minute == null ? "Ohne Zeit" : clock(at, timeZone),
+            label: minute == null ? "Ohne Zeit" : this.clock(at, timeZone),
             events: [],
           };
           eventGroups.push(group);
@@ -7160,7 +9175,7 @@ class SaunaPanel extends HTMLElement {
           )
           .join(
             "",
-          )}</ol></details>${diagnostics.length ? `<details><summary>Historische Fehlerhinweise (${diagnostics.length})</summary>${diagnostics.map((r) => `<p><small>${clock(r.received_at)}</small> ${esc(r.payload.messages?.join(" ") || "Keine Störung gemeldet.")}</p>`).join("")}</details>` : ""}${t.retracted.length ? `<p class="muted">${t.retracted.length} vorläufige Erkennung(en) aufgehoben. Diese werden nicht als Gänge gezählt.</p>` : ""}</div>`,
+          )}</ol></details>${this.historyFaultMarkup(records)}${t.retracted.length ? `<p class="muted">${t.retracted.length} vorläufige Erkennung(en) aufgehoben. Diese werden nicht als Gänge gezählt.</p>` : ""}</div>`,
       );
       this.shadowRoot
         .querySelectorAll("#event-list details")
@@ -7183,14 +9198,29 @@ class SaunaPanel extends HTMLElement {
       this.historyIndex(records);
     return this.chartDataIndex.diagnostics;
   }
+  historyConfigurationModel() {
+    const session = this.shown?.session;
+    if (session?.configuration_model) return session.configuration_model;
+    return session?.timeline.session_id &&
+      session.timeline.session_id === this.state?.session?.timeline.session_id &&
+      !session.ended_at
+      ? this.state?.configuration_model || null
+      : null;
+  }
   diagnosticsParameters() {
-    const parameters = {
-      ...this.state.configuration?.parameters,
-      ...this.shown?.session.configuration?.parameters,
-    };
+    const session = this.shown?.session,
+      live =
+        session?.timeline.session_id === this.state?.session?.timeline.session_id &&
+        !session?.ended_at,
+      parameters =
+        session?.configuration?.parameters ||
+        (live ? this.state?.configuration?.parameters : {}) ||
+        {};
     return Object.fromEntries(
       Object.entries(parameters).filter(([key]) =>
-        /^(door_|strong_|weak_|infusion_|vent_|person_step_seconds$)/.test(key),
+        /^(door_|strong_|weak_|infusion_|vent_|person_step_seconds$|grid_seconds$)/.test(
+          key,
+        ),
       ),
     );
   }
@@ -7203,8 +9233,13 @@ class SaunaPanel extends HTMLElement {
       data.revision,
       this.eventNavigation(),
       this.diagnosticsParameters(),
+      this.historyConfigurationModel(),
+      this.appearanceValue(),
       this.window,
-      this.$("#detection-plots")?.getBoundingClientRect?.().width || 640,
+      this.highlightedEventId,
+      this.selectedDiagnosticTraceAt || data.traces[0]?.at || null,
+      this.$("#detection-plots")?.getBoundingClientRect?.().width ||
+        this.preference("diagnostic_fallback_width_px"),
       timeZone,
     ]);
   }
@@ -7251,6 +9286,11 @@ class SaunaPanel extends HTMLElement {
       (node) => node.dataset.eventId === eventId,
     );
     nodes.forEach((node) => (node.dataset.selected = "true"));
+    this.shadowRoot
+      .querySelectorAll(".diagnostic-marker")
+      .forEach((node) =>
+        node.setAttribute?.("aria-pressed", String(node.dataset.eventId === eventId)),
+      );
     if (reveal) {
       const row = nodes.find((node) => node.classList.contains("event-row"));
       const details = row?.closest?.("details");
@@ -7261,6 +9301,15 @@ class SaunaPanel extends HTMLElement {
   revealEventTarget(kind) {
     const pending = this.pendingEventFocus;
     if (!pending || pending.kind !== kind) return;
+    if (
+      (pending.sessionId &&
+        pending.sessionId !== this.shown?.session.timeline.session_id) ||
+      (kind === "marker" && this.view !== "diagnostics") ||
+      (kind === "row" && this.navigation?.main !== "history")
+    ) {
+      this.pendingEventFocus = null;
+      return;
+    }
     const target = [
       ...this.shadowRoot.querySelectorAll(
         kind === "row" ? "#event-list [data-action]" : ".diagnostic-marker",
@@ -7270,30 +9319,38 @@ class SaunaPanel extends HTMLElement {
         node.dataset.eventId === pending.eventId ||
         node.dataset.action === `event-row:${pending.eventId}`,
     );
+    // A reveal is a single navigation operation, never a latent request that
+    // can steal focus after unrelated data arrives.
+    this.pendingEventFocus = null;
     if (!target) return;
     this.highlightEvent(pending.eventId, kind === "row");
     target.scrollIntoView?.({ block: "center", behavior: "smooth" });
-    target.focus?.();
-    this.pendingEventFocus = null;
+    target.focus?.({ preventScroll: true });
   }
   focusEvent(eventId, revealRow = false) {
     const event = this.eventNavigation().find((item) => item.event_id === eventId),
-      at = stamp(event?.trace_at || event?.effective_at || event?.detected_at);
-    if (!event || !at) {
+      trace =
+        event && this.diagnosticTraceForEvent(this.diagnosticData().traces, event),
+      at = stamp(trace?.at || event?.effective_at || event?.detected_at);
+    this.selectedDiagnosticTraceAt = trace?.at || null;
+    this.selectedDiagnosticTrace = trace || null;
+    if (!event || !Number.isFinite(at) || (!trace && !revealRow)) {
+      this.pendingEventFocus = null;
       this.highlightEvent(eventId, revealRow);
+      this.drawHistory("selection");
       return;
     }
     const [domainStart, domainEnd] = this.historyDomain();
-    const span = Math.min(domainEnd - domainStart, 30 * 60000);
-    const left = Math.max(domainStart, Math.min(domainEnd - span, at - span / 2));
-    this.setHistoryWindow(left, left + span);
-    this.drawHistory();
+    if (!this.window || at < this.window[0] || at > this.window[1]) {
+      const span = Math.min(
+          domainEnd - domainStart,
+          this.preference("history_marker_focus_span_ms"),
+        ),
+        left = Math.max(domainStart, Math.min(domainEnd - span, at - span / 2));
+      this.setHistoryWindow(left, left + span);
+    }
     this.highlightEvent(eventId, revealRow);
-    if (!revealRow)
-      this.$('.event-marker[data-selected="true"]')?.scrollIntoView({
-        block: "center",
-        behavior: "smooth",
-      });
+    this.drawHistory("selection");
   }
   invalidateHistoryIndex() {
     this.historyDatasetRevision = (this.historyDatasetRevision || 0) + 1;
@@ -7302,7 +9359,7 @@ class SaunaPanel extends HTMLElement {
     const signature = JSON.stringify({
       id: session.timeline.session_id,
       ended_at: session.ended_at,
-      energy: session.energy,
+      energy: energyIntervalSignature(session.energy),
       heating: session.heating,
       active: session.timeline.active,
       completed: session.timeline.completed,
@@ -7366,34 +9423,64 @@ class SaunaPanel extends HTMLElement {
         number = source.value == null ? NaN : Number(source.value),
         value = Number.isFinite(number) ? number : null;
       if (!Number.isFinite(time)) continue;
-      const key = `${source.position}:${source.quantity}`,
-        values = index.series.get(key) || [],
-        point = { time, value, source };
-      index.seriesState ??= new Map();
-      const state = index.seriesState.get(key) || { revision: 0 };
-      point.serial = ++state.revision;
-      if (value != null) state.hasValue = true;
-      index.seriesState.set(key, state);
-      // Raw observations retain nulls for truthful hover readouts. The
-      // curve index shares only valid point objects, making a valid neighbour
-      // across even a long missing interval available by binary search.
-      const targets = [values];
-      if (value != null) {
+      const observations = [{ quantity: source.quantity, time, value, source }],
+        absolute = record.display?.absolute_humidity,
+        absoluteTime = stamp(absolute?.received_at);
+      if (absolute && Number.isFinite(absoluteTime))
+        observations.push({
+          quantity: "absolute_humidity",
+          time: absoluteTime,
+          value:
+            typeof absolute.value === "number" && Number.isFinite(absolute.value)
+              ? absolute.value
+              : null,
+          source: absolute,
+          validUntil: stamp(absolute.valid_until),
+        });
+      for (const observation of observations) {
+        const { quantity, time, value, source: pointSource } = observation,
+          key = `${source.position}:${quantity}`,
+          values = index.series.get(key) || [],
+          point = { time, value, source: pointSource },
+          derived = quantity === "absolute_humidity";
+        if (derived) point.validUntil = observation.validUntil;
+        index.seriesState ??= new Map();
+        const state = index.seriesState.get(key) || { revision: 0 };
+        point.serial = ++state.revision;
+        if (value != null) state.hasValue = true;
+        index.seriesState.set(key, state);
+        // Raw observations retain nulls for truthful hover readouts. The
+        // curve index shares only valid point objects, making a valid neighbour
+        // across even a long missing interval available by binary search.
         const curveValues = index.curveSeries.get(key) || [];
-        index.curveSeries.set(key, curveValues);
-        targets.push(curveValues);
-      }
-      for (const target of targets) {
-        const display = index.display.get(target);
-        if (rebuild || !target.length || target.at(-1).time <= time) {
-          target.push(point);
-          if (display) this.appendHistoryDisplay(display, point, target.length - 1);
-        } else {
-          target.splice(lowerBoundHistory(target, time), 0, point);
-          index.display.delete(target);
+        if (derived) {
+          // A pair can become complete on the second record at the same time.
+          // Keep its final projection in both the raw and curve indexes.
+          for (const target of [values, curveValues]) {
+            const at = lowerBoundHistory(target, time);
+            if (target[at]?.time === time) {
+              target.splice(at, 1);
+              index.display.delete(target);
+            }
+          }
         }
+        const targets = [values];
+        if (value != null) {
+          index.curveSeries.set(key, curveValues);
+          targets.push(curveValues);
+        }
+        for (const target of targets) {
+          const display = index.display.get(target);
+          if ((!derived && rebuild) || !target.length || target.at(-1).time <= time) {
+            target.push(point);
+            if (display) this.appendHistoryDisplay(display, point, target.length - 1);
+          } else {
+            target.splice(lowerBoundHistory(target, time), 0, point);
+            index.display.delete(target);
+          }
+        }
+        index.series.set(key, values);
       }
-      index.series.set(key, values);
     }
     if (rebuild)
       for (const values of [...index.series.values(), ...index.curveSeries.values()])
@@ -7543,19 +9630,385 @@ class SaunaPanel extends HTMLElement {
   historyRecords(kind) {
     return this.chartDataIndex?.byKind.get(kind) || [];
   }
-  nearestMeasurement(position, quantity, time) {
+  historyHumidityDisplay() {
+    const absolute = this.historyHumidityMode === "absolute";
+    return {
+      mode: absolute ? "absolute" : "relative",
+      quantity: absolute ? "absolute_humidity" : "humidity",
+      unit: absolute ? "g/m³" : "%",
+      label: absolute ? "Absolute Feuchte (g/m³)" : "Relative Feuchte (%)",
+      precision: this.preference(
+        absolute ? "absolute_humidity_precision" : "value_precision",
+      ),
+    };
+  }
+  nearestMeasurement(position, quantity, time, pinned = false) {
     if (
       this.shown?.records &&
       (this.chartDataIndex?.records !== this.shown.records ||
         this.chartDataIndex.indexedCount !== this.shown.records.length)
     )
       this.historyIndex(this.shown.records);
+    const values = this.series(position, quantity);
+    if (quantity === "absolute_humidity") {
+      const after = lowerBoundHistory(values, time),
+        index = values[after]?.time === time ? after : after - 1;
+      return values[index] || null;
+    }
     return nearestHistoryPoint(
-      this.series(position, quantity),
+      values,
       time,
-      this.window[0],
-      this.window[1],
+      pinned ? -Infinity : this.window[0],
+      pinned ? Infinity : this.window[1],
     );
+  }
+  historyValueIdentity() {
+    return `${this.entry}:${this.shown?.session?.timeline?.session_id}`;
+  }
+  syncHistoryValueIdentity() {
+    if (
+      this.historyValueSelection &&
+      this.historyValueSelection.identity !== this.historyValueIdentity()
+    ) {
+      this.clearHistorySelection();
+      this.cancelHistoryInput();
+    }
+  }
+  historyPhaseBoundaries() {
+    const intervals = this.shown?.phase_projection?.intervals || [],
+      boundaries = intervals
+        .map((phase) => ({
+          time: stamp(phase.started_at),
+          phase: phase.phase,
+          boundary: "start",
+        }))
+        .filter((item) => Number.isFinite(item.time)),
+      last = intervals.at(-1),
+      end = stamp(last?.ended_at),
+      sessionEnd = stamp(this.shown?.session?.ended_at);
+    // The projection's final end in a live session is its read horizon.
+    // Only an archived session end proves a terminal phase boundary.
+    if (Number.isFinite(end) && end === sessionEnd)
+      boundaries.push({ time: end, phase: last.phase, boundary: "end" });
+    return boundaries;
+  }
+  historyCurrentSnap(snap) {
+    return snap
+      ? this.historyPhaseBoundaries().find((item) => item.time === snap.time) || null
+      : null;
+  }
+  historySnapTarget(time, model = this.historyChart?.model, geometry) {
+    const radius = this.preference("history_phase_snap_radius_px");
+    const target = { time, snap: null };
+    if (!radius || !model) return target;
+    const rect =
+      geometry?.rects?.surface ||
+      this.historyChart?.interaction?.geometry?.rects?.surface;
+    if (!(rect?.width > 0) || !(model.end > model.start) || !(model.right > model.left))
+      return target;
+    const tolerance =
+      ((model.end - model.start) / (model.right - model.left)) *
+      (model.width / rect.width) *
+      radius;
+    let distance = Infinity;
+    for (const boundary of this.historyPhaseBoundaries()) {
+      const at = boundary.time,
+        delta = Math.abs(at - time);
+      if (
+        at >= model.start &&
+        at <= model.end &&
+        delta <= tolerance &&
+        delta < distance
+      ) {
+        target.time = at;
+        target.snap = boundary;
+        distance = delta;
+      }
+    }
+    return target;
+  }
+  historySnapTime(time, model = this.historyChart?.model, geometry) {
+    return this.historySnapTarget(time, model, geometry).time;
+  }
+  selectHistoryTime(time, model = this.historyChart?.model, geometry) {
+    if (!Number.isFinite(time) || !this.shown?.session) return;
+    const identity = this.historyValueIdentity(),
+      current = this.historyValueSelection;
+    if (current?.identity === identity && current.kind === "range") {
+      this.clearHistorySelection();
+      return;
+    }
+    const target = this.historySnapTarget(time, model, geometry);
+    time = target.time;
+    const beginsBefore = current?.start < time;
+    this.historyValueSelection =
+      current?.identity === identity &&
+      current.kind === "point" &&
+      current.start !== time
+        ? {
+            identity,
+            kind: "range",
+            start: Math.min(current.start, time),
+            end: Math.max(current.start, time),
+            startSnap: beginsBefore ? current.startSnap : target.snap,
+            endSnap: beginsBefore ? target.snap : current.startSnap,
+          }
+        : {
+            identity,
+            kind: "point",
+            start: time,
+            end: time,
+            startSnap: target.snap,
+            endSnap: target.snap,
+          };
+    this.historyKeyboardTime = time;
+    this.historyKeyboardPreview = false;
+    this.historyKeyboardTarget = this.historyHoverPreview = null;
+    this.pendingHover = null;
+    this.syncHistorySelection();
+    this.historyChart?.interaction.refreshSelection();
+  }
+  clearHistorySelection() {
+    this.historyValueSelection = null;
+    this.historyKeyboardTime = null;
+    this.historyKeyboardPreview = false;
+    this.historyKeyboardTarget = this.historyHoverPreview = null;
+    this.inspectedHistoryEventId = null;
+    this.pendingHover = this.lastHistoryPointer = null;
+    for (const pointer of this.chartPointers?.values() || []) pointer.tap = false;
+    this.historyChart?.interaction.hide();
+    this.syncHistorySelection();
+    this.syncHistoryEventInspection();
+    if (this.shadowRoot?.activeElement?.matches?.(".history-event-marker"))
+      this.historyChart?.surface.focus?.({ preventScroll: true });
+  }
+  historySelectionPhase() {
+    const selection = this.historyValueSelection;
+    if (!selection) return null;
+    if (selection.kind === "point") return this.historyPhaseAt(selection.start);
+    return (
+      (this.shown?.phase_projection?.intervals || []).find((phase) => {
+        const start = stamp(phase.started_at),
+          end = stamp(phase.ended_at);
+        return (
+          Number.isFinite(start) &&
+          Number.isFinite(end) &&
+          start <= selection.start &&
+          end >= selection.end
+        );
+      }) || null
+    );
+  }
+  syncHistorySelection(model = this.historyChart?.model) {
+    const selection = this.historyValueSelection,
+      layer = this.$("[data-history-selection]"),
+      band = this.$("[data-history-selection-band]"),
+      first = this.$("[data-history-selection-start]"),
+      last = this.$("[data-history-selection-end]"),
+      firstHalo = this.$("[data-history-selection-start-snap]"),
+      lastHalo = this.$("[data-history-selection-end-snap]"),
+      startSnap = this.historyCurrentSnap(selection?.startSnap),
+      endSnap = this.historyCurrentSnap(selection?.endSnap),
+      inView = (time) => !!model && time >= model.start && time <= model.end,
+      visible =
+        !!selection &&
+        !!model &&
+        selection.start <= model.end &&
+        selection.end >= model.start;
+    layer?.setAttribute?.("visibility", visible ? "visible" : "hidden");
+    band?.setAttribute(
+      "visibility",
+      visible && selection.kind === "range" ? "visible" : "hidden",
+    );
+    first?.setAttribute(
+      "visibility",
+      selection && inView(selection.start) ? "visible" : "hidden",
+    );
+    last?.setAttribute(
+      "visibility",
+      selection?.kind === "range" && inView(selection.end) ? "visible" : "hidden",
+    );
+    firstHalo?.setAttribute(
+      "visibility",
+      startSnap && inView(selection.start) ? "visible" : "hidden",
+    );
+    lastHalo?.setAttribute(
+      "visibility",
+      selection?.kind === "range" && endSnap && inView(selection.end)
+        ? "visible"
+        : "hidden",
+    );
+    first?.setAttribute("data-snap", String(!!startSnap));
+    last?.setAttribute("data-snap", String(!!endSnap));
+    if (selection && model) {
+      const left = model.x(selection.start),
+        right = model.x(selection.end);
+      band?.setAttribute("x", String(Math.max(model.left, left)));
+      band?.setAttribute(
+        "width",
+        String(Math.max(0, Math.min(model.right, right) - Math.max(model.left, left))),
+      );
+      band?.setAttribute("y", String(model.top));
+      band?.setAttribute("height", String(model.bottom - model.top));
+      for (const [node, x] of [
+        [first, left],
+        [last, right],
+      ])
+        for (const [name, value] of Object.entries({
+          x1: x,
+          x2: x,
+          y1: model.top,
+          y2: model.bottom,
+        }))
+          node?.setAttribute(name, String(value));
+      const geometry = this.historyChart?.interaction.cachedGeometry,
+        radius = this.preference("event_marker_size_px") / 2,
+        rx =
+          radius *
+          (model.width / Math.max(1, geometry?.rects?.surface?.width || model.width)),
+        ry =
+          radius *
+          (model.height /
+            Math.max(1, geometry?.rects?.surface?.height || model.height));
+      for (const [halo, x] of [
+        [firstHalo, left],
+        [lastHalo, right],
+      ])
+        for (const [name, value] of Object.entries({
+          cx: x,
+          cy: model.top + ry,
+          rx,
+          ry,
+        }))
+          halo?.setAttribute(name, String(value));
+    }
+    const clear = this.$('[data-action="clear-history-selection"]'),
+      toSelection = this.$('[data-action="history-to-selection"]');
+    if (clear)
+      clear.disabled = !(
+        selection ||
+        this.inspectedHistoryEventId ||
+        this.historyHoverPreview
+      );
+    if (toSelection) toSelection.disabled = !selection;
+  }
+  historyInspectedEvent() {
+    return (
+      this.normalHistoryEvents().find(
+        (event) => event.event_id === this.inspectedHistoryEventId,
+      ) || null
+    );
+  }
+  inspectHistoryEvent(eventId) {
+    this.inspectedHistoryEventId = eventId;
+    this.pendingHover = this.lastHistoryPointer = this.historyHoverPreview = null;
+    this.historyKeyboardPreview = false;
+    this.historyKeyboardTarget = null;
+    this.syncHistoryEventInspection();
+    this.historyChart?.interaction.refreshHover();
+    this.syncHistorySelection();
+  }
+  syncHistoryEventInspection() {
+    const event = this.historyInspectedEvent(),
+      node = this.$("#history-event-inspection"),
+      markers = this.shadowRoot?.querySelectorAll?.("[data-history-event-id]") || [];
+    if (node) {
+      node.hidden = !event;
+      const text = event
+        ? `${events[event.kind] || event.kind} · ${this.clock(event.effective_at)}`
+        : "";
+      if (node.textContent !== text) node.textContent = text;
+    }
+    for (const marker of markers) {
+      const selected = marker.dataset.historyEventId === event?.event_id;
+      marker.setAttribute("data-selected", String(selected));
+      marker.setAttribute("aria-pressed", String(selected));
+    }
+  }
+  keyHistorySelection(event) {
+    if (!this.window) return;
+    if (event.key === "Escape") {
+      event.preventDefault();
+      this.clearHistorySelection();
+      return;
+    }
+    if (!["Enter", " ", "ArrowLeft", "ArrowRight"].includes(event.key)) return;
+    if (["ArrowLeft", "ArrowRight"].includes(event.key) && !event.shiftKey) return;
+    event.preventDefault();
+    const [start, end] = this.window;
+    this.historyKeyboardTime = Math.max(
+      start,
+      Math.min(end, this.historyKeyboardTime ?? (start + end) / 2),
+    );
+    if (["ArrowLeft", "ArrowRight"].includes(event.key)) {
+      this.historyKeyboardTime = Math.max(
+        start,
+        Math.min(
+          end,
+          this.historyKeyboardTime +
+            (end - start) *
+              this.preference("history_keyboard_selection_fraction") *
+              (event.key === "ArrowLeft" ? -1 : 1),
+        ),
+      );
+      this.historyKeyboardTarget = this.historySnapTarget(
+        this.historyKeyboardTime,
+        this.historyChart?.model,
+        this.historyChart?.interaction.readGeometry?.(),
+      );
+      const svg = this.historyChart?.surface;
+      if (svg)
+        svg.setAttribute(
+          "aria-description",
+          `Zeitpunkt · ${this.tooltipWhen(this.historyKeyboardTime)}`,
+        );
+      this.historyKeyboardPreview = true;
+      this.historyHoverPreview = null;
+      this.historyChart?.interaction.previewTime(this.historyKeyboardTime);
+    } else
+      this.selectHistoryTime(
+        this.historyKeyboardTarget?.time ?? this.historyKeyboardTime,
+      );
+  }
+  beginHistoryInput() {
+    if (this.historyInputSnapshot) return;
+    this.pendingHover = null;
+    const chart = this.historyChart;
+    this.historyInputSnapshot = {
+      domain: [...(chart?.domain || this.historyDomain())],
+      model: chart?.model ? { ...chart.model } : null,
+    };
+  }
+  finishHistoryInput() {
+    if (
+      this.chartPointers?.size ||
+      this.historyGesture ||
+      this.webkitHistoryGesture ||
+      this.historyInputMode
+    )
+      return;
+    this.historyInputSnapshot = null;
+    if (this.historyChart) this.historyChart.domain = this.historyDomain();
+    this.scheduleHistoryRender("viewport");
+  }
+  cancelHistoryInput() {
+    const captures = [...(this.chartPointers || [])].map(([pointerId, pointer]) => [
+      pointer.svg,
+      pointerId,
+    ]);
+    if (this.historyGesture)
+      captures.push([this.historyGesture.svg, this.historyGesture.pointerId]);
+    this.chartPointers?.clear();
+    this.historyGesture =
+      this.webkitHistoryGesture =
+      this.historyInputMode =
+      this.historyInputSnapshot =
+      this.pinchDistance =
+        null;
+    if (this.historyWheelTimer != null) clearTimeout(this.historyWheelTimer);
+    this.historyWheelTimer = null;
+    for (const [svg, pointerId] of captures)
+      if (svg?.hasPointerCapture?.(pointerId)) svg.releasePointerCapture(pointerId);
   }
   svgCoordinates(svg, clientX, clientY = 0) {
     if (
@@ -7574,8 +10027,8 @@ class SaunaPanel extends HTMLElement {
     }
     const rect = svg.getBoundingClientRect();
     const viewBox = svg.viewBox?.baseVal,
-      width = viewBox?.width || 1200,
-      height = viewBox?.height || 480;
+      width = viewBox?.width || this.historyGeometry().width,
+      height = viewBox?.height || this.historyGeometry().height;
     return {
       x: (viewBox?.x || 0) + ((clientX - rect.left) / rect.width) * width,
       y: (viewBox?.y || 0) + ((clientY - rect.top) / rect.height) * height,
@@ -7591,8 +10044,45 @@ class SaunaPanel extends HTMLElement {
     });
   }
   scheduleHover(event) {
-    this.lastHistoryPointer = { clientX: event.clientX, clientY: event.clientY };
-    this.pendingHover = event;
+    if (this.historyValueSelection?.kind === "range") return;
+    if (
+      this.historyGesture ||
+      this.webkitHistoryGesture ||
+      this.chartPointers?.size > 1 ||
+      (this.historyInputMode && this.historyInputMode !== "pointer")
+    )
+      return;
+    const pointer = this.chartPointers?.get(event.pointerId),
+      interaction = this.historyChart?.interaction;
+    if (this.chartPointers?.size && !pointer) return;
+    if (
+      event.historyEventId ||
+      (!this.historyValueSelection && this.historyInspectedEvent())
+    ) {
+      this.pendingHover = this.lastHistoryPointer = this.historyHoverPreview = null;
+      interaction?.refreshHover();
+      this.syncHistorySelection();
+      return;
+    }
+    if (pointer && !pointer.tap) {
+      this.pendingHover = this.lastHistoryPointer = this.historyHoverPreview = null;
+      interaction?.hide();
+      return;
+    }
+    const geometry = pointer?.geometry || interaction?.readGeometry(),
+      model = pointer?.model || this.historyChart?.model,
+      hit = interaction?.timeAt(event, model, geometry),
+      preview = hit ? this.historySnapTarget(hit.time, model, geometry) : null;
+    this.historyKeyboardPreview = false;
+    this.historyKeyboardTarget = null;
+    this.lastHistoryPointer = preview ? { time: preview.time } : null;
+    this.pendingHover = {
+      ...event,
+      resolved: true,
+      hit,
+      model,
+      preview,
+    };
     this.scheduleHistoryRender("cursor");
   }
   scheduleHistoryRender(reason = "viewport") {
@@ -7630,30 +10120,29 @@ class SaunaPanel extends HTMLElement {
       end = Number.isFinite(ended) ? ended : now,
       complete =
         measurementWindow?.complete ?? !!(session?.ended_at || archive?.ended_at);
-    return [start, Math.max(start + 1000, complete ? end : Math.min(end, now))];
+    return [
+      start,
+      Math.max(
+        start + this.preference("history_minimum_span_ms"),
+        complete ? end : Math.min(end, now),
+      ),
+    ];
   }
   ensureHistoryWindow() {
-    const [start, end] = this.historyDomain(),
-      width = end - start;
-    const previous = this.window,
-      followDomain = !this.window || this.zoom === 1;
-    if (followDomain || this.window[1] <= start || this.window[0] >= end)
-      this.window = [start, end];
-    const current = Math.max(
-      width / 256,
-      Math.min(width, this.window[1] - this.window[0]),
-    );
-    const left = Math.max(start, Math.min(end - current, this.window[0])),
-      next = [left, left + current];
-    if (!previous || previous[0] !== next[0] || previous[1] !== next[1])
-      this.historyWindowRevision = (this.historyWindowRevision || 0) + 1;
-    this.window = next;
-    this.zoom = width / current;
+    // Incoming data never moves a user's viewport or changes its zoom. Only a
+    // session change or the explicit full-session action clears this window.
+    if (this.window) return;
+    this.window = this.historyDomain();
+    this.zoom = 1;
+    this.historyWindowRevision = (this.historyWindowRevision || 0) + 1;
   }
   setHistoryWindow(left, right) {
-    const [start, end] = this.historyDomain(),
+    const [start, end] = this.historyInputSnapshot?.domain || this.historyDomain(),
       span = end - start,
-      minimum = span / 256;
+      minimum = Math.min(
+        span / this.preference("history_max_zoom"),
+        this.window ? this.window[1] - this.window[0] : Infinity,
+      );
     const width = Math.max(minimum, Math.min(span, right - left));
     const nextLeft = Math.max(start, Math.min(end - width, left));
     const next = [nextLeft, nextLeft + width];
@@ -7665,34 +10154,54 @@ class SaunaPanel extends HTMLElement {
   overviewFraction(svg, clientX) {
     const point = this.svgCoordinates(svg, clientX),
       fraction =
-        (point.x - HISTORY_PLOT.left) / (HISTORY_PLOT.right - HISTORY_PLOT.left);
+        (point.x - this.historyGeometry().left) /
+        (this.historyGeometry().right - this.historyGeometry().left);
     return Math.max(0, Math.min(1, fraction));
   }
   beginHistoryGesture(event, svg) {
     if (!this.window) return;
-    this.historyChart?.interaction.invalidateGeometry("geometry", false);
     const handle = event.target.dataset.historyHandle,
       move = event.target.closest("[data-history-window]");
     if (!handle && !move) return;
+    if (this.historyInputMode === "wheel") this.endHistoryWheel();
+    if (this.historyInputMode) return;
+    this.historyChart?.interaction.invalidateGeometry("geometry", false);
+    this.beginHistoryInput();
+    this.historyInputMode = "overview";
     event.preventDefault();
     svg.setPointerCapture?.(event.pointerId);
+    const fraction = this.overviewFraction(svg, event.clientX),
+      [domainStart, domainEnd] = this.historyInputSnapshot.domain,
+      at = domainStart + fraction * (domainEnd - domainStart);
     this.historyGesture = {
       pointerId: event.pointerId,
       svg,
       kind: handle || "move",
-      fraction: this.overviewFraction(svg, event.clientX),
+      fraction,
+      offset:
+        handle === "start"
+          ? at - this.window[0]
+          : handle === "end"
+            ? at - this.window[1]
+            : 0,
       window: [...this.window],
     };
   }
   updateHistoryGesture(event) {
     const gesture = this.historyGesture;
-    if (!gesture) return;
+    if (!gesture || gesture.pointerId !== event.pointerId) return;
     event.preventDefault();
-    const [domainStart, domainEnd] = this.historyChart?.domain || this.historyDomain(),
+    const [domainStart, domainEnd] =
+        this.historyInputSnapshot?.domain ||
+        this.historyChart?.domain ||
+        this.historyDomain(),
       span = domainEnd - domainStart;
-    const at = domainStart + this.overviewFraction(gesture.svg, event.clientX) * span,
+    const at =
+        domainStart +
+        this.overviewFraction(gesture.svg, event.clientX) * span -
+        (gesture.offset ?? 0),
       [left, right] = gesture.window,
-      minimum = span / 256;
+      minimum = span / this.preference("history_max_zoom");
     if (gesture.kind === "start")
       this.setHistoryWindow(Math.min(at, right - minimum), right);
     else if (gesture.kind === "end")
@@ -7706,72 +10215,181 @@ class SaunaPanel extends HTMLElement {
   }
   endHistoryGesture(event) {
     const gesture = this.historyGesture;
-    if (!gesture) return;
-    gesture.svg.releasePointerCapture?.(event.pointerId);
+    if (!gesture || gesture.pointerId !== event.pointerId) return;
     this.historyGesture = null;
+    this.historyInputMode = null;
+    gesture.svg.releasePointerCapture?.(event.pointerId);
+    this.finishHistoryInput();
     this.drawHistory();
   }
   beginChartPointer(event, svg) {
+    if (event.button != null && event.button !== 0) return;
+    if (this.historyInputMode === "wheel") this.endHistoryWheel();
     if (this.historyInputMode && this.historyInputMode !== "pointer") return;
+    this.beginHistoryInput();
     this.historyInputMode = "pointer";
+    this.historyKeyboardPreview = false;
+    this.historyKeyboardTarget = null;
     this.historyChart?.interaction.invalidateGeometry("geometry", false);
     svg.setPointerCapture?.(event.pointerId);
-    this.chartPointers.set(event.pointerId, { x: event.clientX, y: event.clientY });
+    const model = this.historyChart?.model;
+    const geometry = this.historyChart?.interaction.readGeometry?.();
+    this.chartPointers.set(event.pointerId, {
+      x: event.clientX,
+      y: event.clientY,
+      startX: event.clientX,
+      startY: event.clientY,
+      movement: 0,
+      tap: !this.chartPointers.size,
+      svg,
+      model: model ? { ...model } : null,
+      geometry,
+    });
+    if (this.chartPointers.size > 1)
+      for (const point of this.chartPointers.values()) point.tap = false;
+    if (this.chartPointers.size > 1) {
+      this.pendingHover = this.lastHistoryPointer = this.historyHoverPreview = null;
+      this.historyChart?.interaction.hide?.();
+    }
     this.pinchDistance = null;
+    if (this.chartPointers.size === 2) this.pinchZoom(svg);
   }
-  endChartPointer(event) {
-    if (!this.chartPointers?.has(event.pointerId)) return;
-    event.target
-      .closest?.("svg.session-chart")
-      ?.releasePointerCapture?.(event.pointerId);
+  updateChartPointer(event) {
+    const pointer = this.chartPointers.get(event.pointerId);
+    if (!pointer) return;
+    pointer.x = event.clientX;
+    pointer.y = event.clientY;
+    pointer.movement = Math.max(
+      pointer.movement,
+      Math.hypot(event.clientX - pointer.startX, event.clientY - pointer.startY),
+    );
+    if (pointer.movement > this.preference("history_tap_movement_px"))
+      pointer.tap = false;
+  }
+  endChartPointer(event, cancelled = false) {
+    const pointer = this.chartPointers?.get(event.pointerId);
+    if (!pointer) return;
+    this.updateChartPointer(event);
     this.chartPointers.delete(event.pointerId);
+    if (
+      !cancelled &&
+      event.type === "pointerup" &&
+      pointer.tap &&
+      !this.chartPointers.size
+    ) {
+      this.historyChart?.interaction.readGeometry();
+      const hit = this.historyChart?.interaction.timeAt(
+        { ...event, svg: pointer.svg, clientX: event.clientX, clientY: event.clientY },
+        pointer.model,
+        pointer.geometry,
+      );
+      if (hit) {
+        this.selectHistoryTime(hit.time, pointer.model, hit.geometry);
+        pointer.svg.focus?.({ preventScroll: true });
+      }
+    }
+    if (cancelled || !pointer.tap) {
+      this.pendingHover = this.lastHistoryPointer = this.historyHoverPreview = null;
+      this.historyChart?.interaction.hide?.();
+    }
+    pointer.svg.releasePointerCapture?.(event.pointerId);
     this.pinchDistance = null;
     if (!this.chartPointers.size && this.historyInputMode === "pointer")
       this.historyInputMode = null;
-    if (!this.chartPointers.size) this.scheduleHistoryRender("cursor");
+    if (!this.chartPointers.size) this.finishHistoryInput();
   }
-  syncHistoryOverview() {
+  syncHistoryOverview(geometry) {
     const svg = this.$("#history-overview svg");
     if (!svg || !this.window) return;
     const [start, end] = this.historyChart?.domain || this.historyDomain(),
       width = end - start,
       left =
-        HISTORY_PLOT.left +
-        ((this.window[0] - start) / width) * (HISTORY_PLOT.right - HISTORY_PLOT.left),
+        this.historyGeometry().left +
+        ((this.window[0] - start) / width) *
+          (this.historyGeometry().right - this.historyGeometry().left),
       right =
-        HISTORY_PLOT.left +
-        ((this.window[1] - start) / width) * (HISTORY_PLOT.right - HISTORY_PLOT.left);
+        this.historyGeometry().left +
+        ((this.window[1] - start) / width) *
+          (this.historyGeometry().right - this.historyGeometry().left);
     const selected = svg.querySelector("[data-history-window]"),
       first = svg.querySelector('[data-history-handle="start"]'),
-      last = svg.querySelector('[data-history-handle="end"]');
+      last = svg.querySelector('[data-history-handle="end"]'),
+      handle =
+        (this.preference("event_marker_size_px") / 2) *
+        (this.historyGeometry().width /
+          Math.max(
+            1,
+            geometry?.rects?.overview?.width || this.historyGeometry().width,
+          ));
     selected?.setAttribute("x", left);
     selected?.setAttribute("width", Math.max(1, right - left));
-    first?.setAttribute("x", left - 4);
-    last?.setAttribute("x", right - 4);
+    first?.setAttribute("x", left - handle);
+    last?.setAttribute("x", right);
+    first?.setAttribute("width", handle);
+    last?.setAttribute("width", handle);
     svg.setAttribute(
       "aria-valuetext",
-      `${clock(this.window[0])} bis ${clock(this.window[1])}, Zoom ${num(this.zoom, 1)}×`,
+      `${this.clock(this.window[0])} bis ${this.clock(this.window[1])}, Zoom ${this.num(this.zoom, this.preference("value_precision"))}×`,
     );
     svg.setAttribute(
       "aria-valuenow",
       String(Math.round(((this.window[0] - start) / width) * 100)),
     );
-    const reset = this.$('[data-action="reset-zoom"]');
-    if (reset) reset.textContent = `${num(this.zoom, 1)}×`;
+    const zoom = this.$("#history-zoom-value");
+    if (zoom)
+      zoom.textContent = `${this.num(this.zoom, this.preference("value_precision"))}×`;
   }
   historyLegend(label, items) {
     if (!items.length) return "";
     return `<div class="history-legend" aria-label="${esc(label)}"><strong>${esc(label)}</strong><div class="legend">${items
       .map(([kind, text, phase]) => {
-        const shape = ["temperature", "humidity", "infusion"].includes(kind)
-          ? `<line class="${kind}" x1="2" x2="26" y1="7" y2="7"/>`
-          : `<rect class="${kind}" x="2" y="2" width="24" height="10" rx="2"/>`;
-        return `<span${phase ? ` data-legend-phase="${esc(phase)}"` : ""}><svg class="chart legend-swatch" viewBox="0 0 28 14" aria-hidden="true">${shape}</svg>${esc(text)}</span>`;
+        const marker = `<g class="history-event-marker"><ellipse cx="14" cy="4" rx="3" ry="3"/></g>`;
+        const shape =
+          kind === "event"
+            ? `<line class="history-event-guide" x1="14" x2="14" y1="1" y2="13"/>${marker}`
+            : kind === "infusion"
+              ? `<line class="infusion" x1="14" x2="14" y1="1" y2="13"/>${marker}`
+              : `<rect class="${kind}" x="2" y="2" width="24" height="10" rx="2"/>`;
+        return `<span${phase ? ` data-legend-phase="${esc(phase)}" style="--history-legend-color: var(--sauna-color-${phaseAppearance[phase].color.replaceAll("_", "-")})"` : ""}><svg class="chart legend-swatch" viewBox="0 0 28 14" aria-hidden="true">${shape}</svg>${esc(text)}</span>`;
       })
       .join("")}</div></div>`;
   }
   historyMarkup() {
-    return `<div class="plot-wrap history-stack"><svg class="chart history-background" viewBox="0 0 ${HISTORY_PLOT.width} 480" preserveAspectRatio="none" aria-hidden="true"><defs><clipPath id="history-layer-clip"><rect x="${HISTORY_PLOT.left}" y="18" width="${HISTORY_PLOT.right - HISTORY_PLOT.left}" height="417"/></clipPath></defs><g data-history-annotations clip-path="url(#history-layer-clip)"></g></svg><canvas class="chart history-curves" role="img" aria-label="Temperatur- und Feuchteverlauf; Ereignisse und Zeiten stehen in den nachfolgenden Tabellen." aria-describedby="gangs event-list">Temperatur und Feuchte der Sitzung. Ereignisse und Saunagänge sind in den Tabellen unter dem Diagramm zugänglich.</canvas><svg class="chart session-chart" viewBox="0 0 ${HISTORY_PLOT.width} 480" preserveAspectRatio="none" role="img" tabindex="0" aria-label="Sitzungsverlauf"><g data-history-axes></g><line id="cursor" x1="0" x2="0" y1="18" y2="435" stroke="var(--sauna-color-chart-text)" visibility="hidden"/></svg></div>`;
+    return `<div class="plot-wrap history-stack"><svg class="chart history-background" preserveAspectRatio="none" aria-hidden="true"><defs><clipPath id="history-layer-clip"><rect data-history-clip/></clipPath></defs><g data-history-annotations clip-path="url(#history-layer-clip)"></g></svg><canvas class="chart history-curves" role="img" aria-label="Temperatur- und Feuchteverlauf; Ereignisse und Zeiten stehen in den nachfolgenden Tabellen." aria-describedby="gangs event-list">Temperatur und Feuchte der Sitzung. Ereignisse und Saunagänge sind in den Tabellen unter dem Diagramm zugänglich.</canvas><svg class="chart session-chart" preserveAspectRatio="none" role="group" tabindex="0" aria-label="Sitzungsverlauf"><g data-history-axes></g><g data-history-selection clip-path="url(#history-layer-clip)" visibility="hidden" aria-hidden="true"><rect class="history-selection-band" data-history-selection-band/><line class="history-selection-guide" vector-effect="non-scaling-stroke" data-history-selection-start/><line class="history-selection-guide" vector-effect="non-scaling-stroke" data-history-selection-end/><ellipse class="history-snap-halo" vector-effect="non-scaling-stroke" data-history-selection-start-snap visibility="hidden"/><ellipse class="history-snap-halo" vector-effect="non-scaling-stroke" data-history-selection-end-snap visibility="hidden"/></g><g data-history-events clip-path="url(#history-layer-clip)"></g><line id="cursor" stroke="var(--sauna-color-chart-text)" visibility="hidden"/><ellipse class="history-snap-halo" vector-effect="non-scaling-stroke" data-history-snap-halo visibility="hidden"/></svg></div>`;
+  }
+  syncHistoryGeometry(plot = this.historyGeometry(), geometry) {
+    const attributes = (node, values) => {
+      for (const [key, value] of Object.entries(values))
+        if (node?.getAttribute?.(key) !== String(value)) node?.setAttribute(key, value);
+    };
+    for (const selector of [".history-background", "svg.session-chart"])
+      attributes(this.$(selector), { viewBox: `0 0 ${plot.width} ${plot.height}` });
+    attributes(this.$("[data-history-clip]"), {
+      x: plot.left,
+      y: plot.top,
+      width: plot.right - plot.left,
+      height: plot.bottom - plot.top,
+    });
+    attributes(this.$("#cursor"), { y1: plot.top, y2: plot.bottom });
+    const overview = this.$("#history-overview svg"),
+      height = this.preference("history_overview_height_px"),
+      padding = this.preference("event_marker_gap_px"),
+      handle =
+        (this.preference("event_marker_size_px") / 2) *
+        (plot.width / Math.max(1, geometry?.rects?.overview?.width || plot.width));
+    attributes(overview, { viewBox: `0 0 ${plot.width} ${height}` });
+    attributes(overview?.querySelector("[data-history-window]"), {
+      y: padding * 2,
+      height: Math.max(0, height - padding * 4),
+      rx: this.preference("control_radius_px") / 2,
+    });
+    for (const side of ["start", "end"])
+      attributes(overview?.querySelector(`[data-history-handle="${side}"]`), {
+        y: padding,
+        height: Math.max(0, height - padding * 2),
+        width: handle,
+        rx: this.preference("control_radius_px") / 2,
+      });
   }
   historyLegendMarkup() {
     const presentPhases = [
@@ -7782,10 +10400,12 @@ class SaunaPanel extends HTMLElement {
     const phaseItems = presentPhases
       .filter((phase) => phaseAppearance[phase])
       .map((phase) => [phaseAppearance[phase].shape, phases[phase], phase]);
-    return `<div class="history-legend-groups">${this.historyLegend("Phasen", phaseItems)}${this.historyLegend(
+    const humidity = this.historyHumidityDisplay();
+    return `<div class="history-legend-groups"><button type="button" class="history-humidity-toggle" data-action="history-humidity" aria-pressed="${humidity.mode === "absolute"}">${esc(humidity.label)}</button>${this.historyLegend("Phasen", phaseItems)}${this.historyLegend(
       "Ereignisse",
       [
-        ["door", "Saunatür offen"],
+        ["event", "Tür geöffnet / geschlossen"],
+        ["door", "Tür offen"],
         ["infusion", "Aufguss"],
       ],
     )}</div>`;
@@ -7798,7 +10418,7 @@ class SaunaPanel extends HTMLElement {
       // Only inserts in this span change its length. Late inserts before it
       // shift both indices equally; stable neighbour identities still detect
       // an insertion that changes an edge tangent without changing the count.
-      key = `${this.historyProjection()}:${this.historyProjectionGeneration || 0}:${start}:${end}:${ttl}:${pixels}:${after - first}:${values[first]?.serial || 0}:${values[after - 1]?.serial || 0}`;
+      key = `${this.historyProjection()}:${this.historyProjectionGeneration || 0}:${quantity}:${quantity === "absolute_humidity" ? state?.revision || 0 : ""}:${start}:${end}:${ttl}:${pixels}:${after - first}:${values[first]?.serial || 0}:${values[after - 1]?.serial || 0}`;
     const name = `${position}:${quantity}`,
       old = cache.get(name);
     if (old?.source === values && old.key === key) return old;
@@ -7828,14 +10448,15 @@ class SaunaPanel extends HTMLElement {
     cache.set(name, result);
     return result;
   }
-  historyModel(chart, session, cssWidth = HISTORY_PLOT.width) {
+  historyModel(chart, session, cssWidth = this.historyGeometry().width) {
     const [start, end] = this.window,
-      left = HISTORY_PLOT.left,
-      right = HISTORY_PLOT.right,
-      top = 18,
-      bottom = 435,
+      left = this.historyGeometry().left,
+      right = this.historyGeometry().right,
+      top = this.historyGeometry().top,
+      bottom = this.historyGeometry().bottom,
       ttl = historyMeasurementTtlSeconds(this, session) * 1000,
       positions = [...this.positions],
+      humidityDisplay = this.historyHumidityDisplay(),
       series = new Map();
     let lo = Infinity,
       hi = -Infinity,
@@ -7844,11 +10465,11 @@ class SaunaPanel extends HTMLElement {
       for (const quantity of ["temperature", "humidity"]) {
         const entry = this.historyPreparedSeries(
           position,
-          quantity,
+          quantity === "humidity" ? humidityDisplay.quantity : quantity,
           start,
           end,
           ttl,
-          Math.max(1, ((right - left) * cssWidth) / HISTORY_PLOT.width),
+          Math.max(1, ((right - left) * cssWidth) / this.historyGeometry().width),
           chart.prepared,
         );
         series.set(`${position}:${quantity}`, entry);
@@ -7857,9 +10478,36 @@ class SaunaPanel extends HTMLElement {
           hi = Math.max(hi, entry.high);
         } else humidity = Math.max(humidity, entry.high);
       }
-    const low = Number.isFinite(lo) ? Math.floor((lo - 2) / 10) * 10 : 20,
-      high = Number.isFinite(hi) ? Math.ceil((hi + 2) / 10) * 10 : 100,
-      humidityHigh = Math.max(60, Math.ceil((humidity + 2) / 20) * 20),
+    const temperaturePadding = this.preference("history_temperature_padding_c"),
+      temperatureStep = this.preference("history_temperature_scale_step_c"),
+      humidityPadding = this.preference("history_humidity_padding_percent"),
+      humidityStep = this.preference("history_humidity_scale_step_percent"),
+      absoluteStep = 10 ** -humidityDisplay.precision,
+      fallback = this.appearanceScale("temperature"),
+      frozen = this.historyInputSnapshot?.model,
+      low =
+        frozen?.low ??
+        (Number.isFinite(lo)
+          ? Math.floor((lo - temperaturePadding) / temperatureStep) * temperatureStep
+          : fallback.minimum),
+      high =
+        frozen?.high ??
+        (Number.isFinite(hi)
+          ? Math.max(
+              low + temperatureStep,
+              Math.ceil((hi + temperaturePadding) / temperatureStep) * temperatureStep,
+            )
+          : fallback.maximum),
+      humidityHigh =
+        (frozen && (frozen.humidityMode || "relative") === humidityDisplay.mode
+          ? frozen.humidityHigh
+          : null) ??
+        (humidityDisplay.mode === "absolute"
+          ? Math.max(absoluteStep, Math.ceil(humidity / absoluteStep) * absoluteStep)
+          : Math.max(
+              this.preference("history_humidity_minimum_maximum_percent"),
+              Math.ceil((humidity + humidityPadding) / humidityStep) * humidityStep,
+            )),
       x = (time) => left + ((time - start) / (end - start)) * (right - left),
       yT = (value) => bottom - ((value - low) / (high - low)) * (bottom - top),
       yH = (value) => bottom - (value / humidityHigh) * (bottom - top);
@@ -7871,11 +10519,15 @@ class SaunaPanel extends HTMLElement {
       right,
       top,
       bottom,
-      width: HISTORY_PLOT.width,
-      height: 480,
+      width: this.historyGeometry().width,
+      height: this.historyGeometry().height,
+      coordinatePrecision: this.preference("chart_coordinate_precision"),
       low,
       high,
       humidityHigh,
+      humidityMode: humidityDisplay.mode,
+      humidityUnit: humidityDisplay.unit,
+      humidityPrecision: humidityDisplay.precision,
       ttl,
       positions,
       series,
@@ -7911,13 +10563,61 @@ class SaunaPanel extends HTMLElement {
       return Number.isFinite(at) && Math.abs(at - time) <= Math.max(0, tolerance);
     });
   }
+  historySelectionEvents() {
+    const selection = this.historyValueSelection;
+    if (!selection) return [];
+    return orderedHistoryEvents(this.normalHistoryEvents()).filter((event) => {
+      const at = stamp(event.effective_at);
+      return (
+        Number.isFinite(at) &&
+        (selection.kind === "range"
+          ? historyEventMarkerKinds.has(event.kind) &&
+            at >= selection.start &&
+            at < selection.end
+          : at === selection.start)
+      );
+    });
+  }
+  historyEventMarkers(model, geometry) {
+    const size = this.preference("event_marker_size_px"),
+      gap = this.preference("event_marker_gap_px"),
+      radiusX =
+        (size / 2) *
+        (model.width / Math.max(1, geometry?.rects?.surface?.width || model.width)),
+      radiusY =
+        (size / 2) *
+        (model.height / Math.max(1, geometry?.rects?.surface?.height || model.height)),
+      laneHeight =
+        (size + gap) *
+        (model.height / Math.max(1, geometry?.rects?.surface?.height || model.height)),
+      markers = orderedHistoryEvents(this.normalHistoryEvents())
+        .filter((event) => historyEventMarkerKinds.has(event.kind))
+        .map((event) => ({ event, at: stamp(event.effective_at) })),
+      layout = this.eventMarkerLayout(
+        markers,
+        model.start,
+        model.end,
+        (model.right - model.left) *
+          ((geometry?.rects?.surface?.width || model.width) / model.width),
+        size,
+        gap,
+      );
+    return layout.markers
+      .map(({ event, at, lane }) => {
+        const x = model.x(at),
+          top = model.top + radiusY + lane * laneHeight,
+          label = `${events[event.kind] || event.kind} · ${this.tooltipWhen(event.effective_at)}`;
+        return `<line class="history-event-guide" data-key="history-event-guide:${esc(event.event_id)}" vector-effect="non-scaling-stroke" x1="${x}" x2="${x}" y1="${model.top}" y2="${model.bottom}"/><g class="history-event-marker" role="button" tabindex="0" data-action="history-event:${esc(event.event_id)}" data-history-event-id="${esc(event.event_id)}" aria-label="${esc(label)}" aria-pressed="false"><ellipse vector-effect="non-scaling-stroke" cx="${x}" cy="${top}" rx="${radiusX}" ry="${radiusY}"/><title>${esc(label)}</title></g>`;
+      })
+      .join("");
+  }
   historyAnnotations(model, session, gangs) {
     const { start, end, left, right, top, bottom, x } = model;
     const interval = (a, b, klass, title, y = top, height = bottom - top) => {
       const aa = Math.max(start, stamp(a)),
         bb = Math.min(end, stamp(b || session.ended_at || this.state.now));
       return bb > aa
-        ? `<rect class="${klass}" x="${x(aa).toFixed(2)}" y="${y}" width="${(x(bb) - x(aa)).toFixed(2)}" height="${height}"><title>${esc(title)}</title></rect>`
+        ? `<rect class="${klass}" x="${x(aa).toFixed(this.preference("chart_coordinate_precision"))}" y="${y}" width="${(x(bb) - x(aa)).toFixed(this.preference("chart_coordinate_precision"))}" height="${height}"><title>${esc(title)}</title></rect>`
         : "";
     };
     let svg = "";
@@ -7951,76 +10651,156 @@ class SaunaPanel extends HTMLElement {
           "Saunatür offen",
         );
     });
-    for (let n = 0; n <= 8; n++) {
-      const yy = top + ((bottom - top) * n) / 8;
+    const gridTicks = this.preference("history_axis_max_ticks");
+    for (let n = 0; n <= gridTicks; n++) {
+      const yy = top + ((bottom - top) * n) / gridTicks;
       svg += `<line class="gridline" x1="${left}" x2="${right}" y1="${yy}" y2="${yy}"/>`;
     }
     for (const e of session.timeline.processed.filter((e) => e.kind === "infusion")) {
       const xx = x(stamp(e.effective_at));
-      svg += `<line class="infusion" x1="${xx}" x2="${xx}" y1="${top}" y2="${bottom}"><title>Aufguss · ${clock(e.effective_at)}</title></line>`;
+      svg += `<line class="infusion" x1="${xx}" x2="${xx}" y1="${top}" y2="${bottom}"><title>Aufguss · ${this.clock(e.effective_at)}</title></line>`;
     }
     return svg;
   }
-  historyAxes(model, { width = 1200, height = 480 } = {}) {
+  historyAxes(model, { width = model.width, height = model.height } = {}) {
     const { start, end, left, right, top, bottom, low, high, humidityHigh, x } = model;
     const timeZone = localTimeZone();
-    const scaleX = 1200 / Math.max(1, width),
-      scaleY = 480 / Math.max(1, height);
+    const scaleX = model.width / Math.max(1, width),
+      scaleY = model.height / Math.max(1, height);
     // Cancel the SVG's unequal viewport scaling only for labels. Curves and
     // annotation positions continue to share their existing plot coordinates.
     const text = (label, px, py, klass = "", anchor = "start") =>
       `<text class="${klass}" text-anchor="${anchor}" transform="translate(${px} ${py}) scale(${scaleX} ${scaleY})">${esc(label)}</text>`;
+    const minimumTicks = this.preference("history_axis_min_ticks"),
+      maximumTicks = this.preference("history_axis_max_ticks");
     const valueTicks = Math.max(
-        2,
-        Math.min(8, Math.floor((bottom - top) / scaleY / 44)),
+        minimumTicks,
+        Math.min(
+          maximumTicks,
+          Math.floor(
+            (bottom - top) / scaleY / this.preference("history_value_tick_spacing_px"),
+          ),
+        ),
       ),
-      timeTicks = Math.max(2, Math.min(8, Math.floor((right - left) / scaleX / 80)));
+      timeTicks = Math.max(
+        minimumTicks,
+        Math.min(
+          maximumTicks,
+          Math.floor(
+            (right - left) / scaleX / this.preference("history_time_tick_spacing_px"),
+          ),
+        ),
+      );
     let svg = "";
     for (let n = 0; n <= valueTicks; n++) {
       const fraction = n / valueTicks,
-        y = bottom - (bottom - top) * fraction + 4 * scaleY;
+        y =
+          bottom -
+          (bottom - top) * fraction +
+          (this.preference("font_size_small_px") / 3) * scaleY;
       svg += text(
-        (low + (high - low) * fraction).toFixed(0),
-        Math.max(0, left - 40 * scaleX),
+        this.num(low + (high - low) * fraction, this.preference("value_precision")),
+        Math.max(0, left - this.historyGeometry().left * scaleX),
         y,
         "axis-temperature",
       );
       svg += text(
-        (humidityHigh * fraction).toFixed(0),
-        Math.min(1200, right + 40 * scaleX),
+        this.num(
+          humidityHigh * fraction,
+          model.humidityPrecision ?? this.preference("value_precision"),
+        ),
+        Math.min(model.width, right + this.historyGeometry().left * scaleX),
         y,
         "axis-humidity",
         "end",
       );
     }
+    const times = Array.from(
+        { length: timeTicks + 1 },
+        (_, n) => start + ((end - start) * n) / timeTicks,
+      ),
+      minuteLabels = times.map((time) => this.clock(time, timeZone)),
+      secondsFormatter =
+        new Set(minuteLabels).size < minuteLabels.length
+          ? timestampFormatter(
+              "clockSeconds",
+              timeZone,
+              this.preference("timestamp_formatter_cache_entries"),
+            )
+          : null;
     for (let n = 0; n <= timeTicks; n++) {
-      const time = start + ((end - start) * n) / timeTicks;
+      const time = times[n];
       svg += text(
-        clock(time, timeZone),
+        secondsFormatter ? secondsFormatter.format(new Date(time)) : minuteLabels[n],
         x(time),
-        bottom + 24 * scaleY,
+        bottom + this.preference("font_size_small_px") * 2 * scaleY,
         "",
         n === 0 ? "start" : n === timeTicks ? "end" : "middle",
       );
     }
+    const humidityHeadingRight = Math.min(
+      right,
+      Math.min(model.width, right + this.historyGeometry().left * scaleX) -
+        (this.num(
+          humidityHigh,
+          model.humidityPrecision ?? this.preference("value_precision"),
+        ).length *
+          this.preference("font_size_small_px") +
+          this.preference("control_group_gap_px")) *
+          scaleX,
+    );
     return (
       svg +
-      text("Temperatur (°C)", left, 12 * scaleY, "axis-temperature") +
-      text("Luftfeuchte (%)", right, 12 * scaleY, "axis-humidity", "end")
+      text(
+        "Temperatur (°C)",
+        left,
+        this.preference("font_size_small_px") * scaleY,
+        "axis-temperature",
+      ) +
+      text(
+        model.humidityMode === "absolute"
+          ? "Absolute Feuchte (g/m³)"
+          : "Relative Feuchte (%)",
+        humidityHeadingRight,
+        this.preference("font_size_small_px") * scaleY,
+        "axis-humidity",
+        "end",
+      )
     );
   }
   hoverChart(event) {
+    if (
+      this.historyGesture ||
+      this.webkitHistoryGesture ||
+      this.chartPointers?.size > 1
+    )
+      return this.historyChart?.interaction.refreshHover(this.historyChart.model);
     this.historyChart?.interaction.hover(event, this.historyChart.model);
   }
   zoomAt(factor, clientX, svg) {
     if (!this.window) return;
     const px = this.svgCoordinates(svg, clientX).x,
-      fraction = Math.max(0, Math.min(1, (px - 65) / 1070));
-    const [domainStart, domainEnd] = this.historyDomain();
-    const nextZoom = Math.max(1, Math.min(256, this.zoom * factor));
-    if (nextZoom === this.zoom) return;
-    const nextWidth = (domainEnd - domainStart) / nextZoom,
+      fraction = Math.max(
+        0,
+        Math.min(
+          1,
+          (px - this.historyGeometry().left) /
+            (this.historyGeometry().right - this.historyGeometry().left),
+        ),
+      );
+    const [domainStart, domainEnd] =
+      this.historyInputSnapshot?.domain || this.historyDomain();
+    const currentWidth = this.window[1] - this.window[0],
+      minimum = Math.min(
+        currentWidth,
+        (domainEnd - domainStart) / this.preference("history_max_zoom"),
+      ),
+      nextWidth = Math.max(
+        minimum,
+        Math.min(domainEnd - domainStart, currentWidth / factor),
+      ),
       focus = this.window[0] + fraction * (this.window[1] - this.window[0]);
+    if (nextWidth === currentWidth) return;
     const left = Math.max(
       domainStart,
       Math.min(domainEnd - nextWidth, focus - fraction * nextWidth),
@@ -8042,15 +10822,17 @@ class SaunaPanel extends HTMLElement {
   beginWebkitGesture(event) {
     const svg = this.eventElement(event, "svg.session-chart");
     if (!svg) return;
+    if (this.historyInputMode === "wheel") this.endHistoryWheel();
     if (this.historyInputMode && this.historyInputMode !== "webkit") {
       event.preventDefault();
       this.webkitHistoryGesture = { suppressed: true };
       return;
     }
     this.historyInputMode = "webkit";
+    this.beginHistoryInput();
     this.historyChart?.interaction.invalidateGeometry("geometry", false);
     const rect =
-      this.historyChart?.interaction.readGeometry().rects.surface ||
+      this.historyChart?.interaction.readGeometry()?.rects?.surface ||
       svg.getBoundingClientRect();
     event.preventDefault();
     this.webkitHistoryGesture = {
@@ -8074,23 +10856,49 @@ class SaunaPanel extends HTMLElement {
     event.preventDefault();
     const suppressed = this.webkitHistoryGesture.suppressed;
     this.webkitHistoryGesture = null;
-    if (suppressed) return;
+    if (suppressed) {
+      this.finishHistoryInput();
+      return;
+    }
     if (this.historyInputMode === "webkit") this.historyInputMode = null;
+    this.finishHistoryInput();
     this.scheduleHistoryRender();
   }
   wheelHistoryGesture(event, svg) {
     event.preventDefault();
     if (this.historyInputMode && this.historyInputMode !== "wheel") return;
+    this.beginHistoryInput();
     this.historyInputMode = "wheel";
-    this.zoomAt(Math.exp(-event.deltaY * 0.002), event.clientX, svg);
-    clearTimeout(this.historyWheelTimer);
-    this.historyWheelTimer = setTimeout(() => {
-      if (this.historyInputMode === "wheel") this.historyInputMode = null;
-    }, 120);
+    this.zoomAt(
+      Math.exp(-event.deltaY * this.preference("history_wheel_zoom_coefficient")),
+      event.clientX,
+      svg,
+    );
+    if (this.historyWheelTimer != null) clearTimeout(this.historyWheelTimer);
+    this.historyWheelTimer = setTimeout(
+      () => this.endHistoryWheel(),
+      this.preference("history_wheel_idle_ms"),
+    );
   }
-  eventMarkerLayout(markers, start, end, stripWidth, markerSize = 17, markerGap = 3) {
+  endHistoryWheel() {
+    if (this.historyWheelTimer != null) clearTimeout(this.historyWheelTimer);
+    this.historyWheelTimer = null;
+    if (this.historyInputMode !== "wheel") return;
+    this.historyInputMode = null;
+    this.finishHistoryInput();
+  }
+  eventMarkerLayout(
+    markers,
+    start,
+    end,
+    stripWidth,
+    markerSize = this.preference("event_marker_size_px"),
+    markerGap = this.preference("event_marker_gap_px"),
+  ) {
     const width =
-      Number.isFinite(stripWidth) && stripWidth > 0 ? stripWidth : markerSize * 8;
+      Number.isFinite(stripWidth) && stripWidth > 0
+        ? stripWidth
+        : markerSize * this.preference("event_marker_fallback_count");
     const collisionPercent = (100 * (markerSize + markerGap)) / width;
     const lanes = [];
     const visible = markers
@@ -8157,8 +10965,8 @@ class SaunaPanel extends HTMLElement {
       {
         door_open: ["door_temperature_slope", "door_open"],
         door_close: ["door_temperature_slope", "door_close"],
-        person_strong: ["strong_temperature_slope", "person_strong"],
-        person_weak: ["weak_temperature_slope", "person_weak"],
+        person_strong: ["strong_humidity_slope", "person_strong"],
+        person_weak: ["weak_humidity_slope", "person_weak"],
         infusion: ["infusion_humidity_delta", "infusion"],
         ventilation_confirmed: [
           "ventilation_temperature_loss",
@@ -8204,23 +11012,14 @@ class SaunaPanel extends HTMLElement {
       ) || null
     );
   }
-  drawDiagnostics() {
-    if (!this.state?.permissions?.admin) {
-      this.updateMarkup("#detection-plots", "");
-      return;
-    }
-    if (!this.shown) {
-      this.$("#detection-plots").innerHTML = "<p>Keine Saunasitzung ausgewählt.</p>";
-      return;
-    }
-    const traces = this.diagnosticData().traces;
-    const groups = [
+  diagnosticMetricDefinitions() {
+    return [
       ["Türerkennung", "door_temperature_slope", "Temperaturänderung · °C/min"],
       ["Türerkennung", "door_humidity_delta", "Feuchteänderung · Prozentpunkte"],
       [
         "Starke Personenerkennung",
         "strong_temperature_slope",
-        "Temperaturtrend · °C/min",
+        "Temperaturtrend (Kontext) · °C/min",
       ],
       [
         "Starke Personenerkennung",
@@ -8230,7 +11029,7 @@ class SaunaPanel extends HTMLElement {
       [
         "Schwache Personenerkennung",
         "weak_temperature_slope",
-        "Temperaturtrend · °C/min",
+        "Temperaturtrend (Kontext) · °C/min",
       ],
       [
         "Schwache Personenerkennung",
@@ -8242,7 +11041,26 @@ class SaunaPanel extends HTMLElement {
         "infusion_humidity_delta",
         "Feuchteänderung · Prozentpunkte",
       ],
-      ["Aufgusserkennung", "infusion_temperature_delta", "Temperaturänderung · °C"],
+      [
+        "Aufgusserkennung",
+        "infusion_temperature_delta",
+        "Temperaturänderung (Kontext) · °C",
+      ],
+      [
+        "Starke Personenerkennung",
+        "strong_absolute_humidity_delta",
+        "Absoluter Feuchteanstieg · g/m³",
+      ],
+      [
+        "Schwache Personenerkennung",
+        "weak_absolute_humidity_delta",
+        "Absoluter Feuchteanstieg · g/m³",
+      ],
+      [
+        "Aufgusserkennung",
+        "infusion_absolute_humidity_delta",
+        "Absoluter Feuchteanstieg · g/m³",
+      ],
       ["Lüftungserkennung", "ventilation_temperature_loss", "Temperaturverlust · °C"],
       [
         "Lüftungserkennung",
@@ -8251,10 +11069,136 @@ class SaunaPanel extends HTMLElement {
         (v) => v * 100,
       ],
     ];
-    // The session snapshot is the effective configuration for archived data.
-    // Older sessions fall back to the current state when no snapshot exists.
+  }
+  diagnosticSelectionMarkup(traces) {
+    const event = this.eventNavigation().find(
+        (item) => item.event_id === this.highlightedEventId,
+      ),
+      linked = event && this.diagnosticTraceForEvent(traces, event),
+      trace =
+        linked ||
+        (traces.includes(this.selectedDiagnosticTrace)
+          ? this.selectedDiagnosticTrace
+          : null) ||
+        traces.find((item) => item.at === this.selectedDiagnosticTraceAt) ||
+        (!event ? traces[0] : null);
+    if (!trace)
+      return `<section id="diagnostic-selection" class="diagnostic-selection-context" aria-live="polite"><h3>Erkennungsnachweis</h3><p>${event ? "Für dieses Ereignis fehlt der gespeicherte Erkennungsnachweis." : "Noch keine gespeicherten Erkennungswerte."}</p></section>`;
+    this.selectedDiagnosticTraceAt = trace.at;
+    this.selectedDiagnosticTrace = trace;
+    const index = traces.indexOf(trace),
+      configurationModel = this.historyConfigurationModel(),
+      definitions = new Map(
+        this.diagnosticMetricDefinitions().map((definition) => [
+          definition[1],
+          definition,
+        ]),
+      ),
+      labels = {
+        ...signalText,
+        ventilation: "Lüftung",
+        ventilation_context: "Durchlüften bestätigt",
+        ventilation_recovery: "Temperaturerholung",
+        ventilation_temperature_drop: "Temperaturverlust ausreichend",
+        ventilation_water_loss: "Wasserverlust ausreichend",
+        ventilation_time_held: "Mindestdauer erreicht",
+        ventilation_sources_coherent: "Messquellen durchgängig",
+        ventilation_proven: "Durchlüften belegt",
+      },
+      value = (item, key, kind) => {
+        if (item == null)
+          return kind === "conditions" ? "Nicht geprüft" : "Nicht gespeichert";
+        if (kind === "checks" && typeof item === "boolean")
+          return item ? "Prüfung aktiv" : "Nicht geprüft";
+        if (kind === "conditions" && typeof item === "boolean")
+          return item ? "Erfüllt" : "Nicht erfüllt";
+        if (kind === "holds" && typeof item === "number")
+          return `${this.num(item, 0)} Prüfpunkte`;
+        if (typeof item === "boolean") return item ? "Ja" : "Nein";
+        const definition = definitions.get(key);
+        if (definition && typeof item === "number") {
+          const converted = definition[3] ? definition[3](item) : item;
+          return `${this.num(converted, this.preference(key.includes("absolute_humidity") && !key.endsWith("loss") ? "absolute_humidity_precision" : "detail_value_precision"))} ${definition[2].split(" · ").at(-1)}`;
+        }
+        if (typeof item === "number")
+          return this.num(item, this.preference("detail_value_precision"));
+        return String(item);
+      },
+      label = (key) => {
+        const definition = definitions.get(key);
+        return definition
+          ? `${definition[0]} · ${definition[2].split(" · ")[0]}`
+          : labels[key]
+            ? `${labels[key]}${configurationModel?.presence?.direct && ["strong", "weak"].includes(key) ? " (nicht führende Personenquelle)" : ""}`
+            : this.detailFieldLabel?.(key) || key.replaceAll("_", " ");
+      },
+      entries = (items, kind) =>
+        Object.entries(items || {})
+          .map(
+            ([key, item]) =>
+              `<dt data-key="label:${esc(key)}">${esc(label(key))}</dt><dd data-key="value:${esc(key)}">${item && typeof item === "object" ? `<dl>${entries(item, kind)}</dl>` : esc(value(item, key, kind))}</dd>`,
+          )
+          .join("") || "<dt>Angaben</dt><dd>Nicht gespeichert</dd>",
+      groups = [
+        ["Prüfungen", trace.checks, "checks"],
+        ["Bedingungen erfüllt", trace.conditions, "conditions"],
+        ["Prüfpunkte", trace.holds, "holds"],
+        ...(Object.hasOwn(trace, "readiness")
+          ? [["Bereitschaft", trace.readiness]]
+          : []),
+        ...["upper", "lower"]
+          .filter(
+            (position) =>
+              configurationModel?.measurement_positions?.includes(position) ||
+              Object.hasOwn(trace.metrics || {}, position),
+          )
+          .map((position) => [
+            position === "upper" ? "Messwerte oben" : "Messwerte unten",
+            trace.metrics?.[position],
+          ]),
+        [
+          "Weitere Daten",
+          Object.fromEntries(
+            Object.entries(trace).filter(
+              ([key]) =>
+                ![
+                  "at",
+                  "checks",
+                  "conditions",
+                  "holds",
+                  "readiness",
+                  "metrics",
+                  "signals",
+                  "channels",
+                ].includes(key),
+            ),
+          ),
+        ],
+      ];
+    return `<section id="diagnostic-selection" class="diagnostic-selection-context" tabindex="-1" data-trace-at="${esc(trace.at)}"><h3>Erkennungsnachweis · ${this.when(trace.at)}</h3><p id="diagnostic-selection-label" aria-live="polite">${event ? esc(events[event.kind] || event.kind) : "Gespeicherter Prüfzeitpunkt"} · ${esc((trace.channels || []).map((position) => (position === "upper" ? "oben" : position === "lower" ? "unten" : position)).join(", ") || "Keine Messhöhe gespeichert")}${event ? ` <button data-action="event-history:${esc(event.event_id)}">Ereignis im Verlauf</button>` : ""}</p><div class="diagnostic-trace-navigation"><button data-action="diagnostic-trace:previous" ${index <= 0 ? "disabled" : ""} aria-label="Vorheriger Erkennungsnachweis">←</button><input id="diagnostic-trace-index" type="range" min="0" max="${traces.length - 1}" step="1" value="${index}" aria-label="Gespeicherten Erkennungszeitpunkt auswählen" aria-valuetext="${esc(this.when(trace.at))}"><button data-action="diagnostic-trace:next" ${index >= traces.length - 1 ? "disabled" : ""} aria-label="Nächster Erkennungsnachweis">→</button><span>${index + 1} / ${traces.length}</span></div><p>Signale: ${esc((trace.signals || []).map((key) => events[key] || key).join(", ") || "Keine")}</p>${groups.map(([label, items, kind]) => `<details id="diagnostic-values-${esc(label.toLowerCase().replaceAll(" ", "-"))}"><summary>${label}</summary><dl>${entries(items, kind)}</dl></details>`).join("")}</section>`;
+  }
+  drawDiagnostics() {
+    if (!this.state?.permissions?.admin) {
+      this.updateMarkup("#detection-plots", "");
+      return;
+    }
+    if (!this.shown) {
+      this.updateMarkup("#detection-plots", "<p>Keine Saunasitzung ausgewählt.</p>");
+      return;
+    }
+    const traces = this.diagnosticData().traces;
+    const groups = this.diagnosticMetricDefinitions();
+    // Archived thresholds are only those actually saved with the session.
     const parameters = this.diagnosticsParameters();
     const thresholds = (metric, position) => {
+      if (
+        [
+          "strong_temperature_slope",
+          "weak_temperature_slope",
+          "infusion_temperature_delta",
+        ].includes(metric)
+      )
+        return [];
       if (metric === "door_temperature_slope")
         return [
           parameters.door_open_slope,
@@ -8274,24 +11218,57 @@ class SaunaPanel extends HTMLElement {
     const [start, end] = this.window;
     const detectionPlots = this.$("#detection-plots");
     let html =
-      '<details><summary>Hinweise zur Erkennung</summary><p class="muted">Die Kurven zeigen die gespeicherten Erkennungswerte, die gestrichelten Linien die zugehörigen Schwellen. Ein Grenzübertritt löst erst dann ein Ereignis aus, wenn auch die übrigen Bedingungen erfüllt sind. Nach Beginn eines Gangs, im Nachlauf und während laufender Kühlung ruht die Personensuche. Weitere Aufgüsse werden im Gang weiter erkannt.</p></details>';
+      '<details id="diagnostic-help"><summary>Hinweise zur Erkennung</summary><p class="muted">Die Kurven zeigen die gespeicherten Erkennungswerte, die gestrichelten Linien die zugehörigen gespeicherten Schwellen. Ein Grenzübertritt löst erst dann ein Ereignis aus, wenn auch die übrigen Bedingungen erfüllt sind. Ein Marker hebt seinen Erkennungsnachweis hervor. Die Gangerkennung läuft auch während der Ofenkühlung weiter. Weitere Aufgüsse werden im Gang weiter erkannt.</p></details>';
+    const configurationModel = this.historyConfigurationModel(),
+      configuredPositions = configurationModel?.measurement_positions || [],
+      presenceCaption = !configurationModel
+        ? "Die damalige Anlagenkonfiguration ist nicht gespeichert. Es werden die aufgezeichneten Merkmale gezeigt."
+        : configurationModel.presence?.direct
+          ? "Personenquelle: Präsenzsensor mit Türereignis. Gespeicherte indirekte Personenmerkmale bleiben als ergänzende Daten sichtbar."
+          : "Personenquelle: Temperatur und Feuchte. Gespeicherte Prüfungen belegen, welche Erkennungswege zum jeweiligen Zeitpunkt aktiv waren.";
+    html += `<p class="muted" id="diagnostic-configuration">${presenceCaption}${configuredPositions.length ? ` Konfigurierte Messhöhen: ${configuredPositions.map((position) => (position === "upper" ? "oben" : "unten")).join(", ")}.` : ""}</p>`;
+    if (!Object.keys(parameters).length)
+      html +=
+        '<p class="muted" id="diagnostic-threshold-status">Für diese Sitzung sind keine historischen Schwellen gespeichert. Aktuelle Einstellungen werden nicht als damalige Schwellen angezeigt.</p>';
     if (!traces.length) {
-      this.$("#detection-plots").innerHTML =
+      this.updateMarkup(
+        "#detection-plots",
         html +
-        "<p>Für diese Saunasitzung liegen keine gespeicherten Erkennungsverläufe vor.</p>";
+          "<p>Für diese Saunasitzung liegen keine gespeicherten Erkennungsverläufe vor.</p>",
+      );
+      this.pendingEventFocus = null;
       return;
     }
-    const availableWidth = detectionPlots?.getBoundingClientRect?.().width || 640;
-    const columns = availableWidth > 600 ? 2 : 1;
+    const availableWidth =
+      detectionPlots?.getBoundingClientRect?.().width ||
+      this.preference("diagnostic_fallback_width_px");
+    const columns =
+      availableWidth > this.preference("diagnostic_columns_breakpoint_px")
+        ? this.preference("diagnostic_wide_columns")
+        : 1;
     const chartWidth = Math.max(
-      280,
-      (availableWidth - (columns - 1) * 14) / columns - 20,
+      this.preference("diagnostic_min_plot_width_px"),
+      (availableWidth - (columns - 1) * this.preference("diagnostic_plot_gap_px")) /
+        columns -
+        this.preference("diagnostic_plot_padding_px"),
     );
-    const plotLeft = 40,
-      plotRight = chartWidth - 25;
+    const plotLeft = this.preference("diagnostic_axis_left_padding_px"),
+      plotRight = chartWidth - this.preference("diagnostic_axis_right_padding_px"),
+      chartHeight = this.preference("diagnostic_plot_height_px"),
+      plotTop = this.preference("diagnostic_axis_top_padding_px"),
+      plotBottom = chartHeight - this.preference("diagnostic_axis_bottom_padding_px"),
+      guideTop = this.preference("diagnostic_guide_top_padding_px"),
+      timeLabel =
+        chartHeight - this.preference("diagnostic_time_label_bottom_padding_px");
     const chartX = (t) =>
       plotLeft + ((stamp(t) - start) / (end - start)) * (plotRight - plotLeft);
-    html += '<div class="diagnostic-grid">';
+    const selectedEvent = this.eventNavigation().find(
+        (event) => event.event_id === this.highlightedEventId,
+      ),
+      selectedRoute = this.diagnosticRoute(selectedEvent),
+      selectedTrace =
+        selectedEvent && this.diagnosticTraceForEvent(traces, selectedEvent);
+    html += '<div class="diagnostic-grid" id="diagnostic-charts">';
     const visibleTraces = traces.filter((trace) => {
       const time = stamp(trace.at);
       return Number.isFinite(time) && time >= start && time <= end;
@@ -8304,19 +11281,23 @@ class SaunaPanel extends HTMLElement {
       // Pre-ventilation archives do not have these metrics.  Do not show an
       // empty zero line that could be mistaken for a measured loss.
       if (!vals.length) continue;
-      const lines = [
-        ...thresholds(metric, "upper"),
-        ...thresholds(metric, "lower"),
-      ].filter(Number.isFinite);
+      const positions = ["upper", "lower"].filter((position) =>
+          visibleTraces.some((trace) =>
+            Number.isFinite(trace.metrics?.[position]?.[metric]),
+          ),
+        ),
+        lines = positions
+          .flatMap((position) => thresholds(metric, position))
+          .filter(Number.isFinite);
       const chartVals = vals.map(convert),
         chartLines = lines.map(convert);
       const [min, max] = [...chartVals, ...chartLines].reduce(
         ([lo, hi], v) => [Math.min(lo, v), Math.max(hi, v)],
         [0, 0],
       );
-      const lo = min - 1,
-        hi = max + 1,
-        y = (v) => 165 - ((v - lo) / (hi - lo)) * 140;
+      const lo = min - this.preference("diagnostic_scale_padding"),
+        hi = max + this.preference("diagnostic_scale_padding"),
+        y = (v) => plotBottom - ((v - lo) / (hi - lo)) * (plotBottom - plotTop);
       const markerLayout = this.eventMarkerLayout(
         this.diagnosticMarkers(traces, metric, start, end),
         start,
@@ -8326,10 +11307,10 @@ class SaunaPanel extends HTMLElement {
       let chart =
         '<svg class="chart detector-chart" viewBox="0 0 ' +
         chartWidth +
-        ' 200" role="img" aria-label="' +
+        ` ${chartHeight}" role="group" aria-label="` +
         esc(group + " " + label) +
         '">';
-      for (const pos of ["upper", "lower"]) {
+      for (const pos of positions) {
         let path = "",
           last = null;
         for (const t of visibleTraces) {
@@ -8342,60 +11323,74 @@ class SaunaPanel extends HTMLElement {
             time > end
           )
             continue;
-          path += `${last == null || time - last > parameters.person_step_seconds * 1000 ? "M" : "L"}${chartX(t.at).toFixed(2)},${y(convert(v)).toFixed(2)} `;
+          const point = `${chartX(t.at).toFixed(this.preference("chart_coordinate_precision"))},${y(convert(v)).toFixed(this.preference("chart_coordinate_precision"))}`;
+          path +=
+            !Number.isFinite(
+              parameters[
+                metric.startsWith("strong_") || metric.startsWith("weak_")
+                  ? "person_step_seconds"
+                  : "grid_seconds"
+              ],
+            ) ||
+            last == null ||
+            time - last >
+              parameters[
+                metric.startsWith("strong_") || metric.startsWith("weak_")
+                  ? "person_step_seconds"
+                  : "grid_seconds"
+              ] *
+                1000
+              ? `M${point}l0,0 `
+              : `L${point} `;
           last = time;
         }
-        chart += `<path class="${pos} ${quantity}" data-series="detector_${metric}_${pos}" d="${path}"/>`;
+        chart += `<path class="${pos} ${quantity}" data-series="detector_${metric}_${pos}" d="${path}" stroke-linecap="round"/>`;
         for (const v of thresholds(metric, pos).filter(Number.isFinite)) {
           const display = convert(v);
-          chart += `<line x1="${plotLeft}" x2="${plotRight}" y1="${y(display)}" y2="${y(display)}" stroke="var(--sauna-color-chart-threshold)" stroke-dasharray="4 5"><title>Schwelle ${pos === "upper" ? "oben" : "unten"}: ${num(display, 2)}</title></line>`;
+          chart += `<line x1="${plotLeft}" x2="${plotRight}" y1="${y(display)}" y2="${y(display)}" stroke="var(--sauna-color-chart-threshold)" stroke-dasharray="${this.preference("threshold_dash_length_px")} ${this.preference("threshold_dash_gap_px")}"><title>Schwelle ${pos === "upper" ? "oben" : "unten"}: ${this.num(display, this.preference("detail_value_precision"))}</title></line>`;
         }
       }
-      for (let n = 0; n <= 4; n++) {
-        const v = lo + ((hi - lo) * n) / 4,
-          t = start + ((end - start) * n) / 4;
-        chart += `<text class="axis-${quantity}" x="4" y="${y(v) + 4}">${num(v, 1)}</text><text text-anchor="middle" x="${chartX(t)}" y="192">${clock(t)}</text>`;
+      const axisTicks = this.preference("diagnostic_axis_ticks");
+      for (let n = 0; n <= axisTicks; n++) {
+        const v = lo + ((hi - lo) * n) / axisTicks,
+          t = start + ((end - start) * n) / axisTicks;
+        chart += `<text class="axis-${quantity}" x="4" y="${y(v) + 4}">${this.num(v, this.preference("value_precision"))}</text><text text-anchor="middle" x="${chartX(t)}" y="${timeLabel}">${this.clock(t)}</text>`;
+      }
+      if (selectedRoute?.[0] === metric && selectedTrace) {
+        const time = stamp(selectedTrace.at),
+          x = chartX(time);
+        if (time >= start && time <= end)
+          chart += `<rect class="diagnostic-selection-band" x="${Math.max(plotLeft, x - this.preference("event_marker_size_px") / 2)}" y="${guideTop}" width="${this.preference("event_marker_size_px")}" height="${plotBottom - guideTop}"/><line class="diagnostic-selection-guide" x1="${x}" x2="${x}" y1="${guideTop}" y2="${plotBottom}"/>`;
       }
       chart += markerLayout.markers
         .map((marker) => {
           const eventX = chartX(marker.at),
             pointX = chartX(marker.pointAt),
             pointY = y(convert(marker.value)),
-            labelY = Math.max(14, pointY - 10 - marker.lane * 13);
-          return `<g class="event-marker diagnostic-marker" tabindex="0" role="button" data-action="event-marker:${esc(marker.event.event_id)}" data-event-id="${esc(marker.event.event_id)}" data-selected="false" aria-label="${esc(events[marker.event.kind] || marker.event.kind)}, ${when(marker.event.effective_at || marker.event.detected_at)} · ${marker.position === "upper" ? "oben" : "unten"}"><line class="event-marker-link" x1="${eventX.toFixed(2)}" y1="${pointY.toFixed(2)}" x2="${pointX.toFixed(2)}" y2="${pointY.toFixed(2)}"/><circle class="event-marker-point" cx="${pointX.toFixed(2)}" cy="${pointY.toFixed(2)}" r="2.5"/><circle class="event-marker-dot" cx="${eventX.toFixed(2)}" cy="${pointY.toFixed(2)}" r="5"/><text class="event-marker-label" text-anchor="middle" x="${eventX.toFixed(2)}" y="${labelY.toFixed(2)}">${marker.index + 1}</text></g>`;
+            labelY = Math.max(
+              plotTop,
+              pointY -
+                this.preference("event_marker_size_px") / 2 -
+                marker.lane *
+                  (this.preference("event_marker_size_px") +
+                    this.preference("event_marker_gap_px")),
+            );
+          return `<g class="event-marker diagnostic-marker" tabindex="0" role="button" data-action="event-marker:${esc(marker.event.event_id)}" data-event-id="${esc(marker.event.event_id)}" data-selected="${marker.event.event_id === this.highlightedEventId}" aria-pressed="${marker.event.event_id === this.highlightedEventId}" aria-label="${esc(events[marker.event.kind] || marker.event.kind)}, ${this.when(marker.event.effective_at || marker.event.detected_at)} · ${marker.position === "upper" ? "oben" : "unten"}"><line class="event-marker-link" x1="${eventX.toFixed(this.preference("chart_coordinate_precision"))}" y1="${pointY.toFixed(this.preference("chart_coordinate_precision"))}" x2="${pointX.toFixed(this.preference("chart_coordinate_precision"))}" y2="${pointY.toFixed(this.preference("chart_coordinate_precision"))}"/><circle class="event-marker-point" cx="${pointX.toFixed(this.preference("chart_coordinate_precision"))}" cy="${pointY.toFixed(this.preference("chart_coordinate_precision"))}" r="${this.preference("diagnostic_marker_point_radius_px")}"/><circle class="event-marker-dot" cx="${eventX.toFixed(this.preference("chart_coordinate_precision"))}" cy="${pointY.toFixed(this.preference("chart_coordinate_precision"))}" r="${this.preference("diagnostic_marker_event_radius_px")}"/><text class="event-marker-label" text-anchor="middle" x="${eventX.toFixed(this.preference("chart_coordinate_precision"))}" y="${labelY.toFixed(this.preference("chart_coordinate_precision"))}">${marker.index + 1}</text></g>`;
         })
         .join("");
       chart += "</svg>";
-      html += `<div class="plot-panel"><h3>${group} · <span style="color:var(--sauna-color-series-${quantity})">${label}</span></h3><div class="legend diagnostic-legend" style="color:var(--sauna-color-series-${quantity})"><span>━━ Oben</span><span>┄┄ Unten</span></div>${chart}</div>`;
+      const selectedMarker = markerLayout.markers.find(
+          (marker) => marker.event.event_id === this.highlightedEventId,
+        ),
+        context = selectedMarker
+          ? `${esc(events[selectedMarker.event.kind] || selectedMarker.event.kind)} · Prüfung ${this.when(selectedMarker.pointAt)} · ${selectedMarker.position === "upper" ? "oben" : "unten"}: ${this.num(convert(selectedMarker.value), this.preference("detail_value_precision"))} ${esc(label.split(" · ").at(-1))} <button data-action="diagnostic-inspect:${metric}">Prüfbedingungen</button>`
+          : "";
+      html += `<div class="plot-panel" data-key="diagnostic:${metric}" data-diagnostic-metric="${metric}" data-selected="${selectedRoute?.[0] === metric && !!selectedTrace}"><h3>${group} · <span style="color:var(--sauna-color-series-${quantity})">${label}</span></h3><p class="diagnostic-chart-context" data-key="context:${metric}" ${context ? "" : "hidden"}>${context}</p><div class="legend diagnostic-legend" style="color:var(--sauna-color-series-${quantity})">${positions.map((position) => `<span>${position === "upper" ? "━━ Oben" : "┄┄ Unten"}</span>`).join("")}</div>${chart}</div>`;
     }
-    html +=
-      '</div><div class="card"><h2>Erkennungsbedingungen und Bestätigung</h2><div class="scroll"><table><thead><tr><th>Zeit</th><th>Aktive Prüfungen</th><th>Bedingungen erfüllt</th><th>Erfüllte Prüfpunkte</th><th>Ausgelöste Signale</th></tr></thead><tbody>' +
-      traces
-        .filter((t) => t.signals.length)
-        .map(
-          (t) =>
-            `<tr><td>${when(t.at)}</td><td>${esc(
-              t.checks
-                ? Object.entries(t.checks)
-                    .filter(([, v]) => v)
-                    .map(([k]) => signalText[k] || "Erkennung")
-                    .join(", ")
-                : "Keine Angabe in älteren Daten",
-            )}</td><td>${esc(
-              Object.entries(t.conditions)
-                .filter(([, v]) => v)
-                .map(([k]) => signalText[k] || "Erkennungsbedingung")
-                .join(", "),
-            )}</td><td>${esc(
-              Object.entries(t.holds)
-                .filter(([, v]) => Number(v) > 0)
-                .map(([k, v]) => `${signalText[k] || "Signal"}: ${num(v)} Prüfpunkte`)
-                .join(" · "),
-            )}</td><td>${esc(t.signals.map((k) => events[k] || k).join(", "))}</td></tr>`,
-        )
-        .join("") +
-      "</tbody></table></div></div>";
-    this.$("#detection-plots").innerHTML = html;
+    html += "</div>" + this.diagnosticSelectionMarkup(traces);
+    this.updateMarkup("#detection-plots", html);
+    if (this.highlightedEventId && this.shadowRoot?.querySelectorAll)
+      this.highlightEvent(this.highlightedEventId, false);
     this.revealEventTarget("marker");
   }
   settingsParameterGroup({ id }) {
@@ -8410,16 +11405,10 @@ class SaunaPanel extends HTMLElement {
       group?.surface === "integration"
     )
       return "";
-    const source = state.configuration.presence_source || "proxy";
+    const source = state.configuration_model?.presence?.source;
     const subgroups = state.frontend_defaults.settings_subgroups || [];
     const entries = state.parameters
-      .filter((d) => {
-        const group = subgroups.find((group) => group.id === d.settings_subgroup);
-        return (
-          d.settings_group === id &&
-          (!group?.presence_sources || group.presence_sources.includes(source))
-        );
-      })
+      .filter((d) => d.settings_group === id && d.applicable)
       .sort((a, b) => a.order - b.order);
     if (!entries.length) return "";
     const field = (d) =>
@@ -8547,7 +11536,7 @@ class SaunaPanel extends HTMLElement {
       sessions = this.archiveAdminSessions;
     this.updateMarkup(
       "#archive-management",
-      `${this.state.session ? '<p class="muted">Löschen erst nach Ende der laufenden Sitzung.</p>' : ""}<div class="row"><button data-action="archive-list" ${this.archiveAdminBusy ? "disabled" : ""}>Sitzungen verwalten</button><button class="stop" data-action="archive-reset" ${disabled}>Datenbank zurücksetzen</button></div>${sessions ? (sessions.length ? sessions.map((session) => `<div class="row"><span>Sitzung vom ${esc(when(session.started_at))}</span><button class="stop" data-action="archive-delete:${esc(encodeURIComponent(session.session_id))}" ${locked || !session.ended_at ? "disabled" : ""}>Sitzung löschen</button></div>`).join("") : "<p>Keine gespeicherten Sitzungen.</p>") : ""}${pending ? `<div class="notice" role="alert"><p>${pending.reset ? "Alle Sitzungen und Messdaten dieser Sauna endgültig löschen? Einstellungen und Gerätezuordnungen bleiben erhalten." : `Sitzung vom ${esc(when(pending.started_at))} und alle zugehörigen Messdaten endgültig löschen?`}</p><div class="row"><button class="stop" data-action="archive-confirm" ${disabled}>Endgültig löschen</button><button data-action="archive-cancel" ${this.archiveAdminBusy ? "disabled" : ""}>Abbrechen</button></div></div>` : ""}<p role="status">${esc(this.archiveAdminMessage || "")}</p>`,
+      `${this.state.session ? '<p class="muted">Löschen erst nach Ende der laufenden Sitzung.</p>' : ""}<div class="row"><button data-action="archive-list" ${this.archiveAdminBusy ? "disabled" : ""}>Sitzungen verwalten</button><button class="stop" data-action="archive-reset" ${disabled}>Datenbank zurücksetzen</button></div>${sessions ? (sessions.length ? sessions.map((session) => `<div class="row"><span>Sitzung vom ${esc(this.when(session.started_at))}</span><button class="stop" data-action="archive-delete:${esc(encodeURIComponent(session.session_id))}" ${locked || !session.ended_at ? "disabled" : ""}>Sitzung löschen</button></div>`).join("") : "<p>Keine gespeicherten Sitzungen.</p>") : ""}${pending ? `<div class="notice" role="alert"><p>${pending.reset ? "Alle Sitzungen und Messdaten dieser Sauna endgültig löschen? Einstellungen und Gerätezuordnungen bleiben erhalten." : `Sitzung vom ${esc(this.when(pending.started_at))} und alle zugehörigen Messdaten endgültig löschen?`}</p><div class="row"><button class="stop" data-action="archive-confirm" ${disabled}>Endgültig löschen</button><button data-action="archive-cancel" ${this.archiveAdminBusy ? "disabled" : ""}>Abbrechen</button></div></div>` : ""}<p role="status">${esc(this.archiveAdminMessage || "")}</p>`,
     );
   }
   async loadArchiveManagement() {
@@ -8824,7 +11813,7 @@ class SaunaPanel extends HTMLElement {
       editable = !!this.state.permissions?.program && !this.state.configuration_locked,
       gestureEditable =
         !!this.state.permissions?.control && !this.state.configuration_locked,
-      gestureOptions = (this.state.button_session_gestures || [])
+      gestureOptions = (this.state.configuration_model?.button?.session_gestures || [])
         .map(
           (value) =>
             `<option value="${value}" ${configuration.button_session_gesture === value ? "selected" : ""}>${{ long: "Gedrückt halten", double: "Zweimal drücken", triple: "Dreimal drücken" }[value]}</option>`,
@@ -8957,7 +11946,7 @@ class SaunaPanel extends HTMLElement {
         row.dataset.dropPosition = after ? "after" : "before";
       }
     }
-    const edge = 48,
+    const edge = this.preference("program_drag_edge_px"),
       host = this.$(".settings-content")?.getBoundingClientRect?.();
     drag.edgeDirection =
       host && event.clientY < host.top + edge
@@ -8975,7 +11964,9 @@ class SaunaPanel extends HTMLElement {
       drag.scrollFrame = null;
       if (this.programDrag !== drag || !drag.edgeDirection) return;
       const container = this.$(".settings-content");
-      if (container) container.scrollTop += drag.edgeDirection * 18;
+      if (container)
+        container.scrollTop +=
+          drag.edgeDirection * this.preference("program_drag_scroll_px");
       this.updateProgramDrag({
         pointerId: drag.pointerId,
         clientX: drag.clientX,
@@ -9210,7 +12201,7 @@ class SaunaPanel extends HTMLElement {
       ["#history", !["history", "diagnostics"].includes(view)],
       ["#settings", view !== "settings"],
       ["#control-history", !(main === "details" && detail === "detail-history")],
-      ["#history-inspection", main === "details" && detail === "detail-history"],
+      ["#history-inspection", main === "details"],
       [".history-plot-frame", main === "details" && detail === "detail-history"],
       [".history-readout", main === "details"],
       ["#history-legends", main === "details"],
@@ -9419,7 +12410,10 @@ class SaunaPanel extends HTMLElement {
       track = this.$('[data-light-arc][role="slider"]'),
       handle = this.$(".light-instrument .instrument-arc-handle");
     track?.setAttribute("aria-valuenow", value);
-    track?.setAttribute("aria-valuetext", `${num(value, 0)} %`);
+    track?.setAttribute(
+      "aria-valuetext",
+      `${this.num(value, this.preference("percentage_precision"))} %`,
+    );
     handle?.setAttribute("cx", point.x);
     handle?.setAttribute("cy", point.y);
   }
@@ -9513,6 +12507,52 @@ class SaunaPanel extends HTMLElement {
     }
   }
   async action(action) {
+    if (action === "clear-history-selection") return this.clearHistorySelection();
+    if (action === "history-humidity") {
+      this.historyHumidityMode =
+        this.historyHumidityMode === "absolute" ? "relative" : "absolute";
+      this.scheduleHistoryRender("humidity");
+      return;
+    }
+    if (action === "history-to-selection") {
+      const selection = this.historyValueSelection;
+      if (!selection) return;
+      if (selection.kind === "range")
+        this.setHistoryWindow(selection.start, selection.end);
+      else {
+        const width = this.window[1] - this.window[0];
+        this.setHistoryWindow(selection.start - width / 2, selection.start + width / 2);
+      }
+      this.drawHistory();
+      return;
+    }
+    if (action.startsWith("history-event:")) {
+      this.inspectHistoryEvent(action.slice("history-event:".length));
+      return;
+    }
+    if (
+      action === "detail-follow" ||
+      action.startsWith("detail-record-page:") ||
+      action.startsWith("detail-event-page:")
+    ) {
+      if (!this.state?.permissions?.admin || !this.shown) return;
+      if (action === "detail-follow") {
+        this.controlHistoryEnd = Math.max(
+          stamp(this.shown.session.timeline.session_started_at) +
+            this.preference("history_minimum_span_ms"),
+          stamp(this.shown.session.ended_at || this.state.now),
+        );
+        this.controlHistoryCursor = this.controlHistoryEnd;
+      } else {
+        const page = Number(action.slice(action.indexOf(":") + 1));
+        if (!Number.isInteger(page)) return;
+        if (action.startsWith("detail-event-page:"))
+          this.detailEventPage = Math.max(0, page);
+        else this.detailRecordPage = Math.max(0, page);
+      }
+      this.renderControlHistory();
+      return;
+    }
     if (action === "fullscreen") return this.toggleFullscreen();
     if (action === "menu") {
       if (!this.isPanelFullscreen() || !this.hasHomeAssistantNavigation()) return;
@@ -9563,9 +12603,7 @@ class SaunaPanel extends HTMLElement {
       (action === "manual-light-overview" && !manualControls.brightness) ||
       (action.startsWith("heater:") && !manualControls.heater) ||
       (action.startsWith("control-mode:") &&
-        (!permissions.control ||
-          (this.state.configuration_locked &&
-            this.state.configuration.control_mode !== "manual"))) ||
+        (!permissions.control || !this.state.control_mode_change_allowed)) ||
       (action.startsWith("end-phase:") &&
         (!permissions.control || !action.startsWith("end-phase:after_run:"))) ||
       (action === "reset-settings" &&
@@ -9624,19 +12662,65 @@ class SaunaPanel extends HTMLElement {
     if (action.startsWith("event-marker:")) {
       if (!permissions.admin) return;
       const eventId = action.slice(13);
-      this.historyDetail = false;
-      this.positions = new Set([this.historyPrimaryPosition()]);
-      this.pendingEventFocus = { kind: "row", eventId };
-      this.setPanelView("history", true);
-      this.focusEvent(eventId, true);
+      this.pendingEventFocus = {
+        kind: "marker",
+        eventId,
+        sessionId: this.shown?.session.timeline.session_id,
+      };
+      this.setPanelView("diagnostics", true);
+      this.focusEvent(eventId);
       return;
     }
     if (action.startsWith("event-row:")) {
       if (!permissions.admin) return;
       const eventId = action.slice(10);
-      this.pendingEventFocus = { kind: "marker", eventId };
+      this.pendingEventFocus = {
+        kind: "marker",
+        eventId,
+        sessionId: this.shown?.session.timeline.session_id,
+      };
       this.setPanelView("diagnostics", true);
       this.focusEvent(eventId);
+      return;
+    }
+    if (action.startsWith("event-history:")) {
+      if (!permissions.admin) return;
+      const eventId = action.slice("event-history:".length);
+      this.historyDetail = false;
+      this.positions = new Set([this.historyPrimaryPosition()]);
+      this.pendingEventFocus = {
+        kind: "row",
+        eventId,
+        sessionId: this.shown?.session.timeline.session_id,
+      };
+      this.setPanelView("history", true);
+      this.focusEvent(eventId, true);
+      return;
+    }
+    if (action.startsWith("diagnostic-inspect:")) {
+      if (!permissions.admin) return;
+      const target = this.$("#diagnostic-selection");
+      target?.scrollIntoView?.({ block: "nearest", behavior: "smooth" });
+      target?.focus?.({ preventScroll: true });
+      return;
+    }
+    if (action.startsWith("diagnostic-trace:")) {
+      if (!permissions.admin) return;
+      const traces = this.diagnosticData().traces,
+        index = traces.includes(this.selectedDiagnosticTrace)
+          ? traces.indexOf(this.selectedDiagnosticTrace)
+          : traces.findIndex((trace) => trace.at === this.selectedDiagnosticTraceAt),
+        next = Math.max(
+          0,
+          Math.min(traces.length - 1, index + (action.endsWith(":previous") ? -1 : 1)),
+        );
+      if (traces[next]) {
+        this.selectedDiagnosticTrace = traces[next];
+        this.selectedDiagnosticTraceAt = traces[next].at;
+        this.highlightedEventId = null;
+        this.pendingEventFocus = null;
+        this.drawDiagnostics();
+      }
       return;
     }
     if (action === "details") return this.action(this.navigation?.detail || "detail");
@@ -9844,7 +12928,10 @@ class SaunaPanel extends HTMLElement {
       this.ensureHistoryWindow();
       const svg = this.$("svg.session-chart"),
         [left, right] = this.window,
-        factor = action === "zoom-in" ? 2 : 0.5;
+        factor =
+          action === "zoom-in"
+            ? this.preference("history_zoom_factor")
+            : 1 / this.preference("history_zoom_factor");
       if (svg) {
         const rect = svg.getBoundingClientRect();
         this.zoomAt(factor, rect.left + rect.width / 2, svg);

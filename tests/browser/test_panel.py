@@ -12,6 +12,9 @@ import time
 import unittest
 import zipfile
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from test_settings import setting, browser_timeout
+
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "integration"))
 import test_device_path as device_tests
 from harness import retain_session
@@ -23,12 +26,24 @@ from homeassistant.helpers.service import async_get_all_descriptions
 from homeassistant.components.http.config import async_get_and_load_store
 from playwright.async_api import async_playwright, expect
 from custom_components.ha_sauna.core.defaults import section
+from custom_components.ha_sauna.core.history import HISTORY_CONTEXT_SECONDS
 from custom_components.ha_sauna.core.parameters import Parameters
 from custom_components.ha_sauna.core.timeline import Event, Kind
 
 
+async def browser_context(browser, **options):
+    context = await browser.new_context(**options)
+    await context.add_init_script("window.testSettings=" + json.dumps({"browser": setting("browser")}))
+    return context
+
+
 DEFAULT_PROGRAMS = section("programs")
 DEFAULT_PARAMETERS = Parameters({}).as_dict()
+
+
+def state_request_pattern(entry_id=None):
+    entry = re.escape(entry_id) if entry_id else r"[^/?]+"
+    return re.compile(rf"/api/ha_sauna/{entry}/state(?:\?.*)?$")
 
 
 def default_css_color(role):
@@ -43,6 +58,8 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
     # Recorder before entity platforms; never suppress or stub its WS response.
     with_recorder = True
     set_source = device_tests.DevicePathTests.set_source
+    healthy_until = device_tests.DevicePathTests.healthy_until
+    finish_light_transition = device_tests.DevicePathTests.finish_light_transition
 
     async def asyncSetUp(self):
         await device_tests.DevicePathTests.asyncSetUp(self)
@@ -72,10 +89,10 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
         self.url = f"http://127.0.0.1:{self.hass.http.server_port}"
         refresh = await self.hass.auth.async_create_refresh_token(self.user, client_id=self.url + "/")
         tokens = {"hassUrl": self.url, "clientId": self.url + "/", "access_token": self.hass.auth.async_create_access_token(refresh),
-                  "refresh_token": refresh.token, "expires": (time.time()+1800)*1000, "expires_in": 1800}
+                  "refresh_token": refresh.token, "expires": (time.time()+setting("browser.auth_token_seconds"))*1000, "expires_in": setting("browser.auth_token_seconds")}
         self.playwright = await async_playwright().start()
         self.browser = await self.playwright.chromium.launch()
-        self.context = await self.browser.new_context(viewport={"width": 1440, "height": 1080}, color_scheme="dark", accept_downloads=True)
+        self.context = await browser_context(self.browser, viewport=setting("browser.viewports.desktop"), color_scheme="dark", accept_downloads=True)
         await self.context.add_init_script("localStorage.setItem('hassTokens', " + json.dumps(json.dumps(tokens)) + ");")
         await self.context.add_init_script("window.testErrors=[];addEventListener('unhandledrejection',e=>window.testErrors.push({code:e.reason?.code,message:e.reason?.message,stack:e.reason?.stack}));")
         self.page = await self.context.new_page()
@@ -105,7 +122,7 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
         self.page.on("websocket", websocket)
         await self.page.goto(self.url + "/ha-sauna")
         self.panel = self.page.locator("ha-sauna-panel")
-        await expect(self.panel.locator('#current [data-action="operation"]')).to_be_visible(timeout=60000)
+        await expect(self.panel.locator('#current [data-action="operation"]')).to_be_visible(timeout=browser_timeout("bootstrap"))
 
     async def cleanup_browser(self):
         try:
@@ -289,15 +306,15 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.errors, [])
 
     async def test_shared_dropdown_touch_stays_inside_mobile_viewport(self):
-        context = await self.browser.new_context(
-            viewport={"width": 390, "height": 844}, has_touch=True,
+        context = await browser_context(self.browser,
+            viewport=setting("browser.viewports.mobile"), has_touch=True,
             storage_state=await self.context.storage_state(),
         )
         try:
             page = await context.new_page()
             await page.goto(self.url + "/ha-sauna")
             panel = page.locator("ha-sauna-panel")
-            await expect(panel.locator('#current [data-action="operation"]')).to_be_visible(timeout=60000)
+            await expect(panel.locator('#current [data-action="operation"]')).to_be_visible(timeout=browser_timeout("bootstrap"))
             await panel.locator('.main-tabs [data-action="settings"]').tap()
             await panel.locator('[data-action="settings-menu"]').tap()
             await panel.locator('[data-action="settings-section:maintenance"]').tap()
@@ -327,14 +344,14 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
         normal_tokens = json.dumps({
             "hassUrl": self.url, "clientId": self.url + "/",
             "access_token": self.hass.auth.async_create_access_token(refresh),
-            "refresh_token": refresh.token, "expires": (time.time() + 1800) * 1000,
-            "expires_in": 1800,
+            "refresh_token": refresh.token, "expires": (time.time() + setting("browser.auth_token_seconds")) * 1000,
+            "expires_in": setting("browser.auth_token_seconds"),
         })
         admin_tokens = await self.page.evaluate("localStorage.getItem('hassTokens')")
         for admin, tokens in ((True, admin_tokens), (False, normal_tokens)):
             for width in (1440, 390):
                 with self.subTest(admin=admin, width=width):
-                    context = await self.browser.new_context(viewport={"width": width, "height": 1080})
+                    context = await browser_context(self.browser, viewport={"width": width, "height": 1080})
                     try:
                         await context.add_init_script(
                             "localStorage.setItem('hassTokens', " + json.dumps(tokens) + ");"
@@ -343,7 +360,7 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
                         page.on("pageerror", lambda error: self.errors.append(str(error)))
                         await page.goto(self.url + "/ha-sauna")
                         panel = page.locator("ha-sauna-panel")
-                        await expect(panel.locator('#current [data-action="operation"]')).to_be_visible(timeout=60000)
+                        await expect(panel.locator('#current [data-action="operation"]')).to_be_visible(timeout=browser_timeout("bootstrap"))
                         tabs = panel.locator(".main-tabs")
                         menu = panel.locator('[data-action="menu"]')
                         fullscreen = panel.locator('[data-action="fullscreen"]')
@@ -428,9 +445,9 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
         refresh = await self.hass.auth.async_create_refresh_token(user, client_id=self.url + "/")
         tokens = {"hassUrl": self.url, "clientId": self.url + "/",
                   "access_token": self.hass.auth.async_create_access_token(refresh),
-                  "refresh_token": refresh.token, "expires": (time.time() + 1800) * 1000,
-                  "expires_in": 1800}
-        context = await self.browser.new_context(viewport={"width": 390, "height": 844})
+                  "refresh_token": refresh.token, "expires": (time.time() + setting("browser.auth_token_seconds")) * 1000,
+                  "expires_in": setting("browser.auth_token_seconds")}
+        context = await browser_context(self.browser, viewport=setting("browser.viewports.mobile"))
         try:
             await context.add_init_script("localStorage.setItem('hassTokens', " + json.dumps(json.dumps(tokens)) + ");")
             page = await context.new_page()
@@ -438,7 +455,7 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
             page.on("pageerror", lambda error: errors.append(str(error)))
             await page.goto(self.url + "/ha-sauna")
             panel = page.locator("ha-sauna-panel")
-            await expect(panel.locator('#current [data-action="operation"]')).to_be_visible(timeout=60000)
+            await expect(panel.locator('#current [data-action="operation"]')).to_be_visible(timeout=browser_timeout("bootstrap"))
             await expect(panel.locator('.main-tabs [data-action="details"]')).to_be_hidden()
             await expect(panel.get_by_role("button", name="Manuell steuern", exact=True)).to_be_visible()
             await expect(panel.get_by_role('slider', name='Lichthelligkeit einstellen')).to_be_disabled()
@@ -458,7 +475,7 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
             await self.runtime.set_operation(True)
             await self.hass.async_block_till_done()
             await panel.locator('.main-tabs [data-action="history"]').click()
-            await expect(panel.locator('#history .history-curves')).to_be_visible(timeout=15000)
+            await expect(panel.locator('#history .history-curves')).to_be_visible(timeout=browser_timeout("update"))
             self.assertEqual(errors, [])
         finally:
             await context.close()
@@ -516,8 +533,7 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
                 identity,
             )
         await self.runtime.set_operation(False)
-        self.now += timedelta(minutes=20)
-        await self.runtime.tick()
+        await device_tests.DevicePathTests.expire_recording_gap(self)
         await self.runtime.archive.flush()
         self.assertIsNone(self.runtime.session)
         # Keep the completed archive far from the live status time.
@@ -535,11 +551,11 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
             "clientId": self.url + "/",
             "access_token": self.hass.auth.async_create_access_token(refresh),
             "refresh_token": refresh.token,
-            "expires": (time.time() + 1800) * 1000,
-            "expires_in": 1800,
+            "expires": (time.time() + setting("browser.auth_token_seconds")) * 1000,
+            "expires_in": setting("browser.auth_token_seconds"),
         }
-        context = await self.browser.new_context(
-            viewport={"width": 1440, "height": 1080}
+        context = await browser_context(self.browser,
+            viewport=setting("browser.viewports.desktop")
         )
         self.addAsyncCleanup(context.close)
         await context.add_init_script(
@@ -553,7 +569,7 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
         normal_panel = page.locator("ha-sauna-panel")
         await expect(
             normal_panel.locator('#current [data-action="operation"]')
-        ).to_be_visible(timeout=60000)
+        ).to_be_visible(timeout=browser_timeout("bootstrap"))
         await self.hass.async_block_till_done()
         archive_url = f"**/api/ha_sauna/{self.entry.entry_id}/archive?*"
         for page, panel, admin in (
@@ -562,7 +578,7 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
         ):
             with self.subTest(admin=admin):
                 await panel.evaluate("""async p => {
-                  while (p.busy) await new Promise(resolve => setTimeout(resolve, 10));
+                  while (p.busy) await new Promise(resolve => setTimeout(resolve, window.testSettings.browser.poll_ms));
                   clearTimeout(p.timer);
                   await p.refresh();
                 }""")
@@ -589,9 +605,9 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
                 await page.route(archive_url, delay_archive_page)
                 try:
                     await panel.locator('.main-tabs [data-action="history"]').click()
-                    await asyncio.wait_for(entered.wait(), 10)
+                    await asyncio.wait_for(entered.wait(), timeout=setting("browser.event_timeout_s"))
                     await expect(panel.locator("svg.session-chart")).to_be_visible(
-                        timeout=15000
+                        timeout=browser_timeout("update")
                     )
                     self.assertEqual(
                         await panel.evaluate("p => p.historySelectionId()"), identity
@@ -699,11 +715,11 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
                 await self.dropdown_trigger(session_select).click()
                 await page.keyboard.press("Escape")
                 await panel.evaluate("""async p => {
-                  while (p.busy) await new Promise(resolve => setTimeout(resolve, 10));
+                  while (p.busy) await new Promise(resolve => setTimeout(resolve, window.testSettings.browser.poll_ms));
                   if (p.historyLoad) await p.historyLoad.promise;
                 }""")
                 await expect(panel.locator("svg.session-chart")).to_be_visible(
-                    timeout=15000
+                    timeout=browser_timeout("update")
                 )
                 traces = await panel.evaluate(
                     "p => p.shown.records.filter(r => r.kind === 'detector_trace').length"
@@ -716,7 +732,7 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
                     ).click()
                     await expect(
                         panel.locator(".diagnostic-marker").first
-                    ).to_be_visible(timeout=15000)
+                    ).to_be_visible(timeout=browser_timeout("update"))
                 else:
                     self.assertEqual(traces, 0)
                     await expect(
@@ -733,7 +749,7 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_upper_probe_failure_keeps_lower_readings_and_visible_warning(self):
         await self.set_source("upper_temperature", "unavailable")
-        self.now = self.base + timedelta(seconds=31)
+        self.now = self.base + timedelta(seconds=DEFAULT_PARAMETERS["sensor_timeout_seconds"] + 1)
         await self.set_source("lower_temperature", 68)
         await self.set_source("lower_humidity", 38)
         await self.runtime.tick()
@@ -766,6 +782,11 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
         await expect(self.panel.locator('#history-overview')).to_be_empty()
 
     async def test_instance_switch_waits_for_its_own_status_before_exposing_controls(self):
+        first_target = self.runtime.configuration.parameters.values["target_temperature_c"]
+        target_definition = next(item for item in section("parameters") if item["key"] == "target_temperature_c")
+        second_target = target_definition["maximum"]
+        if second_target == first_target:
+            second_target = self.runtime.configuration.parameters.values["sauna_min_temperature_c"]
         second_heater = device_tests.TestHeater()
         second_heater.entity_id = "switch.test_heater_second"
         second_heater._attr_unique_id = "isolated-heater-second"
@@ -775,17 +796,17 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
         second = await device_tests.create_sauna(self.hass, binding_overrides={
             "heater": second_heater.entity_id,
         }, parameter_overrides={
-            "target_temperature_c": 90,
+            "target_temperature_c": second_target,
         })
         await self.page.reload()
-        await expect(self.panel.locator('#current [data-action="operation"]')).to_be_visible(timeout=60000)
+        await expect(self.panel.locator('#current [data-action="operation"]')).to_be_visible(timeout=browser_timeout("bootstrap"))
         await expect(self.dropdown_trigger(self.panel.locator('#instance'))).to_be_visible()
         await self.select_dropdown(self.panel.locator('#instance'), self.entry.entry_id)
-        await expect(self.panel.locator('[data-target-arc][role="slider"]')).to_have_attribute("aria-valuenow", "80")
+        await expect(self.panel.locator('[data-target-arc][role="slider"]')).to_have_attribute("aria-valuenow", format(first_target, "g"))
         await self.panel.locator('.main-tabs [data-action="settings"]').click()
         await expect(self.panel.locator('#parameters')).to_be_visible()
         await self.panel.evaluate("""async p => {
-          while (p.busy) await new Promise(resolve => setTimeout(resolve, 10));
+          while (p.busy) await new Promise(resolve => setTimeout(resolve, window.testSettings.browser.poll_ms));
           clearTimeout(p.timer);
         }""")
         old_started, new_started = asyncio.Event(), asyncio.Event()
@@ -799,8 +820,8 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
             new_started.set()
             await new_release.wait()
             await route.continue_()
-        old_url = f"**/api/ha_sauna/{self.entry.entry_id}/state"
-        new_url = f"**/api/ha_sauna/{second.entry_id}/state"
+        old_url = state_request_pattern(self.entry.entry_id)
+        new_url = state_request_pattern(second.entry_id)
         writes = []
         def record_write(request):
             if f"/api/ha_sauna/{second.entry_id}/" in request.url and request.method == "POST":
@@ -810,7 +831,7 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
         await self.page.route(new_url, new_status)
         try:
             await self.panel.evaluate("p => { p.switchTestPoll = p.refresh(); }")
-            await asyncio.wait_for(old_started.wait(), 10)
+            await asyncio.wait_for(old_started.wait(), timeout=setting("browser.event_timeout_s"))
             await self.select_dropdown(self.panel.locator('#instance'), second.entry_id)
             await expect(self.panel.locator('#settings')).to_contain_text("Lade Saunadaten")
             self.assertEqual(await self.panel.locator('#parameters').count(), 0)
@@ -823,13 +844,13 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
             }""")
             self.assertEqual(writes, [])
             old_release.set()
-            await asyncio.wait_for(new_started.wait(), 10)
+            await asyncio.wait_for(new_started.wait(), timeout=setting("browser.event_timeout_s"))
             self.assertIsNone(await self.panel.evaluate("p => p.state"))
             await expect(self.panel.locator('#settings')).to_contain_text("Lade Saunadaten")
             new_release.set()
-            await expect(self.panel.locator('#parameters')).to_be_visible(timeout=15000)
+            await expect(self.panel.locator('#parameters')).to_be_visible(timeout=browser_timeout("update"))
             await self.panel.locator('.main-tabs [data-action="overview"]').click()
-            await expect(self.panel.locator('[data-target-arc][role="slider"]')).to_have_attribute("aria-valuenow", "90")
+            await expect(self.panel.locator('[data-target-arc][role="slider"]')).to_have_attribute("aria-valuenow", format(second_target, "g"))
             self.assertEqual(writes, [])
         finally:
             old_release.set()
@@ -859,7 +880,7 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue((await saved.value).ok)
         self.assertEqual(self.entry.options["appearance"]["instruments"], selected)
         await self.page.reload()
-        await expect(self.panel.locator('#current [data-action="operation"]')).to_be_visible(timeout=60000)
+        await expect(self.panel.locator('#current [data-action="operation"]')).to_be_visible(timeout=browser_timeout("bootstrap"))
         await self.panel.locator('.main-tabs [data-action="settings"]').click()
         await self.open_appearance()
         editor = self.panel.locator("#appearance-settings")
@@ -947,7 +968,7 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
 
         await self.page.reload()
         self.panel = self.page.locator("ha-sauna-panel")
-        await expect(self.panel.locator('#current [data-action="operation"]')).to_be_visible(timeout=60000)
+        await expect(self.panel.locator('#current [data-action="operation"]')).to_be_visible(timeout=browser_timeout("bootstrap"))
         await self.panel.locator('.main-tabs [data-action="settings"]').click()
         await self.open_appearance()
         editor = self.panel.locator("#appearance-settings")
@@ -1022,7 +1043,7 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
         self.assertLessEqual(await self.panel.evaluate("p=>p.shadowRoot.querySelector('main').scrollWidth"), 390)
 
         tokens = await self.page.evaluate("localStorage.getItem('hassTokens')")
-        light_context = await self.browser.new_context(viewport={"width": 1440, "height": 1080}, color_scheme="light")
+        light_context = await browser_context(self.browser, viewport=setting("browser.viewports.desktop"), color_scheme="light")
         try:
             await light_context.add_init_script("localStorage.setItem('hassTokens', " + json.dumps(tokens) + ");")
             light_page = await light_context.new_page()
@@ -1030,8 +1051,8 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
             light_page.on("pageerror", lambda error: light_errors.append(str(error)))
             await light_page.goto(self.url + "/ha-sauna")
             light_panel = light_page.locator("ha-sauna-panel")
-            await expect(light_panel.locator('#current [data-action="operation"]')).to_be_visible(timeout=60000)
-            await expect(light_page.get_by_text("Loading...", exact=True)).to_be_hidden(timeout=30000)
+            await expect(light_panel.locator('#current [data-action="operation"]')).to_be_visible(timeout=browser_timeout("bootstrap"))
+            await expect(light_page.get_by_text("Loading...", exact=True)).to_be_hidden(timeout=browser_timeout("loading"))
             light_background = await light_panel.evaluate("p=>getComputedStyle(p).backgroundColor")
             self.assertEqual(
                 light_background, dark_background,
@@ -1080,7 +1101,7 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(self.entry.runtime_data.configuration.selected_program_id, identity)
             self.assertEqual(self.entry.runtime_data.configuration.temperature_steps, (76, 83, 90))
         await self.page.reload()
-        await expect(self.panel.locator('#current [data-action="operation"]')).to_be_visible(timeout=60000)
+        await expect(self.panel.locator('#current [data-action="operation"]')).to_be_visible(timeout=browser_timeout("bootstrap"))
         await expect(self.panel.locator('[data-action="program-mode:program"]')).to_have_attribute("aria-pressed", "true")
         named = self.panel.locator('[data-action="program-select:individual"]')
         await expect(named).to_have_attribute("aria-pressed", "true")
@@ -1197,7 +1218,7 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
                 lambda response: response.url.endswith(program_url) and response.request.method == "POST"
             ) as response_wait:
                 click = asyncio.create_task(action.click())
-                await asyncio.wait_for(entered.wait(), 10)
+                await asyncio.wait_for(entered.wait(), timeout=setting("browser.event_timeout_s"))
                 await expect(action).to_have_text("Wird übernommen …")
                 await expect(action).to_have_class("program-saving program-main")
                 await expect(action).to_have_css("border-style", "solid")
@@ -1209,13 +1230,13 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
             saved = await response_wait.value
             self.assertEqual(saved.status, 200)
             self.assertEqual((await saved.json())["selected_program_id"], DEFAULT_PROGRAMS[0]["id"])
-            await expect(action).to_have_text("✓ Übernommen", timeout=15000)
+            await expect(action).to_have_text("✓ Übernommen", timeout=browser_timeout("update"))
             await expect(action).to_have_class("program-saved program-main")
             self.assertEqual(await operation_geometry(), operation_box)
         finally:
             release.set()
             if entered.is_set():
-                await asyncio.wait_for(route_finished.wait(), 10)
+                await asyncio.wait_for(route_finished.wait(), timeout=setting("browser.event_timeout_s"))
             await self.page.unroute("**" + program_url, delay_program)
         self.assertEqual(self.entry.runtime_data.configuration.selected_program_id, DEFAULT_PROGRAMS[0]["id"])
         await expect(active_program).to_have_text(DEFAULT_PROGRAMS[0]["name"])
@@ -1225,7 +1246,7 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
         await self.panel.evaluate("p=>p.refresh()")
         await expect(active_program).to_have_text(DEFAULT_PROGRAMS[0]["name"])
         await expect(choice).to_have_attribute("aria-pressed", "true")
-        await expect(action).to_have_count(0, timeout=5000)
+        await expect(action).to_have_count(0, timeout=browser_timeout("short"))
         self.assertEqual(await operation_geometry(), operation_box)
         self.assertEqual(self.errors, [])
 
@@ -1238,7 +1259,7 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
                     await self.runtime.set_operation(True)
                 await self.page.set_viewport_size({"width": width, "height": 2400})
                 await self.page.reload()
-                await expect(self.panel.locator('[data-action="program-toggle"]')).to_be_visible(timeout=60000)
+                await expect(self.panel.locator('[data-action="program-toggle"]')).to_be_visible(timeout=browser_timeout("bootstrap"))
                 await self.panel.locator('[data-action="program-toggle"]').click()
                 await self.panel.locator("#progression-end").fill("91")
                 await self.panel.locator("#progression-end").press("Tab")
@@ -1261,7 +1282,7 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
                 async def delay_confirmation(route):
                     response = await route.fetch()
                     entered.set()
-                    await asyncio.sleep(0.5)
+                    await asyncio.sleep(setting("browser.observer_yield_seconds"))
                     await release.wait()
                     try:
                         await route.fulfill(response=response)
@@ -1271,7 +1292,7 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
                 await self.page.route("**" + temperature_url, delay_confirmation)
                 try:
                     await action.click()
-                    await asyncio.wait_for(entered.wait(), 10)
+                    await asyncio.wait_for(entered.wait(), timeout=setting("browser.event_timeout_s"))
                     await expect(action).to_have_text("Wird übernommen …")
                     await expect(self.panel.locator("#program-choice-body")).to_be_visible()
                     during = await geometry()
@@ -1287,7 +1308,7 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
                 finally:
                     release.set()
                     if entered.is_set():
-                        await asyncio.wait_for(finished.wait(), 10)
+                        await asyncio.wait_for(finished.wait(), timeout=setting("browser.event_timeout_s"))
                     await self.page.unroute("**" + temperature_url, delay_confirmation)
         self.assertEqual(self.errors, [])
 
@@ -1295,7 +1316,7 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
         temperature_url = f"/api/ha_sauna/{self.entry.entry_id}/temperature"
         async def delay_field_save(route):
             response = await route.fetch()
-            await asyncio.sleep(0.5)
+            await asyncio.sleep(setting("browser.observer_yield_seconds"))
             await route.fulfill(response=response)
 
         choices = (
@@ -1308,7 +1329,7 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
                 await self.panel.evaluate('''p => p.api(`/${p.entry}/program`, "POST",
                   {target_temperature_c: 70, final_temperature_c: 90, temperature_gangs: 3})''')
                 await self.page.reload()
-                await expect(self.panel.locator("#progression-end")).to_have_value("90", timeout=60000)
+                await expect(self.panel.locator("#progression-end")).to_have_value("90", timeout=browser_timeout("bootstrap"))
                 self.assertIsNone(self.runtime.session)
                 writes = []
                 order = []
@@ -1331,7 +1352,7 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
                     # One physical click closes the changed field and chooses the kind or mode.
                     await self.panel.locator(f'[data-action="{action}"]').click()
                     await self.panel.evaluate(
-                        "async p => { while (p.programRequest) await new Promise(r => setTimeout(r, 10)); }"
+                        "async p => { while (p.programRequest) await new Promise(r => setTimeout(r, window.testSettings.browser.poll_ms)); }"
                     )
                     self.assertEqual(writes, [
                         ("temperature", {"final_temperature_c": 91}),
@@ -1370,7 +1391,7 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
                         response = await response_wait.value
                         self.assertEqual(response.status, 200)
                         await self.panel.evaluate(
-                            "async p => { while (p.programRequest) await new Promise(r => setTimeout(r, 10)); }"
+                            "async p => { while (p.programRequest) await new Promise(r => setTimeout(r, window.testSettings.browser.poll_ms)); }"
                         )
                         self.assertEqual(writes, [
                             ("temperature", {"final_temperature_c": 91}),
@@ -1385,12 +1406,13 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.errors, [])
 
     async def test_unrelated_hass_updates_do_not_restart_an_inflight_idle_poll(self):
-        state_url = f"/api/ha_sauna/{self.entry.entry_id}/state"
+        state_url = state_request_pattern(self.entry.entry_id)
+        idle_poll_ms = section("appearance")["preferences"]["status_idle_poll_ms"]["default"]
         await self.panel.evaluate(
-            "async p => { while (p.busy) await new Promise(r => setTimeout(r, 10)); }"
+            "async p => { while (p.busy) await new Promise(r => setTimeout(r, window.testSettings.browser.poll_ms)); }"
         )
         self.assertIsNone(self.runtime.session)
-        self.assertEqual(await self.panel.evaluate("p => p.statusPollInterval()"), 10000)
+        self.assertEqual(await self.panel.evaluate("p => p.statusPollInterval()"), idle_poll_ms)
         previous_hass = await self.panel.evaluate_handle("p => p.hass")
         entered, release = asyncio.Event(), asyncio.Event()
         starts = []
@@ -1401,23 +1423,23 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
             response = await route.fetch()
             if first:
                 entered.set()
-            await asyncio.sleep(0.25)
+            await asyncio.sleep(setting("browser.inflight_probe_seconds"))
             if first:
                 await release.wait()
             await route.fulfill(response=response)
 
-        await self.page.route("**" + state_url, delay_state)
+        await self.page.route(state_url, delay_state)
         try:
             # The original start/timer/setter paths stay active. A real unrelated
             # HA entity reaches the panel through the actual frontend websocket.
             await self.panel.evaluate("p => p.start()")
-            await asyncio.wait_for(entered.wait(), 10)
+            await asyncio.wait_for(entered.wait(), timeout=setting("browser.event_timeout_s"))
             self.hass.states.async_set("sensor.unrelated_panel_probe", "1")
             await self.hass.async_block_till_done()
             reached_setter = await self.panel.evaluate('''async p => {
-              const deadline = performance.now() + 5000;
+              const deadline = performance.now() + window.testSettings.browser.timeouts_ms.short;
               while (p.hass.states['sensor.unrelated_panel_probe']?.state !== '1' && performance.now() < deadline)
-                await new Promise(resolve => setTimeout(resolve, 10));
+                await new Promise(resolve => setTimeout(resolve, window.testSettings.browser.poll_ms));
               return p.hass.states['sensor.unrelated_panel_probe']?.state === '1' && p.busy;
             }''')
             self.assertTrue(reached_setter, "the original hass setter receives the foreign update during the request")
@@ -1426,15 +1448,15 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
             for value in range(2, 11):
                 self.hass.states.async_set("sensor.unrelated_panel_probe", str(value))
                 await self.hass.async_block_till_done()
-                await asyncio.sleep(0.1)
-            await self.page.wait_for_timeout(400)
+                await asyncio.sleep(setting("browser.listener_yield_seconds"))
+            await self.page.wait_for_timeout(setting("browser.idle_observation_ms"))
             self.assertEqual(await self.panel.evaluate("p => p.hass.states['sensor.unrelated_panel_probe'].state"), "10")
             self.assertEqual(len(starts), 1, [round(at - starts[0], 3) for at in starts])
-            self.assertLess(time.monotonic() - starts[0], 10)
-            self.assertEqual(await self.panel.evaluate("p => p.statusPollInterval()"), 10000)
+            self.assertLess(time.monotonic() - starts[0], idle_poll_ms / 1000)
+            self.assertEqual(await self.panel.evaluate("p => p.statusPollInterval()"), idle_poll_ms)
         finally:
             release.set()
-            await self.page.unroute("**" + state_url, delay_state)
+            await self.page.unroute(state_url, delay_state)
             await previous_hass.dispose()
         self.assertEqual(self.errors, [])
 
@@ -1448,7 +1470,7 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
                 )
                 await self.page.reload()
                 choice = self.panel.locator('[data-action="program-mode:individual"]')
-                await expect(choice).to_be_visible(timeout=60000)
+                await expect(choice).to_be_visible(timeout=browser_timeout("bootstrap"))
                 entered, release, finished = asyncio.Event(), asyncio.Event(), asyncio.Event()
 
                 async def delay_program(route):
@@ -1475,7 +1497,7 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
                 await self.page.route("**" + program_url, delay_program)
                 try:
                     await choice.click()
-                    await asyncio.wait_for(entered.wait(), 10)
+                    await asyncio.wait_for(entered.wait(), timeout=setting("browser.event_timeout_s"))
                     await expect(self.panel.locator("#progression-end")).to_be_visible()
                     await expect(choice).to_contain_text("Wird übernommen …")
                     saving = await geometry()
@@ -1483,7 +1505,7 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
                     await expect(choice).to_contain_text("✓ Übernommen")
                     saved = await geometry()
                     self.assertEqual(saved, saving)
-                    await expect(choice).not_to_contain_text("✓ Übernommen", timeout=5000)
+                    await expect(choice).not_to_contain_text("✓ Übernommen", timeout=browser_timeout("short"))
                     self.assertEqual(await geometry(), saving)
                     await self.panel.evaluate("p => p.refresh()")
                     self.assertEqual(await geometry(), saving)
@@ -1491,7 +1513,7 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
                 finally:
                     release.set()
                     if entered.is_set():
-                        await asyncio.wait_for(finished.wait(), 10)
+                        await asyncio.wait_for(finished.wait(), timeout=setting("browser.event_timeout_s"))
                     await self.page.unroute("**" + program_url, delay_program)
         self.assertEqual(self.errors, [])
 
@@ -1502,7 +1524,7 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
                 await self.panel.evaluate('''p => p.api(`/${p.entry}/program`, "POST",
                   {temperature_steps: [70, 88, 90]})''')
                 await self.page.reload()
-                await expect(self.panel.locator("[data-free-step]").nth(1)).to_have_value("88", timeout=60000)
+                await expect(self.panel.locator("[data-free-step]").nth(1)).to_have_value("88", timeout=browser_timeout("bootstrap"))
                 if running:
                     await self.panel.locator('#current [data-action="operation"]').click()
                     await expect(self.panel.locator('[data-action="program-toggle"]')).to_be_visible()
@@ -1537,7 +1559,7 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
                                 await count.press("Enter")
                             self.assertTrue((await count_saved.value).ok)
                             await self.panel.evaluate(
-                                "async p => { while (p.programRequest) await new Promise(r => setTimeout(r, 10)); }"
+                                "async p => { while (p.programRequest) await new Promise(r => setTimeout(r, window.testSettings.browser.poll_ms)); }"
                             )
                             await count.press("Tab")
                             await self.panel.evaluate("p => p.refresh()")
@@ -1554,7 +1576,7 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
                         await expect(self.panel.locator('[data-action="program-apply"]')).to_be_enabled()
                     async with self.page.expect_response(
                         lambda response: response.url.endswith(program_url)
-                        and response.request.method == "POST", timeout=5000
+                        and response.request.method == "POST", timeout=browser_timeout("short")
                     ) as saved:
                         await self.panel.locator(
                             '[data-action="program-apply"]' if running else '[data-action="program-kind:even"]'
@@ -1582,7 +1604,7 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
                 end = self.panel.locator("#progression-end")
                 gangs = self.panel.locator("#progression-gangs")
                 start = self.panel.locator("#progression-start")
-                await expect(end).to_have_value("90", timeout=60000)
+                await expect(end).to_have_value("90", timeout=browser_timeout("bootstrap"))
                 entered = [asyncio.Event(), asyncio.Event()]
                 release = [asyncio.Event(), asyncio.Event()]
                 finished = [asyncio.Event(), asyncio.Event()]
@@ -1597,7 +1619,7 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
                         return
                     response = None if navigation == "failure" else await route.fetch()
                     entered[index].set()
-                    await asyncio.sleep(0.5)
+                    await asyncio.sleep(setting("browser.observer_yield_seconds"))
                     await release[index].wait()
                     try:
                         if navigation == "failure":
@@ -1616,7 +1638,7 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
                         await self.page.keyboard.press("Tab")
                     else:
                         await gangs.click()
-                    await asyncio.wait_for(entered[0].wait(), 10)
+                    await asyncio.wait_for(entered[0].wait(), timeout=setting("browser.event_timeout_s"))
                     await expect(gangs).to_be_focused()
                     await expect(gangs).to_be_enabled()
                     if navigation == "failure":
@@ -1626,7 +1648,7 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
                         await expect(gangs).to_be_focused()
                         for _ in range(3):
                             await self.panel.evaluate("p => p.refresh()")
-                        await self.page.wait_for_timeout(2100)
+                        await self.page.wait_for_timeout(await self.panel.evaluate("p => p.preference('program_saved_feedback_ms')") + setting("browser.poll_ms"))
                         self.assertEqual(writes, [{"final_temperature_c": 91}])
                         self.assertEqual(self.entry.options["parameters"]["final_temperature_c"], 90)
                         await expect(end).to_have_value("91")
@@ -1636,13 +1658,13 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
                     await start.fill("7")
                     self.assertEqual(writes, [{"final_temperature_c": 91}])
                     release[0].set()
-                    await asyncio.wait_for(entered[1].wait(), 10)
+                    await asyncio.wait_for(entered[1].wait(), timeout=setting("browser.event_timeout_s"))
                     await expect(start).to_be_focused()
                     await expect(start).to_have_value("7")
                     release[1].set()
-                    await asyncio.wait_for(finished[1].wait(), 10)
+                    await asyncio.wait_for(finished[1].wait(), timeout=setting("browser.event_timeout_s"))
                     await self.panel.evaluate(
-                        "async p => { while (p.programRequest) await new Promise(r => setTimeout(r, 10)); }"
+                        "async p => { while (p.programRequest) await new Promise(r => setTimeout(r, window.testSettings.browser.poll_ms)); }"
                     )
                     await self.panel.evaluate("p => p.refresh()")
                     await expect(start).to_be_focused()
@@ -1668,7 +1690,7 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
                             await start.press("Tab")
                         self.assertTrue((await completed.value).ok)
                         await self.panel.evaluate(
-                            "async p => { while (p.programRequest) await new Promise(r => setTimeout(r, 10)); }"
+                            "async p => { while (p.programRequest) await new Promise(r => setTimeout(r, window.testSettings.browser.poll_ms)); }"
                         )
                         await self.panel.evaluate("p => p.refresh()")
                         self.assertEqual(completed_writes, [{"target_temperature_c": 72,
@@ -1683,7 +1705,7 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
                         event.set()
                     for index, event in enumerate(entered):
                         if event.is_set():
-                            await asyncio.wait_for(finished[index].wait(), 10)
+                            await asyncio.wait_for(finished[index].wait(), timeout=setting("browser.event_timeout_s"))
                     await self.page.unroute("**" + temperature_url, delayed_temperature)
         self.assertEqual(self.errors, [])
 
@@ -1713,9 +1735,9 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
                 refresh = await self.hass.auth.async_create_refresh_token(user, client_id=self.url + "/")
                 tokens = {"hassUrl": self.url, "clientId": self.url + "/",
                           "access_token": self.hass.auth.async_create_access_token(refresh),
-                          "refresh_token": refresh.token, "expires": (time.time() + 1800) * 1000,
-                          "expires_in": 1800}
-                context = await self.browser.new_context(viewport={"width": 390, "height": 844})
+                          "refresh_token": refresh.token, "expires": (time.time() + setting("browser.auth_token_seconds")) * 1000,
+                          "expires_in": setting("browser.auth_token_seconds")}
+                context = await browser_context(self.browser, viewport=setting("browser.viewports.mobile"))
                 try:
                     await context.add_init_script("localStorage.setItem('hassTokens', " + json.dumps(json.dumps(tokens)) + ");")
                     page = await context.new_page()
@@ -1725,7 +1747,7 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
                     await page.goto(self.url + "/ha-sauna")
                     panel = page.locator("ha-sauna-panel")
                     field = panel.locator('.light-instrument [data-manual-light-value]')
-                    await expect(field).to_be_visible(timeout=60000)
+                    await expect(field).to_be_visible(timeout=browser_timeout("bootstrap"))
                     await expect(field).to_have_attribute("type", "range")
                     await expect(field).to_be_disabled()
                     self.assertIsNone(self.runtime.session)
@@ -1842,12 +1864,12 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
                                 self.assertTrue((await changed.value).ok)
                                 await page.wait_for_function(
                                     "p => !p.busy && !p.programRequest && !p.temperatureInteraction",
-                                    arg=await panel.element_handle(), timeout=10000,
+                                    arg=await panel.element_handle(), timeout=browser_timeout("interaction"),
                                 )
                                 if style == "linear":
-                                    await expect(target).to_have_value(str(value), timeout=10000)
+                                    await expect(target).to_have_value(str(value), timeout=browser_timeout("interaction"))
                                 else:
-                                    await expect(target).to_have_attribute("aria-valuenow", str(value), timeout=10000)
+                                    await expect(target).to_have_attribute("aria-valuenow", str(value), timeout=browser_timeout("interaction"))
                                 self.assertEqual(self.entry.options["parameters"]["target_temperature_c"], value)
                                 self.assertEqual(self.runtime.controller.target_temperature, value)
 
@@ -1856,6 +1878,7 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
                                 await panel.locator('.manual-heater [data-action="heater:true"]').click()
                             self.assertTrue((await heated.value).ok)
                             self.assertTrue(self.heater.is_on)
+                            identity = self.runtime.session.session_id
                             await choose_target(minimum)
                             self.assertFalse(self.heater.is_on)
                             self.assertTrue(self.runtime.controller.heater_override)
@@ -1876,8 +1899,9 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
                             await self.set_source("upper_temperature", minimum - self.runtime.configuration.parameters.values["readiness_hysteresis_c"] - 1)
                             self.assertFalse(self.heater.is_on)
                             await self.set_source("upper_temperature", temperature)
-                            self.assertIsNone(self.runtime.session)
-                            self.assertIsNone(self.runtime.detector)
+                            self.assertEqual(self.runtime.session.session_id, identity)
+                            self.assertFalse(self.runtime.session.operation_enabled)
+                            self.assertIsNotNone(self.runtime.detector)
                             self.assertAlmostEqual(self.light.brightness, 255 * .6, delta=1)
                     self.assertEqual([item for item in writes if item[0] in ("control", "heater")],
                                      [("heater", {"value": True}), ("heater", {"value": False})] * 2)
@@ -1889,7 +1913,8 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
                     async with page.expect_response(lambda response: response.url.endswith("/control-mode") and response.request.method == "POST") as automatic:
                         await panel.locator('[data-action="control-mode:automatic"]').click()
                     self.assertTrue((await automatic.value).ok)
-                    self.assertIsNone(self.runtime.session)
+                    self.assertEqual(self.runtime.session.session_id, identity)
+                    self.assertFalse(self.runtime.session.operation_enabled)
                     async with page.expect_response(lambda response: response.url.endswith("/control") and response.request.method == "POST") as started:
                         await panel.locator('#current [data-action="operation"]').click()
                     self.assertTrue((await started.value).ok)
@@ -1898,13 +1923,16 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
                     await expect(panel.locator('[data-action^="control-mode:"]')).to_have_count(0)
                     await self.runtime.set_operation(False)
                     await panel.evaluate("p => p.refresh()")
-                    await expect(panel.locator('[data-action^="control-mode:"]')).to_have_count(0)
+                    await expect(panel.locator('[data-action="control-mode:manual"]')).to_be_enabled()
+                    self.assertTrue(await panel.evaluate("p => p.state.control_mode_change_allowed"))
                     await expect(panel.locator('.manual-light [data-action="light:true"]')).to_be_disabled()
                     self.assertEqual(self.runtime.session.session_id, identity)
                     self.assertFalse(self.runtime.session.operation_enabled)
                     token = next(deadline.token for deadline in self.runtime.session.deadlines
                                  if deadline.purpose == "session_gap")
                     await self.runtime.finish_session_gap(token)
+                    self.assertEqual(self.runtime.session.session_id, identity)
+                    await device_tests.DevicePathTests.expire_recording_gap(self)
                 finally:
                     await context.close()
         self.assertEqual(self.errors, [])
@@ -1957,24 +1985,13 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.errors, [])
 
     async def test_return_to_auto_clears_overrides_while_outputs_and_session_stay_on(self):
-        from custom_components.ha_sauna.settings import async_set_parameters
-
-        previous_runtime = self.runtime
-        await async_set_parameters(self.hass, self.entry, {"light_transition_seconds": 0}, partial=True)
-        # Non-temperature options schedule an HA options-listener reload. Bind
-        # the replacement only after HA has finished that asynchronous work.
-        await self.hass.async_block_till_done()
-        self.runtime = self.entry.runtime_data
-        self.assertIsNot(self.runtime, previous_runtime)
-        self.assertFalse(self.runtime.closed or self.runtime.reconfiguring)
-        self.assertEqual(self.runtime.configuration.parameters.values["light_transition_seconds"], 0)
-        self.base = self.now = self.runtime._clock()
-        self.runtime._clock = lambda: self.now
-        await self.panel.evaluate("p => p.refresh()")
         async with self.page.expect_response(lambda response: response.url.endswith("/control") and response.request.method == "POST") as started:
             await self.panel.locator('#current [data-action="operation"]').click()
         self.assertTrue((await started.value).ok)
         await expect(self.panel.locator('#current [data-phase="aufheizen"]')).to_be_visible()
+        await self.finish_light_transition()
+        await self.panel.evaluate("p => p.refresh()")
+        self.assertTrue(self.light.is_on)
         self.assertIs(self.runtime, self.entry.runtime_data)
         identity = self.runtime.session.session_id
         phase = self.runtime.controller.phase
@@ -1992,6 +2009,11 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
                 response = await returned.value
                 self.assertTrue(response.ok)
                 self.assertEqual(response.request.post_data_json, {"value": None})
+                if output == "light":
+                    # Advance the real configured fade on the fixture clock;
+                    # do not disable its policy merely to finish the UI check.
+                    await self.finish_light_transition()
+                    await self.panel.evaluate("p => p.refresh()")
                 await expect(self.panel.locator(f'.manual-{output} [data-action="{output}:auto"]')).to_have_attribute("aria-pressed", "true")
                 await expect(self.panel.locator(f'.manual-{output} [data-action="{output}:true"]')).to_have_attribute("aria-pressed", "true")
                 self.assertEqual(self.runtime.session.session_id, identity)
@@ -2011,15 +2033,15 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
         refresh = await self.hass.auth.async_create_refresh_token(user, client_id=self.url + "/")
         tokens = {"hassUrl": self.url, "clientId": self.url + "/",
                   "access_token": self.hass.auth.async_create_access_token(refresh),
-                  "refresh_token": refresh.token, "expires": (time.time() + 1800) * 1000,
-                  "expires_in": 1800}
-        context = await self.browser.new_context(viewport={"width": 390, "height": 844})
+                  "refresh_token": refresh.token, "expires": (time.time() + setting("browser.auth_token_seconds")) * 1000,
+                  "expires_in": setting("browser.auth_token_seconds")}
+        context = await browser_context(self.browser, viewport=setting("browser.viewports.mobile"))
         try:
             await context.add_init_script("localStorage.setItem('hassTokens', " + json.dumps(json.dumps(tokens)) + ");")
             page = await context.new_page()
             await page.goto(self.url + "/ha-sauna")
             panel = page.locator("ha-sauna-panel")
-            await expect(panel.locator('#current [data-action="operation"]')).to_be_visible(timeout=60000)
+            await expect(panel.locator('#current [data-action="operation"]')).to_be_visible(timeout=browser_timeout("bootstrap"))
             self.assertEqual(await panel.evaluate("p => [p.state.permissions.admin, p.state.permissions.light]"), [False, True])
             presets = panel.locator('#current [data-action^="light:"]')
             self.assertEqual(await presets.evaluate_all("buttons => buttons.map(b => b.dataset.action)"),
@@ -2065,7 +2087,7 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
         await self.set_source("upper_temperature", 65)
         await self.set_source("lower_temperature", 66)
         await self.panel.evaluate("""async p => {
-          while (p.busy) await new Promise(resolve => setTimeout(resolve, 10));
+          while (p.busy) await new Promise(resolve => setTimeout(resolve, window.testSettings.browser.poll_ms));
           await p.refresh(true);
         }""")
         await expect(self.panel.locator(".dial-temperature .reading")).to_contain_text("65")
@@ -2095,12 +2117,12 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(await async_setup_component(self.hass, "config", {}))
         await self.hass.async_block_till_done()
         await self.page.reload()
-        await expect(self.panel.locator('#current [data-action="operation"]')).to_be_visible(timeout=60000)
+        await expect(self.panel.locator('#current [data-action="operation"]')).to_be_visible(timeout=browser_timeout("bootstrap"))
         await self.panel.locator('.main-tabs [data-action="settings"]').click()
         await self.panel.get_by_role("link", name="Sauna konfigurieren", exact=True).click()
         await expect(self.page).to_have_url(re.compile(r"/config/integrations/integration/ha_sauna$"))
         row = self.page.locator("ha-config-entry-row").filter(has_text=self.entry.title)
-        await expect(row).to_be_visible(timeout=30000)
+        await expect(row).to_be_visible(timeout=browser_timeout("loading"))
         configure = await self.page.evaluate("""() => document.querySelector('home-assistant').hass.localize(
           'ui.panel.config.integrations.config_entry.configure')""")
         self.assertTrue(configure)
@@ -2143,6 +2165,7 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
         await menu.get_by_text(subgroup["label"], exact=True).click()
         fields = [item for item in section("parameters")
                   if item["settings_subgroup"] == subgroup["id"]
+                  and item["configuration_surface"] == "integration"
                   and item["minimum"] != item["maximum"]]
         await expect(dialog.locator("ha-selector-number")).to_have_count(len(fields))
         for definition in fields:
@@ -2241,14 +2264,17 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
         await menu.get_by_text("Entität umbenennen", exact=True).click()
         group_picker = dialog.locator("ha-selector-select")
         await group_picker.locator("ha-select").click()
-        await expect(group_picker.get_by_text(controls_label, exact=True)).to_be_visible()
-        await expect(group_picker.get_by_text(external_label, exact=True)).to_be_visible()
+        # HA's menu items share their labels with the selected-value display.
+        controls_option = group_picker.get_by_role("menuitem", name=controls_label, exact=True)
+        await expect(controls_option).to_be_visible()
+        await expect(group_picker.get_by_role("menuitem", name=external_label, exact=True)).to_be_visible()
         await self.page.screenshot(
             path=str(screenshots / "options_rename_groups.png"),
             full_page=True, animations="disabled")
-        await group_picker.get_by_text(controls_label, exact=True).click()
+        await controls_option.click()
+        await expect(group_picker).to_have_js_property("value", "own:controls")
         await dialog.get_by_role("button", name="Weiter", exact=True).click()
-        await expect(dialog.get_by_text("Entität auswählen", exact=True)).to_be_visible()
+        await expect(dialog.get_by_title("Entität auswählen", exact=True)).to_be_visible()
         picker = dialog.locator("ha-selector-entity ha-entity-picker")
         await expect(picker).to_be_visible()
         await picker.click()
@@ -2270,13 +2296,13 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
         await dialog.get_by_role("textbox", name=re.compile(r"^Anzeigename")).fill("Nicht speichern")
         await dialog.locator("ha-selector-boolean ha-switch, ha-selector-boolean ha-checkbox").click()
         await dialog.get_by_role("button", name="Umbenennen", exact=True).click()
-        await expect(dialog.get_by_text("Entität auswählen", exact=True)).to_be_visible()
+        await expect(dialog.get_by_title("Entität auswählen", exact=True)).to_be_visible()
         await dialog.locator("ha-selector-boolean ha-switch, ha-selector-boolean ha-checkbox").click()
         await dialog.get_by_role("button", name="Weiter", exact=True).click()
         await expect(dialog.locator("ha-selector-select")).to_be_visible()
         group_picker = dialog.locator("ha-selector-select")
         await group_picker.locator("ha-select").click()
-        await group_picker.get_by_text("Zurück zur Übersicht", exact=True).click()
+        await group_picker.get_by_role("menuitem", name="Zurück zur Übersicht", exact=True).click()
         await dialog.get_by_role("button", name="Weiter", exact=True).click()
         await expect(menu.get_by_text("Entität umbenennen", exact=True)).to_be_visible()
         self.assertEqual(registry.async_get(self.operation), selected_before)
@@ -2333,11 +2359,11 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(await async_setup_component(self.hass, "config", {}))
         await self.hass.async_block_till_done()
         await self.page.reload()
-        await expect(self.panel.locator('#current [data-action="operation"]')).to_be_visible(timeout=60000)
+        await expect(self.panel.locator('#current [data-action="operation"]')).to_be_visible(timeout=browser_timeout("bootstrap"))
         await self.panel.locator('.main-tabs [data-action="settings"]').click()
         await self.panel.get_by_role("link", name="Sauna konfigurieren", exact=True).click()
         row = self.page.locator("ha-config-entry-row").filter(has_text=self.entry.title)
-        await expect(row).to_be_visible(timeout=30000)
+        await expect(row).to_be_visible(timeout=browser_timeout("loading"))
         configure = await self.page.evaluate("""() => document.querySelector('home-assistant').hass.localize(
           'ui.panel.config.integrations.config_entry.configure')""")
         await row.get_by_role("button", name=configure, exact=True).click()
@@ -2421,20 +2447,23 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("parameters_door", flow["menu_options"])
         flow = await self.hass.config_entries.options.async_configure(
             flow["flow_id"], {"next_step_id": "parameters_door"})
-        values = {item["key"]: self.entry.options["parameters"][item["key"]]
-                  for item in section("parameters")
-                  if item["settings_subgroup"] == "door" and item["minimum"] != item["maximum"]}
+        values = {
+            str(marker): self.entry.options["parameters"][str(marker)]
+            for marker in flow["data_schema"].schema
+        }
+        parameter_key = "door_window_seconds"
+        changed = values[parameter_key] + DEFAULT_PARAMETERS["grid_seconds"]
         result = await self.hass.config_entries.options.async_configure(
-            flow["flow_id"], {**values, "door_open_slope": -2.1})
+            flow["flow_id"], {**values, parameter_key: changed})
         self.assertEqual((result["type"], result["step_id"], result["flow_id"]), ("menu", "sensors", flow["flow_id"]))
         await self.hass.async_block_till_done()
         self.runtime = self.entry.runtime_data
-        self.assertEqual(self.entry.options["parameters"]["door_open_slope"], -2.1)
+        self.assertEqual(self.entry.options["parameters"][parameter_key], changed)
         for key, value in saved_proxy.items():
             self.assertEqual(self.entry.options["parameters"][key], value)
         await self.panel.evaluate("p => p.refresh(true)")
         await expect(link).to_be_visible()
-        await expect(self.panel.locator('input[name="door_open_slope"]')).to_have_count(0)
+        await expect(self.panel.locator(f'input[name="{parameter_key}"]')).to_have_count(0)
         self.assertEqual(self.errors, [])
         self.assertEqual(self.ws_errors, [])
 
@@ -2629,13 +2658,13 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
         retain_session(self.runtime)
         old_id = self.runtime.session.session_id
         await self.runtime.set_operation(False)
-        self.now += timedelta(minutes=20)
-        await self.runtime.tick()
+        await device_tests.DevicePathTests.expire_recording_gap(self)
+        await self.healthy_until(self.now + timedelta(seconds=HISTORY_CONTEXT_SECONDS))
         await self.runtime.archive.flush()
         self.assertIsNone(self.runtime.session)
         await self.panel.evaluate("p => p.refresh()")
         await self.panel.locator('.main-tabs [data-action="history"]').click()
-        await expect(self.panel.locator("svg.session-chart")).to_be_visible(timeout=15000)
+        await expect(self.panel.locator("svg.session-chart")).to_be_visible(timeout=browser_timeout("update"))
         await self.panel.evaluate("async p => { if (p.historyLoad) await p.historyLoad.promise; }")
         self.assertEqual(await self.panel.evaluate("p => p.historySelectionId()"), old_id)
         old_cache = await self.panel.evaluate_handle("(p, id) => p.cache.get(id)", old_id)
@@ -2647,7 +2676,7 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
           Object.defineProperty(document, 'hidden', {configurable: true, get: () => true});
           document.dispatchEvent(new Event('visibilitychange'));
         }""")
-        await self.panel.evaluate("async p => { while (p.busy) await new Promise(r => setTimeout(r, 10)); }")
+        await self.panel.evaluate("async p => { while (p.busy) await new Promise(r => setTimeout(r, window.testSettings.browser.poll_ms)); }")
         await self.set_source("upper_temperature", 71)
         await self.set_source("lower_temperature", 65)
         await self.runtime.set_operation(True)
@@ -2655,8 +2684,8 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
         new_id = self.runtime.session.session_id
         self.assertNotEqual(new_id, old_id)
         await self.runtime.set_operation(False)
-        self.now += timedelta(minutes=20)
-        await self.runtime.tick()
+        await device_tests.DevicePathTests.expire_recording_gap(self)
+        await self.healthy_until(self.now + timedelta(seconds=HISTORY_CONTEXT_SECONDS))
         await self.runtime.archive.flush()
         self.assertIsNone(self.runtime.session)
         requests = []
@@ -2671,7 +2700,7 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
               delete document.hidden;
               document.dispatchEvent(new Event('visibilitychange'));
             }""")
-            await expect(self.panel.locator(f'#session option[value="{new_id}"]')).to_have_count(1, timeout=15000)
+            await expect(self.panel.locator(f'#session option[value="{new_id}"]')).to_have_count(1, timeout=browser_timeout("update"))
             await self.panel.evaluate("async p => { if (p.historyLoad) await p.historyLoad.promise; }")
             self.assertEqual(await self.panel.evaluate("p => p.historySelectionId()"), new_id)
             self.assertEqual(await self.panel.evaluate("p => p.shown.session.timeline.session_id"), new_id)
@@ -2757,10 +2786,13 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
         await self.panel.evaluate("p => p.refresh(true)")
         state = await self.panel.evaluate("p => p.api(`/${p.entry}/state`)")
         self.assertEqual(state["configuration"]["control_input_mode"], "button")
-        self.assertEqual(state["button_session_gestures"], ["long", "double", "triple"])
+        self.assertEqual(
+            state["configuration_model"]["button"]["session_gestures"],
+            ["long", "double", "triple"],
+        )
         await self.panel.locator('[data-action="program-mode:program"]').click()
         await expect(self.panel.locator(f'[data-action="program-select:{DEFAULT_PROGRAMS[0]["id"]}"]')).to_have_attribute(
-            "aria-pressed", "true", timeout=15000
+            "aria-pressed", "true", timeout=browser_timeout("update")
         )
         await self.panel.locator('.main-tabs [data-action="settings"]').click()
         gesture = self.panel.locator('#button-session-gesture')
@@ -2824,8 +2856,8 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.entry.options['button_program'], DEFAULT_PROGRAMS[-2]["id"])
 
         tokens = await self.page.evaluate("localStorage.getItem('hassTokens')")
-        context = await self.browser.new_context(
-            viewport={"width": 390, "height": 844}, is_mobile=True, has_touch=True
+        context = await browser_context(self.browser,
+            viewport=setting("browser.viewports.mobile"), is_mobile=True, has_touch=True
         )
         try:
             await context.add_init_script("localStorage.setItem('hassTokens', " + json.dumps(tokens) + ");")
@@ -2834,7 +2866,7 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
             page.on('pageerror', lambda error: errors.append(str(error)))
             await page.goto(self.url + '/ha-sauna')
             panel = page.locator('ha-sauna-panel')
-            await expect(panel.locator('#current [data-action="operation"]')).to_be_visible(timeout=60000)
+            await expect(panel.locator('#current [data-action="operation"]')).to_be_visible(timeout=browser_timeout("bootstrap"))
             await panel.locator('.main-tabs [data-action="settings"]').click()
             mobile_rows = panel.locator('#program-library [data-program-id]')
             touch_before = await mobile_rows.evaluate_all('elements => elements.map(row => row.dataset.programId)')
@@ -2853,7 +2885,7 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
                     'type': 'touchMove',
                     'touchPoints': [{'x': x, 'y': y_start + (y_end - y_start) * step / 9, 'id': 1}]
                 })
-                await page.wait_for_timeout(20)
+                await page.wait_for_timeout(setting("browser.touch_observation_ms"))
             await cdp.send('Input.dispatchTouchEvent', {'type': 'touchEnd', 'touchPoints': []})
             touch_order = await mobile_rows.evaluate_all('elements => elements.map(row => row.dataset.programId)')
             self.assertEqual(touch_order[0], touch_before[1])
@@ -2924,9 +2956,9 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
         refresh = await self.hass.auth.async_create_refresh_token(user, client_id=self.url + "/")
         tokens = {"hassUrl": self.url, "clientId": self.url + "/",
                   "access_token": self.hass.auth.async_create_access_token(refresh),
-                  "refresh_token": refresh.token, "expires": (time.time() + 1800) * 1000,
-                  "expires_in": 1800}
-        context = await self.browser.new_context(viewport={"width": 390, "height": 844})
+                  "refresh_token": refresh.token, "expires": (time.time() + setting("browser.auth_token_seconds")) * 1000,
+                  "expires_in": setting("browser.auth_token_seconds")}
+        context = await browser_context(self.browser, viewport=setting("browser.viewports.mobile"))
         try:
             await context.add_init_script("localStorage.setItem('hassTokens', " + json.dumps(json.dumps(tokens)) + ");")
             page = await context.new_page()
@@ -2934,7 +2966,7 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
             await page.goto(self.url + "/ha-sauna")
             panel = page.locator("ha-sauna-panel")
             split = panel.locator('#current .operation-control.split')
-            await expect(split).to_be_visible(timeout=60000)
+            await expect(split).to_be_visible(timeout=browser_timeout("bootstrap"))
             end_cooling_user = split.get_by_role("button", name="Kühlung beenden", exact=True)
             await expect(end_cooling_user).to_be_enabled()
             await expect(panel.locator('.manual-heater [data-action="heater:true"]')).to_be_disabled()
@@ -2994,12 +3026,12 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
         }, identity)
         await self.runtime.archive.flush()
         await self.panel.locator('[data-action="history"]').click()
-        await expect(self.panel.locator('[data-gang-id]')).to_contain_text("Vorläufig", timeout=15000)
+        await expect(self.panel.locator('[data-gang-id]')).to_contain_text("Vorläufig", timeout=browser_timeout("update"))
         gang_id = await self.panel.locator('[data-gang-id]').get_attribute("data-gang-id")
         start = await self.panel.locator('[data-gang-id]').get_attribute("data-start")
         self.assertEqual(start, (self.base+timedelta(seconds=25)).isoformat())
         await self.emit(Kind.INFUSION, 40)
-        await expect(self.panel.locator('[data-gang-id]')).to_contain_text("Bestätigt", timeout=15000)
+        await expect(self.panel.locator('[data-gang-id]')).to_contain_text("Bestätigt", timeout=browser_timeout("update"))
         self.assertEqual(await self.panel.locator('[data-gang-id]').get_attribute("data-gang-id"), gang_id)
         self.assertEqual(await self.panel.locator('[data-gang-id]').get_attribute("data-start"), start)
         # Normal history exposes only the leading measurement height.
@@ -3214,7 +3246,7 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
         await self.panel.locator('[data-action="reset-zoom"]').click()
         await self.panel.locator('[data-action="details"]').click()
         await self.set_source("upper_temperature", "unavailable")
-        await expect(self.panel.locator('#details')).to_contain_text("Messwert fehlt", timeout=15000)
+        await expect(self.panel.locator('#details')).to_contain_text("Messwert fehlt", timeout=browser_timeout("update"))
         await self.panel.locator('[data-action="diagnostics"]').click()
         await expect(self.panel.locator('[data-series="detector_door_temperature_slope_upper"]')).to_be_attached()
         self.assertFalse(await self.panel.locator("#plots").is_visible())
@@ -3247,11 +3279,23 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
         marker = self.panel.locator(f'.diagnostic-marker[data-event-id="{event_id}"][data-selected="true"]').first
         await expect(marker).to_be_focused()
         await marker.press('Enter')
+        await expect(self.panel.locator('.detail-tabs [data-action="diagnostics"]')).to_have_attribute('aria-current', 'page')
+        await expect(marker).to_be_focused()
+        await expect(marker).to_have_attribute('aria-pressed', 'true')
+        await expect(self.panel.locator('#diagnostic-selection')).to_be_visible()
+        await expect(self.panel.locator('.diagnostic-selection-band').first).to_be_visible()
+        guide = self.panel.locator('.diagnostic-selection-guide').first
+        self.assertEqual(await guide.get_attribute('x1'), await guide.get_attribute('x2'))
+        self.assertGreater(float(await guide.get_attribute('y2')), float(await guide.get_attribute('y1')))
+        await self.panel.locator(f'[data-action="event-history:{event_id}"]').click()
         await expect(self.panel.locator('.main-tabs [data-action="history"]')).to_have_attribute('aria-current', 'page')
         await expect(self.panel.locator('#event-list')).to_be_visible()
         selected_link = self.panel.locator(f'#event-list [data-action="event-row:{event_id}"]')
         await expect(selected_link).to_be_focused()
-        await expect(selected_link).to_have_css("outline-width", "2px")
+        self.assertGreaterEqual(
+            await selected_link.evaluate("button => parseFloat(getComputedStyle(button).outlineWidth)"),
+            2,
+        )
         button_contrast = await selected_link.evaluate("""button => {
           const style = getComputedStyle(button);
           const light = color => color.match(/[\\d.]+/g).slice(0, 3).map(Number)
@@ -3299,20 +3343,23 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(session["timeline"]["active"]["gang_id"], gang_id)
             self.assertGreater(len(archive.read("measurements.csv").splitlines()), 50)
         await self.runtime.set_operation(False)
-        self.now += timedelta(minutes=3)
-        await self.runtime.tick()
+        await device_tests.DevicePathTests.expire_recording_gap(self)
         await self.panel.locator('.main-tabs [data-action="overview"]').click()
         await self.panel.locator('[data-action="history"]').click()
-        await expect(self.panel.locator(f'#session option[value="{identity}"]')).to_contain_text(" · beendet", timeout=15000)
+        archived_option = self.panel.locator(f'#session option[value="{identity}"]')
+        await expect(archived_option).to_contain_text(
+            re.compile(r"\d{2}:\d{2}(?::\d{2})? – .*\d{2}:\d{2}"), timeout=browser_timeout("update")
+        )
+        await expect(archived_option).not_to_contain_text("beendet")
         await expect(self.panel.locator("svg.session-chart")).to_be_visible()
         await self.select_dropdown(self.panel.locator("#session"), identity)
-        await expect(self.panel.locator('[data-gang-id]')).to_contain_text("Bestätigt", timeout=15000)
+        await expect(self.panel.locator('[data-gang-id]')).to_contain_text("Bestätigt", timeout=browser_timeout("update"))
         self.assertEqual(await self.panel.locator('[data-gang-id]').get_attribute("data-start"), start)
         tokens = await self.page.evaluate("localStorage.getItem('hassTokens')")
 
         async def zone_snapshot(zone):
-            context = await self.browser.new_context(
-                viewport={"width": 1440, "height": 1080}, timezone_id=zone
+            context = await browser_context(self.browser,
+                viewport=setting("browser.viewports.desktop"), timezone_id=zone
             )
             try:
                 await context.add_init_script(
@@ -3324,18 +3371,18 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
                 panel = page.locator("ha-sauna-panel")
                 await expect(
                     panel.locator('#current [data-action="operation"]')
-                ).to_be_visible(timeout=60000)
+                ).to_be_visible(timeout=browser_timeout("bootstrap"))
                 await panel.locator('.main-tabs [data-action="history"]').click()
                 await expect(
                     panel.locator(f'#session option[value="{identity}"]')
-                ).to_be_attached(timeout=15000)
+                ).to_be_attached(timeout=browser_timeout("update"))
                 await self.select_dropdown(panel.locator("#session"), identity)
                 await panel.evaluate("""async p => {
-                  while (p.busy) await new Promise(resolve => setTimeout(resolve, 10));
+                  while (p.busy) await new Promise(resolve => setTimeout(resolve, window.testSettings.browser.poll_ms));
                   if (p.historyLoad) await p.historyLoad.promise;
                 }""")
                 await expect(panel.locator("[data-gang-id]")).to_contain_text(
-                    "Bestätigt", timeout=15000
+                    "Bestätigt", timeout=browser_timeout("update")
                 )
                 self.assertEqual(
                     await panel.locator("[data-gang-id]").get_attribute("data-start"),
@@ -3470,11 +3517,11 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
         await self.panel.locator('[data-action="program-mode:constant"]').click()
         await expect(self.panel.locator('[data-action="program-mode:constant"]')).to_have_attribute("aria-pressed", "true")
         await self.panel.evaluate(
-            "async panel => { while (panel.programRequest) await new Promise(resolve => setTimeout(resolve, 10)); }"
+            "async panel => { while (panel.programRequest) await new Promise(resolve => setTimeout(resolve, window.testSettings.browser.poll_ms)); }"
         )
         self.assertEqual(await self.panel.locator('#current [data-action^="preset:"]').count(), DEFAULT_PARAMETERS["preset_count"])
         target_arc=self.panel.locator('[data-target-arc][role="slider"]')
-        await expect(target_arc).to_be_visible(timeout=10000)
+        await expect(target_arc).to_be_visible(timeout=browser_timeout("interaction"))
         await expect(target_arc).to_have_attribute("aria-label", "Solltemperatur einstellen")
         standard = self.entry.runtime_data.configuration.parameters.values["standard_temperature_c"]
         await expect(target_arc).to_have_attribute("aria-valuenow", f"{standard:g}")
@@ -3484,10 +3531,10 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
             await target_arc.press("PageDown")
         minimum = float(await target_arc.get_attribute("aria-valuemin"))
         decreased = max(minimum, standard - 10 * section("frontend")["temperature_dial_step_c"])
-        await expect(target_arc).to_have_attribute("aria-valuenow", f"{decreased:g}", timeout=10000)
+        await expect(target_arc).to_have_attribute("aria-valuenow", f"{decreased:g}", timeout=browser_timeout("interaction"))
         await self.panel.locator('[data-action="program-mode:individual"]').click()
         await self.panel.evaluate(
-            "async panel => { while (panel.programRequest) await new Promise(resolve => setTimeout(resolve, 10)); }"
+            "async panel => { while (panel.programRequest) await new Promise(resolve => setTimeout(resolve, window.testSettings.browser.poll_ms)); }"
         )
         await expect(self.panel.locator("#progression-end")).to_be_visible()
         # This program has explicit sample endpoints, independent of the factory target.
@@ -3510,7 +3557,7 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(saved["parameters"]["target_temperature_c"],70)
         self.assertEqual(saved["parameters"]["final_temperature_c"],86)
         self.assertEqual(saved["parameters"]["temperature_gangs"],3)
-        await expect(self.panel.locator('#progression-end')).to_have_value("86", timeout=15000)
+        await expect(self.panel.locator('#progression-end')).to_have_value("86", timeout=browser_timeout("update"))
         self.runtime=self.entry.runtime_data
         from datetime import UTC, datetime
         self.now=datetime.now(UTC)
@@ -3532,7 +3579,7 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.entry.options["parameters"]["final_temperature_c"],90)
         self.assertEqual(self.runtime.controller.target_temperature,next_target)
         self.assertEqual(self.entry.options["program_mode"],"progressive")
-        await expect(self.panel.locator("#program-choice-body")).to_be_hidden(timeout=10000)
+        await expect(self.panel.locator("#program-choice-body")).to_be_hidden(timeout=browser_timeout("interaction"))
         options_before_target = dict(self.entry.options)
         configuration_before_target = self.runtime.configuration
         session_program_before_target = (
@@ -3545,15 +3592,18 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
         target_arc=self.panel.locator('[data-target-arc][role="slider"]')
         await expect(target_arc).to_have_attribute("aria-label", "Temperatur für den nächsten Gang einstellen")
         await expect(self.panel.locator('#current .target-caption')).to_have_text("NÄCHSTER GANG")
+        increased_target = min(next(item["maximum"] for item in section("parameters")
+                                    if item["key"] == "target_temperature_c"),
+                               next_target + 10 * section("frontend")["temperature_dial_step_c"])
         await target_arc.focus()
         async with self.page.expect_response(lambda response: response.url.endswith(temperature_url) and response.request.method == "POST") as result:
             await target_arc.press("PageUp")
         response = await result.value
         self.assertTrue(response.ok)
         saved = await response.json()
-        self.assertEqual((saved["target_temperature"], saved["next_gang_temperature"]), (80, 80))
+        self.assertEqual((saved["target_temperature"], saved["next_gang_temperature"]), (increased_target, increased_target))
         await self.panel.evaluate("p=>p.temperatureChange")
-        await expect(target_arc).to_have_attribute("aria-valuenow", "80", timeout=10000)
+        await expect(target_arc).to_have_attribute("aria-valuenow", format(increased_target, "g"), timeout=browser_timeout("interaction"))
         self.assertEqual(dict(self.entry.options), options_before_target)
         self.assertIs(self.runtime.configuration, configuration_before_target)
         self.assertEqual(self.entry.options["program_mode"],"progressive")
@@ -3564,8 +3614,8 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
             self.runtime.session.temperature_program_start_gang_count,
         ), session_program_before_target)
         self.assertIsNone(self.runtime.session.timeline.active)
-        self.assertEqual(self.runtime.controller.target_temperature, 80)
-        self.assertEqual(self.runtime.controller.next_gang_temperature, 80)
+        self.assertEqual(self.runtime.controller.target_temperature, increased_target)
+        self.assertEqual(self.runtime.controller.next_gang_temperature, increased_target)
         await self.panel.get_by_role("button", name="Ändern", exact=True).click()
         await expect(self.panel.locator('#progression-start')).to_have_value("70")
         await expect(self.panel.locator('#progression-end')).to_have_value("90")
@@ -3578,7 +3628,7 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
         await expect(self.panel.locator('#progression-gangs')).to_have_value("2")
         self.assertIs(self.entry.runtime_data,self.runtime)
         self.assertEqual(self.runtime.session.session_id,identity)
-        self.assertEqual(self.runtime.controller.target_temperature,80)
+        self.assertEqual(self.runtime.controller.target_temperature,increased_target)
         self.assertEqual(await self.panel.locator('#current [data-mechanical-timer]').count(),0)
         self.now+=timedelta(seconds=20)
         await self.runtime.tick()
@@ -3588,7 +3638,7 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(await self.panel.locator("#current [data-door-status]").count(), 0)
         await self.set_source("upper_temperature", 90)
         await self.set_instrument_style("light", "linear")
-        await expect(self.panel.locator('#current #manual-light-value-overview')).to_be_visible(timeout=10000)
+        await expect(self.panel.locator('#current #manual-light-value-overview')).to_be_visible(timeout=browser_timeout("interaction"))
         await self.panel.locator('#current #manual-light-value-overview').evaluate("input => { input.value = '60'; }")
         await self.panel.locator('#current #manual-light-value-overview').dispatch_event("change")
         await expect(self.panel.locator('#current [data-light-status]')).to_have_count(0)
@@ -3610,7 +3660,7 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
         self.assertIsNotNone(self.runtime.session)
         await expect(self.panel.locator("#details [data-door-status]")).to_have_text("Tür geschlossen")
         await self.panel.locator('.main-tabs [data-action="overview"]').click()
-        await expect(self.panel.locator("#program-choice-body")).to_be_hidden(timeout=5000)
+        await expect(self.panel.locator("#program-choice-body")).to_be_hidden(timeout=browser_timeout("short"))
         await self.panel.get_by_role("button", name="Ändern", exact=True).click()
         await self.panel.locator('[data-action="program-mode:constant"]').click()
         await expect(self.panel.locator('#current .program-pending')).to_contain_text("Konstant")
@@ -3624,7 +3674,7 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
         await expect(self.panel.locator('[data-readiness]')).to_be_visible()
         await self.panel.locator('[data-action="settings"]').click()
         settings = self.panel.locator("#settings")
-        await expect(settings.locator("#program-library [data-program-id]").first).to_be_visible(timeout=10000)
+        await expect(settings.locator("#program-library [data-program-id]").first).to_be_visible(timeout=browser_timeout("interaction"))
         await expect(self.dropdown_trigger(settings.locator("#button-program"))).to_be_visible()
         await self.open_parameter_group("preset_start_c")
         await expect(self.panel.locator('input[name="preset_start_c"]')).to_be_disabled()
@@ -3667,8 +3717,7 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
         await self.hass.async_block_till_done()
         self.assertIs(self.entry.runtime_data, self.runtime)
         self.assertEqual(self.entry.options["log_level"], "DEBUG")
-        self.now+=timedelta(minutes=3)
-        await self.runtime.tick()
+        await device_tests.DevicePathTests.expire_recording_gap(self)
         self.assertIsNone(self.runtime.session)
         await self.panel.locator('.main-tabs [data-action="overview"]').click()
         await self.panel.evaluate("p=>p.refresh()")
@@ -3678,10 +3727,10 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
         text=await self.panel.locator('#current').inner_text()
         for code in ("measurement_unavailable", "configuration_required", "pending", "sensor_timeout_seconds"):
             self.assertNotIn(code,text)
-        self.now+=timedelta(minutes=10)
+        self.now += timedelta(seconds=DEFAULT_PARAMETERS["sensor_timeout_seconds"])
         await self.runtime.tick()
         await self.panel.evaluate("p=>p.refresh()")
-        await expect(self.panel.locator('#current [data-phase-timer]')).to_have_count(0,timeout=15000)
+        await expect(self.panel.locator('#current [data-phase-timer]')).to_have_count(0,timeout=browser_timeout("update"))
         await self.page.set_viewport_size({"width":390,"height":844})
         self.assertLessEqual(await self.panel.evaluate("p=>p.shadowRoot.querySelector('main').scrollWidth"),390)
         await self.panel.locator('[data-action="details"]').click()
@@ -3700,7 +3749,7 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
         await self.panel.locator('input[name="preset_step_c"]').fill("45")
         await self.open_settings_section("maintenance")
         await self.panel.get_by_role("button", name="Werkseinstellungen wiederherstellen", exact=True).click()
-        await expect(self.panel.locator('#log-level')).to_have_value(section("instance")["log_level"], timeout=15000)
+        await expect(self.panel.locator('#log-level')).to_have_value(section("instance")["log_level"], timeout=browser_timeout("update"))
         await expect(self.panel.locator('input[name="preset_step_c"]')).to_have_value(format(DEFAULT_PARAMETERS["preset_step_c"], "g"))
         await expect(self.panel.locator('input[name="preset_start_c"]')).to_have_value(format(DEFAULT_PARAMETERS["preset_start_c"], "g"))
         await self.hass.async_block_till_done()
@@ -3712,14 +3761,14 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_rejected_start_explains_stale_measurement_and_recovers(self):
         panel_file = Path(__file__).resolve().parents[2] / "custom_components/ha_sauna/panel.js"
-        digest = sha256(panel_file.read_bytes()).hexdigest()[:16]
+        digest = sha256(panel_file.read_bytes()).hexdigest()
         loaded = await self.page.evaluate("performance.getEntriesByType('resource').map(r=>r.name)")
         self.assertIn(self.url + "/ha_sauna/panel.js?v=" + digest, loaded)
 
         # A source stops reporting after the last UI refresh. The real API
         # must reject the stale display's still-enabled button with HTTP 409.
         await self.panel.evaluate("p=>clearTimeout(p.timer)")
-        self.now=self.base+timedelta(seconds=31)
+        self.now=self.base+timedelta(seconds=DEFAULT_PARAMETERS["sensor_timeout_seconds"] + 1)
         async with self.page.expect_response(lambda r: r.url.endswith("/control") and r.request.method == "POST") as response:
             await self.panel.locator('#current [data-action="operation"]').click()
         self.assertEqual((await response.value).status, 409)
@@ -3737,7 +3786,7 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
             await self.set_source(f"{position}_temperature",50)
             await self.set_source(f"{position}_humidity",30)
         await self.panel.evaluate("p=>p.refresh()")
-        await expect(self.panel.locator('#current [data-action="operation"]')).to_be_enabled(timeout=15000)
+        await expect(self.panel.locator('#current [data-action="operation"]')).to_be_enabled(timeout=browser_timeout("update"))
         await self.panel.locator('#current [data-action="operation"]').click()
         await expect(self.panel.locator('#current [data-phase="aufheizen"]')).to_be_visible()
         await expect(self.panel.locator('#current')).not_to_contain_text("Noch nicht abschätzbar")

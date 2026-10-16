@@ -1,6 +1,11 @@
 "use strict";
+const { panelFixture: fixturePanel } = require("./catalog_fixture.cjs");
 
 const assert = require("node:assert/strict");
+const {
+  parameterValues: fixtureValues,
+  parameterDefinition: fixtureDefinition,
+} = require("./catalog_fixture.cjs");
 const fs = require("node:fs");
 const test = require("node:test");
 const vm = require("node:vm");
@@ -31,11 +36,11 @@ const session = {
   timeline: { session_started_at: iso(0), processed: [], completed: [] },
 };
 const panel = () =>
-  Object.assign(Object.create(Panel.prototype), {
+  Object.assign(fixturePanel(Panel), {
     shown: { session, records: [] },
     state: {
       now: iso(3600),
-      configuration: { parameters: { sensor_timeout_seconds: 5 } },
+      configuration: { parameters: fixtureValues() },
     },
     $: () => null,
     scheduleHistoryRender: () => {},
@@ -171,7 +176,11 @@ test("the history heading and timeline revisions remain independent of samples",
   assert.equal(p.historyTitle(session), "Letzte Sitzung");
   p.selected = "archive-1";
   p.sessions = [{ session_id: "archive-1", started_at: iso(10) }];
-  assert.match(p.historyTitle({ timeline: {} }), /^Sitzung vom /);
+  assert.equal(p.historyTitle({ timeline: {} }), p.sessionLabel(p.sessions[0]));
+  assert.doesNotMatch(
+    p.historyTitle({ timeline: {} }),
+    /Sitzung vom|beendet|Ohne Startzeit/,
+  );
 
   const live = {
     ...session,
@@ -251,13 +260,13 @@ test("explicit navigation during a periodic refresh queues one fresh read", asyn
   let releaseFirst;
   let stateReads = 0;
   const firstState = new Promise((resolve) => (releaseFirst = resolve));
-  const p = Object.assign(Object.create(Panel.prototype), {
+  const p = Object.assign(fixturePanel(Panel), {
     entry: "entry",
     generation: 0,
     isConnected: true,
     shadowRoot: { activeElement: null },
     api: async (path) => {
-      if (path !== "/entry/state") throw Error(path);
+      if (path !== "/entry/state?include_catalog=false") throw Error(path);
       stateReads++;
       return stateReads === 1 ? firstState : {};
     },

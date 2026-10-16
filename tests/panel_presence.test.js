@@ -1,4 +1,9 @@
+const { panelFixture: fixturePanel } = require("./catalog_fixture.cjs");
 const assert = require("node:assert/strict");
+const {
+  parameterValues: fixtureValues,
+  parameterDefinition: fixtureDefinition,
+} = require("./catalog_fixture.cjs");
 const fs = require("node:fs");
 const path = require("node:path");
 const vm = require("node:vm");
@@ -39,10 +44,10 @@ const annotationModel = () => {
     x: (time) => left + ((time - start) / (finish - start)) * (right - left),
   };
 };
-const panel = Object.assign(Object.create(Panel.prototype), {
+const panel = Object.assign(fixturePanel(Panel), {
   state: {
     now: end,
-    configuration: { parameters: { sensor_timeout_seconds: 60 } },
+    configuration: { parameters: fixtureValues() },
     presence: {
       configured_source: "ha_presence",
       current: {
@@ -60,6 +65,10 @@ const panel = Object.assign(Object.create(Panel.prototype), {
       },
     },
     rule_inputs: { gang_heat_demand: true, temporary_door_heat: true },
+    configuration_model: {
+      presence: { source: "proxy", direct: false, observer: true },
+      regulation_causes: ["gang_heat", "provisional_door_heat", "cooling"],
+    },
   },
   historyRecords: () => [],
 });
@@ -68,21 +77,35 @@ assert.match(
   detail,
   /Indirekter Hinweis zurückgenommen; keine beobachtete Abwesenheit/,
 );
-assert.match(detail, /Präsenzsensor/);
 assert.match(detail, /Nicht verfügbar/);
 assert.match(detail, /Beobachtete Quelle · &lt;sensor&gt;/);
 assert.match(detail, /Temperatur und Feuchte/);
 assert.doesNotMatch(detail, /Proxy/);
 panel.state.configuration.bindings = { presence: "<sensor>" };
-panel.state.presence.effective_source = "ha_presence";
+panel.state.configuration_model.presence = {
+  source: "ha_presence",
+  direct: true,
+  observer: false,
+};
+panel.state.configuration_model.regulation_causes = [
+  "gang_heat",
+  "provisional_door_heat",
+  "cooling",
+];
 panel.state.presence.external["<sensor>"].reason = "unavailable";
+panel.state.presence.current = panel.state.presence.external["<sensor>"];
 const directDetail = panel.presenceDetails();
-assert.match(directDetail, /Führender Präsenzsensor · &lt;sensor&gt;/);
+assert.match(directDetail, /Präsenzsensor mit Türereignis/);
+assert.doesNotMatch(directDetail, /Beobachtete Quelle/);
+assert.match(
+  directDetail,
+  /Vorläufige Heizanforderung nach Türschluss[\s\S]*Aktiv/,
+);
 assert.match(directDetail, /Sensor nicht verfügbar/);
 assert.doesNotMatch(directDetail, /unavailable/);
 assert.doesNotMatch(detail, /Aktivierungsregeln sind offen|keine Wiedergabe/);
 assert.match(detail, /Heizanforderung im Saunagang[\s\S]*Aktiv/);
-assert.match(detail, /Temporäres Heizen nach Türschluss[\s\S]*Aktiv/);
+assert.match(detail, /Vorläufige Heizanforderung nach Türschluss[\s\S]*Aktiv/);
 
 const session = {
   ended_at: end,
@@ -148,7 +171,7 @@ console.log("presence and phase projection panel tests passed");
     "#history": { hidden: false },
     "#session": { innerHTML: "", value: "" },
   };
-  const refreshing = Object.assign(Object.create(Panel.prototype), panel, {
+  const refreshing = Object.assign(fixturePanel(Panel), panel, {
     isConnected: true,
     entry: "entry",
     generation: 0,
@@ -168,7 +191,7 @@ console.log("presence and phase projection panel tests passed");
       rendered = this.historyAnnotations(annotationModel(), this.shown.session, gangs);
     },
     api: async (request) => {
-      if (request === "/entry/state") return apiState;
+      if (request === "/entry/state?include_catalog=false") return apiState;
       if (request === "/entry/archive")
         return [{ session_id: "s", started_at: t, ended_at: end }];
       archiveCalls++;
@@ -231,7 +254,7 @@ console.log("presence and phase projection panel tests passed");
 });
 
 // The operational history separates observed occupancy, demand and real feedback.
-const operational = Object.assign(Object.create(Panel.prototype), {
+const operational = Object.assign(fixturePanel(Panel), {
   state: { now: end, configuration: { bindings: { presence: "binary_sensor.demo" } } },
   shown: {
     session: {
@@ -341,5 +364,8 @@ for (const [reason, label] of [
     operational.html.includes(`>${label}</td>`),
     `${reason} has its German label in the decision history`,
   );
-  assert.ok(!operational.html.includes(reason), `${reason} is not shown as an ID`);
+  assert.ok(
+    !operational.html.split('id="detail-records"')[0].includes(reason),
+    `${reason} is not shown as an ID outside explicit archive fields`,
+  );
 }

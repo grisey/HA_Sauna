@@ -8,31 +8,52 @@ from homeassistant.auth.permissions.const import POLICY_CONTROL, POLICY_READ
 from homeassistant.components.http import KEY_HASS, HomeAssistantView
 from homeassistant.helpers import entity_registry as er
 
-from .appearance import APPEARANCE_CATALOG
-from .archive import plain
+from .appearance import APPEARANCE_CATALOG, frontend_preferences
+from .archive import energy_interval_delta, plain
 from .const import DOMAIN
-from .core.defaults import section
+from .core.configuration_model import ConfigurationModel, temperature_control
+from .core.notification_recipients import ActorRef
+from .notification_options import CONF_NOTIFICATION_ASSIGNMENTS
 from .core.display import phase_timer, start_availability
 from .core.parameters import EDITABLE_DEFINITIONS, LIVE_TEMPERATURE_KEYS, ParameterError
+from .core.power import watts
+from .core.timeline import project_door_cycles
 from .environment import environment_snapshot
 from .log import LEVELS
+from .runtime import Configuration
 from .presentation import (
-    decision_message, fault_message, issues, parameter_error,
-    public_measurement, public_phase_projection, public_session, public_state,
+    decision_message,
+    fault_message,
+    issues,
+    parameter_error,
+    public_measurement,
+    public_phase_projection,
+    public_session,
+    public_state,
     resolve_cooling_token,
 )
 from .settings import (
     ConfigurationLocked,
+    StaleFieldStandardPreview,
+    async_apply_field_standard_action,
+    async_get_field_standards,
+    async_preview_field_standard_action,
     async_reset_parameters,
     async_set_appearance,
-    async_set_button_program,
     async_set_button_gesture,
+    async_set_button_program,
     async_set_control_mode,
     async_set_parameters,
     async_set_program,
     async_set_program_catalog,
     async_set_temperature_steps,
 )
+
+
+
+def request_actor(request):
+    """Carry only the authenticated request user into an effective command."""
+    return ActorRef(request["hass_user"].id, "ha_authenticated_request")
 
 
 def can_control(request, entry_id):
@@ -166,6 +187,19 @@ class StateView(HomeAssistantView):
             regulation_measurement = (
                 device.regulation_measurement(now) if device else None
             )
+            configuration_model = runtime.configuration_model
+            configuration = {
+                **{key: value for key, value in runtime.configuration.as_options().items()
+                   if key != CONF_NOTIFICATION_ASSIGNMENTS},
+                "parameters": runtime.configuration.parameters.as_dict(),
+            }
+            last_session = next(
+                (
+                    item for item in reversed(controller.completed_sessions)
+                    if item.timeline.gang_count
+                ),
+                None,
+            )
             result = plain(
                     {
                         "title": request.app[KEY_HASS].config_entries.async_get_entry(entry_id).title,
@@ -179,18 +213,18 @@ class StateView(HomeAssistantView):
                         "rule_inputs": controller.regulation_inputs,
                         "phase_projection": controller.phase_projection(now),
                         "session": session,
-                        "configuration": runtime.configuration.as_options(),
+                        "configuration": configuration,
+                        "configuration_model": configuration_model.as_dict(),
                         "button_session_gestures": runtime.available_button_session_gestures,
                         "measurement_ttl_seconds": runtime.configuration.parameters.values[
                             "sensor_timeout_seconds"
                         ],
-                        "appearance": runtime.configuration.appearance,
-                        "appearance_catalog": APPEARANCE_CATALOG,
-                        "frontend_defaults": section("frontend"),
-                        "last_session": next((
-                            item for item in reversed(controller.completed_sessions)
-                            if item.timeline.gang_count
-                        ), None),
+                        "appearance": configuration["appearance"],
+                        **({"appearance_catalog": APPEARANCE_CATALOG}
+                           if request.query.get("include_catalog", "true") != "false"
+                           else {}),
+                        "frontend_defaults": frontend_preferences(runtime.configuration.appearance),
+                        "last_session": last_session,
                         "archive_revision": runtime.archive.revision if runtime.archive else 0,
                         "parameters": [
                             {
@@ -199,10 +233,14 @@ class StateView(HomeAssistantView):
                                     d.key
                                 ),
                                 "live_editable": d.key in LIVE_TEMPERATURE_KEYS,
+                                "applicable": configuration_model.parameter_applicable(d),
                             }
                             for d in EDITABLE_DEFINITIONS
                         ],
                         "configuration_locked": session is not None,
+                        "control_mode_change_allowed": (
+                            controller.control_mode_change_allowed and not runtime.reconfiguring
+                        ),
                         "operation_enabled": bool(
                             session and session.operation_enabled
                         ),
@@ -218,6 +256,7 @@ class StateView(HomeAssistantView):
                         "thermostat_restart_temperature": controller.thermostat_restart_temperature,
                         "target_temperature": controller.target_temperature,
                         "next_gang_temperature": controller.next_gang_temperature,
+                        "temperature_control": temperature_control(controller).as_dict(),
                         "phase_timer": phase_timer(controller, now),
                         "start_availability": start_availability(
                             controller,
@@ -237,12 +276,7 @@ class StateView(HomeAssistantView):
                             regulation_measurement.position.value
                             if regulation_measurement else None
                         ),
-                        "measurement_positions": [
-                            position
-                            for position in ("upper", "lower")
-                            if f"{position}_temperature"
-                            in runtime.configuration.bindings.values
-                        ],
+                        "measurement_positions": configuration_model.measurement_positions,
                         "gang_count": session.timeline.gang_count if session else 0,
                         "gang_confirmation": active.confirmation if active else None,
                         "gang_duration_seconds": active.elapsed_seconds(now)
@@ -275,6 +309,28 @@ class StateView(HomeAssistantView):
                         },
                     }
                 )
+            for key, owner, session_id_key, after_key in (
+                ("session", session, "energy_session_id", "energy_after"),
+                (
+                    "last_session", last_session,
+                    "last_energy_session_id", "last_energy_after",
+                ),
+            ):
+                serialized_session = result.get(key)
+                if serialized_session is not None:
+                    serialized_session["door_cycles"] = plain(
+                        project_door_cycles(serialized_session.get("timeline", {}))
+                    )
+                    if request.query.get("include_energy_intervals", "true") == "false":
+                        continue
+                    energy_delta = energy_interval_delta(
+                        owner.energy,
+                        after=request.query.get(after_key)
+                        if request.query.get(session_id_key) == owner.session_id
+                        else None,
+                    )
+                    if energy_delta is not None:
+                        serialized_session["energy"]["interval_delta"] = energy_delta
             if not request["hass_user"].is_admin:
                 result = public_state(result)
             return self.json(result)
@@ -296,7 +352,10 @@ class ControlView(HomeAssistantView):
         ):
             raise web.HTTPBadRequest(text="enabled muss wahr oder falsch sein")
         try:
-            await runtime.set_operation(body["enabled"])
+            await runtime.set_operation(
+                body["enabled"],
+                actor=request_actor(request),
+            )
         except ValueError as error:
             return self.json({"error": str(error)}, status_code=409)
         return self.json({"success": True})
@@ -327,7 +386,8 @@ class FinishPhaseView(HomeAssistantView):
             )
         try:
             await runtime.finish_phase(
-                body["purpose"], resolve_cooling_token(runtime.session, body["token"])
+                body["purpose"], resolve_cooling_token(runtime.session, body["token"]),
+                actor=request_actor(request),
             )
         except ValueError as error:
             return self.json({"error": str(error)}, status_code=409)
@@ -354,7 +414,7 @@ class FinishSessionView(HomeAssistantView):
                 status_code=400,
             )
         try:
-            await runtime.finish_session_gap(body["token"])
+            await runtime.finish_session_gap(body["token"], actor=request_actor(request))
         except ValueError as error:
             return self.json({"error": str(error)}, status_code=409)
         return self.json({"success": True})
@@ -385,7 +445,7 @@ class ParametersView(HomeAssistantView):
                 hass,
                 hass.config_entries.async_get_entry(entry_id),
                 body,
-                partial=self.partial,
+                partial=self.partial, actor=request_actor(request),
             )
         except ParameterError as error:
             return self.json({"error": parameter_error(error)}, status_code=400)
@@ -396,6 +456,7 @@ class ParametersView(HomeAssistantView):
             "success": True, "parameters": parameters,
             "target_temperature": runtime.controller.target_temperature,
             "next_gang_temperature": runtime.controller.next_gang_temperature,
+            "temperature_control": temperature_control(runtime.controller).as_dict(),
             "program_mode": runtime.configuration.program_mode,
             "selected_program_id": runtime.configuration.selected_program_id,
             "temperature_steps": runtime.configuration.temperature_steps,
@@ -415,7 +476,7 @@ class ParametersView(HomeAssistantView):
                 hass,
                 hass.config_entries.async_get_entry(entry_id),
                 body,
-                partial=True,
+                partial=True, actor=request_actor(request),
             )
         except ParameterError as error:
             return self.json({"error": parameter_error(error)}, status_code=400)
@@ -485,6 +546,85 @@ class AppearanceView(HomeAssistantView):
         return self.json({"success": True, "appearance": appearance})
 
 
+def field_standard_action_arguments(body):
+    """Check transport keys and types; settings owns action and field semantics."""
+    if (
+        not isinstance(body, dict)
+        or "action" not in body
+        or set(body) - {"action", "field", "group", "all", "value", "confirmation"}
+    ):
+        raise ValueError("Ungültige Standardaktion")
+    for key in ("action", "field", "group", "confirmation"):
+        if key in body and (not isinstance(body[key], str) or not body[key]):
+            raise ValueError(f"{key} muss eine nicht leere Zeichenfolge sein")
+    if "all" in body and body["all"] is not True:
+        raise ValueError("all muss wahr sein")
+    return {
+        key: value
+        for key, value in body.items()
+        if key not in {"action", "confirmation"}
+    }
+
+
+class StandardsView(HomeAssistantView):
+    """Expose the existing settings owner's inventory and confirmed actions."""
+
+    url = "/api/ha_sauna/{entry_id}/standards"
+    name = "api:ha_sauna:standards"
+    requires_auth = True
+
+    async def get(self, request, entry_id):
+        if not request["hass_user"].is_admin:
+            raise web.HTTPForbidden()
+        hass = request.app[KEY_HASS]
+        runtime = runtime_for(hass, entry_id)
+        entry = hass.config_entries.async_get_entry(entry_id)
+        try:
+            result = await async_get_field_standards(entry)
+        except ConfigurationLocked as error:
+            return self.json({"error": str(error)}, status_code=409)
+        except RuntimeError as error:
+            if runtime.closed or getattr(entry, "runtime_data", None) is not runtime:
+                raise web.HTTPServiceUnavailable() from error
+            raise
+        return self.json(result)
+
+    async def post(self, request, entry_id):
+        if not request["hass_user"].is_admin:
+            raise web.HTTPForbidden()
+        hass = request.app[KEY_HASS]
+        runtime = runtime_for(hass, entry_id)
+        entry = hass.config_entries.async_get_entry(entry_id)
+        body = await json_body(request)
+        try:
+            arguments = field_standard_action_arguments(body)
+            if "confirmation" in body:
+                result = await async_apply_field_standard_action(
+                    hass, entry, body["action"],
+                    confirmation=body["confirmation"],
+                    actor=request_actor(request), **arguments,
+                )
+            else:
+                result = await async_preview_field_standard_action(
+                    entry, body["action"], **arguments
+                )
+        except ParameterError as error:
+            return self.json({"error": parameter_error(error)}, status_code=400)
+        except StaleFieldStandardPreview as error:
+            return self.json(
+                {"error": str(error), "preview": error.preview}, status_code=409
+            )
+        except ConfigurationLocked as error:
+            return self.json({"error": str(error)}, status_code=409)
+        except ValueError as error:
+            return self.json({"error": str(error)}, status_code=400)
+        except RuntimeError as error:
+            if runtime.closed or getattr(entry, "runtime_data", None) is not runtime:
+                raise web.HTTPServiceUnavailable() from error
+            raise
+        return self.json(result)
+
+
 class ProgramView(HomeAssistantView):
     """Select a stored profile or an explicit start/end/distribution program."""
 
@@ -502,11 +642,11 @@ class ProgramView(HomeAssistantView):
             if isinstance(body, dict) and set(body) == {"profile"}:
                 if not isinstance(body["profile"], str):
                     raise ValueError("Ungültiges Temperaturprogramm")
-                parameters = await async_set_program(hass, entry, body["profile"])
+                parameters = await async_set_program(hass, entry, body["profile"], actor=request_actor(request))
             elif isinstance(body, dict) and set(body) == {"target_temperature_c"}:
                 parameters = await async_set_parameters(
                     hass, entry, body, partial=True, explicit_target=True,
-                    program_mode="constant", new_program=True,
+                    program_mode="constant", new_program=True, actor=request_actor(request),
                 )
             elif isinstance(body, dict) and set(body) == {
                 "target_temperature_c",
@@ -531,14 +671,14 @@ class ProgramView(HomeAssistantView):
                     hass,
                     entry,
                     body,
-                    partial=True,
+                    partial=True, actor=request_actor(request),
                     explicit_target=False,
                     program_mode="progressive",
                     new_program=True,
                 )
             elif isinstance(body, dict) and set(body) == {"temperature_steps"}:
                 parameters = await async_set_temperature_steps(
-                    hass, entry, body["temperature_steps"]
+                    hass, entry, body["temperature_steps"], actor=request_actor(request)
                 )
             else:
                 raise ParameterError("base", "invalid_parameters")
@@ -651,7 +791,7 @@ class ControlModeView(HomeAssistantView):
         if not isinstance(body, dict) or set(body) != {"mode"}:
             raise web.HTTPBadRequest(text="Betriebsmodus fehlt oder ist ungültig")
         try:
-            configuration = await async_set_control_mode(hass, entry, body["mode"])
+            configuration = await async_set_control_mode(hass, entry, body["mode"], actor=request_actor(request))
         except ValueError as error:
             return self.json({"error": str(error)}, status_code=409)
         return self.json(
@@ -676,7 +816,7 @@ class LightView(HomeAssistantView):
             raise web.HTTPBadRequest(text="Lichtwert fehlt oder ist ungültig")
         runtime = runtime_for(request.app[KEY_HASS], entry_id)
         try:
-            await runtime.set_light_override(value)
+            await runtime.set_light_override(value, actor=request_actor(request))
         except ValueError as error:
             return self.json({"error": str(error)}, status_code=400)
         return self.json({"success": True, "manual_controls": manual_controls(runtime)})
@@ -701,7 +841,7 @@ class HeaterView(HomeAssistantView):
                 text="Heizwert muss wahr, falsch oder automatisch sein"
             )
         try:
-            await runtime.set_heater_override(body["value"])
+            await runtime.set_heater_override(body["value"], actor=request_actor(request))
         except ValueError as error:
             return self.json({"error": str(error)}, status_code=409)
         return self.json({"success": True, "manual_controls": manual_controls(runtime)})
@@ -755,16 +895,23 @@ class ArchiveView(HomeAssistantView):
         if projection not in (None, "history"):
             raise web.HTTPBadRequest(text="Unbekannte Archivansicht")
         read_options = {"after": after}
+        if "energy_after" in request.query:
+            read_options["energy_after"] = request.query["energy_after"]
         clock = getattr(runtime, "_clock", None)
         if callable(clock):
             read_options["now"] = clock()
         if projection == "history":
             read_options.update(
-                limit=5000,
+                humidity_display=True,
+                limit=runtime.configuration.parameters.values["archive_history_page_records"],
                 kinds=(
                     "measurement", "source_snapshot", "phase", "diagnostic",
                     "detector_trace", "detection", "presence", "presence_source",
                     "decision", "command", "light_command", "consumer_event",
+                    "source_state", "heating_observation", "illuminance", "notice",
+                    "manual_light", "manual_heater", "heater_override_rejected",
+                    "manual_phase_end", "manual_session_light_end", "interruption",
+                    "session",
                 ) if request["hass_user"].is_admin else (
                     "measurement", "source_snapshot", "phase",
                 ),
@@ -774,16 +921,75 @@ class ArchiveView(HomeAssistantView):
             raise web.HTTPNotFound()
         if session_id:
             session = result["session"]
+            session["door_cycles"] = plain(
+                project_door_cycles(session.get("timeline", {}))
+            )
             session["measurement_ttl_seconds"] = historical_measurement_ttl(
                 session, runtime.configuration.parameters.values["sensor_timeout_seconds"]
             )
             if request["hass_user"].is_admin:
+                try:
+                    stored_configuration = Configuration.from_options(
+                        session.get("configuration"), historical=True
+                    )
+                    session["configuration_model"] = (
+                        ConfigurationModel.from_configuration(
+                            stored_configuration
+                        ).as_dict()
+                    )
+                except (TypeError, ValueError, KeyError):
+                    # Old archives may not carry a complete configuration.
+                    # Their recorded observations remain available; current
+                    # instance settings are not historical evidence.
+                    session["configuration_model"] = None
                 for record in result["records"]:
                     if record["kind"] == "diagnostic":
                         record["payload"]["messages"] = [
                             fault_message(k, v)
                             for k, v in record["payload"].get("faults", {}).items()
                         ]
+                    elif projection == "history" and record["kind"] == "source_state":
+                        payload = record["payload"]
+                        if payload.get("role") == "heater_power":
+                            attributes = payload.get("attributes", {})
+                            record["display"] = {
+                                "power_w": watts(
+                                    payload.get("state"),
+                                    attributes.get("unit_of_measurement"),
+                                )
+                                if attributes.get("device_class") == "power"
+                                else None
+                            }
+                    elif projection == "history" and record["kind"] == "session":
+                        # State history keeps the recorded values without
+                        # transferring a growing copy of the entire event
+                        # timeline for every snapshot. The unprojected archive
+                        # and authenticated export retain the full originals.
+                        record["projection"] = "session_state"
+                        record["payload"] = {
+                            key: value
+                            for key, value in record["payload"].items()
+                            if key.startswith("temperature_")
+                            or key in {
+                                "operation_enabled",
+                                "operation_off_at",
+                                "ended_at",
+                                "thermostat",
+                                "energy",
+                                "ready_at",
+                                "active_gang_temperature_c",
+                                "next_gang_temperature_c",
+                                "next_gang_temperature_blocked_by",
+                                "configuration",
+                            }
+                        }
+                        energy = record["payload"].get("energy")
+                        if isinstance(energy, dict):
+                            record["payload"]["energy"] = {
+                                key: value
+                                for key, value in energy.items()
+                                if key != "interval_delta"
+                            }
             else:
                 result["session"] = public_session(session)
                 result["phase_projection"] = public_phase_projection(result["phase_projection"])
@@ -840,7 +1046,7 @@ class ExportView(HomeAssistantView):
                 runtime.archive.save_session(
                     runtime.session,
                     runtime._clock(),
-                    runtime.configuration.as_options(),
+                    runtime.configuration.as_snapshot(),
                 )
         path = await runtime.archive.export()
         response = web.StreamResponse(
@@ -854,7 +1060,9 @@ class ExportView(HomeAssistantView):
             await response.prepare(request)
             handle = await asyncio.to_thread(path.open, "rb")
             try:
-                while chunk := await asyncio.to_thread(handle.read, 65536):
+                while chunk := await asyncio.to_thread(
+                    handle.read, runtime.configuration.parameters.values["archive_export_chunk_bytes"]
+                ):
                     await response.write(chunk)
             finally:
                 await asyncio.to_thread(handle.close)
@@ -880,6 +1088,7 @@ def register(hass):
     hass.http.register_view(TemperatureView)
     hass.http.register_view(ResetParametersView)
     hass.http.register_view(AppearanceView)
+    hass.http.register_view(StandardsView)
     hass.http.register_view(ProgramView)
     hass.http.register_view(ProgramsView)
     hass.http.register_view(ButtonProgramView)

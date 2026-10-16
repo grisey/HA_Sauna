@@ -1,0 +1,640 @@
+{
+  "schema_version": 1,
+  "policy": "Scenario evaluations own complete-session behavioural contracts. Other tests retain only distinct transport, validation, numerical or presentation contracts.",
+  "scenario_contracts": [
+    {
+      "contract": "A recorded exit with through-ventilation can finish when continuing absence is reported after the door closes.",
+      "scenario": "R02",
+      "expectation_ids": [
+        "A05-delayed-absence-ends"
+      ],
+      "supersedes": [
+        {
+          "file": "tests/test_direct_presence_control.py",
+          "class": "DirectPresenceControlTests",
+          "method": "test_absence_after_closed_door_cycle_cannot_reuse_that_exit",
+          "reason": "The old assertion required the confirmed exit to remain active solely because absence arrived after door closure. It contradicts the user-confirmed real exit."
+        },
+        {
+          "file": "tests/test_direct_presence_control.py",
+          "class": "DirectPresenceControlTests",
+          "method": "test_absence_before_delayed_exit_does_not_use_old_door_cycle",
+          "reason": "The old assertion required the confirmed exit to remain active solely because absence arrived after door closure. It contradicts the user-confirmed real exit."
+        },
+        {
+          "file": "tests/test_direct_presence_control.py",
+          "class": "DirectPresenceRuntimeTests",
+          "method": "test_absence_before_delayed_exit_requests_cooling_only_on_real_ventilation",
+          "reason": "The old assertion required the confirmed exit to remain active solely because absence arrived after door closure. It contradicts the user-confirmed real exit."
+        },
+        {
+          "file": "tests/test_timeline.py",
+          "class": "TimelineTests",
+          "method": "test_closed_direct_exit_rejects_absence_from_after_its_closure",
+          "reason": "Absence after closure does not invalidate a proven exit. R02 binds the user-confirmed counterexample."
+        }
+      ]
+    },
+    {
+      "contract": "The evenly distributed programme holds its final target for additional complete stays.",
+      "scenario": "G01",
+      "expectation_ids": [
+        "target_1",
+        "target_2",
+        "target_3",
+        "target_4",
+        "target_5",
+        "completed_direct_session"
+      ],
+      "supersedes": [
+        {
+          "file": "tests/test_temperature_program.py",
+          "class": "TemperatureProgramTests",
+          "method": "test_end_target_is_held_after_the_last_distribution_point",
+          "reason": "The full-session oracle now owns this behaviour with bound environmental inputs; the isolated duplicate is removed."
+        },
+        {
+          "file": "tests/test_cooling.py",
+          "class": "CoolingTests",
+          "method": "test_temperature_program_distributes_then_holds_for_unlimited_gangs",
+          "retained_boundary_method": "test_program_cursor_follows_recording_and_exit_event_identity",
+          "reason": "G01 owns the full programme progression and final-temperature hold. Only duplicate-exit idempotence and the programme cursor bound to recording identity remain as separate state-integrity contracts."
+        }
+      ]
+    },
+    {
+      "contract": "Individual programme steps retain their final temperature without limiting the number of stays.",
+      "scenario": "G03",
+      "expectation_ids": [
+        "target_4",
+        "target_5",
+        "completed_direct_session"
+      ],
+      "supersedes": [
+        {
+          "file": "tests/test_temperature_program.py",
+          "class": "TemperatureProgramTests",
+          "method": "test_explicit_steps_hold_the_last_value_without_limiting_gangs",
+          "reason": "The full-session oracle now owns this behaviour with bound environmental inputs; the isolated duplicate is removed."
+        },
+        {
+          "file": "tests/test_live_settings.py",
+          "class": "LiveTemperatureTests",
+          "method": "test_manual_steps_follow_actual_gangs_and_hold_the_last_step",
+          "reason": "G03 already evaluates each actual stage and retention of the final stage through a complete session."
+        }
+      ]
+    },
+    {
+      "contract": "Constant operation keeps the central target across a complete session.",
+      "scenario": "G04",
+      "expectation_ids": [
+        "target_1",
+        "target_2",
+        "target_3"
+      ],
+      "supersedes": [
+        {
+          "file": "tests/test_temperature_program.py",
+          "class": "TemperatureProgramTests",
+          "method": "test_constant_program_holds_its_temperature",
+          "reason": "The full-session oracle now owns this behaviour with bound environmental inputs; the isolated duplicate is removed."
+        },
+        {
+          "file": "tests/test_live_settings.py",
+          "class": "LiveTemperatureTests",
+          "method": "test_explicit_constant_selection_stays_fixed_for_all_later_gangs",
+          "reason": "I01 evaluates the explicit transition to Constant; G04 owns subsequent constant targets across complete stays."
+        }
+      ],
+      "additional_evaluations": [
+        {
+          "scenario": "I01",
+          "expectation_ids": [
+            "constant_uses_standard"
+          ]
+        }
+      ]
+    },
+    {
+      "contract": "Manual heater enable starts one recording; thermostat cycles and restarts before the shared OFF deadline do not split it. The recording ends at that deadline.",
+      "scenario": "G05",
+      "expectation_ids": [
+        "started",
+        "manual_hysteresis_first_on",
+        "manual_hysteresis_off",
+        "manual_hysteresis_on_again",
+        "manual_stop_in_heating_pause",
+        "finished",
+        "completed_direct_session"
+      ],
+      "supersedes": [
+        {
+          "file": "tests/test_button_runtime.py",
+          "class": "ButtonRuntimeTests",
+          "method": "test_manual_heater_command_begins_recording",
+          "reason": "The full-session oracle now owns this behaviour with bound environmental inputs; the isolated duplicate is removed."
+        },
+        {
+          "file": "tests/test_manual_mode.py",
+          "class": "ManualModeTests",
+          "method": "test_manual_hysteresis_switches_without_minimum_heat_or_pause",
+          "reason": "The full-session oracle now owns this behaviour with bound environmental inputs; the isolated duplicate is removed."
+        },
+        {
+          "file": "tests/integration/test_device_path.py",
+          "class": "DevicePathTests",
+          "method": "test_manual_heater_choices_bound_recording_and_preserve_operation_controls",
+          "retained_boundary_method": "test_manual_heater_services_leave_the_automatic_operation_entity_off",
+          "reason": "Recording identity and transitions belong to G05; actual heater service delivery and the distinct automatic-operation HA entity remain adapter contracts."
+        },
+        {
+          "file": "tests/integration/test_device_path.py",
+          "class": "DevicePathTests",
+          "method": "test_manual_climate_cycles_share_recording_and_empty_recording_is_discarded",
+          "retained_boundary_method": "test_manual_climate_state_and_archive_export_follow_shared_runtime",
+          "reason": "Cycle and recording identity belong to G05/G00-manual; climate state/hvac_action projection, actual services, light ownership and archive serialization remain integration contracts."
+        }
+      ],
+      "additional_evaluations": [
+        {
+          "scenario": "G00-manual",
+          "expectation_ids": [
+            "not_retained"
+          ]
+        }
+      ]
+    },
+    {
+      "contract": "Both configured presence sources recognize manual stays without creating automatic heater or cooling demands.",
+      "scenario": "G05",
+      "expectation_ids": [
+        "stay_1_started",
+        "stay_1_ended",
+        "manual_1_no_additional_control",
+        "manual_2_no_additional_control",
+        "manual_3_no_additional_control",
+        "completed_direct_session",
+        "completed_proxy_session"
+      ],
+      "supersedes": [
+        {
+          "file": "tests/test_manual_mode.py",
+          "class": "ManualModeTests",
+          "method": "test_recognition_observes_entry_gang_and_exit_without_controlling_outputs",
+          "reason": "The full-session oracle now owns this behaviour with bound environmental inputs; the isolated duplicate is removed."
+        },
+        {
+          "file": "tests/test_local_preview.py",
+          "class": "LocalPreviewTests",
+          "method": "test_user_can_control_manual_heater_through_real_controller",
+          "reason": "Heating behaviour moves to G05; non-admin transport and display of manual selection remain.",
+          "retained_boundary_method": "test_user_heater_route_projects_the_manual_selection"
+        },
+        {
+          "file": "tests/integration/test_device_path.py",
+          "class": "DevicePathTests",
+          "method": "test_manual_presence_and_ventilation_record_gang_without_switching_heater_or_light",
+          "retained_boundary_method": "test_manual_recognition_emits_no_actor_services_and_archives_operator_inputs",
+          "reason": "Gang counting and absence of automatic demands belong to G05; this keeps concrete service silence and persisted operator-input records through HA."
+        }
+      ],
+      "additional_evaluations": [
+        {
+          "scenario": "R03",
+          "expectation_ids": [
+            "M02-detection-does-not-control",
+            "M04-no-automatic-light-run"
+          ]
+        }
+      ]
+    },
+    {
+      "contract": "The configured native gesture selects its configured programme and session action while retaining manual preheating in the same recording; short presses retain the programme and temperature.",
+      "scenario": "I03",
+      "expectation_ids": [
+        "short_starts_manual",
+        "button_selection_wins",
+        "short_auto_override",
+        "second_short_returns",
+        "gesture_ended"
+      ],
+      "supersedes": [
+        {
+          "file": "tests/test_button_runtime.py",
+          "class": "ButtonRuntimeTests",
+          "method": "test_selected_multi_click_starts_automatic_and_finishes_without_hold",
+          "reason": "The full-session oracle now owns this behaviour with bound environmental inputs; the isolated duplicate is removed."
+        },
+        {
+          "file": "tests/test_button_runtime.py",
+          "class": "ButtonRuntimeTests",
+          "method": "test_constant_button_start_uses_standard_from_automatic_or_manual",
+          "reason": "The full-session oracle now owns this behaviour with bound environmental inputs; the isolated duplicate is removed."
+        },
+        {
+          "file": "tests/test_button_runtime.py",
+          "class": "ButtonRuntimeTests",
+          "method": "test_button_start_uses_the_selected_named_program_from_either_mode",
+          "reason": "The full-session oracle now owns this behaviour with bound environmental inputs; the isolated duplicate is removed."
+        },
+        {
+          "file": "tests/test_button_runtime.py",
+          "class": "ButtonRuntimeTests",
+          "method": "test_short_press_preserves_active_session_setpoint_and_program",
+          "reason": "The full-session oracle now owns this behaviour with bound environmental inputs; the isolated duplicate is removed."
+        },
+        {
+          "file": "tests/test_local_preview.py",
+          "class": "LocalPreviewTests",
+          "method": "test_preview_button_short_bounds_manual_recording",
+          "reason": "The full-session oracle now owns this behaviour with bound environmental inputs; the isolated duplicate is removed."
+        },
+        {
+          "file": "tests/integration/test_device_path.py",
+          "class": "DevicePathTests",
+          "method": "test_native_named_button_program_starts_from_manual_and_short_preserves_it",
+          "reason": "Programme choice and short-press semantics move to I03. Native and binary delivery, actor commands, edges and feedback remain in the dedicated adapter tests."
+        },
+        {
+          "file": "tests/integration/test_device_path.py",
+          "class": "DevicePathTests",
+          "method": "test_binary_named_button_program_starts_from_manual_and_short_preserves_it",
+          "reason": "Programme choice and short-press semantics move to I03. Native and binary delivery, actor commands, edges and feedback remain in the dedicated adapter tests."
+        },
+        {
+          "file": "tests/integration/test_device_path.py",
+          "class": "DevicePathTests",
+          "method": "test_native_constant_button_start_uses_central_standard_and_short_preserves_it",
+          "reason": "Programme choice and short-press semantics move to I03. Native and binary delivery, actor commands, edges and feedback remain in the dedicated adapter tests."
+        },
+        {
+          "file": "tests/integration/test_device_path.py",
+          "class": "DevicePathTests",
+          "method": "test_binary_constant_button_start_uses_central_standard_and_short_preserves_it",
+          "reason": "Programme choice and short-press semantics move to I03. Native and binary delivery, actor commands, edges and feedback remain in the dedicated adapter tests."
+        }
+      ],
+      "additional_evaluations": [
+        {
+          "scenario": "G05",
+          "expectation_ids": [
+            "started",
+            "finished"
+          ]
+        }
+      ]
+    },
+    {
+      "contract": "A heater override cannot bypass active cooling; a directly observed returning stay ends cooling immediately.",
+      "scenario": "I02",
+      "expectation_ids": [
+        "cooling_rejects_manual_on",
+        "fourth_entry_cancels_cooling",
+        "stay_4_ended"
+      ],
+      "supersedes": [
+        {
+          "file": "tests/test_button_runtime.py",
+          "class": "ButtonRuntimeTests",
+          "method": "test_button_cannot_pause_or_reenter_active_after_run",
+          "reason": "The full-session oracle now owns this behaviour with bound environmental inputs; the isolated duplicate is removed."
+        },
+        {
+          "file": "tests/test_gang_phase_rules.py",
+          "class": "GangPhaseRulesTests",
+          "method": "test_return_through_open_door_ends_cooling_and_can_complete_next_gang",
+          "reason": "Return and cooling behaviour move to I02; exact close-event provenance and interruption timestamp remain.",
+          "retained_boundary_method": "test_return_close_anchors_to_the_existing_unclosed_exit_episode"
+        }
+      ]
+    },
+    {
+      "contract": "An already present occupant starts at the minimum; falling below it cannot prevent the later exit of that gang.",
+      "scenario": "I03",
+      "expectation_ids": [
+        "cold_entry_waits",
+        "minimum_crossing_starts_gang"
+      ],
+      "supersedes": [
+        {
+          "file": "tests/test_gang_phase_rules.py",
+          "class": "GangPhaseRulesTests",
+          "method": "test_present_occupant_starts_at_minimum_without_another_door_cycle",
+          "reason": "The full-session oracle now owns this behaviour with bound environmental inputs; the isolated duplicate is removed."
+        },
+        {
+          "file": "tests/test_button_runtime.py",
+          "class": "ButtonRuntimeTests",
+          "method": "test_short_manual_choices_bound_recordings",
+          "reason": "Recording semantics move to I03/G05; only the configuration persistence callback contract remains here.",
+          "retained_boundary_method": "test_short_mode_choice_calls_configuration_persistence"
+        },
+        {
+          "file": "tests/test_button_runtime.py",
+          "class": "ButtonRuntimeTests",
+          "method": "test_long_manual_start_switches_to_automatic_and_holds_acknowledgement",
+          "reason": "Mode and recording transitions move to I03; binary release suppression and stale native suffix handling remain an input-protocol contract.",
+          "retained_boundary_method": "test_binary_hold_ignores_native_suffix_before_release"
+        },
+        {
+          "file": "tests/test_local_preview.py",
+          "class": "LocalPreviewTests",
+          "method": "test_native_multiple_press_starts_automatic_from_manual_recording",
+          "reason": "Session gesture effects move to I03; the preview setting route and validation remain.",
+          "retained_boundary_method": "test_preview_gesture_selection_uses_settings_validation"
+        }
+      ],
+      "additional_evaluations": [
+        {
+          "scenario": "I04",
+          "expectation_ids": [
+            "exit_below_minimum"
+          ]
+        }
+      ]
+    },
+    {
+      "contract": "Real heating cycles do not invent a cooling phase or an independent heat budget.",
+      "scenario": "G04",
+      "expectation_ids": [
+        "automatic_upper_threshold_off",
+        "automatic_lower_threshold_reheats"
+      ],
+      "supersedes": [
+        {
+          "file": "tests/test_button_runtime.py",
+          "class": "ButtonRuntimeTests",
+          "method": "test_long_heat_has_no_independent_cooling_and_button_uses_feedback",
+          "reason": "The old fixture advanced 90 minutes without measurements and then asserted normal heating. Complete curves now supply valid inputs throughout the interval; override behaviour is evaluated separately in I03."
+        }
+      ],
+      "additional_evaluations": [
+        {
+          "scenario": "I03",
+          "expectation_ids": [
+            "short_auto_override",
+            "second_short_returns"
+          ]
+        }
+      ]
+    },
+    {
+      "contract": "An explicit cooling end returns to normal regulation without creating another gang or recording.",
+      "scenario": "I02",
+      "expectation_ids": [
+        "explicit_cooling_end",
+        "stay_3_started",
+        "stay_3_ended"
+      ],
+      "supersedes": [
+        {
+          "file": "tests/test_manual_phases.py",
+          "class": "ManualPhaseTests",
+          "method": "test_early_oven_cooling_returns_to_regulation_without_extra_cycle",
+          "retained_boundary_method": "test_manual_phase_end_books_actual_time_and_rejects_token_reuse",
+          "reason": "Cooling behaviour moves to I02. Actual completion timestamp and token replay rejection remain distinct boundary checks."
+        },
+        {
+          "file": "tests/test_manual_phases.py",
+          "class": "ManualPhaseTests",
+          "method": "test_after_run_without_cooling_returns_to_regulation_and_preserves_session",
+          "retained_boundary_method": "test_manual_phase_end_preserves_energy_record_identity",
+          "reason": "Cooling behaviour moves to I02. The persistent energy object and session identity remain a data-integrity contract."
+        }
+      ]
+    },
+    {
+      "contract": "A measured proxy stay is confirmed, ends on through-ventilation, cools, and returns to normal heating.",
+      "scenario": "G04-proxy",
+      "expectation_ids": [
+        "stay_1_confirmed",
+        "stay_1_gang_heat",
+        "stay_1_cooling",
+        "stay_1_cooling_over",
+        "completed_proxy_session"
+      ],
+      "supersedes": [
+        {
+          "file": "tests/integration/test_device_path.py",
+          "class": "DevicePathTests",
+          "method": "test_full_measured_gang_and_cooling_chain_through_ha",
+          "reason": "The old test invented its own 451-second environmental curve and copied the cooling equation. G04 owns the full physical progression with bound measured shapes. Exact HA input delivery and persisted raw values remain in TransportLifecycleTests.test_continuous_inputs_with_slow_light_failures_do_not_queue_before_off; service/error ownership remains in DevicePathTests."
+        },
+        {
+          "file": "tests/test_detector.py",
+          "class": "DetectorTests",
+          "method": "test_synthetic_episode_person_infusion_and_ventilation",
+          "reason": "The former full synthetic episode repeats the measured whole-session proxy chain. Distinct weak/strong source, invalid-input and timing-boundary contracts stay in the detector suite."
+        }
+      ]
+    },
+    {
+      "contract": "Readiness follows a reached target, persists through ordinary thermostat drops, and returns to heating when the effective target is raised.",
+      "scenario": "I01",
+      "expectation_ids": [
+        "initial_ready",
+        "raised_target_reheats",
+        "raised_target_ready"
+      ],
+      "additional_evaluations": [
+        {
+          "scenario": "G04",
+          "expectation_ids": [
+            "automatic_upper_threshold_off",
+            "automatic_lower_threshold_reheats"
+          ]
+        }
+      ],
+      "supersedes": [
+        {
+          "file": "tests/test_cooling.py",
+          "class": "CoolingTests",
+          "method": "test_readiness_latches_at_setpoint_and_survives_a_temperature_drop",
+          "retained_boundary_method": "test_readiness_comparison_includes_the_configured_target_boundary",
+          "reason": "I01 and G04 own readiness, heating-phase changes and ordinary temperature drops. Only the inclusive numeric comparison at the configured target remains as an algorithm boundary contract."
+        }
+      ]
+    },
+    {
+      "contract": "A one-gang target selected between stays preserves the selected programme and is consumed by that stay only.",
+      "scenario": "I01",
+      "expectation_ids": [
+        "one_next_target",
+        "stay_2_confirmed",
+        "original_program_resumes"
+      ],
+      "supersedes": [
+        {
+          "file": "tests/test_live_settings.py",
+          "class": "NextGangTemperatureTests",
+          "method": "test_choice_without_active_gang_returns_to_unchanged_program",
+          "reason": "The bound full-session evaluations own the temporary target and unchanged programme continuation; provisional retraction and replacement of a pending target remain distinct boundary tests."
+        }
+      ]
+    }
+  ],
+  "boundary_contracts": [
+    {
+      "files": [
+        "tests/test_button.py"
+      ],
+      "scope": "Decode one native or binary input gesture; native classifications do not own a second timer. This suite checks decoder actions, not whole-session heater or program behaviour."
+    },
+    {
+      "files": [
+        "tests/test_start_availability.py"
+      ],
+      "scope": "Map already established regulation state to display fields, timer and text; no second source of gang or cooling admission rules."
+    },
+    {
+      "files": [
+        "tests/integration/test_device_path.py",
+        "tests/integration/test_transport_lifecycle.py"
+      ],
+      "scope": "Actual Home Assistant input delivery, service payloads, actor feedback, cancellation, failures and archive write ownership. Session-domain assertions covered by a bound scenario are removed separately."
+    },
+    {
+      "files": [
+        "tests/test_direct_presence_control.py"
+      ],
+      "scope": "Remaining unpaired, stale, duplicated, unavailable or queued evidence checks protect input boundaries; real late-exit behaviour is owned by R02."
+    },
+    {
+      "files": [
+        "tests/test_button_runtime.py"
+      ],
+      "scope": "Configuration persistence, original input receipt times, duplicate suffixes, binary edge duration, invalid inputs and protection admission. Session programme and recording semantics are owned by I03/G05."
+    },
+    {
+      "files": [
+        "tests/test_local_preview.py"
+      ],
+      "scope": "Preview transport, role permissions, shared configuration projection, simulation clock and displayed actor feedback. Complete manual and gesture session effects are not reasserted here."
+    },
+    {
+      "files": [
+        "tests/test_timeline.py"
+      ],
+      "scope": "Immutable event provenance, event identity, ordering, evidence timestamps and rejected stale/unpaired input. A derived exit event cannot precede the latest required evidence."
+    },
+    {
+      "files": [
+        "tests/test_program_configuration.py"
+      ],
+      "scope": "Parameter validation, configuration persistence, archives, active-session setting locks, and metadata-constrained native gesture selection."
+    },
+    {
+      "files": [
+        "tests/test_temperature_program.py"
+      ],
+      "scope": "Numerical half-up rounding, range validation and single-distribution-point semantics. Full programme progression and terminal target retention belong to G01/G03/G04."
+    },
+    {
+      "files": [
+        "tests/test_manual_mode.py",
+        "tests/test_gang_phase_rules.py"
+      ],
+      "scope": "Invalid readings, unknown and stale evidence, technical protection and exact event provenance. Bound ordinary manual cycles, temperature-minimum crossing and cooling return are checked in session scenarios."
+    },
+    {
+      "files": [
+        "tests/test_manual_phases.py"
+      ],
+      "scope": "Phase-token validation, actual completion time, stale or repeated completion and preservation of session/energy record identity."
+    },
+    {
+      "files": [
+        "tests/test_cooling.py",
+        "tests/test_detection_context.py"
+      ],
+      "scope": "Inclusive numeric setpoint comparison, original evidence timestamps, duplicate-event idempotence and programme/cooling state bound to recording identity. Full programme progression, readiness changes and return behaviour belong to the bound session scenarios."
+    }
+  ],
+  "component_contracts": [
+    {
+      "contract": "All retired parameter keys are accepted for loading and discarded before runtime consumers see the parameter set.",
+      "owner": {
+        "file": "tests/test_retired_cooling_parameters.py",
+        "class": "RetiredParameterTests",
+        "method": "test_saved_retired_values_are_accepted_but_discarded"
+      },
+      "supersedes": [
+        {
+          "file": "tests/test_button_runtime.py",
+          "class": "ButtonRuntimeTests",
+          "method": "test_legacy_budget_does_not_create_cooling_during_a_gang",
+          "reason": "The generic legacy-key contract already covers these ignored inputs. The old method additionally pressed the outdoor button during an active gang, which is not a physically available user action."
+        },
+        {
+          "file": "tests/test_button_runtime.py",
+          "class": "ButtonRuntimeTests",
+          "method": "test_removed_hold_brightness_parameter_is_not_restored",
+          "reason": "The generic legacy-key contract already includes button_hold_brightness_percent."
+        },
+        {
+          "file": "tests/test_heating_admission.py",
+          "class": "HeatingAdmissionTests",
+          "method": "test_old_exact_minimum_remainder_allows_regular_restart",
+          "reason": "All legacy keys are already discarded before control. Repeating ordinary heating with selected obsolete keys adds no separate contract; G04 and the existing regulation boundary tests own heating behaviour."
+        },
+        {
+          "file": "tests/test_heating_admission.py",
+          "class": "HeatingAdmissionTests",
+          "method": "test_old_short_remainder_does_not_block_regular_restart",
+          "reason": "All legacy keys are already discarded before control. Repeating ordinary heating with selected obsolete keys adds no separate contract; G04 and the existing regulation boundary tests own heating behaviour."
+        },
+        {
+          "file": "tests/test_heating_admission.py",
+          "class": "HeatingAdmissionTests",
+          "method": "test_short_initial_budget_does_not_create_cooling_at_session_start",
+          "reason": "All legacy keys are already discarded before control. Repeating ordinary heating with selected obsolete keys adds no separate contract; G04 and the existing regulation boundary tests own heating behaviour."
+        },
+        {
+          "file": "tests/test_cooling_credit.py",
+          "class": "OvenCoolingTests",
+          "method": "test_old_budget_never_creates_a_cycle_or_blocks_a_new_gang",
+          "reason": "All legacy keys are already discarded before control. Repeating ordinary heating with selected obsolete keys adds no separate contract; G04 and the existing regulation boundary tests own heating behaviour."
+        },
+        {
+          "file": "tests/test_cooling_credit.py",
+          "class": "OvenCoolingTests",
+          "method": "test_old_temperature_threshold_has_no_pending_or_remaining_cooling",
+          "reason": "All legacy keys are already discarded before control. Repeating ordinary heating with selected obsolete keys adds no separate contract; G04 and the existing regulation boundary tests own heating behaviour."
+        }
+      ]
+    },
+    {
+      "contract": "A programme with one distribution point moves from its start to its separate final target after the first counted gang.",
+      "owner": {
+        "file": "tests/test_temperature_program.py",
+        "class": "TemperatureProgramTests",
+        "method": "test_single_gang_reaches_a_different_end_after_first_actual_gang"
+      },
+      "supersedes": [
+        {
+          "file": "tests/test_live_settings.py",
+          "class": "LiveTemperatureTests",
+          "method": "test_one_distribution_point_reaches_a_different_end_after_one_gang",
+          "reason": "The numerical single-point semantics already have one explicit owner; full progression and gang cursor identity are independently covered."
+        }
+      ]
+    },
+    {
+      "contract": "A temporary door demand is transferred only by actual heat feedback, regardless of contactor/report order; duplicate feedback does not extend the interval.",
+      "owner": {
+        "file": "tests/test_door_heating_feedback.py",
+        "class": "DoorHeatingFeedbackTests",
+        "method": "test_both_feedback_orders_and_repetition_do_not_stale_or_extend"
+      },
+      "supersedes": [
+        {
+          "file": "tests/test_phase_heat_cooling.py",
+          "class": "PhaseHeatCoolingTests",
+          "method": "test_door_close_holds_demand_until_actual_contactor_on",
+          "reason": "The owner already covers this exact contactor-first sequence as well as the reverse sequence and duplicate feedback."
+        }
+      ]
+    }
+  ]
+}

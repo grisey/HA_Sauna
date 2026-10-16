@@ -1,0 +1,33 @@
+{
+  "schema_version": 1,
+  "session_ids": ["R01", "R02", "R03", "R04"],
+  "sampling": {
+    "feature_step_s": 5.0,
+    "fit_windows_s": [20.0, 60.0, 180.0],
+    "minimum_points": 5,
+    "minimum_span_fraction": 0.65,
+    "maximum_gap_fraction": 0.5,
+    "maximum_pair_age_s": 15.0,
+    "maximum_pair_skew_s": 10.0,
+    "derived_decimal_places": 9
+  },
+  "selection": {
+    "extreme_rank": 0.98,
+    "form_rank": 0.75,
+    "flattening_ratio": 0.3,
+    "minimum_center_separation_s": 60.0,
+    "maximum_shape_cases_per_session": 48,
+    "control_interval_s": 600.0,
+    "case_before_s": 90.0,
+    "case_after_s": 90.0,
+    "maximum_evidence_items": 6
+  },
+  "comparison": {
+    "level_window_s": 60.0,
+    "minimum_shared_fraction": 0.8,
+    "base_similarity_quantile": 0.2,
+    "added_contrast_quantile": 0.8,
+    "maximum_pairs_per_extension": 6,
+    "maximum_contrasts_per_pair": 6
+  }
+}

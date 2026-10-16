@@ -8,7 +8,7 @@ import unittest
 from custom_components.ha_sauna.core.controller import Controller
 from custom_components.ha_sauna.core.models import Position, Quantity
 from custom_components.ha_sauna.core.parameters import Parameters
-from custom_components.ha_sauna.core.presence import ProxyPresenceSource, binary_presence
+from custom_components.ha_sauna.core.presence import binary_presence
 from custom_components.ha_sauna.core.timeline import Event, Kind
 from custom_components.ha_sauna.runtime import Configuration, SaunaRuntime
 from test_foundation import T0, bindings
@@ -44,7 +44,7 @@ class FollowupControlTests(unittest.TestCase):
         c.set_temperature(100, at(4))
         self.assertEqual(c.last_decision.reason, "minimum_heating")
         self.assertEqual(c.session.heating.intervals[-1].started_at, at(3))
-        c.advance(at(603))
+        c.advance(at(3 + c.parameters.seconds("minimum_heating_minutes")))
         self.assertFalse(c.last_decision.heat)
 
     def test_door_events_never_create_a_deadline_or_delayed_request(self):
@@ -58,7 +58,7 @@ class FollowupControlTests(unittest.TestCase):
         self.assertFalse(any(d.purpose == "door_request" for d in c.session.deadlines))
 
     def test_gang_heat_demand_starts_and_retraction_releases_it(self):
-        c = controller(90, confirmation_minutes=1, minimum_heating_minutes=0)
+        c = controller(90)
         c.process(ev(Kind.DOOR_OPEN, 1))
         c.process(ev(Kind.DOOR_CLOSE, 1))
         # Actual heat acknowledges door demand; retraction then leaves only
@@ -66,21 +66,22 @@ class FollowupControlTests(unittest.TestCase):
         c.report_heating(True, at(1))
         self.assertFalse(c.regulation_inputs.temporary_door_heat)
         person = ev(Kind.PERSON_STRONG, 2)
-        c.process_presence(ProxyPresenceSource.present(person), person)
+        c.process(person)
         self.assertTrue(c.last_decision.heat)
         self.assertEqual(c.last_decision.reason, "gang_heat_demand")
-        c.advance(at(61))
+        expiry = 1 + c.parameters.seconds("confirmation_minutes")
+        c.advance(at(expiry))
         self.assertFalse(c.last_decision.heat)
         self.assertEqual(c.last_decision.reason, "temperature_reached")
         c.protection.add("feedback_failure")
-        c.process(ev(Kind.DOOR_OPEN, 62))
-        c.process(ev(Kind.DOOR_CLOSE, 63))
-        protected_person = ev(Kind.PERSON_STRONG, 64)
-        c.process_presence(ProxyPresenceSource.present(protected_person), protected_person)
+        c.process(ev(Kind.DOOR_OPEN, expiry + 1))
+        c.process(ev(Kind.DOOR_CLOSE, expiry + 2))
+        protected_person = ev(Kind.PERSON_STRONG, expiry + 3)
+        c.process(protected_person)
         self.assertFalse(c.last_decision.heat)
 
     def test_manual_heating_hands_off_to_live_gang_demand(self):
-        c = controller(90, minimum_heating_minutes=0)
+        c = controller(90)
         c.set_heater_override(True, at(1))
         c.report_heating(True, at(2))
         c.process(ev(Kind.DOOR_OPEN, 3))
@@ -105,7 +106,7 @@ class FollowupControlTests(unittest.TestCase):
         self.assertEqual(c.last_decision.reason, "after_run")
 
     def test_retracted_candidate_restores_all_background_and_preserves_actual_track(self):
-        c = controller(70, confirmation_minutes=1, minimum_heating_minutes=0)
+        c = controller(70)
         c.process(ev(Kind.DOOR_OPEN, 5))
         c.process(ev(Kind.DOOR_CLOSE, 5))
         c.process(ev(Kind.PERSON_STRONG, 10, effective=8))
@@ -115,12 +116,13 @@ class FollowupControlTests(unittest.TestCase):
         c.report_contactor(None, at(40))
         c.report_contactor(False, at(50))
         track = c.session.contactor_history
-        c.advance(at(65))
-        p = c.phase_projection(at(70))
+        expiry = 5 + c.parameters.seconds("confirmation_minutes")
+        c.advance(at(expiry))
+        p = c.phase_projection(at(expiry + 5))
         self.assertEqual([(i.phase, i.started_at, i.ended_at) for i in p.intervals],
-                         [("aufheizen", at(0), at(20)), ("bereit", at(20), at(70))])
+                         [("aufheizen", at(0), at(20)), ("bereit", at(20), at(expiry + 5))])
         self.assertEqual([(i.started_at, i.ended_at) for i in p.readiness_pauses],
-                         [(at(30), at(40)), (at(50), at(70))])
+                         [(at(30), at(40)), (at(50), at(expiry + 5))])
         self.assertEqual(c.session.contactor_history, track)
         self.assertTrue(p.complete)
 
@@ -156,7 +158,7 @@ class PresenceRuntimeTests(unittest.IsolatedAsyncioTestCase):
             await runtime.accept_presence(replace(report, received_at=at(1)))
             self.assertIsNone(runtime.session)
             self.assertIsNone(runtime.presence.current)
-            self.assertEqual(runtime.presence_status["effective_source"], "ha_presence")
+            self.assertTrue(runtime.configuration_model.direct_presence)
             self.assertIsNone(runtime.presence_status["current"])
             self.assertEqual(len(runtime.presence.observations), 1)
             self.assertEqual(len(runtime.consumer_events), 1)
@@ -170,7 +172,7 @@ class PresenceRuntimeTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_proxy_path_preserves_events_and_retraction_is_not_absence(self):
         now = at(0)
-        runtime = SaunaRuntime(Configuration(bindings(), Parameters({"confirmation_minutes": 1})), clock=lambda: now)
+        runtime = SaunaRuntime(Configuration(bindings(), Parameters({})), clock=lambda: now)
         runtime.controller.set_temperature(90, now)
         await runtime.begin_session("s")
         runtime._sync_detector()
@@ -186,7 +188,14 @@ class PresenceRuntimeTests(unittest.IsolatedAsyncioTestCase):
         await runtime.receive(event)
         self.assertEqual(runtime.presence.current.source_ref, event.event_id)
         self.assertEqual(runtime.session.timeline.active.recognition_event_id, event.event_id)
-        now = at(61)
+        expiry = 1 + runtime.configuration.parameters.seconds("confirmation_minutes")
+        refresh = max(1, int(runtime.configuration.parameters.values["sensor_timeout_seconds"] / 2))
+        for second in range(refresh, int(expiry), refresh):
+            now = at(second)
+            for quantity, value in ((Quantity.TEMPERATURE, 90), (Quantity.HUMIDITY, 20)):
+                runtime.detector.accept(measurement(Position.UPPER, quantity, value, second))
+            await runtime.tick()
+        now = at(expiry)
         await runtime.tick()
         self.assertEqual(runtime.presence.current.occupancy, "unknown")
         self.assertEqual(runtime.presence.current.assertion, "proxy_retraction")

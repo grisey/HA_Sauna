@@ -1,15 +1,15 @@
+const { panelFixture: fixturePanel } = require("./catalog_fixture.cjs");
 // Runs without Home Assistant or a browser: controls stay on the control page.
 const assert = require("node:assert/strict");
+const {
+  parameterValues: fixtureValues,
+  parameterDefinition: fixtureDefinition,
+} = require("./catalog_fixture.cjs");
 const fs = require("node:fs");
 const vm = require("node:vm");
 
-const defaults = JSON.parse(
-  fs.readFileSync("custom_components/ha_sauna/defaults.json", "utf8"),
-);
+const defaults = structuredClone(require("./catalog_fixture.cjs").catalog);
 const frontendDefaults = defaults.frontend;
-const targetDefinition = defaults.parameters.find(
-  ({ key }) => key === "target_temperature_c",
-);
 
 let Panel;
 const sandbox = {
@@ -51,12 +51,13 @@ assert.doesNotMatch(source, /Servus|greeting/);
 
 const makePanel = (permissions, lightValue = "42") => {
   const calls = [];
-  const panel = Object.assign(Object.create(Panel.prototype), {
+  const panel = Object.assign(fixturePanel(Panel), {
     entry: "entry-1",
     state: {
       frontend_defaults: frontendDefaults,
       permissions,
       configuration: { control_mode: "manual" },
+      control_mode_change_allowed: true,
       operation_enabled: true,
     },
     api: async (...args) => calls.push(args),
@@ -97,7 +98,7 @@ const renderCurrent = (
     if (!nodes.has(selector)) nodes.set(selector, { innerHTML: "", hidden: false });
     return nodes.get(selector);
   };
-  const panel = Object.assign(Object.create(Panel.prototype), {
+  const panel = Object.assign(fixturePanel(Panel), {
     hass: { user: { name: "Testperson", is_admin: permissions.admin } },
     $: node,
     progressionDraft: null,
@@ -118,16 +119,10 @@ const renderCurrent = (
         program_mode: "constant",
         selected_program_id: null,
         temperature_programs: [],
-        parameters: {
-          preset_count: 0,
-          preset_start_c: 70,
-          preset_step_c: 5,
-          session_light_brightness_percent: 50,
-          manual_override_minutes: 10,
-        },
+        parameters: fixtureValues(),
         ...(program.configuration || {}),
       },
-      parameters: [{ ...targetDefinition, minimum: 30, maximum: 100 }],
+      parameters: [fixtureDefinition("target_temperature_c")],
       measurements: [],
       measurement_status: {},
 
@@ -137,6 +132,10 @@ const renderCurrent = (
       },
       permissions,
       configuration_locked: locked,
+      control_mode_change_allowed: mode === "manual" || !session || !operationEnabled,
+      light_after_run: session?.deadlines?.some((d) => d.purpose === "session_gap")
+        ? { ends_at: "2026-09-20T12:10:00Z" }
+        : null,
       issues: [],
       start_errors: startErrors,
       operation_enabled: operationEnabled,
@@ -147,6 +146,12 @@ const renderCurrent = (
       energy_kwh: 0,
       energy_source: "estimated",
       target_temperature: 80,
+      temperature_control: {
+        scope: "current",
+        value: 80,
+        current_target: 80,
+        next_target: 80,
+      },
       start_availability: null,
       phase_timer: null,
     },
@@ -163,8 +168,10 @@ const renderCurrent = (
       button_session_gesture: "double",
       temperature_programs: [],
     };
-    panel.state.button_session_gestures = ["long", "double", "triple"];
-    panel.temperatureBounds = () => ({ minimum: 50, maximum: 100 });
+    panel.state.configuration_model = {
+      button: { session_gestures: ["long", "double", "triple"] },
+    };
+    panel.temperatureBounds = () => fixtureDefinition("target_temperature_c");
     panel.infoButton = () => "";
     let markup;
     panel.updateMarkup = (_selector, html) => {
@@ -189,10 +196,10 @@ const renderCurrent = (
     panel.state.permissions.control = false;
     await panel.action("button-gesture");
     assert.equal(calls.length, 0);
-    panel.state.button_session_gestures = ["long"];
+    panel.state.configuration_model.button.session_gestures = ["long"];
     panel.drawButtonProgram();
     assert.doesNotMatch(markup, /value="double"|value="triple"/);
-    panel.state.button_session_gestures = [];
+    panel.state.configuration_model.button.session_gestures = [];
     panel.drawButtonProgram();
     assert.doesNotMatch(markup, /button-session-gesture|Sitzung starten und beenden/);
     assert.match(markup, /id="button-program"/);
@@ -211,7 +218,9 @@ const renderCurrent = (
       command = deferred(),
       refreshes = [];
     const p = fixture.panel;
-    p.state.configuration.parameters = { session_light_brightness_percent: 50 };
+    p.state.configuration.parameters = fixtureValues();
+    const brightness =
+      p.state.configuration.parameters.session_light_brightness_percent;
     p.state.manual_controls = {
       heater: {
         manual: false,
@@ -257,9 +266,9 @@ const renderCurrent = (
                 observation: { available: true, on: true },
               }
             : {
-                manual: 50,
-                manual_feedback_target: 50,
-                observation: { available: true, brightness_percent: 50 },
+                manual: brightness,
+                manual_feedback_target: brightness,
+                observation: { available: true, brightness_percent: brightness },
               },
       },
     });
@@ -497,7 +506,7 @@ const renderCurrent = (
       syncAppearanceEditor() {},
       scheduleRefresh() {},
       api: (path) =>
-        path.endsWith("/state")
+        path.split("?")[0].endsWith("/state")
           ? ++reads === 1
             ? stale.promise
             : fresh.promise
@@ -650,7 +659,7 @@ const renderCurrent = (
   const preferenceCalls = [],
     startButton = { disabled: false, textContent: "Als Startseite festlegen" },
     startStatus = { textContent: "" };
-  const startPage = Object.assign(Object.create(Panel.prototype), {
+  const startPage = Object.assign(fixturePanel(Panel), {
     state: {
       frontend_defaults: frontendDefaults,
       permissions: { admin: false },
@@ -690,7 +699,7 @@ const renderCurrent = (
 
   const failedButton = { disabled: false },
     failedStatus = { textContent: "vorher" };
-  const failedStartPage = Object.assign(Object.create(Panel.prototype), {
+  const failedStartPage = Object.assign(fixturePanel(Panel), {
     state: {
       frontend_defaults: frontendDefaults,
       permissions: { admin: false },
@@ -867,7 +876,7 @@ const renderCurrent = (
     true,
     pausedSession,
   );
-  assert.doesNotMatch(userLocked, /data-action="control-mode:/);
+  assert.match(userLocked, /data-action="control-mode:manual"/);
   const controlCases = [
     { mode: "automatic", session: null, operating: false },
     { mode: "automatic", session: pausedSession, operating: false },
@@ -900,7 +909,7 @@ const renderCurrent = (
           );
         assert.equal(
           /data-action="control-mode:/.test(html),
-          scenario.mode === "manual" || !scenario.session,
+          scenario.mode === "manual" || !scenario.session || !scenario.operating,
           context,
         );
         assert.deepEqual(
@@ -1068,7 +1077,7 @@ const renderCurrent = (
   );
   assert.match(
     pausedOverview,
-    /class="tile operation stop" data-action="finish-session:gap-current"[^>]*>Endgültig beenden<\/button>/,
+    /class="tile operation stop" data-action="finish-session:gap-current"[^>]*>Lichtnachlauf beenden<\/button>/,
   );
   assert.match(pausedOverview, /data-action="operation"[^>]*>Fortsetzen<\/button>/);
   assert.doesNotMatch(pausedOverview, /Einschalten/);
@@ -1138,6 +1147,7 @@ const renderCurrent = (
   calls.length = 0;
   // The API spy does not deliver the following automatic session's state.
   panel.state.configuration = { control_mode: "automatic" };
+  panel.state.control_mode_change_allowed = false;
   await panel.action("control-mode:manual");
   await panel.action("manual-light-overview");
   await panel.action("details");
@@ -1405,7 +1415,7 @@ const renderCurrent = (
       detailNodes.set(selector, { innerHTML: "", hidden: false });
     return detailNodes.get(selector);
   };
-  const detailPanel = Object.assign(Object.create(Panel.prototype), {
+  const detailPanel = Object.assign(fixturePanel(Panel), {
     hass: { user: { name: "Admin", is_admin: true } },
     $: detailNode,
     progressionDraft: null,
@@ -1431,17 +1441,9 @@ const renderCurrent = (
         program_mode: "constant",
         selected_program_id: null,
         temperature_programs: [],
-        parameters: {
-          preset_count: 0,
-          preset_start_c: 70,
-          preset_step_c: 5,
-          session_light_brightness_percent: 50,
-          manual_override_minutes: 10,
-          readiness_hysteresis_c: 3,
-          nominal_power_kw: 4.5,
-        },
+        parameters: fixtureValues(),
       },
-      parameters: [{ ...targetDefinition, minimum: 30, maximum: 100 }],
+      parameters: [fixtureDefinition("target_temperature_c")],
       measurements: [],
       measurement_status: {},
       manual_controls: {
@@ -1527,7 +1529,7 @@ const renderCurrent = (
       },
     },
   ];
-  const navigation = Object.assign(Object.create(Panel.prototype), {
+  const navigation = Object.assign(fixturePanel(Panel), {
     state: {
       frontend_defaults: frontendDefaults,
       permissions: { admin: true },

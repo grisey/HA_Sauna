@@ -8,6 +8,7 @@ from custom_components.ha_sauna.core.timeline import Event, Kind
 
 
 T0 = datetime(2026, 9, 22, 17, tzinfo=UTC)
+MINIMUM = Parameters({}).seconds("minimum_heating_minutes")
 
 
 def at(seconds: int) -> datetime:
@@ -31,10 +32,6 @@ def controller() -> Controller:
         Parameters(
             {
                 "target_temperature_c": 80,
-                "readiness_offset_c": 3,
-                "readiness_hysteresis_c": 3,
-                "minimum_heating_minutes": 10,
-                "thermostat_cooldown_minutes": 5,
             }
         )
     )
@@ -48,15 +45,15 @@ def controller() -> Controller:
 
 
 def stop_then_manually_restart(value: Controller) -> None:
-    value.set_temperature(83, at(700))
-    value.report_contactor(False, at(701))
-    value.report_heating(False, at(701))
-    value.set_temperature(81, at(720))
-    event(value, Kind.DOOR_OPEN, 730)
-    value.set_heater_override(True, at(731))
-    value.report_contactor(True, at(732))
-    value.report_heating(True, at(732))
-    event(value, Kind.DOOR_CLOSE, 750)
+    value.set_temperature(value.target_temperature + value.parameters.values["readiness_offset_c"], at(MINIMUM + 100))
+    value.report_contactor(False, at(MINIMUM + 101))
+    value.report_heating(False, at(MINIMUM + 101))
+    value.set_temperature(value.target_temperature, at(MINIMUM + 120))
+    event(value, Kind.DOOR_OPEN, MINIMUM + 130)
+    value.set_heater_override(True, at(MINIMUM + 131))
+    value.report_contactor(True, at(MINIMUM + 132))
+    value.report_heating(True, at(MINIMUM + 132))
+    event(value, Kind.DOOR_CLOSE, MINIMUM + 150)
 
 
 class ControlRegressionTests(unittest.TestCase):
@@ -76,7 +73,7 @@ class ControlRegressionTests(unittest.TestCase):
         value = controller()
         stop_then_manually_restart(value)
 
-        event(value, Kind.PERSON_STRONG, 760)
+        event(value, Kind.PERSON_STRONG, MINIMUM + 160)
 
         assert value.last_decision.heat is True
         assert value.last_decision.reason == "gang_heat_demand"
@@ -85,32 +82,32 @@ class ControlRegressionTests(unittest.TestCase):
     def test_live_gang_demand_keeps_confirmed_heat_after_minimum_runtime(self):
         value = controller()
         stop_then_manually_restart(value)
-        event(value, Kind.PERSON_STRONG, 760)
+        event(value, Kind.PERSON_STRONG, MINIMUM + 160)
 
-        value.advance(at(1400))
+        value.advance(at(MINIMUM * 2 + 200))
         assert value.last_decision.heat is True
         assert value.last_decision.reason == "gang_heat_demand"
 
         idle = controller()
-        idle.set_temperature(83, at(700))
-        idle.report_contactor(False, at(701))
-        idle.report_heating(False, at(701))
-        idle.set_temperature(81, at(720))
+        idle.set_temperature(idle.target_temperature + idle.parameters.values["readiness_offset_c"], at(MINIMUM + 100))
+        idle.report_contactor(False, at(MINIMUM + 101))
+        idle.report_heating(False, at(MINIMUM + 101))
+        idle.set_temperature(idle.target_temperature, at(MINIMUM + 120))
         assert idle.last_decision.heat is False
 
     def test_open_while_heating_leaves_one_close_request_if_heat_stops_before_close(self):
         value = controller()
-        event(value, Kind.DOOR_OPEN, 700)
+        event(value, Kind.DOOR_OPEN, MINIMUM + 100)
         assert value.door_request.eligible_open is True
 
-        value.set_temperature(83, at(720))
-        value.report_contactor(False, at(721))
-        value.report_heating(False, at(721))
-        value.set_temperature(81, at(740))
-        event(value, Kind.DOOR_CLOSE, 750)
+        value.set_temperature(value.target_temperature + value.parameters.values["readiness_offset_c"], at(MINIMUM + 120))
+        value.report_contactor(False, at(MINIMUM + 121))
+        value.report_heating(False, at(MINIMUM + 121))
+        value.set_temperature(value.target_temperature, at(MINIMUM + 140))
+        event(value, Kind.DOOR_CLOSE, MINIMUM + 150)
 
         assert value.last_decision.heat is True
         assert value.last_decision.reason == "temporary_door_heat"
         assert value.door_request.eligible_open is False
         assert value.door_request.door_open is False
-        assert event(value, Kind.DOOR_CLOSE, 750).changed is False
+        assert event(value, Kind.DOOR_CLOSE, MINIMUM + 150).changed is False

@@ -96,7 +96,9 @@ Kanalvariante. `proof_open` verweist mit `state_id` und `states_jsonl_line` auf
 die zugrunde liegenden Originalzeilen. Temperaturminima und deren Abstand zum
 Schließsignal sind nachträgliche Kurvenmerkmale in der Ergebnisbeschreibung.
 
-[Prüfverfahren für optionale private Replays](README.md#fachkern-und-javascript)
+Diese historische Reproduktion ist kein bedingt übersprungener Produkttest.
+Die [verbindlichen Sitzungsprüfungen](sessions/README.md) enthalten ihre drei
+realen Eingabereihen vollständig im Repository.
 
 ## Provenienz und Datenhaltung
 
@@ -107,8 +109,8 @@ Dokument jeweils mit einer eigenen Prüfsumme. `full_replay_result_sha256` binde
 die vollständige Referenzausgabe einschließlich der Zusatzberechnungen; Quellenkennung, Ergebnisprüfsumme und gespeicherte
 Referenzwerte bleiben auf die ursprüngliche Berechnung bezogen.
 
-Der im Ergebnis enthaltene Eingabedateiname gehört zum byteweisen Vergleich; die optionale
-Reproduktionsprüfung gleicht ihn an `source_archive` an. Die gespeicherten
+Der im Ergebnis enthaltene Eingabedateiname gehört zum byteweisen Vergleich
+und entspricht bei der historischen Reproduktion `source_archive`. Die gespeicherten
 Bewertungen in `modes` beziehen sich auf dieselbe Kalibrieraufzeichnung.
 
 Recorderexport und erzeugtes Ergebnis bleiben in einem privaten Arbeitsordner.

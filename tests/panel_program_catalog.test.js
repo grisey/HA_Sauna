@@ -1,9 +1,14 @@
+const { panelFixture: fixturePanel } = require("./catalog_fixture.cjs");
 const assert = require("node:assert/strict");
+const {
+  parameterValues: fixtureValues,
+  parameterDefinition: fixtureDefinition,
+} = require("./catalog_fixture.cjs");
 const fs = require("node:fs");
 const vm = require("node:vm");
 
-const frontendDefaults = JSON.parse(
-  fs.readFileSync("custom_components/ha_sauna/defaults.json", "utf8"),
+const frontendDefaults = structuredClone(
+  require("./catalog_fixture.cjs").catalog,
 ).frontend;
 
 let Panel;
@@ -45,12 +50,12 @@ const programs = [
 // A program's compact label is calculated from the backend DTO, never from a
 // frontend profile list or a supposed maximum number of sauna rounds.
 {
-  const p = Object.assign(Object.create(Panel.prototype), {
+  const p = Object.assign(fixturePanel(Panel), {
     state: {
       frontend_defaults: frontendDefaults,
       parameters: [
-        { key: "target_temperature_c", minimum: 60, maximum: 100 },
-        { key: "temperature_gangs", minimum: 1, maximum: 8 },
+        fixtureDefinition("target_temperature_c"),
+        fixtureDefinition("temperature_gangs"),
       ],
     },
   });
@@ -73,7 +78,11 @@ const programs = [
     "manual stages remain exact",
   );
   assert.deepEqual(
-    JSON.parse(JSON.stringify(p.distributedSteps(80, 90, 9))),
+    JSON.parse(
+      JSON.stringify(
+        p.distributedSteps(80, 90, fixtureDefinition("temperature_gangs").maximum + 1),
+      ),
+    ),
     [],
     "stage expansion observes the configured maximum",
   );
@@ -99,7 +108,7 @@ assert.match(
 {
   const calls = [],
     acknowledged = [{ ...programs[1], name: "Server bestätigt" }, programs[0]];
-  const p = Object.assign(Object.create(Panel.prototype), {
+  const p = Object.assign(fixturePanel(Panel), {
     entry: "entry-1",
     state: {
       frontend_defaults: frontendDefaults,
@@ -145,7 +154,7 @@ assert.match(
 // backend before the shared apply action.
 {
   const calls = [];
-  const p = Object.assign(Object.create(Panel.prototype), {
+  const p = Object.assign(fixturePanel(Panel), {
     state: {
       frontend_defaults: frontendDefaults,
       permissions: { program: true },
@@ -203,7 +212,7 @@ assert.match(
   const requested = new Promise((resolve) => {
     release = resolve;
   });
-  const p = Object.assign(Object.create(Panel.prototype), {
+  const p = Object.assign(fixturePanel(Panel), {
     entry: "entry-1",
     progressionDraft: { "progression-end": "95" },
     message: () => {},
@@ -214,8 +223,8 @@ assert.match(
       frontend_defaults: frontendDefaults,
       permissions: { program: true, temperature: true },
       parameters: [
-        { key: "target_temperature_c", minimum: 60, maximum: 100 },
-        { key: "temperature_gangs", minimum: 1, maximum: 8 },
+        fixtureDefinition("target_temperature_c"),
+        fixtureDefinition("temperature_gangs"),
       ],
       configuration: {
         program_mode: "progressive",
@@ -252,7 +261,7 @@ assert.match(
 // the exact stage array accepted by the backend.
 {
   const calls = [];
-  const p = Object.assign(Object.create(Panel.prototype), {
+  const p = Object.assign(fixturePanel(Panel), {
     entry: "entry-1",
     message: () => {},
     drawCurrent: () => {},
@@ -294,7 +303,7 @@ for (const selected of [null, "quiet"]) {
       "#progression-end": { value: "95" },
       "#progression-gangs": { value: "4" },
     };
-  const p = Object.assign(Object.create(Panel.prototype), {
+  const p = Object.assign(fixturePanel(Panel), {
     entry: "entry-1",
     message: () => {},
     drawCurrent: () => {},
@@ -305,8 +314,8 @@ for (const selected of [null, "quiet"]) {
       frontend_defaults: frontendDefaults,
       permissions: { program: true, temperature: true },
       parameters: [
-        { key: "target_temperature_c", minimum: 60, maximum: 100 },
-        { key: "temperature_gangs", minimum: 1, maximum: 8 },
+        fixtureDefinition("target_temperature_c"),
+        fixtureDefinition("temperature_gangs"),
       ],
       configuration: {
         program_mode: selected ? "progressive" : "constant",
@@ -344,7 +353,7 @@ for (const selected of [null, "quiet"]) {
 // A refresh retains the state-backed draft, including after a rejected save.
 {
   const library = { dataset: {}, innerHTML: "" };
-  const p = Object.assign(Object.create(Panel.prototype), {
+  const p = Object.assign(fixturePanel(Panel), {
     hass: { user: { is_admin: true } },
     programDraft: [{ ...programs[0], name: "Nach Fehler" }, programs[1]],
     programLibraryNeedsRender: false,
@@ -354,8 +363,8 @@ for (const selected of [null, "quiet"]) {
       configuration_locked: false,
       configuration: { temperature_programs: programs, button_program: "current" },
       parameters: [
-        { key: "target_temperature_c", minimum: 60, maximum: 110 },
-        { key: "temperature_gangs", minimum: 1, maximum: 8 },
+        fixtureDefinition("target_temperature_c"),
+        fixtureDefinition("temperature_gangs"),
       ],
     },
     $: (selector) => (selector === "#program-library" ? library : null),
@@ -398,7 +407,7 @@ for (const selected of [null, "quiet"]) {
     inputs = {
       "#button-program": { value: "constant" },
     };
-  const p = Object.assign(Object.create(Panel.prototype), {
+  const p = Object.assign(fixturePanel(Panel), {
     entry: "entry-1",
     message: () => {},
     refresh: async () => {},
@@ -412,8 +421,8 @@ for (const selected of [null, "quiet"]) {
         parameters: {},
       },
       parameters: [
-        { key: "target_temperature_c", minimum: 60, maximum: 110 },
-        { key: "temperature_gangs", minimum: 1, maximum: 8 },
+        fixtureDefinition("target_temperature_c"),
+        fixtureDefinition("temperature_gangs"),
       ],
     },
     $: (selector) =>
@@ -479,7 +488,7 @@ for (const selected of [null, "quiet"]) {
   const settings = { innerHTML: "" },
     button = { innerHTML: "" },
     library = { dataset: {}, innerHTML: "" };
-  const p = Object.assign(Object.create(Panel.prototype), {
+  const p = Object.assign(fixturePanel(Panel), {
     hass: { user: { is_admin: false } },
     shadowRoot: { querySelectorAll: () => [], activeElement: null },
     entry: "entry-1",
@@ -493,8 +502,8 @@ for (const selected of [null, "quiet"]) {
         parameters: {},
       },
       parameters: [
-        { key: "target_temperature_c", minimum: 60, maximum: 110 },
-        { key: "temperature_gangs", minimum: 1, maximum: 8 },
+        fixtureDefinition("target_temperature_c"),
+        fixtureDefinition("temperature_gangs"),
       ],
     },
     $: (selector) =>

@@ -1,10 +1,13 @@
 """Gemeinsamer, serialisierter Schreibweg für Parameter aller Bedienoberflächen."""
 
+import json
 from collections.abc import Mapping
 from dataclasses import dataclass, replace
+from hashlib import sha256
 
 from .appearance import validate_appearance
 from .core.button import validate_session_gesture
+from .core.configuration_model import ConfigurationModel, temperature_control
 from .core.parameters import BY_KEY, LIVE_TEMPERATURE_KEYS, ParameterError, Parameters
 from .core.program_catalog import load_programs, validate_programs
 from .core.temperature_program import temperature_steps as validate_temperature_steps
@@ -13,6 +16,237 @@ from .presentation import parameter_error
 
 class ConfigurationLocked(ValueError):
     """Eine Änderung würde die laufende Sitzung neu initialisieren."""
+
+
+class StaleFieldStandardPreview(ValueError):
+    """The current field sources require another explicit confirmation."""
+
+    def __init__(self, preview):
+        self.preview = preview
+        super().__init__(
+            "Die betroffenen Einstellungen haben sich geändert. "
+            "Bitte die aktuelle Vorschau erneut bestätigen."
+        )
+
+
+_NO_FIELD_VALUE = object()
+
+
+def _require_field_standard_runtime(entry, runtime):
+    runtime._require_open()
+    if entry.runtime_data is not runtime or runtime.reconfiguring:
+        raise ConfigurationLocked(
+            "Die Grundeinstellungen werden gerade übernommen. Bitte kurz warten."
+        )
+
+
+def _field_standard_values(configuration, fields):
+    metadata = configuration.standard_field_metadata()
+    return [
+        {
+            "id": name,
+            **metadata[name],
+            "factory": configuration.field_value(name, source="factory"),
+            "standard": configuration.field_value(name, source="standard"),
+            "active": configuration.field_value(name),
+            "has_standard": name in configuration.field_standards,
+        }
+        for name in fields
+    ]
+
+
+def _field_standard_action_context(
+    configuration, action, *, field=None, group=None, all=False,
+    value=_NO_FIELD_VALUE,
+):
+    """Resolve the permanent scope and sign only current action dependencies."""
+    if not isinstance(action, str) or action not in {
+        "overwrite_standard", "restore_standard", "restore_factory"
+    }:
+        raise ValueError("Ungültige Standardaktion")
+    if (
+        not isinstance(all, bool)
+        or sum((field is not None, group is not None, all)) != 1
+    ):
+        raise ValueError("Genau ein Feld, Bereich oder Gesamtumfang ist erforderlich")
+    if action == "overwrite_standard":
+        if field is None or value is _NO_FIELD_VALUE:
+            raise ValueError(
+                "Ein Standard kann nur für ein einzelnes Feld gesetzt werden"
+            )
+    elif value is not _NO_FIELD_VALUE:
+        raise ValueError("Rücksetzen übernimmt keine Entwurfswerte")
+    names = configuration.standard_fields(field=field, group=group)
+    scope = {"field": field} if field is not None else (
+        {"group": group} if group is not None else {"all": True}
+    )
+    fields = _field_standard_values(configuration, names)
+    factory = action == "restore_factory"
+    overwrite = action == "overwrite_standard"
+    for row in fields:
+        row.update({
+            "target": row["active"] if overwrite else (
+                row["factory"] if factory else row["standard"]
+            ),
+            "target_standard": value if overwrite else (
+                row["factory"] if factory else row["standard"]
+            ),
+            "target_has_standard": True if overwrite else (
+                False if factory else row["has_standard"]
+            ),
+        })
+    validation = {}
+    if any(name.startswith("parameters.") for name in names):
+        # Full parameter validation includes cross-field relationships and the
+        # retained catalog/stages. Unrelated appearance is no dependency.
+        validation = {
+            "parameters": configuration.parameters.as_dict(),
+            "temperature_programs": [
+                program.as_dict() for program in configuration.temperature_programs
+            ],
+            "temperature_steps": configuration.temperature_steps,
+        }
+    scales = {
+        name.split(".")[2] for name in names
+        if name.startswith("appearance.scales.")
+    }
+    if scales:
+        validation["scales"] = {
+            name: dict(configuration.appearance["scales"][name])
+            for name in sorted(scales)
+        }
+    preview = {"action": action, "scope": scope, "fields": fields}
+    try:
+        signed = json.dumps(
+            {**preview, "validation": validation},
+            sort_keys=True, separators=(",", ":"), ensure_ascii=False,
+            allow_nan=False,
+        )
+    except (TypeError, ValueError, OverflowError):
+        raise ValueError("Ungültiger Feldstandard") from None
+    preview["confirmation"] = sha256(signed.encode("utf-8")).hexdigest()
+    return names, preview
+
+
+def _field_standard_candidate(configuration, action, names, value):
+    if action == "overwrite_standard":
+        name = names[0]
+        draft = configuration.with_field_values({name: value})
+        return configuration.with_field_standard(name, draft.field_value(name))
+    source = "factory" if action == "restore_factory" else "standard"
+    candidate = configuration.with_field_values({
+        name: configuration.field_value(name, source=source) for name in names
+    })
+    return (
+        candidate.without_field_standards(names)
+        if action == "restore_factory" else candidate
+    )
+
+
+def _field_standard_targets(preview, candidate):
+    for row in preview["fields"]:
+        name = row["id"]
+        row.update({
+            "target": candidate.field_value(name),
+            "target_standard": candidate.field_value(name, source="standard"),
+            "target_has_standard": name in candidate.field_standards,
+        })
+
+
+async def async_get_field_standards(entry):
+    """Read the complete W/S/A inventory, including hidden permanent fields."""
+    runtime = entry.runtime_data
+    async with runtime._lock:
+        _require_field_standard_runtime(entry, runtime)
+        configuration = runtime.configuration
+        return {"fields": _field_standard_values(
+            configuration, configuration.standard_fields()
+        )}
+
+
+async def async_preview_field_standard_action(
+    entry, action, *, field=None, group=None, all=False, value=_NO_FIELD_VALUE,
+):
+    """Return a validated proposal without advancing or changing the runtime."""
+    runtime = entry.runtime_data
+    # serialized() drains input and delivers detection before yielding. The
+    # shared lock alone keeps this inventory/proposal strictly read-only.
+    async with runtime._lock:
+        _require_field_standard_runtime(entry, runtime)
+        configuration = runtime.configuration
+        names, preview = _field_standard_action_context(
+            configuration, action, field=field, group=group, all=all, value=value,
+        )
+        candidate = _field_standard_candidate(configuration, action, names, value)
+        _field_standard_targets(preview, candidate)
+        return preview
+
+
+async def async_apply_field_standard_action(
+    hass, entry, action, *, confirmation, field=None, group=None, all=False,
+    value=_NO_FIELD_VALUE, actor=None,
+):
+    """Apply exactly the current confirmed proposal as one configuration write."""
+    runtime = entry.runtime_data
+    async with runtime._lock:
+        _require_field_standard_runtime(entry, runtime)
+        if not isinstance(confirmation, str) or not confirmation:
+            raise ValueError("Ungültige Standardbestätigung")
+        # A persisted options update may be waiting behind this lock. Never
+        # overwrite that newer source with an older live Configuration.
+        from .runtime import Configuration
+
+        configuration = runtime.configuration
+        if (
+            Configuration.from_options(entry.options).as_options()
+            != configuration.as_options()
+        ):
+            raise ConfigurationLocked(
+                "Die Grundeinstellungen werden gerade übernommen. Bitte kurz warten."
+            )
+        names, preview = _field_standard_action_context(
+            configuration, action, field=field, group=group, all=all, value=value,
+        )
+        stale = confirmation != preview["confirmation"]
+        try:
+            candidate = _field_standard_candidate(configuration, action, names, value)
+        except ValueError as error:
+            if not stale:
+                raise
+            preview["validation_error"] = (
+                parameter_error(error) if isinstance(error, ParameterError)
+                else str(error)
+            )
+            preview["confirmation"] = None
+            raise StaleFieldStandardPreview(preview) from None
+        _field_standard_targets(preview, candidate)
+        if stale:
+            raise StaleFieldStandardPreview(preview)
+        parameters_changed = (
+            candidate.parameters.as_dict() != configuration.parameters.as_dict()
+        )
+        if runtime.session and parameters_changed:
+            raise ConfigurationLocked(
+                "Während einer Saunasitzung sind nur Solltemperatur, "
+                "Steigerungsverteilung und Endtemperatur änderbar. "
+                "Andere Einstellungen gelten nach Ende der Sitzung."
+            )
+        # Everything, including serialization, is checked before the first
+        # write. Parameter restores retain the existing options-listener path;
+        # S-only and appearance changes have no controller or archive effects.
+        options = candidate.as_options()
+        if not parameters_changed:
+            runtime.configuration = candidate
+        try:
+            changed = hass.config_entries.async_update_entry(entry, options=options)
+        except BaseException:
+            runtime.configuration = configuration
+            raise
+        if parameters_changed:
+            runtime.reconfiguring = changed
+        elif candidate.appearance != configuration.appearance:
+            runtime.notify_entities()
+        return {**preview, "applied": True}
 
 
 PROGRAM_PROFILES = frozenset(("constant", "progressive", "program_1", "program_2"))
@@ -67,6 +301,7 @@ async def async_set_parameters(
     explicit_target=None,
     program_mode=None,
     new_program=False,
+    actor=None,
 ):
     runtime = entry.runtime_data
     async with runtime.serialized():
@@ -78,6 +313,7 @@ async def async_set_parameters(
             explicit_target=explicit_target,
             program_mode=program_mode,
             new_program=new_program,
+            actor=actor,
         )
 
 
@@ -107,6 +343,8 @@ async def async_reset_parameters(hass, entry):
             button_event_type=runtime.configuration.button_event_type,
             presence_source=runtime.configuration.presence_source,
             appearance=runtime.configuration.appearance,
+            field_standards=runtime.configuration.field_standards,
+            notification_assignments=runtime.configuration.notification_assignments,
         )
         # Ohne Änderung läuft kein Listener. Andernfalls hebt dieser die Sperre
         # nach direkter Übernahme oder durch das Neuladen der Laufzeit auf.
@@ -118,7 +356,7 @@ async def async_reset_parameters(hass, entry):
 
 async def async_set_appearance(hass, entry, value):
     """Persist only display preferences without cycling the active controller."""
-    appearance = validate_appearance(value)
+    appearance = validate_appearance(value, reject_catalog_overrides=True)
     runtime = entry.runtime_data
     async with runtime._lock:
         runtime._require_open()
@@ -130,6 +368,7 @@ async def async_set_appearance(hass, entry, value):
         hass.config_entries.async_update_entry(
             entry, options=runtime.configuration.as_options()
         )
+        runtime.notify_entities()
         return appearance
 
 
@@ -157,6 +396,13 @@ def parameter_change(
     if not isinstance(values, Mapping):
         raise ParameterError("base", "invalid_parameters")
     before = configuration.parameters.as_dict()
+    for key, value in values.items():
+        definition = BY_KEY.get(key)
+        if (
+            definition is not None and definition.configuration_surface == "catalog"
+            and value != before.get(key)
+        ):
+            raise ParameterError(key, "catalog_only")
     merged = {**before, **values} if partial else dict(values)
     # Ein leer übermittelter Endwert fällt auf den zentralen Standard zurück.
     if partial and merged.get("final_temperature_c", False) is None:
@@ -180,6 +426,10 @@ def parameter_change(
         for k in before.keys() | parameters.values.keys()
         if before.get(k) != parameters.values.get(k)
     }
+    model = ConfigurationModel.from_configuration(configuration)
+    for key in values if partial else sorted(changed):
+        if not model.parameter_applicable(key):
+            raise ParameterError(key, "not_applicable")
     explicit_target = (
         "target_temperature_c" in (values if partial else changed)
         if explicit_target is None
@@ -239,6 +489,7 @@ async def _async_set_parameters_locked(
     explicit_target=None,
     program_mode=None,
     new_program=False,
+    actor=None,
 ):
     """Shared parameter write path; the caller holds ``runtime._lock``."""
     runtime = entry.runtime_data
@@ -251,10 +502,7 @@ async def _async_set_parameters_locked(
         partial and isinstance(values, Mapping)
         and set(values) == {"target_temperature_c"}
         and explicit_target is None and program_mode is None and not new_program
-        and runtime.controller.control_mode == "automatic"
-        and runtime.session
-        and (runtime.session.temperature_program_mode
-             or runtime.controller.program_mode) == "progressive"
+        and temperature_control(runtime.controller).scope == "next_gang"
     ):
         # A live instrument edit belongs to one upcoming gang, not to the
         # saved program. Validate through the same parameter bounds/rounding.
@@ -266,6 +514,7 @@ async def _async_set_parameters_locked(
         runtime.persist_completed_sessions()
         if runtime.session:
             before = runtime.controller.next_gang_temperature
+            program_before = _session_temperature_state(runtime)
             target = parameters.values["target_temperature_c"]
             runtime.controller.set_next_gang_temperature(target, now)
             runtime.log.info(
@@ -285,6 +534,8 @@ async def _async_set_parameters_locked(
                 )
             runtime._archive_signature = None
             await runtime._cycle()
+            if program_before != _session_temperature_state(runtime):
+                runtime._record_notification_participant(actor)
             return runtime.configuration.parameters.as_dict()
     change = parameter_change(
         runtime.configuration, values, partial=partial,
@@ -316,6 +567,7 @@ async def _async_set_parameters_locked(
                 else runtime.configuration.selected_program_id
             ),
             temperature_steps=selected_steps,
+            actor=actor,
         )
     else:
         runtime.reconfiguring = True
@@ -325,7 +577,7 @@ async def _async_set_parameters_locked(
         entry,
         options={
             **entry.options,
-            "parameters": parameters.as_dict(),
+            "parameters": parameters.as_options(),
             **({"program_mode": selected_mode} if selected_mode is not None else {}),
             **({"selected_program_id": None} if clear_selected_program else {}),
             **(
@@ -338,7 +590,7 @@ async def _async_set_parameters_locked(
     return parameters.as_dict()
 
 
-async def async_set_program(hass, entry, profile):
+async def async_set_program(hass, entry, profile, *, actor=None):
     """Select a constant, free progressive, or stored program without a reload.
 
     ``progressive`` uses the current start, end and distribution values; a
@@ -361,6 +613,7 @@ async def async_set_program(hass, entry, profile):
         await apply_temperature_parameters(
             runtime,
             parameters,
+            actor=actor,
             program_mode=mode,
             new_program=True,
             temperature_steps=(
@@ -383,7 +636,7 @@ async def async_set_program(hass, entry, profile):
             entry,
             options={
                 **entry.options,
-                "parameters": parameters.as_dict(),
+                "parameters": parameters.as_options(),
                 "program_mode": mode,
                 "selected_program_id": (
                     profile
@@ -397,6 +650,20 @@ async def async_set_program(hass, entry, profile):
         return parameters.as_dict()
 
 
+def _session_temperature_state(runtime):
+    """Only mutable program/override fields affected by temperature writes."""
+    session = runtime.session
+    if session is None:
+        return None
+    return tuple(getattr(session, key) for key in (
+        "temperature_base_c", "temperature_base_gang_count",
+        "temperature_program_mode", "temperature_program_gangs",
+        "temperature_program_steps", "temperature_program_start_gang_count",
+        "next_gang_temperature_c", "next_gang_temperature_blocked_by",
+        "active_gang_temperature_c", "active_gang_temperature_id",
+    ))
+
+
 async def apply_temperature_parameters(
     runtime,
     parameters,
@@ -406,9 +673,13 @@ async def apply_temperature_parameters(
     new_program=False,
     selected_program_id=...,
     temperature_steps=...,
+    actor=None,
 ):
     """Aufrufer hält runtime._lock; niemals Sitzung oder Regelzustände ersetzen."""
     before = runtime.configuration.parameters.as_dict()
+    program_before = _session_temperature_state(runtime)
+    selected_before = runtime.configuration.selected_program_id
+    steps_before = runtime.configuration.temperature_steps
     mode_before = runtime.configuration.program_mode
     target_before = runtime.controller.target_temperature
     runtime.controller.update_temperature_parameters(
@@ -472,6 +743,14 @@ async def apply_temperature_parameters(
             )
         runtime._archive_signature = None
     await runtime._cycle()
+    if (
+        changes or target_before != target_after
+        or mode_before != runtime.configuration.program_mode
+        or selected_before != runtime.configuration.selected_program_id
+        or steps_before != runtime.configuration.temperature_steps
+        or program_before != _session_temperature_state(runtime)
+    ):
+        runtime._record_notification_participant(actor)
 
 
 async def async_set_button_gesture(hass, entry, gesture):
@@ -612,7 +891,7 @@ async def async_set_program_catalog(hass, entry, stored):
         return [program.as_dict() for program in programs]
 
 
-async def async_set_temperature_steps(hass, entry, values):
+async def async_set_temperature_steps(hass, entry, values, *, actor=None):
     """Select explicitly entered stages through the same controller path."""
     runtime = entry.runtime_data
     async with runtime.serialized():
@@ -644,6 +923,7 @@ async def async_set_temperature_steps(hass, entry, values):
             new_program=True,
             selected_program_id=None,
             temperature_steps=steps,
+            actor=actor,
         )
         hass.config_entries.async_update_entry(
             entry, options=runtime.configuration.as_options()
@@ -651,9 +931,10 @@ async def async_set_temperature_steps(hass, entry, values):
         return parameters.as_dict()
 
 
-async def async_set_control_mode(hass, entry, mode):
+async def async_set_control_mode(hass, entry, mode, *, actor=None):
     """Switch controller mode and save the matching configuration atomically."""
     runtime = entry.runtime_data
+    received_at = runtime._clock()
     async with runtime.serialized():
         runtime._require_open()
         if runtime.reconfiguring:
@@ -662,16 +943,19 @@ async def async_set_control_mode(hass, entry, mode):
             )
         if not isinstance(mode, str) or mode not in {"automatic", "manual"}:
             raise ValueError("Ungültiger Betriebsmodus")
-        configuration = runtime._set_control_mode(mode)
+        mode_before = runtime.configuration.control_mode
+        configuration = runtime._set_control_mode(mode, received_at=received_at)
         hass.config_entries.async_update_entry(
             entry, options=configuration.as_options()
         )
         await runtime._cycle()
+        if mode_before != runtime.configuration.control_mode:
+            runtime._record_notification_participant(actor)
         return configuration
 
 
-async def async_set_entity_parameter(hass, entry, key, value):
+async def async_set_entity_parameter(hass, entry, key, value, *, actor=None):
     try:
-        await async_set_parameters(hass, entry, {key: value}, partial=True)
+        await async_set_parameters(hass, entry, {key: value}, partial=True, actor=actor)
     except ParameterError as error:
         raise ValueError(parameter_error(error)) from None

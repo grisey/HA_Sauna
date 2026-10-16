@@ -1,14 +1,153 @@
 """Direkte Präsenz über HA-Listener, Türzuordnung, Quellwechsel und Reload."""
 import asyncio
+import json
 import unittest
+from datetime import UTC, datetime, timedelta
 from unittest.mock import patch
 
 from harness import create_sauna, start_hass
+from test_settings import async_timeout
 
+from custom_components.ha_sauna.archive import plain
 from custom_components.ha_sauna.core.timeline import Confirmation, Event, Kind
+from custom_components.ha_sauna.core.presence import ProxyPresenceSource, binary_presence
+from custom_components.ha_sauna.runtime import Configuration, SaunaRuntime
 
 
 class PresenceRuntimeIntegrationTests(unittest.IsolatedAsyncioTestCase):
+    async def test_runtime_selection_recovers_original_report_at_real_first_usability(self):
+        configured = (await self.configure()).configuration
+        now = datetime(2030, 1, 1, tzinfo=UTC)
+        runtime = SaunaRuntime(configured, clock=lambda: now)
+        gang_before = runtime.session.timeline.active if runtime.session else None
+        entity = configured.bindings.values["presence"]
+        await runtime.accept_presence(binary_presence(entity, "unknown", now, now))
+        now += timedelta(seconds=configured.parameters.values["presence_fallback_delay_seconds"])
+        await runtime.tick()
+        self.assertEqual(runtime.configuration_model.presence_source, "proxy")
+        self.assertFalse(runtime.controller.direct_presence.qualified_presence)
+        fallback_observed = {
+            "source": runtime.presence_source,
+            "switched_at": runtime._presence_source_selection.last_changed_at,
+            "available_since": runtime._presence_source_selection.availability_since,
+            "producer_report": runtime.presence.current,
+            "input": runtime.controller.direct_presence,
+        }
+        now += timedelta(seconds=1)
+        report = binary_presence(entity, "on", now, now)
+        await runtime.accept_presence(report)
+        self.assertEqual(runtime.configuration_model.presence_source, "proxy")
+        self.assertFalse(runtime.controller.direct_presence.qualified_presence)
+        now += timedelta(seconds=configured.parameters.values["presence_recovery_delay_seconds"])
+        await runtime.tick()
+        self.assertEqual(runtime.configuration_model.presence_source, "ha_presence")
+        selected = runtime.controller.direct_presence
+        self.assertTrue(selected.qualified_presence)
+        self.assertEqual(selected.report_id, report.report_id)
+        self.assertEqual(selected.timing.effective_at, report.effective_at)
+        self.assertEqual(selected.timing.received_at, report.received_at)
+        self.assertEqual(selected.timing.first_usable_at, now)
+        self.assertIsNone(runtime.session)
+        evidence = {
+            "delays_seconds": {
+                "fallback": configured.parameters.values["presence_fallback_delay_seconds"],
+                "recovery": configured.parameters.values["presence_recovery_delay_seconds"],
+            },
+            "fallback": fallback_observed,
+            "recovery": {
+                "source": runtime.presence_source,
+                "switched_at": runtime._presence_source_selection.last_changed_at,
+                "available_since": runtime._presence_source_selection.availability_since,
+                "producer_report": runtime.presence.external[entity],
+                "input": selected,
+            },
+            "gang_before": gang_before,
+            "gang_after": runtime.session.timeline.active if runtime.session else None,
+            "last_decision": runtime.controller.last_decision,
+            "regulation_inputs": runtime.controller.regulation_inputs,
+            "cooling": runtime.session.after_run if runtime.session else None,
+        }
+        print("SOURCE_HANDOVER_EVIDENCE=" + json.dumps(
+            plain(evidence), sort_keys=True, separators=(",", ":"),
+        ))
+        await runtime.close()
+
+    async def test_selected_proxy_reports_preserve_identity_without_durable_history(self):
+        runtime = self.entry.runtime_data
+        self.assertEqual(runtime.configuration.presence_source, "proxy")
+        now = runtime._clock()
+        report = ProxyPresenceSource.present(Event(
+            "original-person", "projection-only", Kind.PERSON_STRONG, now, now,
+        ))
+        history = tuple(runtime.controller._direct_presence_history)
+        controller_at = runtime.controller._last_at
+        decisions = tuple(runtime.controller.decisions)
+        runtime._record_presence(report)
+        occupancy = runtime.controller.direct_presence
+        self.assertEqual((occupancy.occupancy, occupancy.available, occupancy.qualified_presence),
+                         ("present", True, False))
+        self.assertEqual(occupancy.report_id, report.report_id)
+        self.assertEqual(occupancy.timing.effective_at, report.effective_at)
+        self.assertEqual(occupancy.timing.received_at, report.received_at)
+        self.assertEqual(tuple(runtime.controller._direct_presence_history), history)
+        self.assertEqual(runtime.controller._last_at, controller_at)
+        self.assertEqual(tuple(runtime.controller.decisions), decisions)
+        self.assertIsNone(runtime.session)
+        runtime._record_presence(report)
+        self.assertIs(runtime.controller.direct_presence, occupancy)
+
+    async def test_selected_sources_share_door_heat_during_thermostat_pause(self):
+        configured = (await self.configure()).configuration
+        observations = []
+        for source in ("proxy", "ha_presence"):
+            now = datetime(2030, 1, 1, tzinfo=UTC)
+            options = configured.as_options()
+            options["presence_source"] = source
+            options["program_mode"] = "constant"
+            options["parameters"] = {**options["parameters"], "target_temperature_c": 80}
+            runtime = SaunaRuntime(Configuration.from_options(options), clock=lambda: now)
+            await runtime.begin_session("source-neutral-door")
+            entity = configured.bindings.values["presence"]
+            await runtime.accept_presence(binary_presence(entity, "off", now, now))
+            target = runtime.controller.target_temperature
+            runtime.controller.set_temperature(target - 2, now)
+            await runtime.set_operation(True)
+            self.assertTrue(runtime.controller.last_decision.heat)
+            now += timedelta(seconds=runtime.configuration.parameters.seconds(
+                "minimum_heating_minutes") + 1)
+            runtime.controller.set_temperature(target + runtime.configuration.parameters.values[
+                "readiness_offset_c"], now)
+            await runtime.tick()
+            self.assertFalse(runtime.controller.last_decision.heat)
+            now += timedelta(seconds=1)
+            runtime.controller.set_temperature(target, now)
+            await runtime.tick()
+            before = runtime.controller.last_decision
+            self.assertEqual(before.reason, "thermostat_cooldown")
+            for name, kind in (("entry-open", Kind.DOOR_OPEN), ("entry-close", Kind.DOOR_CLOSE)):
+                now += timedelta(seconds=1)
+                await runtime.receive(Event(name, runtime.session.session_id, kind, now, now))
+            inputs = runtime.controller.regulation_inputs
+            decision = runtime.controller.last_decision
+            observed = {
+                "source": runtime.configuration_model.presence_source,
+                "temperature": target,
+                "before": {"heat": before.heat, "reason": before.reason},
+                "inputs": {"temporary_door_heat": inputs.temporary_door_heat,
+                           "gang_heat_demand": inputs.gang_heat_demand,
+                           "cooling": inputs.cooling},
+                "last_decision": {"at": decision.at.isoformat(), "heat": decision.heat,
+                                  "reason": decision.reason},
+            }
+            self.assertIsNone(runtime.session.timeline.active)
+            self.assertTrue(inputs.temporary_door_heat)
+            self.assertEqual((decision.heat, decision.reason), (True, "temporary_door_heat"))
+            observations.append(observed)
+            await runtime.close()
+        self.assertEqual({k: v for k, v in observations[0].items() if k != "source"},
+                         {k: v for k, v in observations[1].items() if k != "source"})
+        print("SOURCE_NEUTRAL_DOOR=" + json.dumps(observations, sort_keys=True, separators=(",", ":")))
+
     async def asyncSetUp(self):
         self.hass, self.temp = await start_hass()
         self.entry = await create_sauna(self.hass)
@@ -32,7 +171,7 @@ class PresenceRuntimeIntegrationTests(unittest.IsolatedAsyncioTestCase):
     async def test_initial_changes_unknown_and_audio_do_not_start_a_session(self):
         runtime = await self.configure()
         self.assertEqual(runtime.configuration.presence_source, "ha_presence")
-        self.assertEqual(runtime.presence_status["effective_source"], "ha_presence")
+        self.assertEqual(runtime.configuration_model.presence_source, "ha_presence")
         source = runtime.configuration.bindings.values["presence"]
         self.assertEqual(runtime.presence.external[source].occupancy, "present")
         self.assertIsNone(runtime.session)
@@ -51,6 +190,9 @@ class PresenceRuntimeIntegrationTests(unittest.IsolatedAsyncioTestCase):
                 report = runtime.presence.external[source]
                 self.assertEqual((report.occupancy, report.available), (occupancy, available))
                 self.assertEqual(runtime.presence_status["current"], report)
+                selected = runtime.controller.direct_presence
+                self.assertTrue(selected.qualified_presence)
+                self.assertEqual((selected.occupancy, selected.available), (occupancy, available))
             self.assertEqual(tuple(runtime.controller.decisions), decisions)
             self.assertEqual(audio_calls, [])
             self.assertIsNone(runtime.session)
@@ -171,7 +313,7 @@ class PresenceRuntimeIntegrationTests(unittest.IsolatedAsyncioTestCase):
             async with runtime._lock:
                 self.hass.states.async_set(source, "on")
                 state = self.hass.states.get(source)
-                await asyncio.wait_for(entered.wait(), 3)
+                await asyncio.wait_for(entered.wait(), async_timeout("service"))
                 self.assertEqual(runtime.controller.direct_presence.occupancy, "absent")
                 closed_at = runtime._clock()
                 self.assertLess(state.last_changed, closed_at)
@@ -190,7 +332,7 @@ class PresenceRuntimeIntegrationTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(gang.started_at, closed_at)
         self.assertEqual(gang.confirmation, Confirmation.CONFIRMED)
         self.assertTrue(runtime.controller.regulation_inputs.gang_heat_demand)
-        self.assertEqual(runtime.controller.direct_presence.effective_at, state.last_changed)
+        self.assertEqual(runtime.controller.direct_presence.timing.effective_at, state.last_changed)
         await runtime.tick()
         self.assertEqual(runtime.session.timeline.active.gang_id, gang.gang_id)
         self.assertEqual(sum(e.kind == "gang_confirmed" for e in runtime.consumer_events), 1)
@@ -198,7 +340,7 @@ class PresenceRuntimeIntegrationTests(unittest.IsolatedAsyncioTestCase):
         # The binary absence can precede a slow thermal exit indication.
         self.hass.states.async_set(source, "off")
         await self.hass.async_block_till_done()
-        absent_at = runtime.controller.direct_presence.effective_at
+        absent_at = runtime.controller.direct_presence.timing.effective_at
         self.assertEqual(runtime.session.timeline.active.gang_id, gang.gang_id)
         opened_at = await self.semantic_door(runtime, "slow-exit-open", Kind.DOOR_OPEN)
         self.assertLess(absent_at, opened_at)
@@ -213,7 +355,7 @@ class PresenceRuntimeIntegrationTests(unittest.IsolatedAsyncioTestCase):
         closed_at = await self.semantic_door(runtime, "empty-close", Kind.DOOR_CLOSE)
         self.hass.states.async_set(source, "on")
         await self.hass.async_block_till_done()
-        self.assertGreater(runtime.controller.direct_presence.effective_at, closed_at)
+        self.assertGreater(runtime.controller.direct_presence.timing.effective_at, closed_at)
         self.assertIsNone(runtime.session.timeline.active)
         self.assertFalse(any(e.kind == "gang_confirmed" for e in runtime.consumer_events))
 

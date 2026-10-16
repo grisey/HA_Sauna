@@ -1,0 +1,121 @@
+{
+  "description": "Exclusive synthetic inputs for the local preview; parameter references consume the product catalogue.",
+  "server": {
+    "host": "127.0.0.1",
+    "port": 8765
+  },
+  "initial": {
+    "origin": "2026-10-08T16:00:00+00:00",
+    "scenario": "verlauf",
+    "light_percent": 0,
+    "humidity_percent": 24.5,
+    "target_temperature_c": {
+      "parameter": "target_temperature_c"
+    },
+    "prehistory_temperature_c": 58,
+    "start_temperature_c": 62,
+    "session_id": "lokale-vorschau",
+    "sun_elevation_degrees": null
+  },
+  "bindings": {
+    "upper_temperature": "sensor.demo_temperatur",
+    "upper_humidity": "sensor.demo_feuchte",
+    "heater": "switch.demo_ofen",
+    "light": "light.demo_sauna",
+    "control_input": "event.demo_taster",
+    "presence": "binary_sensor.demo_fp300"
+  },
+  "button_event_types": [
+    "btn_down",
+    "btn_up",
+    "single_push",
+    "double_push",
+    "triple_push",
+    "long_push"
+  ],
+  "sequence": {
+    "warmup_seconds": 600,
+    "warmup_temperature_c": {
+      "parameter": "target_temperature_c"
+    },
+    "ready_seconds": 120,
+    "entry_open_seconds": 3,
+    "entry_close_seconds": 4,
+    "stay_seconds": 240,
+    "stay_temperature_c": 82,
+    "infusion_humidity_percent": 39,
+    "infusion_seconds": 180,
+    "infusion_temperature_c": 83,
+    "exit_open_seconds": 4,
+    "exit_absence_seconds": 1,
+    "exit_ventilation_seconds": 6,
+    "cooling_seconds": 160,
+    "cooling_temperature_c": 79,
+    "archive_temperature_c": 65,
+    "sample_seconds": 10,
+    "action_seconds": 1,
+    "advance_seconds": 60
+  },
+  "environment": {
+    "station": {
+      "name": "Beispielstation",
+      "id": "demo"
+    },
+    "condition": "partlycloudy",
+    "measurement_age_seconds": 600,
+    "source": {
+      "mode": "mixed_data",
+      "interpolated": true
+    },
+    "values": [
+      {
+        "key": "temperature",
+        "label": "Temperatur",
+        "value": 16.4,
+        "unit": "°C"
+      },
+      {
+        "key": "humidity",
+        "label": "Relative Luftfeuchte",
+        "value": 64,
+        "unit": "%"
+      },
+      {
+        "key": "absolute_humidity",
+        "label": "Absolute Luftfeuchte",
+        "value": 8.9,
+        "unit": "g/m³"
+      },
+      {
+        "key": "dew_point",
+        "label": "Taupunkt",
+        "value": 9.6,
+        "unit": "°C"
+      },
+      {
+        "key": "pressure",
+        "label": "Luftdruck",
+        "value": 1016.2,
+        "unit": "hPa"
+      },
+      {
+        "key": "wind_speed",
+        "label": "Windgeschwindigkeit",
+        "value": 12.6,
+        "unit": "km/h"
+      },
+      {
+        "key": "wind_direction",
+        "label": "Windrichtung",
+        "value": "W",
+        "unit": null
+      },
+      {
+        "key": "precipitation",
+        "label": "Niederschlag",
+        "value": 0,
+        "unit": "mm/h"
+      }
+    ]
+  }
+}

@@ -1,8 +1,12 @@
 """The local review transport must preserve actual control/role contracts."""
 import unittest
+from copy import deepcopy
+from dataclasses import asdict
 from datetime import timedelta
+from unittest.mock import patch
 
-from tools.local_preview import Preview
+from custom_components.ha_sauna.settings import ConfigurationLocked
+from tools.local_preview import PREVIEW_DEFAULTS, Preview
 
 
 class LocalPreviewTests(unittest.TestCase):
@@ -27,13 +31,16 @@ class LocalPreviewTests(unittest.TestCase):
 
     def test_display_parameter_save_is_visible_without_a_ha_options_listener(self):
         self.preview.reset("archiv")
-        before = self.preview.runtime.configuration.as_options()
+        before = self.preview.runtime.configuration.as_snapshot()
+        saved_before = self.preview.runtime.configuration.as_options()
         current = before["parameters"]["preset_step_c"]
         changed = current + 1
         self.preview.action("/preview/parameters", {"preset_step_c": changed})
         after = self.preview.state()["configuration"]
         before["parameters"]["preset_step_c"] = changed
+        saved_before["parameters"]["preset_step_c"] = changed
         self.assertEqual(after, before)
+        self.assertEqual(self.preview.entry.options, saved_before)
         self.assertFalse(self.preview.runtime.reconfiguring)
         self.preview.admin = False
         with self.assertRaises(ValueError):
@@ -149,14 +156,13 @@ class LocalPreviewTests(unittest.TestCase):
         self.preview.step((self.preview.c.light_after_run.ends_at - self.preview.now).total_seconds())
         self.assertEqual(self.preview.light, 0)
 
-    def test_user_can_control_manual_heater_through_real_controller(self):
+    def test_user_heater_route_projects_the_manual_selection(self):
         self.preview.admin = False
         self.preview.reset("manuell")
         self.assertTrue(self.preview.state()["permissions"]["heater"])
-        self.preview.action("/preview/heater", {"value":True})
-        self.assertTrue(self.preview.c.last_decision.heat)
-        self.preview.action("/preview/heater", {"value":False})
-        self.assertFalse(self.preview.c.last_decision.heat)
+        for value in (True, False):
+            self.preview.action("/preview/heater", {"value":value})
+            self.assertEqual(self.preview.state()["manual_controls"]["heater"]["manual"], value)
 
     def test_user_sees_manual_enablement_when_thermostat_needs_no_heat(self):
         self.preview.admin = False
@@ -213,15 +219,17 @@ class LocalPreviewTests(unittest.TestCase):
                 self.assertIsNotNone(self.preview.c.session)
                 self.assertTrue(self.preview.state()["operation_enabled"])
                 self.assertTrue(self.preview.c.last_decision.heat)
+                session_id = self.preview.c.session.session_id
                 self.preview.action("/preview/heater", {"value":False})
-                self.assertIsNone(self.preview.c.session)
+                self.assertEqual(self.preview.c.session.session_id, session_id)
+                self.assertFalse(self.preview.c.session.operation_enabled)
                 self.assertFalse(self.preview.c.last_decision.heat)
                 with self.assertRaises(ValueError):
                     self.preview.action("/preview/control", {"enabled":True})
-                self.assertIsNone(self.preview.c.session)
+                self.assertEqual(self.preview.c.session.session_id, session_id)
                 self.preview.action("/preview/control-mode", {"mode":"automatic"})
                 self.preview.action("/preview/control", {"enabled":True})
-                session_id = self.preview.c.session.session_id
+                self.assertEqual(self.preview.c.session.session_id, session_id)
                 self.preview.action("/preview/heater", {"value":True})
                 self.assertEqual(self.preview.c.session.session_id, session_id)
                 self.preview.action("/preview/control", {"enabled":False})
@@ -294,10 +302,106 @@ class LocalPreviewTests(unittest.TestCase):
 
     def test_completed_session_keeps_history_after_restart_and_for_user(self):
         session_id = self.preview.c.session.session_id
+        original_energy = self.preview.c.session.energy
+        original_snapshot = deepcopy(original_energy)
+        stored_snapshot = deepcopy(self.preview.sessions[session_id])
+        energy_values = asdict(original_energy)
+        intervals = energy_values.pop("intervals")
+        energy_values["accounted_at"] = original_energy.accounted_at.isoformat()
+        bootstrap = {
+            "from": None,
+            "to": original_energy.accounted_at.isoformat(),
+            "intervals": [
+                {**interval,
+                 "started_at": interval["started_at"].isoformat(),
+                 "ended_at": interval["ended_at"].isoformat()}
+                for interval in intervals
+            ],
+        }
+        empty = {"from": bootstrap["to"], "to": bootstrap["to"], "intervals": []}
+        for admin in (True, False):
+            with self.subTest(current_admin=admin):
+                self.preview.admin = admin
+                expected = {**energy_values, "interval_delta": bootstrap}
+                self.assertEqual(self.preview.state()["session"]["energy"], expected)
+                self.assertEqual(
+                    self.preview.archive(session_id)["session"]["energy"], expected,
+                )
+                expected_empty = {**energy_values, "interval_delta": empty}
+                self.assertEqual(self.preview.state(
+                    energy_session_id=session_id, energy_after=bootstrap["to"],
+                )["session"]["energy"], expected_empty)
+                self.assertEqual(self.preview.archive(
+                    session_id, energy_after=bootstrap["to"],
+                )["session"]["energy"], expected_empty)
+                self.assertEqual(self.preview.state(
+                    energy_session_id=f"{session_id}:stale",
+                    energy_after=bootstrap["to"],
+                )["session"]["energy"], expected)
+                self.assertIs(self.preview.c.session.energy, original_energy)
+                self.assertEqual(original_energy, original_snapshot)
+                self.assertEqual(self.preview.sessions[session_id], stored_snapshot)
+        self.preview.admin = True
+
+        seconds = PREVIEW_DEFAULTS["sequence"]["action_seconds"]
+        measured_kw = self.preview.c.parameters.values["nominal_power_kw"] / 3
+        started_at = self.preview.now
+        ended_at = started_at + timedelta(seconds=seconds)
+        valid_until = started_at + timedelta(
+            seconds=self.preview.c.parameters.values["sensor_timeout_seconds"],
+        )
+        self.preview.c.report_power(measured_kw * 1000, valid_until, started_at)
+        self.preview.step(seconds)
+        original_suffix = self.preview.c.session.energy.intervals[-1]
+        self.assertEqual((
+            original_suffix.started_at, original_suffix.ended_at,
+            original_suffix.source, original_suffix.power_kw,
+        ), (started_at, ended_at, "measured", measured_kw))
+        suffix = {
+            "from": bootstrap["to"], "to": ended_at.isoformat(),
+            "intervals": [{
+                "started_at": started_at.isoformat(), "ended_at": ended_at.isoformat(),
+                "source": "measured", "power_kw": measured_kw,
+            }],
+        }
+        current_energy = self.preview.c.session.energy
+        current_snapshot = deepcopy(current_energy)
+        stored_snapshot = deepcopy(self.preview.sessions[session_id])
+        current_values = asdict(current_energy)
+        current_values.pop("intervals")
+        current_values["accounted_at"] = current_energy.accounted_at.isoformat()
+        state_energy = self.preview.state(
+            energy_session_id=session_id, energy_after=bootstrap["to"],
+        )["session"]["energy"]
+        self.assertEqual(state_energy, {**current_values, "interval_delta": suffix})
+        self.assertEqual(self.preview.archive(
+            session_id, energy_after=bootstrap["to"],
+        )["session"]["energy"], state_energy)
+        clipped_from = started_at + timedelta(seconds=seconds / 2)
+        clipped = {
+            **suffix, "from": clipped_from.isoformat(),
+            "intervals": [{**suffix["intervals"][0],
+                           "started_at": clipped_from.isoformat()}],
+        }
+        self.assertEqual(self.preview.state(
+            energy_session_id=session_id, energy_after=clipped_from.isoformat(),
+        )["session"]["energy"]["interval_delta"], clipped)
+        self.assertEqual(self.preview.archive(
+            session_id, energy_after=clipped_from.isoformat(),
+        )["session"]["energy"]["interval_delta"], clipped)
+        self.assertIs(self.preview.c.session.energy, current_energy)
+        self.assertEqual(current_energy, current_snapshot)
+        self.assertEqual(self.preview.sessions[session_id], stored_snapshot)
+        self.preview.c.report_power(None, None, self.preview.now)
+
         self.preview.action("/preview/control", {"enabled":False})
         token = next(d.token for d in self.preview.c.session.deadlines
                      if d.purpose == "session_gap")
         self.preview.action("/preview/finish-session", {"token":token})
+        self.assertEqual(self.preview.c.session.session_id, session_id)
+        due_at = next(d.due_at for d in self.preview.c.session.deadlines
+                      if d.purpose == "session_gap")
+        self.preview.step((due_at - self.preview.now).total_seconds())
         self.assertIsNone(self.preview.c.session)
         self.assertEqual(self.preview.state()["last_session"]["timeline"]["session_id"], session_id)
         self.assertEqual(self.preview.archive()[0]["session_id"], session_id)
@@ -305,11 +409,74 @@ class LocalPreviewTests(unittest.TestCase):
         self.assertIsNotNone(completed["session"]["ended_at"])
         self.assertTrue(completed["records"])
         self.assertTrue(completed["phase_projection"]["intervals"])
+        last_energy = self.preview.c.completed_sessions[-1].energy
+        last_snapshot = deepcopy(last_energy)
+        stored_snapshot = deepcopy(self.preview.sessions[session_id])
+        last_values = asdict(last_energy)
+        last_intervals = last_values.pop("intervals")
+        last_values["accounted_at"] = last_energy.accounted_at.isoformat()
+        last_bootstrap = {
+            "from": None, "to": last_energy.accounted_at.isoformat(),
+            "intervals": [
+                {**interval,
+                 "started_at": interval["started_at"].isoformat(),
+                 "ended_at": interval["ended_at"].isoformat()}
+                for interval in last_intervals
+            ],
+        }
+        expected_last = {**last_values, "interval_delta": last_bootstrap}
+        self.assertEqual(completed["session"]["energy"], expected_last)
+        self.assertEqual(self.preview.state()["last_session"]["energy"], expected_last)
+        last_empty = {
+            "from": last_bootstrap["to"], "to": last_bootstrap["to"], "intervals": [],
+        }
+        self.assertEqual(self.preview.state(
+            last_energy_session_id=session_id, last_energy_after=last_bootstrap["to"],
+        )["last_session"]["energy"], {**last_values, "interval_delta": last_empty})
+        self.assertEqual(self.preview.archive(
+            session_id, energy_after=last_bootstrap["to"],
+        )["session"]["energy"], {**last_values, "interval_delta": last_empty})
+        last_interval = last_energy.intervals[-1]
+        last_cursor = last_interval.started_at + (
+            last_interval.ended_at - last_interval.started_at
+        ) / 2
+        last_suffix = {
+            "from": last_cursor.isoformat(), "to": last_bootstrap["to"],
+            "intervals": [{**last_bootstrap["intervals"][-1],
+                           "started_at": last_cursor.isoformat()}],
+        }
+        self.assertEqual(self.preview.state(
+            last_energy_session_id=session_id, last_energy_after=last_cursor.isoformat(),
+        )["last_session"]["energy"], {**last_values, "interval_delta": last_suffix})
+        self.assertEqual(self.preview.archive(
+            session_id, energy_after=last_cursor.isoformat(),
+        )["session"]["energy"], {**last_values, "interval_delta": last_suffix})
+        self.assertIs(self.preview.c.completed_sessions[-1].energy, last_energy)
+        self.assertEqual(last_energy, last_snapshot)
+        self.assertEqual(self.preview.sessions[session_id], stored_snapshot)
         for action in ("door_open", "door_close", "infusion"):
             with self.assertRaisesRegex(ValueError, "Ohne laufende Sitzung"):
                 self.preview.action("/simulate", {"action":action})
         self.preview.action("/preview/control", {"enabled":True})
         self.assertNotEqual(self.preview.c.session.session_id, session_id)
+        current_id = self.preview.c.session.session_id
+        self.assertEqual(self.preview.state(
+            last_energy_session_id=current_id, last_energy_after=last_bootstrap["to"],
+        )["last_session"]["energy"], expected_last)
+        stored_snapshot = deepcopy(self.preview.sessions)
+        current_energy = self.preview.c.session.energy
+        current_values = asdict(current_energy)
+        current_values.pop("intervals")
+        current_values["accounted_at"] = current_energy.accounted_at.isoformat()
+        with patch("tools.local_preview.energy_interval_delta") as energy_delta:
+            scalars = self.preview.state(include_energy_intervals=False)
+            energy_delta.assert_not_called()
+        self.assertEqual(scalars["session"]["energy"], current_values)
+        self.assertEqual(scalars["last_session"]["energy"], last_values)
+        self.assertIs(self.preview.c.session.energy, current_energy)
+        self.assertIs(self.preview.c.completed_sessions[-1].energy, last_energy)
+        self.assertEqual(last_energy, last_snapshot)
+        self.assertEqual(self.preview.sessions, stored_snapshot)
         continued = self.preview.archive(session_id)
         self.assertEqual(continued["session"], completed["session"])
         self.assertEqual(continued["phase_projection"], completed["phase_projection"])
@@ -327,25 +494,31 @@ class LocalPreviewTests(unittest.TestCase):
         self.preview.admin = False
         public = self.preview.archive(session_id)
         self.assertNotIn("configuration", public["session"])
+        self.assertEqual(public["session"]["energy"], expected_last)
+        self.assertEqual(self.preview.state()["last_session"]["energy"], expected_last)
         self.assertTrue(public["records"])
         self.assertTrue(all(r["kind"] in ("measurement", "source_snapshot", "phase")
                             for r in public["records"]))
 
-    def test_preview_button_short_bounds_manual_recording(self):
-        self.preview.reset("manuell")
-        for expected in (True, False):
-            self.preview.action("/simulate", {"action":"button_short"})
-            self.assertEqual(self.preview.c.last_decision.heat, expected)
-            self.assertEqual(self.preview.c.session is not None, expected)
-            self.assertEqual(self.preview.c.control_mode, "manual")
-        self.preview.reset("archiv")
-        self.preview.action("/simulate", {"action":"button_short"})
-        self.assertEqual(self.preview.c.control_mode, "manual")
-        self.assertIsNotNone(self.preview.c.session)
-        self.assertFalse(self.preview.c.automatic_operation_enabled)
-        self.assertTrue(self.preview.c.last_decision.heat)
+    def test_legacy_saved_session_preserves_energy_without_inventing_intervals(self):
+        session_id = self.preview.c.session.session_id
+        saved = deepcopy(self.preview.sessions[session_id])
+        saved.pop("energy")
+        self.preview.sessions[session_id] = saved
+        stored_snapshot = deepcopy(saved)
+        energy_values = deepcopy(saved["session"]["energy"])
+        self.assertNotIn("intervals", energy_values)
+        self.assertNotIn("interval_delta", energy_values)
+        for admin in (True, False):
+            for after in (None, energy_values["accounted_at"]):
+                with self.subTest(admin=admin, after=after):
+                    self.preview.admin = admin
+                    archived = self.preview.archive(session_id, energy_after=after)
+                    self.assertEqual(archived["session"]["energy"], energy_values)
+                    self.assertNotIn("energy", self.preview.sessions[session_id])
+                    self.assertEqual(self.preview.sessions[session_id], stored_snapshot)
 
-    def test_native_multiple_press_starts_automatic_from_manual_recording(self):
+    def test_preview_gesture_selection_uses_settings_validation(self):
         for gesture in ("double", "triple"):
             with self.subTest(gesture=gesture):
                 self.preview.reset("manuell")
@@ -354,31 +527,122 @@ class LocalPreviewTests(unittest.TestCase):
                 saved = self.preview.action("/preview/button-gesture", {"gesture":gesture})
                 self.assertEqual(saved["button_session_gesture"], gesture)
                 self.assertEqual(self.preview.entry.options["button_session_gesture"], gesture)
-                self.preview.action("/simulate", {"action":"button_short"})
-                self.assertIsNotNone(self.preview.c.session)
-                self.assertFalse(self.preview.c.automatic_operation_enabled)
-                self.preview.action("/simulate", {"action":f"button_{gesture}"})
-                self.assertIsNotNone(self.preview.c.session)
-                self.assertEqual(self.preview.c.control_mode, "automatic")
-                with self.assertRaises(ValueError):
-                    self.preview.action("/preview/button-gesture", {"gesture":"long"})
-                self.preview.action("/simulate", {"action":f"button_{gesture}"})
-                self.assertIsNone(self.preview.c.session)
         for gesture in ("short", "unknown"):
             with self.assertRaises(ValueError):
                 self.preview.action("/preview/button-gesture", {"gesture":gesture})
 
-    def test_preview_button_hold_uses_configured_threshold_and_release_feedback(self):
+    def test_preview_button_program_selection_preserves_live_settings_and_standards(self):
+        program = self.preview.runtime.configuration.temperature_programs[0]
+        for live_program in (
+            {"profile": program.id},
+            {"temperature_steps": [program.start_c, program.end_c]},
+        ):
+            with self.subTest(live_program=live_program):
+                self.preview.reset("manuell")
+                self.preview.admin = False
+                self.preview.action("/preview/program", live_program)
+                configuration = self.preview.runtime.configuration
+                field = configuration.standard_fields()[0]
+                configuration = configuration.with_field_standard(
+                    field, configuration.field_value(field, source="factory"),
+                )
+                self.preview.runtime.configuration = configuration
+                self.preview.entry.options = configuration.as_options()
+                self.assertIn(field, configuration.field_standards)
+                self.assertIsNone(self.preview.c.session)
+                self.assertFalse(self.preview.state()["permissions"]["admin"])
+                self.assertTrue(self.preview.state()["permissions"]["program"])
+                controller = self.preview.c
+                parameters = controller.parameters.as_dict()
+                targets = (
+                    controller.target_temperature, controller.thermostat_target,
+                    controller.next_gang_temperature,
+                )
+                steps = controller.temperature_steps
+                expected = configuration.as_snapshot()
+                expected_options = configuration.as_options()
+                for profile in (program.id, "constant"):
+                    with self.subTest(profile=profile):
+                        saved = self.preview.action(
+                            "/preview/button-program", {"profile": profile},
+                        )
+                        self.assertEqual(saved, {
+                            "success": True, "button_program": profile,
+                        })
+                        expected["button_program"] = profile
+                        expected_options["button_program"] = profile
+                        self.assertEqual(
+                            self.preview.runtime.configuration.as_snapshot(), expected,
+                        )
+                        self.assertEqual(self.preview.entry.options, expected_options)
+                        self.assertEqual(
+                            self.preview.state()["configuration"]["button_program"],
+                            profile,
+                        )
+                        self.assertIs(self.preview.runtime.controller, controller)
+                        self.assertIsNone(controller.session)
+                        self.assertEqual(controller.parameters.as_dict(), parameters)
+                        self.assertEqual((
+                            controller.target_temperature, controller.thermostat_target,
+                            controller.next_gang_temperature,
+                        ), targets)
+                        self.assertEqual(controller.temperature_steps, steps)
+
+    def test_preview_button_program_rejects_malformed_requests_without_mutation(self):
+        self.preview.reset("manuell")
+        self.preview.admin = False
+        configuration = self.preview.runtime.configuration
+        options = configuration.as_options()
+        malformed = [
+            [], None, {},
+            {"profile": "constant", "temperature_c": self.preview.c.target_temperature},
+        ]
+        invalid_profiles = [
+            {"profile": profile} for profile in (
+                "missing", "current", None, False, self.preview.c.target_temperature, [],
+            )
+        ]
+        for bodies, message in (
+            (malformed, "Tasterprogramm fehlt oder ist ungültig"),
+            (invalid_profiles, "Ungültiges Tasterprogramm"),
+        ):
+            for body in bodies:
+                with self.subTest(body=body), self.assertRaisesRegex(ValueError, message):
+                    self.preview.action("/preview/button-program", body)
+                self.assertIs(self.preview.runtime.configuration, configuration)
+                self.assertEqual(self.preview.entry.options, options)
+
+    def test_preview_button_program_observes_settings_locks_without_mutation(self):
+        for scenario, reconfiguring in (("aufheizen", False), ("manuell", True)):
+            with self.subTest(scenario=scenario, reconfiguring=reconfiguring):
+                self.preview.reset(scenario)
+                self.preview.admin = False
+                self.preview.runtime.reconfiguring = reconfiguring
+                configuration = self.preview.runtime.configuration
+                options = configuration.as_options()
+                session = self.preview.c.session
+                session_state = self.preview.state()["session"]
+                with self.assertRaises(ConfigurationLocked):
+                    self.preview.action(
+                        "/preview/button-program", {"profile": "constant"},
+                    )
+                self.assertIs(self.preview.runtime.configuration, configuration)
+                self.assertEqual(self.preview.entry.options, options)
+                self.assertIs(self.preview.c.session, session)
+                self.assertEqual(self.preview.state()["session"], session_state)
+                self.preview.runtime.reconfiguring = False
+
+    def test_preview_native_button_consumes_classified_events_without_advancing_time(self):
         self.preview.reset("manuell")
         self.preview.action("/preview/button-gesture", {"gesture":"long"})
         self.assertEqual(self.preview.runtime.configuration.control_input_mode, "button")
         before = self.preview.now
-        seconds = self.preview.c.parameters.values["button_hold_seconds"]
         bright = self.preview.c.parameters.values["session_light_brightness_percent"]
         self.preview.action("/simulate", {"action":"button_hold"})
         state = self.preview.state()
         identity = self.preview.c.session.session_id
-        self.assertEqual(self.preview.now - before, timedelta(seconds=seconds))
+        self.assertEqual(self.preview.now, before)
+        self.assertIsNone(self.preview.runtime._button.hold_threshold)
         self.assertEqual(self.preview.c.control_mode, "automatic")
         self.assertTrue(state["preview_button"]["pressed"])
         self.assertTrue(state["preview_button"]["start_hold"])
@@ -392,7 +656,8 @@ class LocalPreviewTests(unittest.TestCase):
         self.preview.action("/simulate", {"action":"button_short"})
         self.assertEqual(self.preview.c.session.session_id, identity)
         self.preview.action("/simulate", {"action":"button_hold"})
-        self.assertIsNone(self.preview.c.session)
+        self.assertEqual(self.preview.c.session.session_id, identity)
+        self.assertFalse(self.preview.c.session.operation_enabled)
         self.assertEqual(self.preview.state()["manual_controls"]["light"]["observation"]["brightness_percent"], 0)
         self.preview.action("/simulate", {"action":"button_release"})
         self.assertIsNotNone(self.preview.c.light_after_run)
@@ -422,6 +687,11 @@ class LocalPreviewTests(unittest.TestCase):
         self.assertEqual(self.preview.state()["archive_revision"], current["archive_revision"])
         self.assertEqual(len(self.preview.archive()), 1)
         self.preview.action("/preview/heater", {"value":False})
+        self.assertEqual(len(self.preview.archive()), 1)
+        self.assertFalse(self.preview.c.session.operation_enabled)
+        due_at = next(d.due_at for d in self.preview.c.session.deadlines
+                      if d.purpose == "session_gap")
+        self.preview.step((due_at - self.preview.now).total_seconds())
         self.assertEqual(self.preview.archive(), [])
 
     def test_program_choices_use_existing_runtime_settings_without_session_reset(self):

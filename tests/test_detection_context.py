@@ -56,81 +56,82 @@ class DetectionContextTests(unittest.TestCase):
         self.assertIsNone(c.session.timeline.active)
 
     def test_late_or_replaced_weak_context_is_a_processed_non_effect(self):
-        c = controller(confirmation_minutes=1)
+        c = controller()
         c.process(event("entry-open", Kind.DOOR_OPEN, 0))
         c.process(event("close", Kind.DOOR_CLOSE, 0))
-        late = Event("late", "s", Kind.PERSON_WEAK, at(30), at(61))
+        expiry = c.parameters.seconds("confirmation_minutes")
+        late = Event("late", "s", Kind.PERSON_WEAK, at(expiry / 2), at(expiry + 1))
         result = c.process(late)
         self.assertFalse(result.changed)
         self.assertEqual(result.reason, "entry_context_expired")
         self.assertIsNone(c.session.timeline.active)
         self.assertEqual(c.process(late).reason, "duplicate")
 
-        c.process(event("open", Kind.DOOR_OPEN, 62))
-        c.process(event("close2", Kind.DOOR_CLOSE, 63))
-        old = Event("old", "s", Kind.PERSON_WEAK, at(0), at(64))
+        c.process(event("open", Kind.DOOR_OPEN, expiry + 2))
+        c.process(event("close2", Kind.DOOR_CLOSE, expiry + 3))
+        old = Event("old", "s", Kind.PERSON_WEAK, at(0), at(expiry + 4))
         self.assertEqual(c.process(old).reason, "entry_context_changed")
 
     def test_retracted_start_stays_suppressed_until_new_door_episode(self):
-        c = controller(confirmation_minutes=1)
+        c = controller()
         c.process(event("entry-open", Kind.DOOR_OPEN, 0))
         c.process(event("close", Kind.DOOR_CLOSE, 0))
         c.process(event("person", Kind.PERSON_STRONG, 1))
-        c.advance(at(60))
+        expiry = c.parameters.seconds("confirmation_minutes")
+        c.advance(at(expiry))
         self.assertIsNone(c.session.timeline.active)
         self.assertFalse(c.recognition_allowed(Kind.PERSON_STRONG))
         self.assertFalse(c.recognition_allowed(Kind.INFUSION))
-        c.process(event("open", Kind.DOOR_OPEN, 61))
-        c.process(event("close2", Kind.DOOR_CLOSE, 62))
+        c.process(event("open", Kind.DOOR_OPEN, expiry + 1))
+        c.process(event("close2", Kind.DOOR_CLOSE, expiry + 2))
         self.assertTrue(c.recognition_allowed(Kind.PERSON_STRONG))
 
     def test_confirmation_due_at_delivery_waits_for_all_detected_signals(self):
-        c = controller(confirmation_minutes=1)
+        c = controller()
         c.process(event("entry-open", Kind.DOOR_OPEN, 14))
         c.process(event("close", Kind.DOOR_CLOSE, 14))
-        person = Event("person-batch", "s", Kind.PERSON_STRONG, at(16), at(74))
-        infusion = Event("infusion-batch", "s", Kind.INFUSION, at(51), at(74))
+        expiry = 14 + c.parameters.seconds("confirmation_minutes")
+        person = Event("person-batch", "s", Kind.PERSON_STRONG, at(16), at(expiry))
+        infusion = Event("infusion-batch", "s", Kind.INFUSION, at(51), at(expiry))
         c.process(person, defer_confirmation=True)
         gang_id = c.session.timeline.active.gang_id
         c.process(infusion, defer_confirmation=True)
-        c.advance(at(74))
+        c.advance(at(expiry))
         self.assertEqual(c.session.timeline.active.gang_id, gang_id)
         self.assertEqual(len(c.session.timeline.active.infusion_events), 1)
         self.assertFalse(c.session.timeline.retracted)
 
-        late = controller(confirmation_minutes=1)
+        late = controller()
         late.process(event("entry-open", Kind.DOOR_OPEN, 14))
         late.process(event("close", Kind.DOOR_CLOSE, 14))
         late.process(person, defer_confirmation=True)
-        late.advance(at(74))
+        late.advance(at(expiry))
         self.assertIsNone(late.session.timeline.active)
 
-    def test_waiting_without_entry_and_operation_off_cannot_create_a_gang(self):
+    def test_recognition_admission_follows_cooling_entry_and_operation_context(self):
         c = after_run()
-        for second, phase in ((70,"nachlauf"),(99,"nachlauf")):
-            c.advance(at(second))
-            self.assertEqual(c.phase,phase)
-            for kind in (Kind.PERSON_STRONG,Kind.PERSON_WEAK,Kind.INFUSION):
-                self.assertFalse(c.recognition_allowed(kind))
-        c.advance(at(100))
-        self.assertFalse(c.recognition_allowed(Kind.PERSON_STRONG))
-        self.assertFalse(c.recognition_allowed(Kind.INFUSION))
-        # Erst eine neue vollständige Türepisode gibt einen weiteren Start frei.
-        self.assertFalse(c.recognition_allowed(Kind.PERSON_WEAK))
-        c.process(event("previous-exit-close", Kind.DOOR_CLOSE, 100))
-        c.process(event("new-entry-open", Kind.DOOR_OPEN, 101))
-        c.process(event("new-entry-close", Kind.DOOR_CLOSE, 102))
-        self.assertTrue(c.recognition_allowed(Kind.PERSON_STRONG))
-        self.assertTrue(c.recognition_allowed(Kind.INFUSION))
-        c.set_operation(False,at(140))
-        self.assertFalse(c.recognition_allowed(Kind.PERSON_STRONG))
-        self.assertFalse(c.recognition_allowed(Kind.INFUSION))
+        signals = (Kind.PERSON_STRONG, Kind.PERSON_WEAK, Kind.INFUSION)
+        # Cooling can consume evidence without granting a new gang entry.
+        for kind in signals:
+            self.assertTrue(c.recognition_allowed(kind))
+        ended_at = c.session.after_run.ends_at
+        c.advance(ended_at)
+        for kind in signals:
+            self.assertFalse(c.recognition_allowed(kind))
+        c.process(Event("previous-exit-close", "s", Kind.DOOR_CLOSE, ended_at, ended_at))
+        for kind in signals:
+            self.assertTrue(c.recognition_allowed(kind))
+        c.set_operation(False, ended_at + timedelta(seconds=1))
+        for kind in signals:
+            self.assertFalse(c.recognition_allowed(kind))
 
     def test_delayed_return_evidence_belongs_to_entry_not_to_cooling_expiry(self):
         c = after_run()
+        cooling = c.session.after_run
+        cooling_history = c.session.after_run_history
         c.process(event("return-close", Kind.DOOR_CLOSE, 75))
         self.assertIsNotNone(c.session.after_run)
-        self.assertFalse(c.recognition_allowed_at(Kind.INFUSION, at(74)))
+        self.assertTrue(c.recognition_allowed_at(Kind.INFUSION, at(74)))
         old = Event("old-rise", "s", Kind.INFUSION, at(74), at(80))
         self.assertEqual(c.process(old, recognition_at=at(74)).reason,
                          "entry_context_changed")
@@ -139,8 +140,12 @@ class DetectionContextTests(unittest.TestCase):
         c.process(Event("return-rise", "s", Kind.INFUSION, at(76), at(81)),
                   recognition_at=at(76))
         self.assertEqual(c.session.timeline.active.started_at, at(75))
-        self.assertEqual(c.session.after_run_history[-1].ends_at, at(81))
-        self.assertIsNone(c.session.after_run)
+        self.assertEqual(c.session.after_run.phase_id, cooling.phase_id)
+        self.assertEqual(c.session.after_run.started_at, cooling.started_at)
+        self.assertEqual(
+            c.session.after_run.elapsed_seconds, (at(81) - at(70)).total_seconds(),
+        )
+        self.assertEqual(c.session.after_run_history, cooling_history)
 
     def test_late_heating_gate_cannot_hide_received_off_on_from_thermal_proof(self):
         c = controller()
@@ -172,28 +177,31 @@ class DetectionContextTests(unittest.TestCase):
                 self.assertFalse(c.recognition_allowed(Kind.PERSON_WEAK))
 
     def test_confirmation_batch_covers_temperature_and_received_feedback(self):
-        c = controller(confirmation_minutes=1)
+        c = controller()
         c.process(event("entry-open", Kind.DOOR_OPEN, 11))
         c.process(event("close", Kind.DOOR_CLOSE, 11))
         c.process(event("person", Kind.PERSON_STRONG, 11))
         old = c.session.timeline.active
+        expiry = 11 + c.parameters.seconds("confirmation_minutes")
         with c.confirmation_batch():
-            c.set_temperature(90, at(71))
-            c.report_contactor(False, at(71))
-            c.report_heating(False, at(71))
-            c.report_power(None, None, at(71))
-            c.report_fallback_heating(False, at(71))
+            c.set_temperature(90, at(expiry))
+            c.report_contactor(False, at(expiry))
+            c.report_heating(False, at(expiry))
+            c.report_power(None, None, at(expiry))
+            c.report_fallback_heating(False, at(expiry))
             self.assertEqual(c.session.timeline.active.gang_id, old.gang_id)
-            c.process(event("infusion", Kind.INFUSION, 71))
-            c.advance(at(71), finish_confirmation_batch=True)
+            c.process(event("infusion", Kind.INFUSION, expiry))
+            c.advance(at(expiry), finish_confirmation_batch=True)
         self.assertEqual(c.session.timeline.active.gang_id, old.gang_id)
         self.assertTrue(c.session.timeline.active.infusion_events)
 
     def test_booking_keeps_generated_end_and_retraction_receipts_current(self):
         for confirmed in (False, True):
             with self.subTest(confirmed=confirmed):
-                c = controller(confirmation_minutes=1)
-                received = [at(100)]
+                c = controller()
+                expiry = 10 + c.parameters.seconds("confirmation_minutes")
+                first_receipt, last_receipt = expiry + 30, expiry + 31
+                received = [at(first_receipt)]
                 with c.confirmation_batch(lambda: received[0]):
                     c.process(Event("open-late", "s", Kind.DOOR_OPEN,
                                     at(9), received[0], at(10)))
@@ -205,25 +213,25 @@ class DetectionContextTests(unittest.TestCase):
                         c.process(Event("water-late", "s", Kind.INFUSION,
                                         at(15), received[0], at(17)))
                         heating = next(d for d in c.decisions if d.reason == "gang_heat_demand")
-                        self.assertEqual((heating.at, heating.created_at), (at(13), at(100)))
-                    received[0] = at(101)
+                        self.assertEqual((heating.at, heating.created_at), (at(13), at(first_receipt)))
+                    received[0] = at(last_receipt)
                     if confirmed:
                         c.set_operation(False, at(28))
                         off = c.session.timeline.processed[-1]
-                        self.assertEqual((off.booking_at, off.detected_at), (at(28), at(101)))
+                        self.assertEqual((off.booking_at, off.detected_at), (at(28), at(last_receipt)))
                         self.assertEqual((c.last_decision.at, c.last_decision.created_at),
-                                         (at(28), at(101)))
+                                         (at(28), at(last_receipt)))
                         end_kind = "gang_ended"
                     else:
-                        c.advance(at(70), finish_confirmation_batch=True)
+                        c.advance(at(expiry), finish_confirmation_batch=True)
                         expired = c.session.timeline.processed[-1]
                         self.assertEqual((expired.booking_at, expired.detected_at),
-                                         (at(70), at(101)))
+                                         (at(expiry), at(last_receipt)))
                         end_kind = "gang_retracted"
                 start = next(e for e in c.consumer_events if e.kind == "gang_started")
                 end = next(e for e in c.consumer_events if e.kind == end_kind)
-                self.assertEqual(start.received_at, at(100))
-                self.assertEqual(end.received_at, at(101))
+                self.assertEqual(start.received_at, at(first_receipt))
+                self.assertEqual(end.received_at, at(last_receipt))
 
     def test_direct_infusion_suppresses_later_person_signals_even_in_one_catchup_batch(self):
         p = detection_parameters()
@@ -255,15 +263,18 @@ class DetectionContextTests(unittest.TestCase):
 
     def test_skipped_person_checks_do_not_accumulate_hold_time(self):
         d=Detector(detection_parameters(),T0)
+        step = d.p["person_step_seconds"]
+        admission = (d.p["strong_window_seconds"] + d.p["median_seconds"] + step - 1) // step * step
+        confirmed = admission + ((d.p["strong_hold_seconds"] + step - 1) // step) * step
         now=0
         def allowed(kind):
-            return kind in (Kind.PERSON_STRONG,Kind.PERSON_WEAK) and now>=130
+            return kind in (Kind.PERSON_STRONG,Kind.PERSON_WEAK) and now>=admission
         events=[]
-        for now in range(151):
+        for now in range(int(confirmed + step) + 1):
             for position in (Position.UPPER,Position.LOWER):
                 for quantity,value in ((Quantity.TEMPERATURE,70+now*.01),(Quantity.HUMIDITY,20+now*.02)):
                     d.accept(measurement(position,quantity,value,now))
             events+=d.advance(at(now),enabled=True,allowed=allowed)
         people=[e for e in events if e.kind==Kind.PERSON_STRONG]
         self.assertEqual(len(people),1)
-        self.assertEqual(people[0].effective_at,at(140))
+        self.assertEqual(people[0].effective_at,at(confirmed))

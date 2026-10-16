@@ -1,0 +1,161 @@
+{
+  "schema_version": 1,
+  "purpose": "Independent potential whole sessions, not replay labels copied from historical detections.",
+  "required_files": "All inputs, configuration, actions and evaluations are committed with SHA-256 bindings. No private path or environment variable is needed for execution.",
+  "source_count": 13,
+  "source_curves_sha256": "a3a98cc4f2a0f526bc40f5e45c86f3d6820390f250679c9fcaeb6f9e69a0c7e6",
+  "derivation": [
+    "Four climate channels are transferred together in temperature and water-vapour density; relative humidity is recalculated with the documented Magnus saturation-pressure relationship.",
+    "The observed temperature difference between heights relaxes proportionally during door exchange and cooling. Repeating absolute lower-height differences must not invent a thermal inversion.",
+    "Warm-up uses the measured temperature band, not repeated cold-start snippets. A stored-heat bump occurs only immediately after a heating interval; continuing off time consumes the monotonic cooling tail.",
+    "The cooling release is calculated before execution from the documented exponential heat balance and the declared measured actuator history. The curve resumes heating at that release, including the observed initial90 seconds of continued cooling and225-second recovery segment.",
+    "Direct and proxy cases reuse the same measured infusion shapes. Their thermal continuation differs when proxy person evidence limits cooling or a dry proxy stay remains unconfirmed.",
+    "Proxy cooling shortened to the minimum retains the original heat-balance scope. A measured delayed ON response is superimposed on remaining wall-heat recovery without changing vapour density.",
+    "Manual infusion temperatures follow independently selected thermostat heating/off blocks. The measured two-height infusion vapour-density sequence is applied over that temperature path; manual exit uses the measured continuously heated ventilation source.",
+    "Programme changes and overrides select the physical heat/off history before product execution. A wrong product output cannot steer the input fixture.",
+    "Stützwerte are linearly interpolated, with representative asynchronous receipt offsets. Exact raw timing belongs to the separate real-session replay suite."
+  ],
+  "assessment_basis": [
+    "User-described external controls and physical entry, stay, infusion, departure and through-ventilation.",
+    "The configured minimum gates only new gang starts; existing gang ends remain evaluable below it.",
+    "Direct presence confirms a complete entry; its delayed absence can complete the same ventilated exit after closure.",
+    "A dry stay is confirmed with direct presence but has no infusion confirmation under proxy detection.",
+    "Any processed proxy person indication limits a running cooling cycle to its original configured minimum; elapsed OFF time counts and repeated indications cannot restart its clock. Directly confirmed entry ends cooling immediately.",
+    "Manual mode shares recognition and recording while retaining only thermostat heat control and manually selected light."
+  ],
+  "scope_limits": [
+    "These finite whole sessions cover the established behaviour classes and their selected combinations, not every permutation, unknown human behaviour or hardware defect.",
+    "Sensor outages, transport failure, protection, persistence failure and interface permissions remain technical product/integration tests rather than fictitious human actions.",
+    "No scenario claims a measured physical light fade merely from Home Assistant brightness feedback."
+  ],
+  "families": [
+    {
+      "id": "G01",
+      "duration_s": 19501.265,
+      "human_stays": 5,
+      "evaluations": 40,
+      "climate_file": "G01.measurements.json",
+      "climate_sha256": "de240216123ab2899193e377b9840677d76917b4af42550f6b9de6258d94b84f"
+    },
+    {
+      "id": "G02",
+      "duration_s": 14700.111,
+      "human_stays": 3,
+      "evaluations": 26,
+      "climate_file": "G02.measurements.json",
+      "climate_sha256": "8145b3b951f147d288414b84299d3bd003b440e3900188d2a3725767e59c7658"
+    },
+    {
+      "id": "G03",
+      "duration_s": 19419.055,
+      "human_stays": 5,
+      "evaluations": 40,
+      "climate_file": "G03.measurements.json",
+      "climate_sha256": "5e3967afdbb9bc0844b8ffec21af97b604bde2769268029ff9bcd5bcdc23eac4"
+    },
+    {
+      "id": "G04",
+      "duration_s": 14872.284,
+      "human_stays": 3,
+      "evaluations": 28,
+      "climate_file": "G04.measurements.json",
+      "climate_sha256": "78bdf0fdb5864f9ff46ed2e2b18e763aef1ffbd3adaf398b12bd092b73496085"
+    },
+    {
+      "id": "G01-proxy",
+      "duration_s": 15291.059,
+      "human_stays": 5,
+      "evaluations": 38,
+      "climate_file": "G01-proxy.measurements.json",
+      "climate_sha256": "e43f148051cb443c7bb86dd60bc249231e86ca7bdf794a57da0a95bfb4cc3b82"
+    },
+    {
+      "id": "G02-proxy",
+      "duration_s": 13649.324,
+      "human_stays": 3,
+      "evaluations": 24,
+      "climate_file": "G02-proxy.measurements.json",
+      "climate_sha256": "baf8ab0559a4c63441b23ef07557adb6d35202c1284760a94d57a636337b7397"
+    },
+    {
+      "id": "G03-proxy",
+      "duration_s": 16567.929,
+      "human_stays": 5,
+      "evaluations": 38,
+      "climate_file": "G03-proxy.measurements.json",
+      "climate_sha256": "14f4780fd18af336a53adb78d14217f4cab6b1d408fece112162f35d34544276"
+    },
+    {
+      "id": "G04-proxy",
+      "duration_s": 12673.916,
+      "human_stays": 3,
+      "evaluations": 27,
+      "climate_file": "G04-proxy.measurements.json",
+      "climate_sha256": "faa0461ae39904df1c9af3a16fefd5f213dd10c890c84810a5e35a67efcb7f6b"
+    },
+    {
+      "id": "G05",
+      "duration_s": 13533.091,
+      "human_stays": 3,
+      "evaluations": 25,
+      "climate_file": "G05.measurements.json",
+      "climate_sha256": "cbaf103949252c267c35f428db1e051d7a34b93ad7e9fd6c44c7590b18b2cced"
+    },
+    {
+      "id": "I01",
+      "duration_s": 21063.426,
+      "human_stays": 5,
+      "evaluations": 45,
+      "climate_file": "I01.measurements.json",
+      "climate_sha256": "57d727d2853b587c18c5c6b3cb0b0dd327c25c11c9f276248628d4a8bc898d43"
+    },
+    {
+      "id": "I02",
+      "duration_s": 22082.288,
+      "human_stays": 4,
+      "evaluations": 34,
+      "climate_file": "I02.measurements.json",
+      "climate_sha256": "6688d3dd76f2335f0d7a836b5a262389f87a1afed346470326eca820645d9d95"
+    },
+    {
+      "id": "I03",
+      "duration_s": 10447.079,
+      "human_stays": 2,
+      "evaluations": 17,
+      "climate_file": "I03.measurements.json",
+      "climate_sha256": "b8dc1f710ba93237f89f8d218094539221fb55e42ce3f8f238d96d2bbc5cd25c"
+    },
+    {
+      "id": "I04",
+      "duration_s": 9578.942,
+      "human_stays": 2,
+      "evaluations": 10,
+      "climate_file": "I04.measurements.json",
+      "climate_sha256": "eec59277c7308b07a6c8d8f262ac322899f0850f4770b97fc1bfd42ff844ebd3"
+    },
+    {
+      "id": "I05-proxy",
+      "duration_s": 8560.319,
+      "human_stays": 2,
+      "evaluations": 13,
+      "climate_file": "I05-proxy.measurements.json",
+      "climate_sha256": "0bd641bab1fd31fea9f0c3c6b1b17025a902a1e5c95b1fd09e246a96cfb56d37"
+    },
+    {
+      "id": "G00-automatic",
+      "duration_s": 3527.049,
+      "human_stays": 0,
+      "evaluations": 6,
+      "climate_file": "G00-automatic.measurements.json",
+      "climate_sha256": "0c21d93a54eecf8d1d319549218b86e00e764ee8498cb134d08ac79c2eb78340"
+    },
+    {
+      "id": "G00-manual",
+      "duration_s": 3527.049,
+      "human_stays": 0,
+      "evaluations": 6,
+      "climate_file": "G00-manual.measurements.json",
+      "climate_sha256": "0c21d93a54eecf8d1d319549218b86e00e764ee8498cb134d08ac79c2eb78340"
+    }
+  ]
+}

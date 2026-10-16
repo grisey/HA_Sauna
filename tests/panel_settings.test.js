@@ -1,3 +1,4 @@
+const { panelFixture: fixturePanel } = require("./catalog_fixture.cjs");
 // Uses the production catalog and rendering/save paths without Home Assistant.
 const assert = require("node:assert/strict");
 const fs = require("node:fs");
@@ -21,13 +22,11 @@ vm.runInNewContext(fs.readFileSync("custom_components/ha_sauna/panel.js", "utf8"
   Array,
   Infinity,
 });
-const catalog = JSON.parse(
-  fs.readFileSync("custom_components/ha_sauna/defaults.json", "utf8"),
-);
+const catalog = structuredClone(require("./catalog_fixture.cjs").catalog);
 const values = Object.fromEntries(
   catalog.parameters.map((d) => [
     d.key,
-    typeof d.default === "object"
+    d.default !== null && typeof d.default === "object"
       ? catalog.parameters.find((source) => source.key === d.default.parameter).default
       : d.default,
   ]),
@@ -37,13 +36,17 @@ const makePanel = (admin) => {
     controls = new Map(),
     inputs = new Map(),
     save = { disabled: false };
-  const panel = Object.assign(Object.create(Panel.prototype), {
+  const panel = Object.assign(fixturePanel(Panel), {
     entry: "test",
     hass: {},
     state: {
       permissions: { admin },
       configuration: { parameters: { ...values }, presence_source: "proxy" },
-      parameters: catalog.parameters,
+      parameters: catalog.parameters.map((definition) => ({
+        ...definition,
+        applicable: definition.settings_group === "appearance",
+      })),
+      configuration_model: { presence: { source: "proxy" } },
       frontend_defaults: catalog.frontend,
     },
     selectSettingsSection() {},

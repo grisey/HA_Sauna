@@ -1,3 +1,4 @@
+const { panelFixture: fixturePanel } = require("./catalog_fixture.cjs");
 // Runs without Home Assistant or a browser: reset stays restricted to an idle
 // administrator and waits for HA's reloaded configuration before clearing edits.
 const assert = require("node:assert/strict");
@@ -27,13 +28,11 @@ const sandbox = {
 const source = fs.readFileSync("custom_components/ha_sauna/panel.js", "utf8");
 vm.runInNewContext(source, sandbox);
 
-const catalog = JSON.parse(
-  fs.readFileSync("custom_components/ha_sauna/defaults.json", "utf8"),
-);
+const catalog = structuredClone(require("./catalog_fixture.cjs").catalog);
 const defaults = Object.fromEntries(
   catalog.parameters.map(({ key, default: value }) => [
     key,
-    typeof value === "object"
+    value !== null && typeof value === "object"
       ? catalog.parameters.find((source) => source.key === value.parameter).default
       : value,
   ]),
@@ -44,7 +43,7 @@ const makePanel = ({ admin = true, locked = false } = {}) => {
     edited = { dataset: { edited: "true" } };
   let stateReads = 0,
     refreshed = false;
-  const panel = Object.assign(Object.create(Panel.prototype), {
+  const panel = Object.assign(fixturePanel(Panel), {
     entry: "entry-1",
     progressionDraft: { "progression-end": "95" },
     settingsEntry: "entry-1",
@@ -62,7 +61,7 @@ const makePanel = ({ admin = true, locked = false } = {}) => {
       calls.push(args);
       if (args[0] === "/entry-1/parameters/reset")
         return { parameters: defaults, configuration };
-      if (args[0] === "/entry-1/state") {
+      if (args[0] === "/entry-1/state?include_catalog=false&include_energy_intervals=false") {
         stateReads++;
         return {
           configuration:
@@ -98,7 +97,8 @@ const makePanel = ({ admin = true, locked = false } = {}) => {
     "one reset POST is sent",
   );
   assert.equal(
-    test.calls.filter(([path]) => path === "/entry-1/state").length,
+    test.calls.filter(([path]) => path === "/entry-1/state?include_catalog=false&include_energy_intervals=false")
+      .length,
     2,
     "waits through stale log and program state until defaults are loaded",
   );
@@ -157,7 +157,7 @@ const makePanel = ({ admin = true, locked = false } = {}) => {
   assert.equal(test.refreshed, false, "old completion does not refresh the new sauna");
 
   const errors = [];
-  const actionPanel = Object.assign(Object.create(Panel.prototype), {
+  const actionPanel = Object.assign(fixturePanel(Panel), {
     entry: "entry-1",
     generation: 0,
     message: (error) => errors.push(error),

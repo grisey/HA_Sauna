@@ -1,10 +1,12 @@
 """Regressions for proxy-presence delivery at runtime boundaries."""
 
 import asyncio
+from dataclasses import replace
 from pathlib import Path
 from tempfile import TemporaryDirectory
 import unittest
 from datetime import UTC, datetime, timedelta
+from unittest.mock import patch
 
 from custom_components.ha_sauna.archive import plain
 from custom_components.ha_sauna.bindings import Bindings
@@ -43,8 +45,156 @@ def _event(runtime, kind, seconds, event_id):
 
 
 class PresenceRegressionTests(unittest.TestCase):
+    def test_proxy_person_uses_original_event_for_gang_and_presence_projection(self):
+        clock = [START]
+        runtime = _runtime(clock)
+        runtime.controller.begin_session("original-person", START)
+        runtime.controller.set_temperature(75, START)
+        runtime._process_event(_event(runtime, Kind.DOOR_OPEN, 1, "entry-open"))
+        runtime._process_event(_event(runtime, Kind.DOOR_CLOSE, 2, "entry-close"))
+        clock[0] = START + timedelta(seconds=5)
+        person = Event(
+            "original-person", runtime.session.session_id, Kind.PERSON_STRONG,
+            START + timedelta(seconds=3), clock[0], START + timedelta(seconds=4),
+        )
+        with patch.object(runtime.controller, "process", wraps=runtime.controller.process) as process:
+            result = runtime._process_event(person)
+        self.assertTrue(result.changed)
+        self.assertIs(process.call_args.args[0], person)
+        self.assertIs(runtime.session.timeline.processed[-1], person)
+        self.assertEqual(runtime.session.timeline.active.recognition_event_id, person.event_id)
+        self.assertEqual(runtime.session.timeline.active.started_at, START + timedelta(seconds=2))
+        self.assertEqual(runtime.presence.current.source_ref, person.event_id)
+        self.assertEqual(runtime.presence.current.received_at, person.detected_at)
+        self.assertEqual(runtime.presence.current.effective_at, person.effective_at)
+
+    def test_selected_occupancy_has_same_gang_effect_for_different_entities(self):
+        async def exercise(source):
+            clock = [START]
+            configuration = replace(
+                _runtime(clock).configuration,
+                presence_source="ha_presence",
+                bindings=Bindings({**BINDINGS.values, "presence": source}),
+            )
+            runtime = SaunaRuntime(configuration, clock=lambda: clock[0])
+            runtime.controller.begin_session("normalized-occupancy", START)
+            runtime.controller.set_temperature(75, START)
+
+            async def report(state, second, report_id, *, entity=None, assertion=None,
+                             effective=None):
+                clock[0] = START + timedelta(seconds=second)
+                value = binary_presence(
+                    entity or source, state,
+                    START + timedelta(seconds=second if effective is None else effective),
+                    clock[0],
+                )
+                value = replace(value, report_id=report_id)
+                if assertion is not None:
+                    value = replace(value, assertion=assertion)
+                await runtime.accept_presence(value)
+                return value
+
+            def door(kind, second, event_id):
+                clock[0] = START + timedelta(seconds=second)
+                runtime._process_event(_event(runtime, kind, second, event_id))
+
+            with patch.object(
+                runtime.controller, "consume_occupancy_input",
+                wraps=runtime.controller.consume_occupancy_input,
+            ) as consume:
+                door(Kind.DOOR_OPEN, 1, "entry-open")
+                selected = await report("on", 2, "selected-present")
+                normalized = consume.call_args.args[0]
+                door(Kind.DOOR_CLOSE, 3, "entry-close")
+                gang = runtime.session.timeline.active
+                self.assertIsNotNone(gang)
+                self.assertTrue(runtime.controller.regulation_inputs.gang_heat_demand)
+
+                await report("off", 4, "wrong-entity", entity="binary_sensor.unselected")
+                await report("off", 5, "wrong-assertion", assertion="provisional_proxy")
+                self.assertEqual(consume.call_count, 1)
+                self.assertIs(runtime.presence_status["current"], selected)
+                self.assertTrue(runtime.controller.regulation_inputs.gang_heat_demand)
+                self.assertEqual(runtime.session.timeline.active.gang_id, gang.gang_id)
+
+                await report("unknown", 6, "selected-unknown")
+                self.assertEqual(runtime.controller.direct_presence.occupancy, "unknown")
+                self.assertTrue(runtime.controller.direct_presence.qualified_presence)
+                self.assertFalse(runtime.controller.regulation_inputs.gang_heat_demand)
+                self.assertEqual(runtime.session.timeline.active.gang_id, gang.gang_id)
+
+                current = await report("on", 7, "selected-return")
+                await report("off", 8, "stale-absence", effective=1)
+                self.assertIs(runtime.presence_status["current"], current)
+                self.assertTrue(runtime.controller.regulation_inputs.gang_heat_demand)
+                door(Kind.DOOR_OPEN, 9, "exit-open")
+                await report("off", 10, "selected-absent")
+                self.assertEqual(runtime.session.timeline.active.gang_id, gang.gang_id)
+                door(Kind.VENTILATION, 11, "exit-ventilation")
+                self.assertIsNone(runtime.session.timeline.active)
+                self.assertEqual(runtime.session.timeline.gang_count, 1)
+                self.assertEqual(runtime.session.timeline.completed[0].ended_at, clock[0])
+                self.assertIsNone(normalized.timing.first_usable_at)
+                self.assertEqual(normalized.timing.received_at, selected.received_at)
+                self.assertEqual(normalized.timing.effective_at, selected.effective_at)
+                return normalized, tuple(
+                    (item.kind, item.effective_at) for item in runtime.controller.consumer_events
+                )
+
+        first = asyncio.run(exercise("binary_sensor.first_presence"))
+        second = asyncio.run(exercise("binary_sensor.second_presence"))
+        self.assertEqual(first, second)
+
+    def test_unqualified_person_keeps_booking_and_infusion_annotates_occupancy_gang(self):
+        async def exercise():
+            clock = [START]
+            configuration = replace(
+                _runtime(clock).configuration,
+                presence_source="ha_presence",
+                bindings=Bindings({**BINDINGS.values, "presence": "binary_sensor.occupancy"}),
+            )
+            runtime = SaunaRuntime(configuration, clock=lambda: clock[0])
+            runtime.controller.begin_session("qualified-events", START)
+            runtime.controller.set_temperature(75, START)
+            clock[0] = START + timedelta(seconds=1)
+            person = _event(runtime, Kind.PERSON_STRONG, 1, "unqualified-person")
+            result = runtime._process_event(person)
+            self.assertFalse(result.changed)
+            self.assertIsNone(runtime.session.timeline.active)
+            self.assertIs(runtime.session.timeline.processed[-1], person)
+            self.assertEqual(runtime.controller._last_at, person.booking_at)
+            self.assertIsNone(runtime.presence.current)
+
+            clock[0] = START + timedelta(seconds=2)
+            runtime._process_event(_event(runtime, Kind.DOOR_OPEN, 2, "entry-open"))
+            clock[0] = START + timedelta(seconds=3)
+            await runtime.accept_presence(binary_presence(
+                "binary_sensor.occupancy", "on", clock[0], clock[0],
+            ))
+            clock[0] = START + timedelta(seconds=4)
+            runtime._process_event(_event(runtime, Kind.DOOR_CLOSE, 4, "entry-close"))
+            gang_id = runtime.session.timeline.active.gang_id
+            clock[0] = START + timedelta(seconds=5)
+            repeated = _event(runtime, Kind.PERSON_WEAK, 5, "unqualified-repeat")
+            self.assertFalse(runtime._process_event(repeated).changed)
+            self.assertIs(runtime.session.timeline.processed[-1], repeated)
+            self.assertEqual(runtime.session.timeline.active.gang_id, gang_id)
+
+            clock[0] = START + timedelta(seconds=6)
+            infusion = _event(runtime, Kind.INFUSION, 6, "annotating-infusion")
+            self.assertTrue(runtime._process_event(infusion).changed)
+            self.assertEqual(runtime.session.timeline.active.gang_id, gang_id)
+            self.assertEqual(runtime.session.timeline.active.infusion_events, (infusion,))
+            self.assertEqual(sum(item.kind == "gang_confirmed"
+                                 for item in runtime.controller.consumer_events), 1)
+
+        asyncio.run(exercise())
+
     def test_current_status_stays_bounded_as_external_history_grows(self):
-        runtime = _runtime([START])
+        runtime = SaunaRuntime(Configuration(
+            Bindings({**BINDINGS.values, "presence": "binary_sensor.occupancy"}),
+            Parameters({}), presence_source="proxy",
+        ), clock=lambda: START)
         for second in range(1000):
             at = START + timedelta(seconds=second)
             runtime.presence.accept(binary_presence(
@@ -53,10 +203,11 @@ class PresenceRegressionTests(unittest.TestCase):
             ))
         status = runtime.presence_status
         self.assertNotIn("observations", status)
-        self.assertEqual(status["external"]["binary_sensor.occupancy"].occupancy, "present")
+        self.assertNotIn("external", status)
+        self.assertEqual(runtime.presence.external["binary_sensor.occupancy"].occupancy, "present")
         self.assertEqual(len(runtime.presence.observations), 500)
 
-    def test_explicit_session_end_retracts_evidence_from_completed_session(self):
+    def test_stopped_recording_retracts_evidence_and_completes_at_deadline(self):
         async def exercise():
             clock = [START]
             runtime = _runtime(clock)
@@ -74,6 +225,14 @@ class PresenceRegressionTests(unittest.TestCase):
             clock[0] = START + timedelta(seconds=30)
             await runtime._apply_button_action(END_HOLD, clock[0])
             await runtime._cycle()
+            self.assertEqual(runtime.session.session_id, "explicit-end")
+            self.assertFalse(runtime.session.operation_enabled)
+            self.assertEqual(runtime.presence.current.occupancy, "unknown")
+            self.assertEqual(runtime.presence.current.source_ref, "person")
+            deadline = next(d for d in runtime.session.deadlines if d.purpose == "session_gap")
+            clock[0] = deadline.due_at
+            await runtime._cycle()
+            self.assertEqual(runtime.controller.completed_sessions[-1].ended_at, deadline.due_at)
             return runtime
 
         runtime = asyncio.run(exercise())
@@ -178,7 +337,7 @@ class PresenceRegressionTests(unittest.TestCase):
         async def exercise(path, seconds):
             clock = [START]
             runtime = SaunaRuntime(
-                Configuration(BINDINGS, Parameters({"session_gap_minutes": 1, "target_temperature_c": 80})),
+                Configuration(BINDINGS, Parameters({"target_temperature_c": 80})),
                 clock=lambda: clock[0],
             )
             await runtime.start_archive(path, "entry")
@@ -209,18 +368,23 @@ class PresenceRegressionTests(unittest.TestCase):
             return runtime.archive.read("shutdown-gap")
 
         with TemporaryDirectory() as directory:
-            for seconds in (60, 61, 62):
+            gap = Parameters({}).seconds("session_gap_minutes")
+            for seconds in (gap, gap + 1, gap + 2):
                 with self.subTest(seconds=seconds):
                     archived = asyncio.run(exercise(
                         Path(directory) / f"{seconds}.sqlite", seconds
                     ))
-                    ended_at = (START + timedelta(seconds=min(seconds, 61))).isoformat()
+                    ended_at = (
+                        (START + timedelta(seconds=gap + 1)).isoformat()
+                        if seconds >= gap + 1 else None
+                    )
                     self.assertEqual(archived["session"]["ended_at"], ended_at)
                     finals = [record for record in archived["records"]
                               if record["kind"] == "session"
                               and record["payload"].get("ended_at")]
-                    self.assertEqual(len(finals), 1)
-                    self.assertEqual(finals[0]["payload"]["ended_at"], ended_at)
+                    self.assertEqual(len(finals), 1 if ended_at is not None else 0)
+                    if ended_at is not None:
+                        self.assertEqual(finals[0]["payload"]["ended_at"], ended_at)
 
     def test_close_publishes_gang_end_before_archive_close(self):
         tmp_path = Path(self.enterContext(TemporaryDirectory()))

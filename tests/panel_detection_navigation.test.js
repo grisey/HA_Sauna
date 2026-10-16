@@ -1,6 +1,11 @@
+const { panelFixture: fixturePanel } = require("./catalog_fixture.cjs");
 // The detector view works without HA or a browser; the DOM here records real
 // click actions and the stable event-id mapping used by both directions.
 const assert = require("node:assert/strict");
+const {
+  catalog: fixtureCatalog,
+  parameterValues: fixtureValues,
+} = require("./catalog_fixture.cjs");
 const fs = require("node:fs");
 const vm = require("node:vm");
 
@@ -46,18 +51,9 @@ const processed = [
 const session = {
   ended_at: iso(60),
   timeline: { session_started_at: iso(0), processed, completed: [] },
-  configuration: { parameters: { person_step_seconds: 5 } },
+  configuration: { parameters: fixtureValues() },
 };
-const parameters = {
-  door_open_slope: -1,
-  door_heating_slope: -1,
-  door_close_slope: 1,
-  door_open_humidity_upper: 1,
-  door_open_humidity_lower: 1,
-  vent_drop_upper: 3,
-  vent_drop_lower: 3,
-  vent_absolute_humidity_loss_percent: 30,
-};
+const parameters = fixtureValues();
 
 // Equal timestamps do not collapse: IDs remain navigation keys, while each
 // event marker is tied to the archived detector value in its primary curve.
@@ -81,7 +77,7 @@ const parameters = {
       channels: ["upper"],
     },
   ];
-  const p = Object.assign(Object.create(Panel.prototype), {
+  const p = Object.assign(fixturePanel(Panel), {
     shown: {
       session,
       records: traces.map((payload) => ({ kind: "detector_trace", payload })),
@@ -136,7 +132,7 @@ const parameters = {
       channels: ["upper"],
     },
   ];
-  const p = Object.assign(Object.create(Panel.prototype), {
+  const p = Object.assign(fixturePanel(Panel), {
     shown: {
       session: { ...session, timeline: { ...session.timeline, processed: [door] } },
       records: [
@@ -152,13 +148,15 @@ const parameters = {
     $: (selector) => (selector === "#detection-plots" ? plots : null),
   });
   assert.equal(p.diagnosticTraceForEvent(traces, door), traces[1]);
+  p.highlightedEventId = "door-produced";
   p.drawDiagnostics();
   assert.match(plots.innerHTML, /event-marker:door-produced/);
-  assert.match(plots.innerHTML, /2 Prüfpunkte/);
+  assert.match(plots.innerHTML, /Prüfpunkte/);
+  assert.match(plots.innerHTML, /data-key="value:door_open">2 Prüfpunkte</);
 }
 
 {
-  const p = Object.assign(Object.create(Panel.prototype), {
+  const p = Object.assign(fixturePanel(Panel), {
     shown: {
       session: {
         ...session,
@@ -218,9 +216,12 @@ const parameters = {
 }
 
 // Ventilation losses are archived as fractions, but the diagnostics display
-// them as percentages and retain the archived 30 % threshold (25 % is below,
-// 35 % above).  Earlier traces without these metrics render no false zero line.
+// them as percentages and retain the archived configured threshold instead of
+// a changed live value. Earlier traces without these metrics render no false zero line.
 {
+  // Synthetic historical settings, intentionally outside the editable catalogue.
+  const archivedHumidityLossPercent = 30,
+    changedHumidityLossPercent = 80;
   const plots = {};
   const traces = [
     {
@@ -240,7 +241,7 @@ const parameters = {
       signals: [],
     },
     {
-      at: iso(25),
+      at: iso(20 + parameters.grid_seconds),
       metrics: {
         upper: {
           ventilation_temperature_loss: 3.5,
@@ -259,10 +260,13 @@ const parameters = {
   const archived = {
     ...session,
     configuration: {
-      parameters: { ...parameters, vent_absolute_humidity_loss_percent: 30 },
+      parameters: {
+        ...parameters,
+        vent_absolute_humidity_loss_percent: archivedHumidityLossPercent,
+      },
     },
   };
-  const p = Object.assign(Object.create(Panel.prototype), {
+  const p = Object.assign(fixturePanel(Panel), {
     shown: {
       session: archived,
       records: traces.map((payload) => ({ kind: "detector_trace", payload })),
@@ -270,7 +274,10 @@ const parameters = {
     state: {
       permissions: { admin: true },
       configuration: {
-        parameters: { ...parameters, vent_absolute_humidity_loss_percent: 99 },
+        parameters: {
+          ...parameters,
+          vent_absolute_humidity_loss_percent: changedHumidityLossPercent,
+        },
       },
     },
     window: [Date.parse(iso(0)), Date.parse(iso(60))],
@@ -285,18 +292,89 @@ const parameters = {
     plots.innerHTML.replace(/<[^>]*>/g, ""),
     /Lüftungserkennung · Absoluter Feuchteverlust · %/,
   );
-  assert.match(
-    plots.innerHTML,
-    /data-series="detector_ventilation_absolute_humidity_loss_upper" d="M[\d.]+,66\.62 L[\d.]+,28\.78 "/,
+  const preferences = fixtureCatalog.appearance.preferences,
+    value = (key) => preferences[key].default,
+    columns =
+      value("diagnostic_fallback_width_px") > value("diagnostic_columns_breakpoint_px")
+        ? value("diagnostic_wide_columns")
+        : 1,
+    chartWidth = Math.max(
+      value("diagnostic_min_plot_width_px"),
+      (value("diagnostic_fallback_width_px") -
+        (columns - 1) * value("diagnostic_plot_gap_px")) /
+        columns -
+        value("diagnostic_plot_padding_px"),
+    ),
+    left = value("diagnostic_axis_left_padding_px"),
+    right = chartWidth - value("diagnostic_axis_right_padding_px"),
+    top = value("diagnostic_axis_top_padding_px"),
+    bottom =
+      value("diagnostic_plot_height_px") - value("diagnostic_axis_bottom_padding_px"),
+    low = -value("diagnostic_scale_padding"),
+    high =
+      Math.max(35, archivedHumidityLossPercent) + value("diagnostic_scale_padding"),
+    expectedPoint = (second, percentage) => [
+      Number(
+        (left + ((right - left) * second) / 60).toFixed(
+          value("chart_coordinate_precision"),
+        ),
+      ),
+      Number(
+        (bottom - ((percentage - low) / (high - low)) * (bottom - top)).toFixed(
+          value("chart_coordinate_precision"),
+        ),
+      ),
+    ],
+    plottedPoints = () => {
+      const path = plots.innerHTML.match(
+        /data-series="detector_ventilation_absolute_humidity_loss_upper" d="([^"]*)"/,
+      )[1];
+      return [...path.matchAll(/([ML])([\d.]+),([\d.]+)/g)].map((point) => [
+        point[1],
+        Number(point[2]),
+        Number(point[3]),
+      ]);
+    };
+  assert.deepEqual(plottedPoints(), [
+    ["M", ...expectedPoint(20, 25)],
+    ["L", ...expectedPoint(20 + parameters.grid_seconds, 35)],
+  ]);
+  assert.ok(plots.innerHTML.includes(`Schwelle oben: ${archivedHumidityLossPercent}`));
+  assert.ok(!plots.innerHTML.includes(`Schwelle oben: ${changedHumidityLossPercent}`));
+  const missingGridPoint = 20 + parameters.grid_seconds * 2;
+  p.shown.records = traces.map((payload, index) => ({
+    kind: "detector_trace",
+    payload: index ? { ...payload, at: iso(missingGridPoint) } : payload,
+  }));
+  p.drawDiagnostics();
+  assert.deepEqual(
+    plottedPoints(),
+    [
+      ["M", ...expectedPoint(20, 25)],
+      ["M", ...expectedPoint(missingGridPoint, 35)],
+    ],
+    "a missing detector grid point starts a separate segment",
   );
-  assert.match(plots.innerHTML, /Schwelle oben: 30/);
-  assert.doesNotMatch(plots.innerHTML, /Schwelle oben: 99/);
+
+  // An archive without the legacy setting cannot borrow a live threshold.
+  p.shown.session = {
+    ...archived,
+    configuration: { parameters: { ...parameters } },
+  };
+  p.drawDiagnostics();
+  const humidityChart = plots.innerHTML
+    .match(/<svg\b[\s\S]*?<\/svg>/g)
+    .find((chart) =>
+      chart.includes("detector_ventilation_absolute_humidity_loss_upper"),
+    );
+  assert.ok(humidityChart);
+  assert.doesNotMatch(humidityChart, /Schwelle|NaN/);
 }
 
 // Ventilation uses its serialized event kind as signal and the effective
 // sample time, while a trace without the matching metric stays unmarked.
 {
-  const p = Object.assign(Object.create(Panel.prototype), {
+  const p = Object.assign(fixturePanel(Panel), {
     shown: {
       session: {
         ...session,
@@ -345,7 +423,7 @@ const parameters = {
 // The event-list lookup omits optional route arguments.  It must still reject
 // a same-time trace for another signal or one without the primary metric.
 {
-  const p = Object.create(Panel.prototype);
+  const p = fixturePanel(Panel);
   const event = {
     event_id: "door",
     kind: "door_open",
@@ -391,7 +469,7 @@ const parameters = {
 // ventilation measurement or emitting NaN coordinates.
 {
   const plots = {};
-  const p = Object.assign(Object.create(Panel.prototype), {
+  const p = Object.assign(fixturePanel(Panel), {
     shown: {
       session,
       records: [
@@ -430,7 +508,7 @@ const parameters = {
     { event_id: "door-9", kind: "door_close", effective_at: iso(40) },
     { event_id: "future-10", kind: "infusion", effective_at: iso(120) },
   ];
-  const p = Object.assign(Object.create(Panel.prototype), {
+  const p = Object.assign(fixturePanel(Panel), {
     shown: {
       session: { ...session, timeline: { ...session.timeline, processed: allEvents } },
       records: [],
@@ -474,7 +552,7 @@ const parameters = {
       },
     },
   ];
-  const p = Object.assign(Object.create(Panel.prototype), {
+  const p = Object.assign(fixturePanel(Panel), {
     shadowRoot: { querySelectorAll: () => rows },
   });
   p.highlightEvent("infusion-8", true);
@@ -483,10 +561,11 @@ const parameters = {
   assert.equal(rows[1].scrolled, true);
 }
 
-// Both click actions expose their target before focusing it; nonadmins cannot enter diagnostics.
+// Marker and row actions both reveal the local diagnostic evidence. Returning
+// to the event list is an explicitly labelled separate action.
 {
   const calls = [];
-  const p = Object.assign(Object.create(Panel.prototype), {
+  const p = Object.assign(fixturePanel(Panel), {
     state: { permissions: { admin: true } },
     message: () => {},
     setPanelView: (view) => calls.push(["view", view]),
@@ -495,8 +574,8 @@ const parameters = {
   p.action("event-marker:infusion-8");
   p.action("event-row:door-7");
   assert.deepEqual(calls, [
-    ["view", "history"],
-    ["focus", "infusion-8", true],
+    ["view", "diagnostics"],
+    ["focus", "infusion-8", false],
     ["view", "diagnostics"],
     ["focus", "door-7", false],
   ]);
@@ -525,7 +604,7 @@ const parameters = {
       if (!nodes.has(selector)) nodes.set(selector, { innerHTML: "", hidden: false });
       return nodes.get(selector);
     };
-    const p = Object.assign(Object.create(Panel.prototype), {
+    const p = Object.assign(fixturePanel(Panel), {
       entry: "entry",
       state: { now: iso(90), permissions: { admin }, configuration: { parameters } },
       shown: {

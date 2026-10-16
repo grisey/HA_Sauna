@@ -1,6 +1,11 @@
 "use strict";
+const { panelFixture: fixturePanel } = require("./catalog_fixture.cjs");
 
 const assert = require("node:assert/strict");
+const {
+  parameterValues: fixtureValues,
+  parameterDefinition: fixtureDefinition,
+} = require("./catalog_fixture.cjs");
 const fs = require("node:fs");
 const test = require("node:test");
 const vm = require("node:vm");
@@ -65,7 +70,7 @@ const panelSource = fs.readFileSync("custom_components/ha_sauna/panel.js", "utf8
 const frozenTimestampSource =
   'const when = (v) =>\n  v\n    ? new Date(v).toLocaleString("de-DE", {\n        day: "2-digit",\n        month: "2-digit",\n        hour: "2-digit",\n        minute: "2-digit",\n        second: "2-digit",\n      })\n    : "\u2013";\nconst tooltipWhen = (v) => {\n  if (\n    (typeof v !== "string" && (typeof v !== "number" || !Number.isFinite(v))) ||\n    (typeof v === "string" && !v.trim())\n  )\n    return null;\n  const date = new Date(v);\n  if (!Number.isFinite(date.getTime())) return null;\n  const fraction =\n    typeof v === "string" ? v.match(/\\.(\\d+)(?:Z|[+-]\\d\\d:\\d\\d)?$/i)?.[1] : null;\n  return new Intl.DateTimeFormat("de-DE", {\n    day: "2-digit",\n    month: "2-digit",\n    hour: "2-digit",\n    minute: "2-digit",\n    second: "2-digit",\n    timeZoneName: "shortOffset",\n  })\n    .formatToParts(date)\n    .map((part) =>\n      part.type === "second" && fraction ? `${part.value}.${fraction}` : part.value,\n    )\n    .join("");\n};\nconst clock = (v) =>\n  new Date(v).toLocaleTimeString("de-DE", { hour: "2-digit", minute: "2-digit" });\nconst localTimeZone = () => undefined;\n';
 const frozenPanelSource =
-  panelSource.slice(0, panelSource.indexOf("const timestampFormatterLimit")) +
+  panelSource.slice(0, panelSource.indexOf("const timestampFormatOptions")) +
   frozenTimestampSource +
   panelSource.slice(panelSource.indexOf("const num ="));
 
@@ -84,7 +89,7 @@ const loadHelper = (window, source = panelSource, intl = Intl) => {
     customElements: { get: () => null, define: (_, value) => (Panel = value) },
   };
   vm.runInNewContext(
-    `${source}\nglobalThis.HistoryInteraction = HistoryInteraction; globalThis.timestampFunctions = { when, tooltipWhen, clock };`,
+    `${source}\nglobalThis.HistoryInteraction = HistoryInteraction; globalThis.timestampFunctions = { when: (v, tz) => when(v, tz, ${require("./catalog_fixture.cjs").preferences().timestamp_formatter_cache_entries}), tooltipWhen: (v, tz) => tooltipWhen(v, tz, ${require("./catalog_fixture.cjs").preferences().timestamp_formatter_cache_entries}), clock: (v, tz) => clock(v, tz, ${require("./catalog_fixture.cjs").preferences().timestamp_formatter_cache_entries}) };`,
     context,
   );
   context.HistoryInteraction.timestampFunctions = context.timestampFunctions;
@@ -135,12 +140,12 @@ const tooltipFor = (
   const cursor = new Node(document, "line");
   const overview = new Node(document, "overview", { width: 1200, height: 46 });
   const interactionFactory = loadHelper(window, panelCode, intl);
-  const panel = Object.assign(Object.create(Panel.prototype), {
+  const panel = Object.assign(fixturePanel(Panel), {
     positions: new Set(["upper"]),
     window: [received - 30000, received + 30000],
-    state: { configuration: { parameters: { sensor_timeout_seconds: 120 } } },
+    state: { configuration: { parameters: fixtureValues() } },
     shown: {
-      session: { configuration: { parameters: { sensor_timeout_seconds: 120 } } },
+      session: { configuration: { parameters: fixtureValues() } },
       records: [{ kind, payload: source }],
     },
     historyDetail: true,

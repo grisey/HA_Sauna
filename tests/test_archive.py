@@ -2,7 +2,7 @@ import asyncio
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import closing
 from dataclasses import replace
-from datetime import timedelta
+from datetime import UTC, timedelta, timezone
 import json
 from pathlib import Path
 import shutil
@@ -16,11 +16,15 @@ import zipfile
 
 from custom_components.ha_sauna.archive import Archive, encoded, plain
 from custom_components.ha_sauna.core.controller import Controller
+from custom_components.ha_sauna.core.energy import advance
 from custom_components.ha_sauna.core.timeline import Kind
 from custom_components.ha_sauna.core.models import Position, Quantity
+from custom_components.ha_sauna.core.parameters import BY_KEY, Parameters
+from custom_components.ha_sauna.presentation import public_session
 from custom_components.ha_sauna.runtime import Configuration, SaunaRuntime
 from test_foundation import T0, event, parameters, bindings
 from test_detector import measurement
+from test_settings import async_timeout
 
 
 class ArchiveTests(unittest.IsolatedAsyncioTestCase):
@@ -42,13 +46,497 @@ class ArchiveTests(unittest.IsolatedAsyncioTestCase):
         m = measurement(Position.UPPER, Quantity.TEMPERATURE, 70 + n / 1000, n / 1000)
         self.archive.append("measurement", m.received_at, m, "s")
 
+    async def test_controller_histories_survive_archive_and_public_projection(self):
+        initial_parameters = self.c.parameters
+        initial_target = initial_parameters.values["target_temperature_c"]
+        maximum = BY_KEY["target_temperature_c"].maximum
+        changed_target = (
+            maximum if initial_target != maximum
+            else initial_parameters.minimum_for("target_temperature_c")
+        )
+        changed_parameters = Parameters({
+            **initial_parameters.as_dict(), "target_temperature_c": changed_target,
+        })
+        on_at = T0 + timedelta(seconds=10, microseconds=123456)
+        off_at = T0 + timedelta(seconds=20, microseconds=234567)
+        target_at = T0 + timedelta(seconds=25, microseconds=345678)
+        unknown_at = T0 + timedelta(seconds=30, microseconds=456789)
+        final_off_at = T0 + timedelta(seconds=40, microseconds=567890)
+        ended_at = T0 + timedelta(seconds=50, microseconds=678901)
+        record_at = ended_at + timedelta(seconds=17, microseconds=789012)
+        self.c.report_heating(True, on_at)
+        self.c.report_heating(True, on_at + timedelta(seconds=1))
+        self.c.report_heating(False, off_at)
+        self.c.update_temperature_parameters(
+            changed_parameters, target_at, explicit_target=True,
+        )
+        self.c.report_heating(None, unknown_at)
+        self.c.report_heating(False, final_off_at)
+        self.c.finish_session(ended_at, light_after_run=False)
+        completed = self.c.completed_sessions[-1]
+        serialized = plain(completed)
+        expected_heating = [
+            {"at": T0.isoformat(), "heating": None},
+            {"at": on_at.isoformat(), "heating": True},
+            {"at": off_at.isoformat(), "heating": False},
+            {"at": unknown_at.isoformat(), "heating": None},
+            {"at": final_off_at.isoformat(), "heating": False},
+        ]
+        expected_targets = [
+            {"at": T0.isoformat(), "target_c": initial_target},
+            {"at": target_at.isoformat(), "target_c": changed_target},
+        ]
+        configuration = {**self.config, "parameters": changed_parameters.as_dict()}
+        self.archive.save_session(completed, record_at, configuration)
+        await self.archive.flush()
+        stored = self.archive.read("s")["session"]
+        public = public_session(stored)
+        self.assertNotIn("configuration", public)
+
+        next_at = record_at + timedelta(seconds=1)
+        self.c.begin_session("next-history", next_at)
+        self.c.report_heating(True, next_at + timedelta(seconds=1))
+        self.c.update_temperature_parameters(
+            initial_parameters, next_at + timedelta(seconds=2), explicit_target=True,
+        )
+        for stage, payload in (
+            ("plain", serialized), ("archive", stored), ("public", public),
+            ("completed_after_next_session", plain(completed)),
+        ):
+            with self.subTest(stage=stage):
+                self.assertEqual(payload["heating"]["state_history"], expected_heating)
+                self.assertEqual(payload["target_history"], expected_targets)
+                self.assertEqual(payload["ended_at"], ended_at.isoformat())
+
+        legacy_id = "legacy-missing-histories"
+        legacy = {
+            **serialized,
+            "timeline": {**serialized["timeline"], "session_id": legacy_id},
+            "heating": {
+                key: value for key, value in serialized["heating"].items()
+                if key != "state_history"
+            },
+            "configuration": configuration,
+        }
+        legacy.pop("target_history")
+        self.archive.append("session", record_at, legacy, legacy_id)
+        await self.archive.flush()
+        stored_legacy = self.archive.read(legacy_id)["session"]
+        for payload in (stored_legacy, public_session(stored_legacy)):
+            self.assertNotIn("state_history", payload["heating"])
+            self.assertNotIn("target_history", payload)
+
+    async def test_energy_tail_and_metadata_cursor_preserve_original_boundaries(self):
+        p = parameters()
+        seconds = p.values["sensor_timeout_seconds"]
+        step = timedelta(seconds=seconds)
+        nominal_kw = p.values["nominal_power_kw"]
+        start = T0 + timedelta(microseconds=123456)
+        owner = Controller(p)
+        owner.begin_session("Sitzung-ä-♨", start)
+        energy = owner.session.energy
+        rates = (nominal_kw / 2, nominal_kw / 2, nominal_kw / 4, None, None)
+        for n, rate in enumerate(rates, 1):
+            at = start + step * n
+            energy = advance(
+                energy, at, power_w=None if rate is None else rate * 1000,
+                valid_until=at if rate is not None else None,
+                heating=True if n == 4 else None, nominal_kw=nominal_kw,
+            )
+            self.archive.save_session(
+                replace(owner.session, energy=energy), at, self.config,
+            )
+        await self.archive.flush()
+        last = start + step * 5
+        expected = [
+            {"started_at": start.isoformat(), "ended_at": (start + step * 2).isoformat(),
+             "source": "measured", "power_kw": nominal_kw / 2},
+            {"started_at": (start + step * 2).isoformat(),
+             "ended_at": (start + step * 3).isoformat(),
+             "source": "measured", "power_kw": nominal_kw / 4},
+            {"started_at": (start + step * 3).isoformat(),
+             "ended_at": (start + step * 4).isoformat(),
+             "source": "estimated", "power_kw": nominal_kw},
+            {"started_at": (start + step * 4).isoformat(), "ended_at": last.isoformat(),
+             "source": "unknown", "power_kw": None},
+        ]
+        saved = self.archive.read(owner.session.session_id)
+        saved_energy = saved["session"]["energy"]
+        self.assertEqual(saved_energy["interval_delta"], {
+            "from": None, "to": last.isoformat(), "intervals": expected,
+        })
+        self.assertAlmostEqual(saved_energy["measured_kwh"], nominal_kw * seconds * 1.25 / 3600)
+        self.assertAlmostEqual(saved_energy["estimated_kwh"], nominal_kw * seconds / 3600)
+        self.assertEqual(
+            [saved_energy[key] for key in
+             ("measured_seconds", "estimated_seconds", "unknown_seconds")],
+            [seconds * 3, seconds, seconds],
+        )
+        originals = [record["payload"]["energy"]["interval_delta"] for record in saved["records"]]
+        self.assertEqual(
+            [delta["from"] for delta in originals],
+            [None] + [(start + step * n).isoformat() for n in range(1, 5)],
+        )
+        self.assertEqual([delta["intervals"][0]["started_at"] for delta in originals], [
+            (start + step * n).isoformat() for n in range(5)
+        ])
+        self.assertEqual([delta["intervals"][0]["ended_at"] for delta in originals], [
+            (start + step * n).isoformat() for n in range(1, 6)
+        ])
+        cursor = start + step * 1.5
+        offset_cursor = cursor.astimezone(timezone(timedelta(hours=2))).isoformat()
+        page = self.archive.read(owner.session.session_id, limit=1, energy_after=offset_cursor)
+        self.assertEqual(page["session"]["energy"]["interval_delta"], {
+            "from": cursor.isoformat(), "to": last.isoformat(),
+            "intervals": [{**expected[0], "started_at": cursor.isoformat()}, *expected[1:]],
+        })
+        next_page = self.archive.read(
+            owner.session.session_id, after=page["next_after"], limit=1,
+            energy_after=last.isoformat(),
+        )
+        self.assertGreater(next_page["records"][0]["id"], page["records"][0]["id"])
+        self.assertEqual(next_page["session"]["energy"]["interval_delta"], {
+            "from": last.isoformat(), "to": last.isoformat(), "intervals": [],
+        })
+        for invalid in ("keine-Zeit", last.replace(tzinfo=None).isoformat(),
+                        (start - step).isoformat(),
+                        (last + timedelta(microseconds=1)).isoformat()):
+            with self.subTest(cursor=invalid):
+                result = self.archive.read(owner.session.session_id, energy_after=invalid)
+                self.assertEqual(result["session"]["energy"]["interval_delta"], {
+                    "from": None, "to": last.isoformat(), "intervals": expected,
+                })
+        self.archive.save_session(replace(owner.session, energy=energy), last, self.config)
+        await self.archive.flush()
+        unchanged = self.archive.read(owner.session.session_id)["records"][-1]["payload"]
+        self.assertEqual(unchanged["energy"]["interval_delta"], {
+            "from": last.isoformat(), "to": last.isoformat(), "intervals": [],
+        })
+        with closing(sqlite3.connect(self.archive.path)) as db:
+            raw = db.execute(
+                "SELECT payload FROM records WHERE session_id=? ORDER BY id LIMIT 1",
+                (owner.session.session_id,),
+            ).fetchone()[0]
+        self.assertIn("Sitzung-ä-♨", raw)
+        self.assertNotIn("\\u00e4", raw)
+        self.assertIn(start.astimezone(UTC).isoformat(), raw)
+
+    async def test_energy_enqueue_and_encoding_failure_keep_the_unsaved_tail(self):
+        p = parameters()
+        step = timedelta(seconds=p.values["sensor_timeout_seconds"])
+        rate = p.values["nominal_power_kw"]
+        first, last = T0 + step, T0 + step * 2
+        energy = advance(
+            self.c.session.energy, first, power_w=rate * 1000,
+            valid_until=last, heating=True, nominal_kw=rate,
+        )
+        snapshot = replace(self.c.session, energy=energy)
+        with self.assertRaises(ValueError):
+            self.archive.save_session(snapshot, first, {"invalid": float("nan")})
+        with patch.object(self.archive.queue, "put_nowait", side_effect=asyncio.QueueFull):
+            with self.assertRaises(asyncio.QueueFull):
+                self.archive.save_session(snapshot, first, self.config)
+        energy = advance(
+            energy, last, power_w=rate * 1000, valid_until=last,
+            heating=True, nominal_kw=rate,
+        )
+        self.archive.save_session(replace(self.c.session, energy=energy), last, self.config)
+        await self.archive.flush()
+        with self.assertRaisesRegex(ValueError, "rückwärts"):
+            self.archive.save_session(snapshot, first, self.config)
+        saved = self.archive.read("s")
+        originals = [record["payload"] for record in saved["records"] if record["kind"] == "session"]
+        self.assertEqual(len(originals), 2)
+        self.assertEqual(originals[-1]["energy"]["interval_delta"], {
+            "from": T0.isoformat(), "to": last.isoformat(), "intervals": [{
+                "started_at": T0.isoformat(), "ended_at": last.isoformat(),
+                "source": "measured", "power_kw": rate,
+            }],
+        })
+        self.assertAlmostEqual(
+            saved["session"]["energy"]["measured_kwh"], rate * step.total_seconds() * 2 / 3600,
+        )
+
+    async def test_energy_metadata_distinguishes_legacy_zero_and_unknown(self):
+        zero = self.archive.read("s")["session"]["energy"]
+        self.assertEqual(zero["interval_delta"], {
+            "from": None, "to": T0.isoformat(), "intervals": [],
+        })
+        p = parameters()
+        step = timedelta(seconds=p.values["sensor_timeout_seconds"])
+        rate = p.values["nominal_power_kw"]
+        first, last = T0 + step, T0 + step * 2
+        measured = advance(
+            self.c.session.energy, first, power_w=rate * 1000,
+            valid_until=first, heating=True, nominal_kw=rate,
+        )
+        sessions = {}
+        for identity in ("legacy", "unproven", "zero-then-unknown"):
+            owner = Controller(p)
+            sessions[identity] = owner.begin_session(identity, T0)
+        legacy = plain(replace(sessions["legacy"], energy=measured))
+        legacy["configuration"] = self.config
+        self.archive.append("session", first, legacy, "legacy")
+        self.archive.save_session(
+            replace(sessions["unproven"], energy=replace(measured, intervals=())),
+            first, self.config,
+        )
+        measured_zero = advance(
+            self.c.session.energy, first, power_w=0, valid_until=first,
+            heating=False, nominal_kw=rate,
+        )
+        unknown = advance(
+            measured_zero, last, power_w=None, valid_until=None,
+            heating=None, nominal_kw=rate,
+        )
+        self.archive.save_session(
+            replace(sessions["zero-then-unknown"], energy=unknown),
+            last, self.config,
+        )
+        await self.archive.flush()
+        for identity in ("legacy", "unproven"):
+            with self.subTest(session=identity):
+                energy = self.archive.read(identity, energy_after=first.isoformat())["session"]["energy"]
+                self.assertAlmostEqual(energy["measured_kwh"], rate * step.total_seconds() / 3600)
+                self.assertNotIn("interval_delta", energy)
+                self.assertNotIn("intervals_available", energy)
+        energy = self.archive.read("zero-then-unknown")["session"]["energy"]
+        self.assertEqual(energy["measured_kwh"], 0)
+        self.assertEqual(energy["measured_seconds"], step.total_seconds())
+        self.assertEqual(energy["unknown_seconds"], step.total_seconds())
+        self.assertEqual(energy["interval_delta"]["intervals"], [
+            {"started_at": T0.isoformat(), "ended_at": first.isoformat(),
+             "source": "measured", "power_kw": 0},
+            {"started_at": first.isoformat(), "ended_at": last.isoformat(),
+             "source": "unknown", "power_kw": None},
+        ])
+
+    async def test_energy_follow_page_reads_and_encodes_only_the_new_suffix(self):
+        p = parameters()
+        step = timedelta(seconds=p.values["sensor_timeout_seconds"])
+        nominal_kw = p.values["nominal_power_kw"]
+        horizon = T0 + timedelta(microseconds=123456)
+        last = horizon + step
+        expected = {
+            "from": horizon.isoformat(), "to": last.isoformat(), "intervals": [{
+                "started_at": horizon.isoformat(), "ended_at": last.isoformat(),
+                "source": "measured", "power_kw": nominal_kw / 2,
+            }],
+        }
+        selected, decoded, queries = [], [], []
+        connect, loads = sqlite3.connect, json.loads
+
+        class DeltaRows:
+            def __init__(self, rows):
+                self.rows = rows
+
+            def __iter__(self):
+                for row in self.rows:
+                    selected.append(row[0])
+                    yield row
+
+        class TracedConnection(sqlite3.Connection):
+            def execute(self, sql, *args):
+                rows = super().execute(sql, *args)
+                if sql.startswith("SELECT json_extract(payload,'$.energy.interval_delta')"):
+                    queries.append(sql)
+                    return DeltaRows(rows)
+                return rows
+
+        def decode(raw):
+            value = loads(raw)
+            if isinstance(value, dict) and set(value) == {"from", "to", "intervals"}:
+                decoded.append(raw)
+            return value
+
+        sizes = {}
+        observations = []
+        for changing in (False, True):
+            for count in (16, 128):
+                with self.subTest(changing=changing, prefix=count):
+                    owner = Controller(p)
+                    owner.begin_session(f"energy-size-{changing}-{count}", horizon - step * count)
+                    energy = owner.session.energy
+                    for n in range(1, count + 1):
+                        at = horizon - step * (count - n)
+                        rate = nominal_kw / (4 if changing and n % 2 == 0 else 2)
+                        energy = advance(
+                            energy, at, power_w=rate * 1000, valid_until=at,
+                            heating=True, nominal_kw=nominal_kw,
+                        )
+                        self.archive.save_session(replace(owner.session, energy=energy), at, self.config)
+                    await self.archive.flush()
+                    bootstrap = self.archive.read(owner.session.session_id, limit=1)
+                    self.assertEqual(bootstrap["session"]["energy"]["interval_delta"]["to"], horizon.isoformat())
+                    self.assertEqual(
+                        len(bootstrap["session"]["energy"]["interval_delta"]["intervals"]),
+                        count if changing else 1,
+                    )
+                    energy = advance(
+                        energy, last, power_w=(nominal_kw / 2) * 1000, valid_until=last,
+                        heating=True, nominal_kw=nominal_kw,
+                    )
+                    self.archive.save_session(replace(owner.session, energy=energy), last, self.config)
+                    await self.archive.flush()
+                    with closing(connect(self.archive.path)) as db:
+                        originals = [loads(row[0])["energy"]["interval_delta"] for row in db.execute(
+                            "SELECT payload FROM records WHERE session_id=? AND kind='session' ORDER BY id",
+                            (owner.session.session_id,),
+                        )]
+                        scalar = loads(db.execute(
+                            "SELECT payload FROM sessions WHERE session_id=?",
+                            (owner.session.session_id,),
+                        ).fetchone()[0])["energy"]
+                    self.assertNotIn("intervals", scalar)
+                    self.assertNotIn("interval_delta", scalar)
+                    self.assertTrue(scalar["intervals_available"])
+                    original_pieces = sum(len(delta["intervals"]) for delta in originals)
+                    self.assertEqual(original_pieces, count + 1)
+                    self.assertEqual(originals[-1], expected)
+                    byte_sizes = [len(json.dumps(
+                        delta, ensure_ascii=False, separators=(",", ":"),
+                    ).encode("utf-8")) for delta in originals]
+                    # Every saved contribution remains one small envelope,
+                    # including a coalesced owner tail and many true switches.
+                    self.assertLessEqual(max(byte_sizes), byte_sizes[-1] + 4)
+                    sizes[changing, count] = sum(byte_sizes), byte_sizes[-1]
+                    selected.clear()
+                    decoded.clear()
+                    queries.clear()
+                    with (
+                        patch("custom_components.ha_sauna.archive.sqlite3.connect",
+                              side_effect=lambda *args, **kwargs: connect(
+                                  *args, **kwargs, factory=TracedConnection,
+                              )),
+                        patch("custom_components.ha_sauna.archive.json.loads", side_effect=decode),
+                    ):
+                        page = self.archive.read(
+                            owner.session.session_id, after=bootstrap["next_after"],
+                            limit=1, energy_after=horizon.isoformat(),
+                        )
+                        self.assertEqual(page["session"]["energy"]["interval_delta"], expected)
+                        suffix_bytes = len(json.dumps(
+                            page["session"]["energy"]["interval_delta"],
+                            ensure_ascii=False, separators=(",", ":"),
+                        ).encode("utf-8"))
+                        self.assertEqual(suffix_bytes, byte_sizes[-1])
+                        self.assertEqual(len(selected), 1)
+                        self.assertEqual(decoded, selected)
+                        self.assertEqual(len(queries), 1)
+                        self.assertIn("json_extract(payload,'$.energy.interval_delta.to')>?", queries[0])
+                        suffix_counts = {
+                            "sql_queries": len(queries), "sql_rows": len(selected),
+                            "delta_decodes": len(decoded),
+                        }
+                        selected.clear()
+                        decoded.clear()
+                        queries.clear()
+                        unchanged = self.archive.read(
+                            owner.session.session_id, after=page["next_after"],
+                            limit=1, energy_after=last.isoformat(),
+                        )
+                        self.assertEqual(unchanged["session"]["energy"]["interval_delta"], {
+                            "from": last.isoformat(), "to": last.isoformat(), "intervals": [],
+                        })
+                        self.assertEqual((selected, decoded, queries), ([], [], []))
+                        observations.append({
+                            "changing": changing, "prefix": count,
+                            "original_records": len(originals),
+                            "original_pieces": original_pieces,
+                            "stored_delta_bytes": sum(byte_sizes),
+                            "max_stored_delta_bytes": max(byte_sizes),
+                            "suffix_bytes": suffix_bytes,
+                            "suffix": suffix_counts,
+                            "unchanged": {
+                                "sql_queries": len(queries), "sql_rows": len(selected),
+                                "delta_decodes": len(decoded),
+                            },
+                        })
+        for changing in (False, True):
+            self.assertEqual(sizes[changing, 16][1], sizes[changing, 128][1])
+            self.assertLess(sizes[changing, 128][0], sizes[changing, 16][0] * 8)
+        print(json.dumps(
+            {"archive_energy_delta_metrics": observations},
+            ensure_ascii=False, separators=(",", ":"),
+        ))
+
+    async def test_energy_restart_cleanup_and_erase_preserve_only_saved_coverage(self):
+        p = parameters()
+        step = timedelta(seconds=p.values["sensor_timeout_seconds"])
+        rate = p.values["nominal_power_kw"]
+        self.c.set_temperature(p.values["target_temperature_c"], T0)
+        for kind in (Kind.DOOR_OPEN, Kind.DOOR_CLOSE, Kind.INFUSION):
+            self.c.process(event(kind.value, kind, 0))
+        saved_at = T0 + step
+        energy = advance(
+            self.c.session.energy, saved_at, power_w=rate * 1000,
+            valid_until=saved_at, heating=True, nominal_kw=rate,
+        )
+        self.archive.save_session(replace(self.c.session, energy=energy), saved_at, self.config)
+        empty = Controller(p)
+        empty.begin_session("empty-energy", T0)
+        empty_energy = advance(
+            empty.session.energy, saved_at, power_w=None, valid_until=None,
+            heating=None, nominal_kw=rate,
+        )
+        self.archive.save_session(replace(empty.session, energy=empty_energy), saved_at, self.config)
+        await self.archive.flush()
+        original = self.archive.read("s")
+        late_payload = original["records"][-1]["payload"]
+        # A hard stop retains the existing last-save horizon; an owner advance
+        # that never reached save_session is deliberately not durable evidence.
+        unsaved = advance(
+            energy, saved_at + step, power_w=rate * 1000,
+            valid_until=saved_at + step, heating=True, nominal_kw=rate,
+        )
+        await self.archive.close()
+        self.archive = Archive(self.archive.path, "entry", sessions_only=True)
+        await self.archive.start()
+        restored = self.archive.read("s", now=saved_at + step * 10)
+        self.assertEqual(restored["session"]["energy"], original["session"]["energy"])
+        self.assertEqual(restored["session"]["energy"]["accounted_at"], saved_at.isoformat())
+        self.assertNotEqual(restored["session"]["energy"]["accounted_at"], unsaved.accounted_at.isoformat())
+        self.assertIsNone(restored["session"]["ended_at"])
+        self.assertIsNone(self.archive.read("empty-energy"))
+        with closing(sqlite3.connect(self.archive.path)) as db:
+            self.assertEqual(db.execute(
+                "SELECT COUNT(*) FROM records WHERE session_id='empty-energy'",
+            ).fetchone()[0], 0)
+        self.assertEqual(await self.archive.erase("s"), 1)
+        self.archive.append("session", saved_at + step, late_payload, "s")
+        self.archive.save_session(replace(self.c.session, energy=unsaved), saved_at + step, self.config)
+        await self.archive.flush()
+        self.assertIsNone(self.archive.read("s"))
+        fresh_owner = Controller(p)
+        fresh = replace(fresh_owner.begin_session("fresh-energy", T0), energy=energy)
+        self.archive.save_session(fresh, saved_at, self.config)
+        await self.archive.flush()
+        fresh_payload = self.archive.read("fresh-energy")["records"][-1]["payload"]
+        self.assertEqual(await self.archive.erase(reset=True), 1)
+        self.archive.append("session", saved_at + step, fresh_payload, "fresh-energy")
+        await self.archive.flush()
+        self.assertEqual(self.archive.read(), [])
+        with closing(sqlite3.connect(self.archive.path)) as db:
+            self.assertEqual(db.execute("SELECT COUNT(*) FROM records WHERE kind='session'").fetchone()[0], 0)
+
     async def test_runtime_close_persists_the_final_off_decision_once(self):
-        runtime = SaunaRuntime(Configuration(bindings(), parameters()), lambda: T0)
+        p = parameters()
+        step = timedelta(seconds=p.values["sensor_timeout_seconds"])
+        nominal_kw = p.values["nominal_power_kw"]
+        now = T0
+        runtime = SaunaRuntime(Configuration(bindings(), p), lambda: now)
         runtime.archive = self.archive
-        runtime.controller.set_temperature(60, T0)
+        runtime.controller.set_temperature(
+            p.values["target_temperature_c"] - p.values["readiness_hysteresis_c"], T0,
+        )
         runtime.controller.begin_session("closing", T0)
+        runtime.controller.report_power(nominal_kw * 1000, T0 + step * 2, T0)
         runtime.persist()
         self.assertTrue(runtime.controller.last_decision.heat)
+        now = T0 + step / 2
+        runtime.controller.advance(now)
+        runtime.persist()
+        now = T0 + step
 
         async def close_device():
             return None
@@ -65,6 +553,18 @@ class ArchiveTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(off[0]["payload"]["reason"], "operation_off")
         self.assertEqual(off[0]["session_id"], "closing")
         self.assertFalse(stored["session"]["operation_enabled"])
+        energy = stored["session"]["energy"]
+        self.assertEqual(stored["session"]["ended_at"], now.isoformat())
+        self.assertEqual(energy["accounted_at"], now.isoformat())
+        self.assertAlmostEqual(
+            energy["measured_kwh"], nominal_kw * step.total_seconds() / 3600,
+        )
+        self.assertEqual(energy["interval_delta"], {
+            "from": None, "to": now.isoformat(), "intervals": [{
+                "started_at": T0.isoformat(), "ended_at": now.isoformat(),
+                "source": "measured", "power_kw": nominal_kw,
+            }],
+        })
 
     async def test_decision_append_failure_during_close_still_attempts_device_off(self):
         runtime = SaunaRuntime(Configuration(bindings(), parameters()), lambda: T0)
@@ -168,9 +668,28 @@ class ArchiveTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(sum(r["kind"] == "measurement" for r in final["records"]), 11)
 
     async def test_export_during_capture_is_consistent_and_contains_originals(self):
+        p = parameters()
+        step = timedelta(seconds=p.values["sensor_timeout_seconds"])
+        rate = p.values["nominal_power_kw"] / 2
+        energy = advance(
+            self.c.session.energy, T0 + step, power_w=rate * 1000,
+            valid_until=T0 + step * 2, heating=False,
+            nominal_kw=p.values["nominal_power_kw"],
+        )
+        self.archive.save_session(
+            replace(self.c.session, energy=energy), T0 + step, self.config,
+        )
         for n in range(30):
             self.record(n)
         task = asyncio.create_task(self.archive.export())
+        energy = advance(
+            energy, T0 + step * 2, power_w=rate * 1000,
+            valid_until=T0 + step * 2, heating=False,
+            nominal_kw=p.values["nominal_power_kw"],
+        )
+        self.archive.save_session(
+            replace(self.c.session, energy=energy), T0 + step * 2, self.config,
+        )
         for n in range(30, 60):
             self.record(n)
         path = await task
@@ -184,21 +703,80 @@ class ArchiveTests(unittest.IsolatedAsyncioTestCase):
                 csv_rows = export.read("measurements.csv").decode().splitlines()
                 self.assertEqual(len(csv_rows), count + 1)
                 self.assertEqual(len({r["id"] for r in rows}), len(rows))
+                sessions = [
+                    json.loads(line)
+                    for line in export.read("sessions.jsonl").decode().splitlines()
+                ]
+                saved_energy = sessions[0]["energy"]
+                self.assertEqual(
+                    saved_energy["accounted_at"], (T0 + step * 2).isoformat(),
+                )
+                self.assertAlmostEqual(
+                    saved_energy["measured_kwh"],
+                    rate * step.total_seconds() * 2 / 3600,
+                )
+                self.assertEqual(saved_energy["intervals"], [{
+                    "started_at": T0.isoformat(),
+                    "ended_at": (T0 + step * 2).isoformat(),
+                    "source": "measured", "power_kw": rate,
+                }])
+                originals = [
+                    row["payload"]["energy"] for row in rows
+                    if row["kind"] == "session"
+                ]
+                self.assertTrue(all("intervals" not in item for item in originals))
+                self.assertEqual(
+                    [item["interval_delta"]["from"] for item in originals],
+                    [None, T0.isoformat(), (T0 + step).isoformat()],
+                )
+                self.assertEqual(
+                    [len(item["interval_delta"]["intervals"]) for item in originals],
+                    [0, 1, 1],
+                )
         finally:
             path.unlink()
 
     async def test_session_and_records_share_one_read_snapshot(self):
         # The production journal permits a second connection to commit while
         # the reader retains a consistent session/record snapshot.
-        at = T0 + timedelta(seconds=20)
-        finished = plain(replace(self.c.session, ended_at=at))
+        p = parameters()
+        step = timedelta(seconds=p.values["sensor_timeout_seconds"])
+        rate = p.values["nominal_power_kw"]
+        first = T0 + step
+        at = first + step
+        energy = advance(
+            self.c.session.energy, first, power_w=rate * 1000,
+            valid_until=at, heating=True, nominal_kw=rate,
+        )
+        self.archive.save_session(
+            replace(self.c.session, energy=energy), first, self.config,
+        )
+        await self.archive.flush()
+        energy = advance(
+            energy, at, power_w=rate * 1000, valid_until=at,
+            heating=True, nominal_kw=rate,
+        )
+        finished = plain(replace(self.c.session, ended_at=at, energy=energy))
         finished["configuration"] = self.config
+        finished["energy"]["interval_delta"] = {
+            "from": first.isoformat(), "to": at.isoformat(), "intervals": [{
+                "started_at": first.isoformat(), "ended_at": at.isoformat(),
+                "source": "measured", "power_kw": rate,
+            }],
+        }
         archive = self.archive
         connect = sqlite3.connect
+        committed = False
 
         class InterleavedConnection(sqlite3.Connection):
             def execute(self, sql, *args):
-                if sql.startswith("SELECT * FROM records"):
+                nonlocal committed
+                # The scalar row was fetched before this first energy lookup;
+                # hydration and history must retain its established snapshot.
+                if not committed and sql.startswith(
+                    "SELECT MAX(id) FROM records INDEXED BY records_energy_delta"
+                ):
+                    committed = True
                     archive._write(("session", at.isoformat(), encoded(finished), "s"))
                 return super().execute(sql, *args)
 
@@ -215,14 +793,32 @@ class ArchiveTests(unittest.IsolatedAsyncioTestCase):
         )
         self.assertEqual(result["session"]["ended_at"], latest_record["ended_at"])
         self.assertIsNone(result["session"]["ended_at"])
-        self.assertEqual(archive.read("s")["session"]["ended_at"], at.isoformat())
+        saved_energy = result["session"]["energy"]
+        self.assertEqual(saved_energy["accounted_at"], first.isoformat())
+        self.assertEqual(latest_record["energy"]["accounted_at"], first.isoformat())
+        self.assertEqual(saved_energy["interval_delta"], {
+            "from": None, "to": first.isoformat(), "intervals": [{
+                "started_at": T0.isoformat(), "ended_at": first.isoformat(),
+                "source": "measured", "power_kw": rate,
+            }],
+        })
+        self.assertAlmostEqual(
+            saved_energy["measured_kwh"], rate * step.total_seconds() / 3600,
+        )
+        latest = archive.read("s")["session"]
+        self.assertEqual(latest["ended_at"], at.isoformat())
+        self.assertEqual(latest["energy"]["accounted_at"], at.isoformat())
+        self.assertEqual(latest["energy"]["interval_delta"]["intervals"], [{
+            "started_at": T0.isoformat(), "ended_at": at.isoformat(),
+            "source": "measured", "power_kw": rate,
+        }])
 
     async def test_long_history_snapshot_does_not_block_queued_writer(self):
         with closing(sqlite3.connect(self.archive.path)) as reader:
             reader.execute("BEGIN")
             before = reader.execute("SELECT COUNT(*) FROM records").fetchone()[0]
             self.record(1)
-            await asyncio.wait_for(self.archive.flush(), 2)
+            await asyncio.wait_for(self.archive.flush(), async_timeout("writer"))
             self.assertIsNone(self.archive.failure)
             self.assertEqual(reader.execute("SELECT COUNT(*) FROM records").fetchone()[0], before)
         with closing(sqlite3.connect(self.archive.path)) as reader:
@@ -376,40 +972,87 @@ class ArchiveTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_recovered_session_snapshot_does_not_overwrite_newer_snapshot(self):
         original_write = self.archive._write
-        failed_once = False
+        connect = sqlite3.connect
+        attempts = []
+
+        class FailedScalarConnection(sqlite3.Connection):
+            def execute(self, sql, *args):
+                if sql.startswith("INSERT INTO sessions"):
+                    raise sqlite3.OperationalError("database is busy")
+                return super().execute(sql, *args)
 
         def write(record):
-            nonlocal failed_once
-            if record[0] == "session" and not failed_once:
-                failed_once = True
-                raise sqlite3.OperationalError("database is busy")
-            original_write(record)
+            attempts.append(record)
+            if len(attempts) == 1:
+                # Fail after the original INSERT, before its scalar UPSERT.
+                with patch(
+                    "custom_components.ha_sauna.archive.sqlite3.connect",
+                    side_effect=lambda *args, **kwargs: connect(
+                        *args, **kwargs, factory=FailedScalarConnection,
+                    ),
+                ):
+                    original_write(record)
+            else:
+                original_write(record)
 
         self.archive._write = write
-        for second, revision in ((1, "older"), (2, "newer")):
-            self.archive.append(
-                "session",
-                T0 + timedelta(seconds=second),
-                {
-                    "timeline": {"session_started_at": T0.isoformat()},
-                    "ended_at": None,
-                    "revision": revision,
-                },
-                "s",
-            )
+        p = parameters()
+        step = timedelta(seconds=p.values["sensor_timeout_seconds"])
+        rate = p.values["nominal_power_kw"]
+        first = T0 + step
+        last = first + step
+        energy = advance(
+            self.c.session.energy, first, power_w=rate * 1000,
+            valid_until=last, heating=True, nominal_kw=rate,
+        )
+        self.archive.save_session(
+            replace(self.c.session, energy=energy), first, self.config,
+        )
         await self.archive.queue.join()
+        before_retry = self.archive.read("s")
+        self.assertEqual(before_retry["session"]["energy"]["accounted_at"], T0.isoformat())
+        self.assertEqual(len(before_retry["records"]), 1)
+        self.assertIsInstance(self.archive.failure, sqlite3.OperationalError)
+        energy = advance(
+            energy, last, power_w=None, valid_until=None,
+            heating=None, nominal_kw=rate,
+        )
+        self.archive.save_session(
+            replace(self.c.session, energy=energy), last, self.config,
+        )
         await self.archive.flush()
 
         saved = await asyncio.to_thread(self.archive.read, "s")
-        self.assertEqual(saved["session"]["revision"], "newer")
-        self.assertEqual(
-            [
-                record["payload"].get("revision")
-                for record in saved["records"]
-                if record["kind"] == "session"
-            ],
-            [None, "older", "newer"],
+        saved_energy = saved["session"]["energy"]
+        self.assertEqual(saved_energy["accounted_at"], last.isoformat())
+        self.assertAlmostEqual(
+            saved_energy["measured_kwh"], rate * step.total_seconds() / 3600,
         )
+        self.assertEqual(saved_energy["unknown_seconds"], step.total_seconds())
+        self.assertEqual(saved_energy["interval_delta"]["intervals"], [
+            {
+                "started_at": T0.isoformat(), "ended_at": first.isoformat(),
+                "source": "measured", "power_kw": rate,
+            },
+            {
+                "started_at": first.isoformat(), "ended_at": last.isoformat(),
+                "source": "unknown", "power_kw": None,
+            },
+        ])
+        self.assertEqual(
+            [record["payload"]["energy"]["interval_delta"]["to"]
+             for record in saved["records"] if record["kind"] == "session"],
+            [T0.isoformat(), first.isoformat(), last.isoformat()],
+        )
+        self.assertEqual(
+            [record["payload"]["energy"]["interval_delta"]["from"]
+             for record in saved["records"] if record["kind"] == "session"],
+            [None, T0.isoformat(), first.isoformat()],
+        )
+        self.assertEqual(len(attempts), 3)
+        self.assertEqual(attempts[0], attempts[1])
+        self.assertIsNone(self.archive.failure)
+        self.assertFalse(self.archive.failed_records)
 
     async def test_failed_record_burst_retries_once_while_catching_up(self):
         original_write = self.archive._write

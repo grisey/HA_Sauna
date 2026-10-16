@@ -1,4 +1,5 @@
 "use strict";
+const { panelFixture: fixturePanel } = require("./catalog_fixture.cjs");
 
 const assert = require("node:assert/strict");
 const fs = require("node:fs");
@@ -44,7 +45,7 @@ const navigationPanel = () => {
   const main = ["overview", "history", "details", "settings"].map(button);
   const detail = ["detail", "detail-history", "diagnostics"].map(button);
   nodes['.main-tabs [data-action="details"]'] = main[2];
-  const panel = Object.assign(Object.create(Panel.prototype), {
+  const panel = Object.assign(fixturePanel(Panel), {
     state: { permissions: { admin: true } },
     message: () => {},
     refresh: async () => {},
@@ -147,7 +148,7 @@ test("focused button program keeps its choice while accepting a new lock", () =>
     hasAttribute: (name) => name === "disabled",
     getAttribute: (name) => (name === "disabled" ? "" : null),
   };
-  const panel = Object.assign(Object.create(Panel.prototype), {
+  const panel = Object.assign(fixturePanel(Panel), {
     shadowRoot: { activeElement: field },
   });
   panel.patchNode(field, next);
@@ -174,7 +175,7 @@ test("empty history clears the retained overview and every visible sink", () => 
     return nodes.get(selector);
   };
   let destroyed = 0;
-  const panel = Object.assign(Object.create(Panel.prototype), {
+  const panel = Object.assign(fixturePanel(Panel), {
     sessions: [],
     selected: "live",
     state: {},
@@ -253,11 +254,11 @@ test("an entry change withdraws all old controls until its matching state arrive
   await panel.savePrograms();
   panel.beginTemperatureDrag({}, {});
   panel.beginProgramDrag({ target: { closest: () => ({ disabled: false }) } });
-  assert.deepEqual(requests, [["/a/state", "GET"]]);
+  assert.deepEqual(requests, [["/a/state?include_catalog=false", "GET"]]);
   pending[0].resolve({ label: "old a" });
   await oldPoll;
   assert.equal(panel.state, null, "an old state cannot release the new entry");
-  assert.deepEqual(requests[1], ["/b/state", "GET"]);
+  assert.deepEqual(requests[1], ["/b/state?include_catalog=false", "GET"]);
   pending[1].reject(Error("b unavailable"));
   await new Promise((resolve) => setImmediate(resolve));
   assert.equal(panel.state, null);

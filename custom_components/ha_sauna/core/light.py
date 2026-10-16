@@ -32,14 +32,16 @@ def linear(start: float, target: float, elapsed: float, duration: float) -> floa
 
 
 def normal_brightness(elevation: float | None, parameters: Parameters) -> float:
-    """Tag/Nacht-Helligkeit, mit linearer buergerlicher Daemmerung von 0 bis -6 Grad."""
+    """Tag/Nacht-Helligkeit zwischen den gespeicherten Sonnenhöhen."""
     values = parameters.values
     night = values["night_brightness_percent"]
     day = values["operation_brightness_percent"]
     elevation = _number(elevation)
     if elevation is None:
         return night
-    return linear(night, day, _clamp((elevation + 6) / 6, 0, 1), 1)
+    lower = values["light_night_elevation_degrees"]
+    upper = values["light_day_elevation_degrees"]
+    return linear(night, day, _clamp((elevation - lower) / (upper - lower), 0, 1), 1)
 
 
 def temperature_brightness(

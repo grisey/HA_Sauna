@@ -10,14 +10,15 @@ from test_foundation import T0
 
 class SessionLightTests(unittest.TestCase):
     def test_operation_off_starts_light_with_the_shared_session_deadline(self):
-        controller = Controller(Parameters({"session_gap_minutes": 1}))
+        controller = Controller(Parameters({}))
         controller.set_temperature(70, T0)
         controller.set_operation(True, T0)
         controller.set_operation(False, T0 + timedelta(seconds=1))
 
         light = controller.light_after_run
+        due = T0 + timedelta(seconds=1 + controller.parameters.seconds("session_gap_minutes"))
         self.assertEqual(light.started_at, T0 + timedelta(seconds=1))
-        self.assertEqual(light.ends_at, T0 + timedelta(seconds=61))
+        self.assertEqual(light.ends_at, due)
         self.assertEqual(
             light.brightness_percent,
             BY_KEY["session_light_brightness_percent"].default,
@@ -29,20 +30,20 @@ class SessionLightTests(unittest.TestCase):
         )
         self.assertEqual(gap.due_at, light.ends_at)
 
-        controller.advance(T0 + timedelta(seconds=60))
+        controller.advance(due - timedelta(seconds=1))
         self.assertIs(controller.light_after_run, light)
         self.assertIsNotNone(controller.session)
-        controller.advance(T0 + timedelta(seconds=61))
+        controller.advance(due)
         self.assertIsNone(controller.session)
         self.assertIs(controller.light_after_run, light)
         self.assertFalse(controller.last_decision.heat)
-        self.assertIsNone(phase_timer(controller, T0 + timedelta(seconds=61)))
+        self.assertIsNone(phase_timer(controller, due))
 
     def test_resuming_the_same_session_cancels_light_and_gap(self):
-        controller = Controller(Parameters({"session_gap_minutes": 1}))
+        controller = Controller(Parameters({}))
         controller.set_operation(True, T0)
         controller.set_operation(False, T0 + timedelta(seconds=1))
-        controller.set_operation(True, T0 + timedelta(seconds=30))
+        controller.set_operation(True, T0 + timedelta(seconds=1 + controller.parameters.seconds("session_gap_minutes") / 2))
 
         self.assertIsNone(controller.light_after_run)
         self.assertFalse(
@@ -56,7 +57,6 @@ class SessionLightTests(unittest.TestCase):
         controller = Controller(
             Parameters(
                 {
-                    "session_gap_minutes": 3,
                     "session_light_brightness_percent": 64,
                 }
             )
@@ -66,7 +66,8 @@ class SessionLightTests(unittest.TestCase):
 
         self.assertEqual(controller.light_after_run.brightness_percent, 64)
         self.assertEqual(
-            controller.light_after_run.ends_at, T0 + timedelta(minutes=3)
+            controller.light_after_run.ends_at,
+            T0 + timedelta(seconds=controller.parameters.seconds("session_gap_minutes"))
         )
         controller.advance(controller.light_after_run.ends_at)
         self.assertIsNone(phase_timer(controller, controller.light_after_run.ends_at))

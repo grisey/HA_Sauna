@@ -7,6 +7,7 @@ bereits ausgeführten Schaltvorgang. Dieses Modul steuert keine Aktoren.
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from enum import StrEnum
@@ -51,12 +52,19 @@ class UnresolvedTransition(ValueError):
 
 @dataclass(frozen=True)
 class Event:
+    """Ereignis mit dem ursprünglichen Diagnose-/Bestätigungsraster.
+
+    ``trace_at`` transportiert dessen Zeitpunkt; die reale Erkennungszeit
+    bleibt ``detected_at``.
+    """
+
     event_id: str
     session_id: str
     kind: Kind
     effective_at: datetime
     detected_at: datetime
     booking_at: datetime | None = None
+    trace_at: datetime | None = None
 
     def __post_init__(self) -> None:
         if not self.event_id or not self.session_id or not isinstance(self.kind, Kind):
@@ -71,6 +79,17 @@ class Event:
             raise ValueError("Der Ereigniszeitpunkt darf nicht in der Zukunft liegen")
         if not self.effective_at <= self.booking_at <= self.detected_at:
             raise ValueError("Buchungszeit muss zwischen Ereignis- und Erkennungszeit liegen")
+        if self.trace_at is not None:
+            object.__setattr__(self, "trace_at", utc(self.trace_at))
+            if not self.effective_at <= self.trace_at <= self.booking_at <= self.detected_at:
+                raise ValueError(
+                    "Bestätigungszeit muss zwischen Ereignis- und Buchungszeit liegen"
+                )
+
+    @property
+    def confirmation_at(self) -> datetime:
+        """Ursprüngliche Bestätigung, ohne Rasterangabe bisheriger Ereigniszeitpunkt."""
+        return self.trace_at if self.trace_at is not None else self.effective_at
 
 
 @dataclass(frozen=True)
@@ -166,6 +185,26 @@ class Timeline:
             and self.anchor.event_id not in self.rejected_start_sources
         )
 
+    def presence_exit_at(self, absence_at: datetime) -> datetime | None:
+        """Combine current absence with the running gang's own exit episode.
+
+        The presence sensor and thermal door proxy have different delays.
+        Closing the door therefore does not expire persistent absence. A new
+        opening replaces this episode; an opening from before this gang, or
+        one already consumed, cannot finish it.
+        """
+        opening = self.opening if self.door == Door.OPEN else self.closed_opening
+        ventilation = self.exit_ventilation
+        if (
+            self.active is None
+            or opening is None
+            or ventilation is None
+            or opening.event_id in self.rejected_start_sources
+            or opening.effective_at <= self.active.started_at
+        ):
+            return None
+        return max(utc(absence_at), opening.effective_at, ventilation.effective_at)
+
     @property
     def gang_count(self) -> int:
         return sum(g.confirmation == Confirmation.CONFIRMED for g in self.completed)
@@ -176,14 +215,181 @@ class Timeline:
         object.__setattr__(self, "session_started_at", utc(self.session_started_at))
 
 
-def apply(state: Timeline, event: Event, *, gang_start_at: datetime | None = None) -> Timeline:
+def project_door_cycles(timeline: Timeline | Mapping) -> list[dict]:
+    """Historische Türquellen und vorhandene Gangbezüge rein lesend zuordnen.
+
+    ``processed`` behält seine Buchungsreihenfolge. Nur ein echter folgender
+    Türschluss schließt eine Öffnung. Rollen stammen aus den Quellverweisen
+    bestehender Gänge; Betrieb-AUS belegt keinen Austritt. ``gang_links`` erhält
+    auch Austritt und nachfolgenden Eintritt derselben Türfolge. ``role`` und
+    ``gang_id`` sind nur bei genau einem Bezug gesetzt. Archivierte Mappings
+    werden ebenso gelesen wie Timeline-Objekte, ohne deren Inhalt zu verändern.
+    """
+    def get(value, key, default=None):
+        return (value.get(key, default) if isinstance(value, Mapping)
+                else getattr(value, key, default))
+
+    def time(value):
+        try:
+            return utc(datetime.fromisoformat(value) if isinstance(value, str) else value)
+        except (TypeError, ValueError):
+            return None
+
+    session_id = get(timeline, "session_id")
+    cycles, evidence = [], []
+    sources, close_cycles, exit_cycles = {}, {}, {}
+    ambiguous_ids = set()
+    current = None
+    for index, event in enumerate(get(timeline, "processed", ()) or ()):
+        if get(event, "session_id", session_id) != session_id:
+            continue
+        kind, event_id = get(event, "kind"), get(event, "event_id")
+        at = time(get(event, "effective_at"))
+        door_event = kind in (Kind.DOOR_OPEN, Kind.DOOR_CLOSE)
+        if not isinstance(event_id, str) or not event_id or at is None:
+            if door_event:
+                if current is not None:
+                    cycles[current]["open"] = False
+                current = None
+            continue
+        if event_id in sources:
+            if sources[event_id][0] != event:
+                ambiguous_ids.add(event_id)
+                if door_event:
+                    if current is not None:
+                        cycles[current]["open"] = False
+                    current = None
+            continue
+        sources[event_id] = (event, index, at)
+        if kind == Kind.DOOR_OPEN:
+            if current is not None:
+                cycles[current]["open"] = False
+            current = len(cycles)
+            cycles.append({
+                "id": event_id,
+                "event_ids": [event_id],
+                "started_at": at.isoformat(),
+                "ended_at": None,
+                "open": True,
+                "role": None,
+                "gang_id": None,
+                "gang_links": [],
+            })
+            evidence.append({
+                "started_at": at, "ended_at": None,
+                "opening_index": index, "closing_index": None,
+                "ventilation_at": None, "ventilation_event_id": None,
+            })
+        elif kind == Kind.DOOR_CLOSE:
+            if (current is not None and cycles[current]["open"]
+                    and at >= evidence[current]["started_at"]):
+                cycles[current]["event_ids"].append(event_id)
+                cycles[current]["ended_at"] = at.isoformat()
+                cycles[current]["open"] = False
+                evidence[current]["ended_at"] = at
+                evidence[current]["closing_index"] = index
+                close_cycles[event_id] = current
+            else:
+                if current is not None:
+                    cycles[current]["open"] = False
+                current = None
+                cycles.append({
+                    "id": event_id,
+                    "event_ids": [event_id],
+                    "started_at": at.isoformat(),
+                    "ended_at": at.isoformat(),
+                    "open": False,
+                    "role": None,
+                    "gang_id": None,
+                    "gang_links": [],
+                })
+                evidence.append(None)
+        elif current is not None and kind == Kind.VENTILATION:
+            episode = evidence[current]
+            if cycles[current]["open"]:
+                if episode["ventilation_at"] is None:
+                    episode["ventilation_at"] = at
+                    episode["ventilation_event_id"] = event_id
+                if at >= episode["started_at"]:
+                    exit_cycles[event_id] = current
+        elif current is not None and kind == Kind.PRESENCE_ENDED:
+            episode = evidence[current]
+            ventilation = episode["ventilation_at"]
+            # Präsenzende darf nach dem Schluss wirken. Der damalige aktuelle
+            # Öffnungsbezug und dessen Lüftungsbeleg bleiben maßgeblich.
+            if (ventilation is not None
+                    and episode["started_at"] <= ventilation <= at
+                    and (episode["ended_at"] is None
+                         or ventilation <= episode["ended_at"])):
+                exit_cycles[event_id] = current
+
+    roles = {}
+    retracted = {get(gang, "gang_id")
+                 for gang in get(timeline, "retracted", ()) or ()
+                 if get(gang, "session_id", session_id) == session_id}
+    active = get(timeline, "active")
+    gangs = [*(get(timeline, "completed", ()) or ()), *([active] if active else [])]
+    for gang in gangs:
+        gang_id = get(gang, "gang_id")
+        if (not isinstance(gang_id, str) or not gang_id or gang_id in retracted
+                or get(gang, "session_id", session_id) != session_id):
+            continue
+        started_at = time(get(gang, "started_at"))
+        if started_at is None:
+            continue
+        start_source = get(gang, "start_source_event_id")
+        entry = close_cycles.get(start_source)
+        if (entry is not None and start_source not in ambiguous_ids
+                and started_at >= evidence[entry]["ended_at"]):
+            roles.setdefault(entry, {})[("entry", gang_id)] = None
+        end_source = get(gang, "end_event_id")
+        exit_cycle = exit_cycles.get(end_source)
+        if (exit_cycle is None or end_source in ambiguous_ids
+                or time(get(gang, "ended_at")) is None):
+            continue
+        end_event, _, end_at = sources[end_source]
+        episode = evidence[exit_cycle]
+        end_kind, end_reason = get(end_event, "kind"), get(gang, "end_reason")
+        expected_reason = ("presence_exit" if end_kind == Kind.PRESENCE_ENDED
+                           else "ventilation")
+        if (end_reason not in (None, expected_reason)
+                or episode["started_at"] < started_at
+                or (end_kind == Kind.PRESENCE_ENDED
+                    and (episode["started_at"] <= started_at
+                         or episode["ventilation_event_id"] in ambiguous_ids))
+                or (entry is not None
+                    and episode["opening_index"] <= evidence[entry]["closing_index"])
+                or (end_kind == Kind.VENTILATION
+                    and episode["ended_at"] is not None
+                    and end_at > episode["ended_at"])):
+            continue
+        roles.setdefault(exit_cycle, {})[("exit", gang_id)] = None
+    for index, candidates in roles.items():
+        if ambiguous_ids.intersection(cycles[index]["event_ids"]):
+            continue
+        cycles[index]["gang_links"] = [
+            {"gang_id": gang_id, "role": role} for role, gang_id in candidates
+        ]
+        if len(candidates) == 1:
+            cycles[index]["role"], cycles[index]["gang_id"] = next(iter(candidates))
+    return cycles
+
+
+def apply(
+    state: Timeline, event: Event, *, gang_start_at: datetime | None = None,
+) -> Timeline:
     """Ein Ereignis verarbeiten, ohne den bisherigen Zustand zu verändern.
 
     `active` umfasst vorläufige und bestätigte Gänge. Vorbereitung gehört zur
     letzten abgeschlossenen Türöffnungsepisode. Jeder neue Gang benötigt eine
     ungenutzte vollständige Öffnungs- und Schließfolge.
     Ein bestehender Gang behält seine ursprüngliche Zuordnung bei Türbetätigung.
+    Die Bestätigungsart des aktiven Gangs bestimmt den Austrittsbeleg.
     """
+    proxy_presence = (
+        state.active is not None
+        and state.active.recognition_kind != Kind.PRESENCE_CONFIRMED
+    )
     if event.session_id != state.session_id:
         raise ValueError("Ereignis gehört zu einer anderen Session")
     for previous in state.processed:
@@ -210,7 +416,7 @@ def apply(state: Timeline, event: Event, *, gang_start_at: datetime | None = Non
             preparation=None,
             rejected_start_sources=(
                 (event.event_id,) if state.active is not None
-                and state.active.recognition_kind != Kind.PRESENCE_CONFIRMED else ()
+                and proxy_presence else ()
             ),
         )
     elif event.kind == Kind.DOOR_CLOSE:
@@ -227,10 +433,11 @@ def apply(state: Timeline, event: Event, *, gang_start_at: datetime | None = Non
             preparation=state.open_ventilation,
             open_ventilation=None,
         )
-        if state.active is not None:
-            # Closing while the old gang still runs is not a new entry.
-            # After leaving and ventilating, a later closure can instead belong
-            # to the next occupant returning through the still open door.
+        if (state.active is not None
+                and state.active.confirmation == Confirmation.CONFIRMED):
+            # A confirmed gang consumes door cycles within that same stay.
+            # A provisional gang keeps its own start anchor; a newer cycle
+            # remains available if that earlier conjecture later expires.
             result = replace(result, rejected_start_sources=(
                 *state.rejected_start_sources, event.event_id,
             ))
@@ -277,17 +484,10 @@ def apply(state: Timeline, event: Event, *, gang_start_at: datetime | None = Non
             result = replace(result, resolved_presence_close_id=state.anchor.event_id)
     elif event.kind == Kind.PRESENCE_ENDED:
         opening = state.opening if state.door == Door.OPEN else state.closed_opening
-        if (state.active is None or opening is None
-                or opening.event_id in state.rejected_start_sources
-                or opening.effective_at <= state.active.started_at):
-            raise ValueError("Gangende benötigt eine neue Austrittsöffnung")
-        if (event.effective_at < opening.effective_at
-                or (state.door == Door.CLOSED
-                    and (state.anchor is None
-                         or event.effective_at > state.anchor.effective_at))):
-            raise ValueError("Abwesenheit gehört nicht zur Austrittsöffnung")
-        if state.exit_ventilation is None:
-            raise ValueError("Gangende benötigt bestätigtes Lüften der Austrittsöffnung")
+        if state.presence_exit_at(event.effective_at) != event.effective_at:
+            raise ValueError(
+                "Gangende benötigt Abwesenheit und bestätigtes Lüften einer neuen Austrittsöffnung"
+            )
         finished = replace(state.active, ended_at=event.booking_at,
                            end_event_id=event.event_id, end_reason="presence_exit")
         result = replace(state, active=None, completed=state.completed + (finished,),
@@ -304,8 +504,7 @@ def apply(state: Timeline, event: Event, *, gang_start_at: datetime | None = Non
             raise UnresolvedTransition("Durchlüften ohne zugeordnete Öffnung")
         # Mehrere Bestätigungen derselben Episode ändern deren ersten Beleg nicht.
         result = replace(state, open_ventilation=state.open_ventilation or event)
-        if (state.active is not None
-                and state.active.recognition_kind != Kind.PRESENCE_CONFIRMED):
+        if state.active is not None and proxy_presence:
             if state.active.confirmation == Confirmation.PROVISIONAL:
                 result = replace(result, active=None,
                                  retracted=state.retracted + (state.active,))
@@ -321,8 +520,7 @@ def apply(state: Timeline, event: Event, *, gang_start_at: datetime | None = Non
                 active=None,
                 retracted=state.retracted + (state.active,),
                 rejected_start_sources=state.rejected_start_sources
-                + (state.active.start_source_event_id,)
-                + ((state.anchor.event_id,) if state.anchor else ()),
+                + (state.active.start_source_event_id,),
             )
     elif event.kind == Kind.OPERATION_OFF:
         completed = state.completed

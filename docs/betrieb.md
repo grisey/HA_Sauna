@@ -11,14 +11,17 @@ Die Thermostatgrenzen liegen bei:
 - **EIN:** Solltemperatur minus Wiedereinschaltabstand.
 
 An den Grenzen wird geschaltet; dazwischen bleibt der bisherige Zustand erhalten.
-Nach einer Temperaturabschaltung muss zusätzlich die Heizpause ablaufen.
-Die Mindestheizzeit beginnt mit dem tatsächlich bestätigten Heizbeginn und
-verzögert eine reguläre Temperaturabschaltung. Ihr Beginn bleibt auch bei
+In Automatik muss nach einer Temperaturabschaltung zusätzlich die Heizpause ablaufen.
+Die Mindestheizzeit gilt ebenfalls nur in Automatik. Sie beginnt mit dem
+tatsächlich bestätigten Heizbeginn und verzögert eine reguläre
+Temperaturabschaltung. Ihr Beginn bleibt auch bei
 Solländerungen oder Rückgabe einer manuellen EIN-Wahl erhalten.
 
 **Bereit** gilt im freigegebenen Automatikbetrieb ab dem ersten Erreichen des
-Sollwerts, unabhängig von der höheren Abschaltschwelle. Temperaturabfall und
-Solländerung heben diese Bereitschaft nicht auf. Eine vorläufige Gangerkennung
+aktuellen Sollwerts, unabhängig von der höheren Abschaltschwelle. Ein späterer
+Temperaturabfall hebt diese Bereitschaft nicht auf. Eine Sollwerterhöhung über die
+aktuelle Temperatur führt wieder zu **Aufheizen**, bis das neue Ziel erreicht ist.
+Eine vorläufige Gangerkennung
 bewahrt sie; ein bestätigter Gang beendet sie. Nach Gang und Kühlung kann sie
 neu entstehen ([Gangerkennung](gangmodell.md)).
 
@@ -30,13 +33,16 @@ Im Automatikbetrieb gilt, von oben nach unten:
 2. Angeforderte oder laufende [Ofenkühlung](ofenkuehlung.md): Ofen AUS.
 3. Ausdrückliche vorübergehende Ofenwahl, solange sie gilt.
 4. Aktiver Gang: durchgehende Heizanforderung, auch oberhalb der Thermostatgrenze.
-5. Geeigneter Türschluss bei Gangerkennung aus Temperatur und Feuchte: Mindestheizhilfe.
+5. Geeigneter Türschluss: Mindestheizhilfe.
 6. Thermostat einschließlich Mindestheizzeit und Heizpause.
 
-Bei Gangerkennung aus Temperatur und Feuchte gilt die Ganganforderung schon ab
-der vorläufigen Erkennung.
-Bei direkter Präsenz setzt sie einen bestätigten Gang voraus; Quellausfall nimmt
-nur diese zusätzliche Heizanforderung zurück, ohne den Gang zu beenden.
+Bei vorläufigen und durch Aufguss bestätigten Gängen gilt die Ganganforderung
+aus dem aktiven Gang. Bei Bestätigung durch einen qualifizierten Belegungszustand
+setzt sie weiterhin einen aktuellen verfügbaren qualifizierten Zustandsbeleg
+voraus. Unbekannter Zustand oder fehlende Verfügbarkeit nimmt nur diese
+zusätzliche Heizanforderung zurück, ohne den Gang zu beenden. Qualifizierte
+Abwesenheit allein beendet weder Gang noch Ganganforderung; das Gangende folgt
+den bestehenden Tür- und Lüftungsregeln.
 
 Die Türhilfe fordert nach einem geeigneten Türschluss zusätzliches Heizen an.
 Dafür müssen Öffnung und anschließender Schluss zu demselben Vorgang
@@ -44,8 +50,9 @@ bei Betrieb-EIN in Aufheizen oder Bereit gehören. Bei Türschluss muss die
 Mindesttemperatur erreicht sein. Gangbeginn oder Kühlung verwerfen diesen Vorgang.
 Bis zur tatsächlichen Heizbestätigung bleibt die
 Anforderung widerrufbar, danach gilt die Mindestheizzeit. Betrieb-AUS und
-manuelles Ofen-AUS verwerfen die Türanforderung. Direkte Präsenzführung verwendet
-keine Türhilfe.
+manuelles Ofen-AUS verwerfen die Türanforderung. Die Türhilfe gilt auch bei
+direkter Präsenzführung. Schutz, Heizfreigabe und Temperaturgültigkeit bleiben
+maßgeblich.
 
 ## Licht während der Sitzung und beim Ausschalten
 
@@ -63,8 +70,13 @@ Automatische Stellwerte werden auf ganze Prozent gerundet und durch die
 Ausgabehysterese beruhigt; manuelle Wahlen und fälliges AUS werden dadurch nicht
 verzögert.
 
-Übergänge beginnen an der beobachteten Helligkeit. Bei Kühlbeginn ist der erste
-Übergang auf die halbe Restzeit begrenzt. Fälliges AUS beendet auch einen Übergang.
+Die Integration führt automatische Übergänge ab der beobachteten Helligkeit;
+bei unterstützten Geräten fordern die einzelnen Lichtbefehle keine zusätzliche
+Geräteüberblendung an.
+Bei Kühlbeginn ist der erste Übergang auf die halbe Restzeit begrenzt.
+Tasterrückmeldung und fälliges AUS werden ohne eigenen Übergang angefordert und
+beenden einen laufenden Übergang. Geräte- oder integrationsseitige Mindestzeiten
+der tatsächlichen Lichtreaktion bleiben davon unberührt.
 
 ## Heizzeit und Energie
 
@@ -74,8 +86,8 @@ Heizfreigabe, nicht die tatsächliche Leistung hinter einem internen Thermostat.
 Nach der eingestellten durchgehend bestätigten Auszeit wird die lokale Heizsumme
 zurückgesetzt.
 
-Energie stammt aus gültigen Leistungsmessungen, ersatzweise aus Heizzeit mal
-konfigurierter Ofenleistung. Gemessene, geschätzte und unbekannte Anteile werden
+Energie stammt aus gültigen Leistungsmessungen, ersatzweise aus belegter Heizzeit
+mal konfigurierter Ofenleistung. Gemessene, berechnete und unbekannte Anteile werden
 unterschieden. Kühlung und Heizzeitrücksetzung löschen keinen Sitzungsverbrauch.
 
 ## Fehlender Temperaturanstieg

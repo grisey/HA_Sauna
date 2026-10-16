@@ -162,8 +162,10 @@ def parameter_error(error):
         "too_large": "Der Wert liegt über der zulässigen Obergrenze.",
         "integer_required": "Bitte eine ganze Zahl eingeben.",
         "reduction_too_large": "Die Verkürzung muss kleiner als die erste Heizzeit sein.",
-        "window_not_divisible": "Das Zeitfenster muss durch den Zeitabstand der Personenprüfung teilbar sein.",
+        "window_not_divisible": "Das Zeitfenster muss durch sein Erkennungsraster und den jeweiligen Prüfabstand teilbar sein.",
+        "catalog_only": "Dieser Standardwert wird ausschließlich aus dem Parameterkatalog gelesen.",
         "program_catalog_invalid": "Die Mindesttemperatur passt nicht zu den gespeicherten Temperaturprogrammen.",
+        "not_applicable": "Diese Einstellung wird mit den zugeordneten Geräten und dem gewählten Erkennungsverfahren nicht verwendet.",
     }.get(error.code, "Bitte die eingegebenen Werte prüfen.")
     return label + ": " + detail
 

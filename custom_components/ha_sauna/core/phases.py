@@ -108,7 +108,8 @@ def project_session(session, now) -> PhaseProjection:
             phase = "aus"
         else:
             active = [o for o in overlays if o[0] <= left < o[1]]
-            # Cooling takes precedence over contradictory imported gang evidence.
+            # A proxy gang can coexist with its remaining minimum cooling time.
+            # Cooling remains the leading heater phase throughout that interval.
             active.sort(key=lambda o: (o[2] in ("nachlauf", "zwangskühlung"), o[0]))
             if active:
                 _, _, phase, source, complete = active[-1]

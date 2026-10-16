@@ -4,6 +4,8 @@
 const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const vm = require("node:vm");
+const precision = require("./catalog_fixture.cjs").preferences()
+  .chart_coordinate_precision;
 
 class FakePath2D {
   constructor() {
@@ -47,7 +49,8 @@ const frozenSvgPath = (points, x, y) => {
     x(point.time ?? stamp(point.received_at)),
     y(point.value),
   ]);
-  if (xy.length === 1) return `M${xy[0][0].toFixed(2)},${xy[0][1].toFixed(2)}`;
+  if (xy.length === 1)
+    return `M${xy[0][0].toFixed(precision)},${xy[0][1].toFixed(precision)}`;
   const slopes = xy
     .slice(1)
     .map(
@@ -65,12 +68,12 @@ const frozenSvgPath = (points, x, y) => {
       w2 = after + 2 * before;
     return (w1 + w2) / (w1 / previous + w2 / next);
   });
-  let path = `M${xy[0][0].toFixed(2)},${xy[0][1].toFixed(2)}`;
+  let path = `M${xy[0][0].toFixed(precision)},${xy[0][1].toFixed(precision)}`;
   for (let index = 0; index < xy.length - 1; index++) {
     const [x0, y0] = xy[index],
       next = xy[index + 1],
       dx = (next[0] - x0) / 3;
-    path += ` C${(x0 + dx).toFixed(2)},${(y0 + tangents[index] * dx).toFixed(2)} ${(next[0] - dx).toFixed(2)},${(next[1] - tangents[index + 1] * dx).toFixed(2)} ${next[0].toFixed(2)},${next[1].toFixed(2)}`;
+    path += ` C${(x0 + dx).toFixed(precision)},${(y0 + tangents[index] * dx).toFixed(precision)} ${(next[0] - dx).toFixed(precision)},${(next[1] - tangents[index + 1] * dx).toFixed(precision)} ${next[0].toFixed(precision)},${next[1].toFixed(precision)}`;
   }
   return path;
 };
@@ -81,9 +84,12 @@ const svgControls = (path) =>
   ]);
 const compare = (points, x, y) => {
   const expected = JSON.stringify(svgControls(frozenSvgPath(points, x, y)));
-  assert.equal(JSON.stringify(monotoneHistoryCommands(points, x, y)), expected);
+  assert.equal(
+    JSON.stringify(monotoneHistoryCommands(points, x, y, null, precision)),
+    expected,
+  );
   const target = new FakePath2D();
-  monotoneHistoryCommands(points, x, y, target);
+  monotoneHistoryCommands(points, x, y, target, precision);
   assert.equal(JSON.stringify(target.commands), expected);
 };
 const point = (time, value, displayGap) => ({
@@ -106,7 +112,7 @@ for (const values of [
   [point(0, 70), point(1, 71), point(5, 72, true)],
 ]) {
   const actual = historySegments(values, 0, 5, 3).flatMap((segment) =>
-    monotoneHistoryCommands(segment, x, y),
+    monotoneHistoryCommands(segment, x, y, null, precision),
   );
   const expected = historySegments(values, 0, 5, 3).flatMap((segment) =>
     svgControls(frozenSvgPath(segment, x, y)),
@@ -114,7 +120,7 @@ for (const values of [
   assert.equal(JSON.stringify(actual), JSON.stringify(expected));
   const target = new FakePath2D();
   for (const segment of historySegments(values, 0, 5, 3))
-    monotoneHistoryCommands(segment, x, y, target);
+    monotoneHistoryCommands(segment, x, y, target, precision);
   assert.equal(JSON.stringify(target.commands), JSON.stringify(expected));
 }
 
