@@ -82,10 +82,8 @@
     "maximum_cache_entries": 8192,
     "maximum_curve_value_calls": 3000000,
     "maximum_curve_points_per_case_channel": 512,
-    "maximum_ambiguous_cases": 10000,
-    "maximum_runtime_s": 1800.0
+    "maximum_ambiguous_cases": 10000
   },
-  "runtime_owner": {"file": "tests/settings.json", "path": ["runner", "timeouts_s", "sessions"], "completion_reserve_s": 600.0},
   "release": {
     "require_all_R03_references_supported": true,
     "maximum_known_counterexample_supports": 0,

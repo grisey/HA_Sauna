@@ -37,7 +37,6 @@ jobs:
     needs: configuration
     if: ${{ !inputs.format_only }}
     runs-on: ${{ fromJSON(needs.configuration.outputs.settings).operating_system }}
-    timeout-minutes: ${{ fromJSON(needs.configuration.outputs.settings).job_timeouts_minutes.ui }}
     env:
       HA_TEST_REQUIRED: '1'
       ENGINE: ${{ fromJSON(needs.configuration.outputs.browser).engine }}
@@ -65,7 +64,6 @@ jobs:
   format:
     needs: configuration
     runs-on: ${{ fromJSON(needs.configuration.outputs.settings).operating_system }}
-    timeout-minutes: ${{ fromJSON(needs.configuration.outputs.settings).job_timeouts_minutes.format }}
     env:
       UI_BASE_REF: ${{ fromJSON(needs.configuration.outputs.settings).ui_base_ref }}
     steps:

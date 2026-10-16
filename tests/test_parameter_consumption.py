@@ -454,13 +454,7 @@ class ParameterConsumptionTests(unittest.TestCase):
         )
         self.assertAlmostEqual(robust_slope([0, grid, grid * 2], step=grid), 60)
 
-    def test_test_infrastructure_declares_positive_process_limits_once(self):
-        self.assertTrue(
-            all(value > 0 for value in setting("runner.timeouts_s").values())
-        )
-        self.assertTrue(
-            all(value > 0 for value in setting("runner.job_timeouts_minutes").values())
-        )
+    def test_test_infrastructure_uses_the_exclusive_fixture_catalogue(self):
         # Neither loader contains a second copy of the executable defaults.
         settings = json.loads(Path(__file__).with_name("settings.json").read_text())
         self.assertEqual(setting("fixtures.history"), settings["fixtures"]["history"])

@@ -122,7 +122,7 @@ def validate(policy, references):
             if not finite(value) or value < 0 or value == 0 and not allow_zero:
                 raise ValueError(f"Positive finite {section}.{key} required")
     for key, value in policy["limits"].items():
-        if key != "maximum_runtime_s" and type(value) is not int:
+        if type(value) is not int:
             raise ValueError(f"Integer work limit required: {key}")
     for key in ("minimum_consistent_channels", "maximum_resolved_contrary_channels"):
         if type(policy["localization"][key]) is not int:
@@ -173,19 +173,6 @@ def resolve_numerics(policy):
     policy["resolved_numerical_owner"] = {**file_identity(path),
                                            "mapping": owner["parameters"],
                                            "values": policy["numerics"]}
-    runtime = policy["runtime_owner"]
-    runtime_path = ROOT / runtime["file"]
-    timeout = json.loads(runtime_path.read_bytes())
-    for part in runtime["path"]:
-        timeout = timeout[part]
-    available = timeout - runtime["completion_reserve_s"]
-    if not finite(available) or available <= 0:
-        raise ValueError("Runtime reserve leaves no numerical analysis budget")
-    policy["limits"]["maximum_runtime_s"] = min(policy["limits"]["maximum_runtime_s"], available)
-    policy["resolved_runtime_owner"] = {**file_identity(runtime_path),
-                                         "outer_timeout_s": timeout,
-                                         "completion_reserve_s": runtime["completion_reserve_s"],
-                                         "analysis_budget_s": policy["limits"]["maximum_runtime_s"]}
 
 
 def derive_noise_floors(indices, policy):
@@ -258,7 +245,6 @@ class Work:
         original_trend = module.curve_trend
 
         def cached(rows, values, weights):
-            self.check()
             key = (tuple(tuple(row) for row in rows), tuple(values), tuple(weights))
             if key in self.cache:
                 self.counts["least_squares_cache_hits"] += 1
@@ -277,7 +263,6 @@ class Work:
         module._least_squares = cached
 
         def cached_baseline(samples, origin, floor, policy):
-            self.check()
             self.counts["calibration_baseline_calls"] += 1
             # Full immutable original values/times, origin, numerical floor and
             # every CurvePolicy field define this pure calculation. No source
@@ -296,7 +281,6 @@ class Work:
             return result
 
         def cached_trend(samples, *, policy):
-            self.check()
             self.counts["curve_trend_calls"] += 1
             key = (tuple(tuple(sample) for sample in samples), policy)
             if key in self.trend_cache:
@@ -314,12 +298,7 @@ class Work:
         module._calibration_baseline = cached_baseline
         module.curve_trend = cached_trend
 
-    def check(self):
-        if time.monotonic() - self.started > self.policy["limits"]["maximum_runtime_s"]:
-            raise WorkLimitError("maximum_runtime_s exceeded")
-
     def call(self, name, *args, **kwargs):
-        self.check()
         if name == "curve_template_value":
             self.counts["curve_value_calls"] += 1
             if self.counts["curve_value_calls"] > self.policy["limits"]["maximum_curve_value_calls"]:

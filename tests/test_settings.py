@@ -19,10 +19,6 @@ def setting(path):
     return deepcopy(value)
 
 
-def timeout(name):
-    return setting(f"runner.timeouts_s.{name}")
-
-
 def browser_timeout(name):
     return setting(f"browser.timeouts_ms.{name}")
 

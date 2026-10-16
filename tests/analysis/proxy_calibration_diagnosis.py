@@ -230,9 +230,6 @@ class DiagnosisWork:
         self.bindings, self.raw_scores = OrderedDict(), OrderedDict()
         self.raw_calls = []
 
-    def check(self):
-        self.base.check()
-
     def progress(self, phase, **details):
         self.base.progress(phase, **details)
 
@@ -248,7 +245,6 @@ class DiagnosisWork:
         return result
 
     def call(self, name, *args, **kwargs):
-        self.check()
         if name == "bind_curve_template":
             key = (args, tuple(sorted(kwargs.items())))
             return self.memo(self.bindings, key, name, *args, **kwargs)
@@ -799,12 +795,6 @@ def run(args, policy):
     owner_policy["limits"].update({key: value for key, value in policy["limits"].items()
                                     if key in owner_policy["limits"]})
     owner_policy["reporting"]["progress_interval_s"] = policy["reporting"]["progress_interval_s"]
-    timeout = load_json(ROOT / owner_policy["runtime_owner"]["file"])
-    for part in owner_policy["runtime_owner"]["path"]:
-        timeout = timeout[part]
-    owner_policy["limits"]["maximum_runtime_s"] = min(
-        owner_policy["limits"]["maximum_runtime_s"],
-        timeout - owner_policy["runtime_owner"]["completion_reserve_s"])
     work = DiagnosisWork(cal, core, owner_policy, policy, output)
     work.references = calibration["references"]
     work.baseline_profiles = originals

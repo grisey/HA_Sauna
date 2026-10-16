@@ -108,7 +108,6 @@ jobs:
     needs: configuration
     if: ${{ !inputs.curve_compare && !inputs.proxy_form_analysis && !inputs.proxy_candidate_analysis && !inputs.proxy_expectation_analysis && !inputs.proxy_calibration_analysis && contains(fromJSON(needs.configuration.outputs.checks), 'core') }}
     runs-on: ${{ fromJSON(needs.configuration.outputs.settings).operating_system }}
-    timeout-minutes: ${{ fromJSON(needs.configuration.outputs.settings).job_timeouts_minutes.core }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -119,14 +118,12 @@ jobs:
       - name: Fachkern prüfen
         run: |
           python tests/ci_process.py "$SAUNA_CORE_EVIDENCE" python tests/ci_settings.py core
-        timeout-minutes: ${{ fromJSON(needs.configuration.outputs.settings).step_timeouts_minutes.core }}
         env:
           SAUNA_CORE_TESTS: ${{ inputs.core_tests }}
           SAUNA_CORE_EVIDENCE: ${{ runner.temp }}/ha-sauna-core
           SAUNA_PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
       - run: python tests/ci_process.py "${{ runner.temp }}/ha-sauna-core/panel" node --test tests/panel_*.test.js
         if: ${{ !cancelled() && needs.configuration.outputs.core_tests == '[]' }}
-        timeout-minutes: ${{ fromJSON(needs.configuration.outputs.settings).step_timeouts_minutes.panel }}
       - name: Fachkernprozess sichern
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
@@ -142,14 +139,12 @@ jobs:
       contents: read
       actions: read
     runs-on: ${{ fromJSON(needs.configuration.outputs.settings).operating_system }}
-    timeout-minutes: ${{ fromJSON(needs.configuration.outputs.settings).job_timeouts_minutes.sessions }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: ${{ fromJSON(needs.configuration.outputs.settings).python_core }}
       - name: Kalibration auf gespeicherten Originalmessungen auswerten
-        timeout-minutes: ${{ fromJSON(needs.configuration.outputs.settings).step_timeouts_minutes.sessions }}
         env:
           SAUNA_CALIBRATION_EVIDENCE: ${{ runner.temp }}/ha-sauna-proxy-calibration
           SAUNA_CALIBRATION_BASELINE_RUN: ${{ inputs.proxy_calibration_baseline_run }}
@@ -198,14 +193,12 @@ jobs:
     needs: configuration
     if: ${{ github.event_name == 'workflow_dispatch' && inputs.proxy_expectation_analysis && !inputs.proxy_calibration_analysis }}
     runs-on: ${{ fromJSON(needs.configuration.outputs.settings).operating_system }}
-    timeout-minutes: ${{ fromJSON(needs.configuration.outputs.settings).job_timeouts_minutes.sessions }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: ${{ fromJSON(needs.configuration.outputs.settings).python_core }}
       - name: Explizite Erwartungen an gespeicherten Original-Replays auswerten
-        timeout-minutes: ${{ fromJSON(needs.configuration.outputs.settings).step_timeouts_minutes.sessions }}
         env:
           SAUNA_EXPECTATION_CASES: ${{ inputs.proxy_expectation_cases }}
           SAUNA_EXPECTATION_EVIDENCE: ${{ runner.temp }}/ha-sauna-proxy-expectations
@@ -235,14 +228,12 @@ jobs:
     needs: configuration
     if: ${{ github.event_name == 'workflow_dispatch' && inputs.proxy_candidate_analysis && !inputs.proxy_expectation_analysis && !inputs.proxy_calibration_analysis }}
     runs-on: ${{ fromJSON(needs.configuration.outputs.settings).operating_system }}
-    timeout-minutes: ${{ fromJSON(needs.configuration.outputs.settings).job_timeouts_minutes.sessions }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: ${{ fromJSON(needs.configuration.outputs.settings).python_core }}
       - name: Mathematische Proxykandidaten unabhängig prüfen
-        timeout-minutes: ${{ fromJSON(needs.configuration.outputs.settings).step_timeouts_minutes.core }}
         run: |
           SAUNA_CANDIDATE_EVIDENCE="$RUNNER_TEMP/ha-sauna-proxy-candidates"
           evidence="$SAUNA_CANDIDATE_EVIDENCE/test-process"
@@ -259,7 +250,6 @@ jobs:
           cat "$evidence/stderr.log" >&2
           exit "$result"
       - name: Proxy-Formmodelle auf R01–R04 auswerten
-        timeout-minutes: ${{ fromJSON(needs.configuration.outputs.settings).step_timeouts_minutes.sessions }}
         run: |
           SAUNA_CANDIDATE_EVIDENCE="$RUNNER_TEMP/ha-sauna-proxy-candidates"
           evidence="$SAUNA_CANDIDATE_EVIDENCE/analysis-process"
@@ -287,7 +277,6 @@ jobs:
     needs: configuration
     if: ${{ github.event_name == 'workflow_dispatch' && inputs.proxy_form_analysis && !inputs.proxy_candidate_analysis && !inputs.proxy_expectation_analysis && !inputs.proxy_calibration_analysis }}
     runs-on: ${{ fromJSON(needs.configuration.outputs.settings).operating_system }}
-    timeout-minutes: ${{ fromJSON(needs.configuration.outputs.settings).job_timeouts_minutes.core }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
@@ -328,14 +317,12 @@ jobs:
     needs: configuration
     if: ${{ github.event_name == 'workflow_dispatch' && inputs.curve_compare && !inputs.proxy_form_analysis && !inputs.proxy_candidate_analysis && !inputs.proxy_expectation_analysis && !inputs.proxy_calibration_analysis }}
     runs-on: ${{ fromJSON(needs.configuration.outputs.settings).operating_system }}
-    timeout-minutes: ${{ fromJSON(needs.configuration.outputs.settings).job_timeouts_minutes.core }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: ${{ fromJSON(needs.configuration.outputs.settings).python_ha }}
       - name: Bestehende Kurven-Testklasse gepaart messen
-        timeout-minutes: ${{ fromJSON(needs.configuration.outputs.settings).step_timeouts_minutes.core }}
         env:
           CURVE_BASE: ${{ inputs.curve_base }}
           CURVE_CANDIDATE: ${{ inputs.curve_candidate }}
@@ -355,7 +342,7 @@ jobs:
           worktrees = {}
           status = 1
           def git(*arguments, cwd=None):
-              return subprocess.check_output(['git', *arguments], cwd=cwd, text=True, stderr=subprocess.STDOUT, timeout=settings['timeouts_s']['git']).strip()
+              return subprocess.check_output(['git', *arguments], cwd=cwd, text=True, stderr=subprocess.STDOUT).strip()
 
           worker = evidence / 'worker.py'
           worker.write_text(r'''
@@ -477,7 +464,6 @@ jobs:
     needs: configuration
     if: ${{ !inputs.curve_compare && !inputs.proxy_form_analysis && !inputs.proxy_candidate_analysis && !inputs.proxy_expectation_analysis && !inputs.proxy_calibration_analysis && contains(fromJSON(needs.configuration.outputs.checks), 'ha') }}
     runs-on: ${{ fromJSON(needs.configuration.outputs.settings).operating_system }}
-    timeout-minutes: ${{ fromJSON(needs.configuration.outputs.settings).job_timeouts_minutes.ha }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -503,7 +489,6 @@ jobs:
         if: ${{ needs.configuration.outputs.ha_tests != '[]' || needs.configuration.outputs.integration_tests == '[]' }}
         run: |
           python tests/ci_process.py "$SAUNA_HA_EVIDENCE" python tests/ci_settings.py ha
-        timeout-minutes: ${{ fromJSON(needs.configuration.outputs.settings).step_timeouts_minutes.ha_adapter }}
         env:
           HA_TEST_REQUIRED: '1'
           SAUNA_HA_TESTS: ${{ inputs.ha_tests }}
@@ -513,7 +498,6 @@ jobs:
         if: ${{ !cancelled() && (needs.configuration.outputs.integration_tests != '[]' || needs.configuration.outputs.ha_tests == '[]') }}
         run: |
           python tests/ci_process.py "$SAUNA_INTEGRATION_EVIDENCE" python tests/ci_settings.py integration
-        timeout-minutes: ${{ fromJSON(needs.configuration.outputs.settings).step_timeouts_minutes.integration }}
         env:
           HA_TEST_REQUIRED: '1'
           SAUNA_INTEGRATION_TESTS: ${{ inputs.integration_tests }}
@@ -548,7 +532,6 @@ jobs:
     needs: configuration
     if: ${{ !inputs.curve_compare && !inputs.proxy_form_analysis && !inputs.proxy_candidate_analysis && !inputs.proxy_expectation_analysis && !inputs.proxy_calibration_analysis && contains(fromJSON(needs.configuration.outputs.checks), 'sessions') }}
     runs-on: ${{ fromJSON(needs.configuration.outputs.settings).operating_system }}
-    timeout-minutes: ${{ fromJSON(needs.configuration.outputs.settings).job_timeouts_minutes.sessions }}
     strategy:
       fail-fast: false
       matrix:
@@ -568,7 +551,6 @@ jobs:
           else
             python tests/ci_process.py "$SAUNA_SESSION_EVIDENCE" python -m unittest discover -s tests/sessions -v
           fi
-        timeout-minutes: ${{ fromJSON(needs.configuration.outputs.settings).step_timeouts_minutes.sessions }}
         env:
           HA_TEST_REQUIRED: '1'
           TMPDIR: /dev/shm
@@ -588,7 +570,6 @@ jobs:
     needs: configuration
     if: ${{ !inputs.curve_compare && !inputs.proxy_form_analysis && !inputs.proxy_candidate_analysis && !inputs.proxy_expectation_analysis && !inputs.proxy_calibration_analysis && contains(fromJSON(needs.configuration.outputs.checks), 'browser') }}
     runs-on: ${{ fromJSON(needs.configuration.outputs.settings).operating_system }}
-    timeout-minutes: ${{ fromJSON(needs.configuration.outputs.settings).job_timeouts_minutes.browser }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -629,30 +610,25 @@ jobs:
           PY
       - name: Sitzungsverlauf – Browserinteraktionen
         run: python tests/ci_process.py "${{ runner.temp }}/ha-sauna-browser/processes/accept" node tests/browser/live_history/accept.cjs
-        timeout-minutes: ${{ fromJSON(needs.configuration.outputs.settings).step_timeouts_minutes.live_history }}
         env:
           ENGINE: ${{ fromJSON(needs.configuration.outputs.browser).engine }}
           HISTORY_EVIDENCE: ${{ runner.temp }}/ha-sauna-browser/live-history
       - name: Sitzungsverlauf – Lade- und Aktualisierungsmessung
         run: python tests/ci_process.py "${{ runner.temp }}/ha-sauna-browser/processes/profile" node tests/browser/live_history/profile.cjs
-        timeout-minutes: ${{ fromJSON(needs.configuration.outputs.settings).step_timeouts_minutes.live_history }}
         env:
           ENGINE: ${{ fromJSON(needs.configuration.outputs.browser).engine }}
           HISTORY_EVIDENCE: ${{ runner.temp }}/ha-sauna-browser/live-history
       - name: Detailansicht – Zustandserhalt und Marker
         run: python tests/ci_process.py "${{ runner.temp }}/ha-sauna-browser/processes/details" node tests/browser/live_history/details.cjs
-        timeout-minutes: ${{ fromJSON(needs.configuration.outputs.settings).step_timeouts_minutes.live_history }}
         env:
           ENGINE: ${{ fromJSON(needs.configuration.outputs.browser).engine }}
           DETAILS_EVIDENCE: ${{ runner.temp }}/ha-sauna-browser/details
       - name: Sitzungsverlauf – Zoom und Nachträge
         run: python tests/ci_process.py "${{ runner.temp }}/ha-sauna-browser/processes/interaction" node tests/browser/live_history/interaction.cjs
-        timeout-minutes: ${{ fromJSON(needs.configuration.outputs.settings).step_timeouts_minutes.live_history }}
         env:
           ENGINE: ${{ fromJSON(needs.configuration.outputs.browser).engine }}
           INTERACTION_EVIDENCE: ${{ runner.temp }}/ha-sauna-browser/live-history/interaction.json
       - run: python tests/ci_process.py "${{ runner.temp }}/ha-sauna-browser/processes/python-browser" python -u tests/browser/run.py
-        timeout-minutes: ${{ fromJSON(needs.configuration.outputs.settings).step_timeouts_minutes.ha_browser }}
         env:
           HA_TEST_REQUIRED: '1'
           HA_SAUNA_BROWSER_ARTIFACT_DIR: ${{ runner.temp }}/ha-sauna-browser

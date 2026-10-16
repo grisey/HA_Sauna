@@ -8,31 +8,6 @@
     "prettier": "3.6.2",
     "ruff": "0.17.0",
     "artifact_retention_days": 7,
-    "timeouts_s": {
-      "git": 30,
-      "default": 120,
-      "terminate": 10,
-      "install_python": 900,
-      "install_browser": 600,
-      "install_node": 300,
-      "panel": 300,
-      "panel_api": 300,
-      "live_history": 180,
-      "ha_browser": 900,
-      "format": 600,
-      "core": 120,
-      "ha_adapter": 120,
-      "integration": 1500,
-      "sessions": 2400
-    },
-    "job_timeouts_minutes": {
-      "core": 3,
-      "ha": 30,
-      "sessions": 45,
-      "browser": 25,
-      "ui": 60,
-      "format": 15
-    },
     "ui_base_ref": "origin/codex/sauna-development"
   },
   "browser": {

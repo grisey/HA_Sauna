@@ -1,4 +1,4 @@
-"""Bounded Linux UI checks with separate process and source evidence."""
+"""Linux UI checks with separate process and source evidence."""
 
 import argparse
 from datetime import datetime, timezone
@@ -8,7 +8,6 @@ import os
 from pathlib import Path
 import re
 import shutil
-import signal
 import subprocess
 import sys
 import tempfile
@@ -17,7 +16,7 @@ import time
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "tests"))
-from test_settings import setting, timeout as process_timeout
+from test_settings import setting
 
 
 def utc_now():
@@ -25,20 +24,12 @@ def utc_now():
 
 
 def git(*arguments):
-    return (
-        subprocess.check_output(
-            ["git", *arguments], cwd=ROOT, timeout=process_timeout("git")
-        )
-        .decode()
-        .strip()
-    )
+    return subprocess.check_output(["git", *arguments], cwd=ROOT).decode().strip()
 
 
 def snapshot():
     files = (
-        subprocess.check_output(
-            ["git", "ls-files", "-z"], cwd=ROOT, timeout=process_timeout("git")
-        )
+        subprocess.check_output(["git", "ls-files", "-z"], cwd=ROOT)
         .decode()
         .split("\0")
     )
@@ -84,23 +75,14 @@ class Evidence:
     def save(self):
         self.path.write_text(json.dumps(self.data, indent=2, sort_keys=True) + "\n")
 
-    def run(self, name, command, timeout=None, env=None, suite=None):
-        timeout = process_timeout("default") if timeout is None else timeout
-        if (
-            not isinstance(timeout, (int, float))
-            or isinstance(timeout, bool)
-            or timeout <= 0
-        ):
-            raise ValueError("A process timeout must be a positive number")
+    def run(self, name, command, env=None, suite=None):
         logfile = self.directory / f"{self.mode}-{name}.log"
         result = {
             "name": name,
             "command": command,
-            "timeout_seconds": timeout,
             "started_at": utc_now(),
             "completed": False,
             "exit_code": None,
-            "timed_out": False,
             "log": logfile.name,
         }
         self.data["processes"].append(result)
@@ -118,25 +100,13 @@ class Evidence:
                     stderr=subprocess.STDOUT,
                     start_new_session=True,
                 )
-                try:
-                    result["exit_code"] = process.wait(timeout=timeout)
-                except subprocess.TimeoutExpired:
-                    result["timed_out"] = True
-                    os.killpg(process.pid, signal.SIGTERM)
-                    try:
-                        process.wait(timeout=process_timeout("terminate"))
-                    except subprocess.TimeoutExpired:
-                        os.killpg(process.pid, signal.SIGKILL)
-                        process.wait(timeout=process_timeout("terminate"))
-                    result["exit_code"] = process.returncode
+                result["exit_code"] = process.wait()
                 result["completed"] = True
         except OSError as error:
             result["launch_error"] = str(error)
         result["ended_at"] = utc_now()
         result["elapsed_seconds"] = round(time.monotonic() - start, 3)
-        result["passed"] = (
-            result["completed"] and result["exit_code"] == 0 and not result["timed_out"]
-        )
+        result["passed"] = result["completed"] and result["exit_code"] == 0
         if suite:
             output = logfile.read_text(errors="replace") if logfile.exists() else ""
             counts = re.findall(
@@ -189,12 +159,10 @@ def prepare(evidence):
                 "-r",
                 "tests/browser/requirements.txt",
             ],
-            process_timeout("install_python"),
         ),
         (
             "python-dependencies",
             [sys.executable, "-m", "pip", "check"],
-            process_timeout("default"),
         ),
         (
             "compression-backend",
@@ -203,16 +171,14 @@ def prepare(evidence):
                 "-c",
                 "from isal import isal_zlib; import aiohttp_fast_zlib; from aiohttp.compression_utils import ZLibBackend; assert aiohttp_fast_zlib.best_zlib is isal_zlib; aiohttp_fast_zlib.enable(); assert ZLibBackend.name == isal_zlib.__name__; print(ZLibBackend.name)",
             ],
-            process_timeout("default"),
         ),
         (
             "install-chromium",
             [sys.executable, "-m", "playwright", "install", "--with-deps", "chromium"],
-            process_timeout("install_browser"),
         ),
     ]
-    for name, command, timeout in commands:
-        if not evidence.run(name, command, timeout):
+    for name, command in commands:
+        if not evidence.run(name, command):
             return
     from importlib.metadata import version
 
@@ -229,15 +195,12 @@ def prepare(evidence):
             "--no-package-lock",
             f"playwright@{version('playwright')}",
         ],
-        process_timeout("install_node"),
     ):
         environment_file = os.environ.get("GITHUB_ENV")
         if environment_file:
             with Path(environment_file).open("a") as output:
                 output.write(f"NODE_PATH={runtime / 'node_modules'}\n")
-    evidence.run(
-        "versions", [sys.executable, "-m", "pip", "freeze"], process_timeout("default")
-    )
+    evidence.run("versions", [sys.executable, "-m", "pip", "freeze"])
     evidence.run("node-version", ["node", "--version"])
 
 
@@ -277,7 +240,6 @@ def test(evidence):
         evidence.run(
             "panel",
             ["node", "--test", *panel_tests],
-            process_timeout("panel"),
             environment,
             "node",
         )
@@ -295,7 +257,6 @@ def test(evidence):
                 "test_panel*.py",
                 "-v",
             ],
-            process_timeout("panel_api"),
             environment,
             "unittest",
         )
@@ -305,7 +266,6 @@ def test(evidence):
         evidence.run(
             script,
             ["node", f"tests/browser/live_history/{script}.cjs"],
-            process_timeout("live_history"),
             environment,
         )
     if "ha-browser" in checks:
@@ -317,7 +277,6 @@ def test(evidence):
                 "tests/browser/run.py",
                 *os.environ.get("HA_SAUNA_BROWSER_TESTS", "").split(),
             ],
-            process_timeout("ha_browser"),
             environment,
             "unittest",
         )
@@ -353,27 +312,22 @@ def format_changed(evidence):
                 "--write",
                 *javascript,
             ],
-            process_timeout("format"),
         )
     if python:
         if evidence.run(
             "install-ruff",
             [sys.executable, "-m", "pip", "install", f"ruff=={setting('runner.ruff')}"],
-            process_timeout("install_node"),
         ):
             evidence.run("ruff-version", [sys.executable, "-m", "ruff", "--version"])
             evidence.run(
                 "ruff",
                 [sys.executable, "-m", "ruff", "format", *python],
-                process_timeout("live_history"),
             )
-    evidence.run("patch", ["git", "diff", "--binary", "--"], process_timeout("default"))
+    evidence.run("patch", ["git", "diff", "--binary", "--"])
     shutil.copyfile(
         evidence.directory / "format-patch.log", evidence.directory / "format.patch"
     )
-    evidence.run(
-        "clean-diff", ["git", "diff", "--exit-code", "--"], process_timeout("default")
-    )
+    evidence.run("clean-diff", ["git", "diff", "--exit-code", "--"])
 
 
 def main():

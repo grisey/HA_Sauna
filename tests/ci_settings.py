@@ -3,14 +3,13 @@
 import argparse
 import ast
 import json
-import math
 import os
 from pathlib import Path
 import subprocess
 import sys
 import unittest
 
-from test_settings import setting, timeout
+from test_settings import setting
 
 ROOT = Path(__file__).resolve().parents[1]
 CORE_ROOT = ROOT / "tests"
@@ -62,10 +61,6 @@ def select_integration_tests(raw):
 
 def outputs():
     values = {"settings": setting("runner"), "browser": setting("browser")}
-    values["settings"]["step_timeouts_minutes"] = {
-        key: math.ceil(seconds / 60)
-        for key, seconds in values["settings"]["timeouts_s"].items()
-    }
     derived = json.loads((ROOT / "tests/scenario_manifest.json").read_text())[
         "scenarios"
     ]
@@ -110,7 +105,6 @@ def install_ha():
     subprocess.run(
         [sys.executable, "-m", "pip", "install", *packages],
         check=True,
-        timeout=timeout("install_python"),
     )
 
 

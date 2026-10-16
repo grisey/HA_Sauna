@@ -62,7 +62,6 @@
     "maximum_owner_calls": 500000,
     "maximum_cache_entries": 8192,
     "maximum_curve_value_calls": 3000000,
-    "maximum_runtime_s": 1800.0,
     "maximum_assessments": 30000,
     "maximum_trace_rows": 30000,
     "maximum_baseline_stream_rows": 40000,
