@@ -2205,7 +2205,12 @@ class Detector:
                         )
                         if candidate is not None:
                             original = component["onset_witnesses"].get(position)
-                            if original is None or candidate.onset_at < original.onset_at:
+                            # Der zuerst belegte Beginn gehört zu diesem Anstieg.
+                            # Ein späterer Fit mit Spitze und Fall darf ihn nicht
+                            # durch einen früheren, anderen Knick ersetzen.
+                            # Originalkorrekturen prüfen den gebundenen Zeugen
+                            # weiterhin in _correct_original_infusion.
+                            if original is None:
                                 component["onset_witnesses"][position] = candidate
                                 component["onsets"][position] = candidate.onset_at
                     # Ein früherer Zeuge darf Fortsetzung belegen. Vollständig

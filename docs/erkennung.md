@@ -443,6 +443,10 @@ nachfolgenden Fallbeleg. Die Bestätigung erfolgt pro Episode einmal;
 der spätere Abfall erzeugt nach einer frühen Bestätigung kein zweites Ereignis.
 Die Steuerung reagiert bei der tatsächlichen Bestätigung. Ein gesondert
 belegter früherer Beginn bleibt der historischen Zuordnung vorbehalten.
+Der erste gültige Beginnzeuge eines Anstiegs bleibt je Messposition gebunden.
+Spätere Fits, deren Stützung bereits Spitze und Abfall umfasst, ersetzen ihn
+nicht durch einen früheren Knick. Eine Korrektur seiner Originalwerte prüft
+weiterhin denselben gebundenen Zeugen.
 
 Weitere qualifizierte Komponenten vor dem bestätigten Abschluss gehören zu
 derselben Episode und erzeugen keine weitere Zählung. Der Abschluss benötigt
