@@ -21,6 +21,14 @@ Für jeden Prozess wird sein tatsächlicher Exitcode festgehalten.
 | HA-Integration | Laufende Testinstanz mit HA-Listenern, Diensten, Rechten und HTTP-Schnittstellen; externe Geräte sind Testquellen. | `tests/integration/` |
 | Browser | Bedienung im HA-Frontend über Chromium. | `tests/browser/` |
 
+Die Erkennungsqualität von Türvorgängen, Lüftung und Aufgüssen wird an den
+aufgezeichneten Replaykurven mit unabhängig zugeordneten Ereignissen bewertet.
+Künstlich geformte Temperatur- und Feuchteverläufe dienen dafür nicht als
+zusätzliche Abnahme. Synthetische Komponentenprüfungen behandeln mathematische
+Eigenschaften, Datenzuordnung, Kausalität, Ausfälle und Archivtransport. Für
+einen entfernten Erkennungsfall bleibt die zugehörige Replaybewertung offen,
+bis ihr Ergebnis vorliegt.
+
 ## Fachkern und JavaScript
 
 Fachkern und Panelmethoden werden wie in der CI ausgeführt:

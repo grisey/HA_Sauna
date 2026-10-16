@@ -25,6 +25,7 @@ from custom_components.ha_sauna.core import curve_change as curves
 from custom_components.ha_sauna.core.curve_change import (
     OriginalPositionWindows,
     original_contrasts,
+    original_decline_evidence,
     original_edge_change,
     original_flattening,
     original_followup,
@@ -1681,6 +1682,57 @@ class OriginalFollowupArithmeticTests(unittest.TestCase):
                                      -1 if length == 6 else 0)
                     self.assertEqual(form.level_change, -2 if length == 6 else 0)
                     self.assertEqual(form.residual, 0)
+
+    def test_new_original_fall_matches_rational_slope_without_full_window_wait(self):
+        for time_factor, value_factor, offset in ((1, 1, 0), (3, 4, 100)):
+            with self.subTest(time_factor=time_factor, value_factor=value_factor):
+                reference = self._window(
+                    (12, 10, 8, 6, 6, 6), time_factor=time_factor,
+                    value_factor=value_factor, offset=offset,
+                )
+                # Two new values at 12 and 14 give slope -2, error 1,
+                # mean 3 and level contrast (10 - 3) / 2 = 3.5.
+                points = tuple(
+                    (ORIGIN + timedelta(seconds=t * time_factor), v * value_factor + offset)
+                    for t, v in ((12, 5), (14, 1))
+                )
+                form = original_decline_evidence(reference.current + points, reference)
+                self.assertIsNotNone(form)
+                self.assertEqual(form.points, points)
+                self.assertEqual(form.direction, -2)
+                self.assertEqual(form.level_loss, 3.5)
+                self.assertAlmostEqual(form.slope, -2 * value_factor / time_factor)
+                self.assertLess(len(form.points), len(reference.current))
+                self.assertIsNone(original_decline_evidence(points[:1], reference))
+                self.assertIsNone(original_decline_evidence(points[::-1], reference))
+                self.assertIsNone(original_decline_evidence(points + points[-1:], reference))
+
+    def test_both_humidity_forms_accept_resolved_slowing_without_plateau(self):
+        values = Parameters({}).values
+        temperature = self._window((30, 26, 22, 18, 14, 10))
+        rh = self._window((30, 22, 14, 12, 10, 8))
+        pairs, _ = water_envelope_originals(
+            values, tuple((v - 1, v + 1) for v in (30, 22, 14, 12, 10, 8)),
+        )
+        water = original_water_window(
+            pairs, count=3, at=pairs[-1].available_at,
+            max_gap_seconds=values["curve_original_gap_humidity_upper_seconds"],
+        ).features
+        for humidity in (rh, water):
+            with self.subTest(kind=type(humidity).__name__):
+                form = original_flattening(humidity, temperature, significance=1)
+                self.assertIsNotNone(form)
+                self.assertFalse(form.current_flat.result)
+                self.assertTrue(form.current_nonrising.result)
+                self.assertTrue(form.abating)
+                accelerating = replace(humidity, v=humidity.b - humidity.e - humidity.e_minus)
+                self.assertFalse(original_flattening(
+                    accelerating, temperature, significance=1,
+                ).abating)
+                rising = replace(humidity, v=2 * humidity.e)
+                self.assertFalse(original_flattening(
+                    rising, temperature, significance=1,
+                ).abating)
 
     def test_edge_change_matches_rational_secant_and_affine_symmetries(self):
         for time_factor, value_factor, offset, shift in (

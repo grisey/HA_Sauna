@@ -139,6 +139,19 @@ class OriginalEdgeChange:
 
 
 @dataclass(frozen=True)
+class OriginalDeclineEvidence:
+    """Fall and level loss on the available originals after a fixed binding."""
+
+    points: tuple[tuple[datetime, float], ...]
+    reference: OriginalWindowFeatures
+    slope: float
+    slope_error: float
+    mean: float
+    direction: float
+    level_loss: float
+
+
+@dataclass(frozen=True)
 class OriginalKinkTolerance:
     """Causal background scale and the remaining signed raw slope change.
 
@@ -447,6 +460,20 @@ class OriginalFlattening:
     temperature_not_braking: OriginalFlatteningContrast
 
     @property
+    def current_nonrising(self) -> OriginalFlatteningContrast:
+        """Allow a continuing humidity fall, but no resolved humidity rise."""
+        window = self.humidity_window
+        bound = self.significance * window.e
+        return OriginalFlatteningContrast(window.v, "<=", bound, window.v <= bound)
+
+    @property
+    def abating(self) -> bool:
+        """Resolved slowing of humidity while temperature keeps falling."""
+        return (self.previous_fall.result and self.braking.result
+                and self.current_nonrising.result and self.temperature_falling.result
+                and self.temperature_not_braking.result)
+
+    @property
     def maintained(self) -> bool:
         """Flat humidity while temperature still falls without braking."""
         return (self.current_flat.result and self.temperature_falling.result
@@ -661,6 +688,44 @@ def original_followup(
             previous_change_from_reference_current=(
                 previous_change_from_reference_current
             ),
+        )
+    except (AttributeError, IndexError, OverflowError, TypeError, ValueError):
+        return None
+
+
+def original_decline_evidence(
+    samples: Sequence[tuple[datetime, float]], reference: OriginalWindowFeatures,
+) -> OriginalDeclineEvidence | None:
+    """Assess the growing original suffix, without waiting for full K blocks.
+
+    At least two distinct times are required to determine a slope. The slope
+    bound follows from the supplied value-deviation scale and actual time
+    support; elapsed time and sample count alone never confirm a fall. The
+    fixed preceding level and current mean use the same difference envelope
+    as original_followup. Source continuity and admissibility belong to the
+    caller. These contrasts are not an event probability.
+    """
+    try:
+        if not _original_window_valid(reference):
+            return None
+        points = tuple((stamp, value) for stamp, value in samples
+                       if stamp > reference.newest_at)
+        if len(points) < 2:
+            return None
+        if any(not isinstance(stamp, datetime) or not _profile_number(value)
+               or index and stamp <= points[index - 1][0]
+               for index, (stamp, value) in enumerate(points)):
+            return None
+        line = _original_line(points, reference.scale)
+        if line is None:
+            return None
+        slope, error, mean, _ = line
+        direction = slope / error
+        level_loss = (reference.mean_minus - mean) / (2 * reference.scale)
+        if not all(_profile_number(value) for value in (direction, level_loss)):
+            return None
+        return OriginalDeclineEvidence(
+            points, reference, slope, error, mean, direction, level_loss,
         )
     except (AttributeError, IndexError, OverflowError, TypeError, ValueError):
         return None
@@ -1141,6 +1206,7 @@ def original_water_window(
 def original_flattening(
     humidity_window: OriginalWindowFeatures | OriginalWaterWindowFeatures,
     temperature_window: OriginalWindowFeatures, *, significance: float,
+    reference_humidity: OriginalWindowFeatures | OriginalWaterWindowFeatures | None = None,
 ) -> OriginalFlattening | None:
     """Compare a humidity fall-to-flat transition with its temperature form.
 
@@ -1170,11 +1236,20 @@ def original_flattening(
         else:
             return None
         humidity, temperature = humidity_window, temperature_window
-        humidity_change = humidity.v - humidity.b
-        humidity_change_error = humidity.e + humidity.e_minus
+        reference = humidity if reference_humidity is None else reference_humidity
+        if reference_humidity is not None:
+            # A retained earlier transition supplies its preceding fall.
+            # The current slope always comes from the current original support.
+            if (type(reference) is not type(humidity)
+                    or reference.newest_at > humidity.newest_at
+                    or not all(_profile_number(value) for value in (reference.b, reference.e_minus))
+                    or reference.e_minus < 0):
+                return None
+        humidity_change = humidity.v - reference.b
+        humidity_change_error = humidity.e + reference.e_minus
         temperature_change = temperature.v - temperature.b
         temperature_change_error = temperature.e + temperature.e_minus
-        humidity_previous_bound = significance * humidity.e_minus
+        humidity_previous_bound = significance * reference.e_minus
         humidity_current_bound = significance * humidity.e
         humidity_change_bound = significance * humidity_change_error
         temperature_current_bound = significance * temperature.e
@@ -1190,8 +1265,8 @@ def original_flattening(
             humidity_window=humidity_window, temperature_window=temperature_window,
             significance=significance,
             previous_fall=OriginalFlatteningContrast(
-                -humidity.b, ">", humidity_previous_bound,
-                -humidity.b > humidity_previous_bound,
+                -reference.b, ">", humidity_previous_bound,
+                -reference.b > humidity_previous_bound,
             ),
             current_flat=OriginalFlatteningContrast(
                 abs(humidity.v), "<=", humidity_current_bound,
