@@ -547,6 +547,7 @@ class SaunaRuntime:
         self._detector_infusion_events: dict[int, tuple[Detection, str]] = {}
         self._archive_signature = None
         self._saved_decisions = 0
+        self._saved_manual_heater_ends = 0
         self.presence = PresenceProjection()
         self._selected_presence_report = None
         self.presence_adapter = None
@@ -1318,7 +1319,24 @@ class SaunaRuntime:
                     self.session, now, self.configuration.as_snapshot()
                 )
                 self._archive_signature = signature
+        self._persist_manual_heater_ends()
         self._persist_decisions()
+
+    def _persist_manual_heater_ends(self):
+        """Deliver original choice ends without guessing today's session."""
+        if self.archive is None:
+            return
+        for end in self.controller.manual_heater_ends[self._saved_manual_heater_ends :]:
+            self.archive.append(
+                "manual_heater", end.at,
+                {
+                    "ends_previous_only": True,
+                    "selection_id": end.selection_id,
+                    "change": plain(end),
+                },
+                end.session_id,
+            )
+            self._saved_manual_heater_ends += 1
 
     def _persist_decisions(self):
         """Deliver pending decisions through the same cursor during close."""
@@ -1918,9 +1936,16 @@ class SaunaRuntime:
             self.device.faults.pop("start_rejected", None)
         self.log.info("heater_override", "Manuelle Heizwahl: %s.", value)
         if self.archive:
+            selection = self.controller.last_heater_selection
             self.archive.append(
-                "manual_heater", now, {"value": value, "decision": plain(decision)},
-                self.session.session_id if self.session else previous_id,
+                "manual_heater", now,
+                {
+                    "value": value, "decision": plain(decision),
+                    "selection_id": selection.selection_id if selection else None,
+                    "selection": plain(selection),
+                },
+                selection.session_id if selection is not None
+                else self.session.session_id if self.session else previous_id,
             )
         return decision
 
@@ -2120,6 +2145,9 @@ class SaunaRuntime:
                             "Sicherer Abschluss der Sauna-Laufzeit fehlgeschlagen", failures
                         )
                     raise error
+            self.controller._end_heater_selection(
+                self._clock(), "integration_unloaded"
+            )
             self.closed = True
             self._notification_recipients = None
             self._pending_device_inputs.clear()
@@ -2131,6 +2159,10 @@ class SaunaRuntime:
                 except Exception as error:
                     failures.append(error)
             if self.archive is not None:
+                try:
+                    self._persist_manual_heater_ends()
+                except Exception as error:
+                    failures.append(error)
                 try:
                     self._persist_decisions()
                 except Exception as error:

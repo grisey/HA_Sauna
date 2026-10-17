@@ -62,6 +62,30 @@ class PresenceEntry:
     presence: OccupancyInput
 
 
+@dataclass(frozen=True)
+class ManualHeaterSelection:
+    """Provenance of an accepted choice, independent of heater demand."""
+
+    selection_id: str
+    session_id: str | None
+    at: datetime
+    value: bool
+    control_mode: str
+
+
+@dataclass(frozen=True)
+class ManualHeaterEnd:
+    """Original end of a choice; never an additional control decision."""
+
+    selection_id: str
+    session_id: str | None
+    started_at: datetime
+    at: datetime
+    previous_value: bool
+    control_mode: str
+    reason: str
+
+
 class Controller:
     """Ein führender Zustand. Die äußere Laufzeit serialisiert alle Eingänge."""
 
@@ -108,6 +132,9 @@ class Controller:
         # nicht umschreiben.
         self.automatic_decision: thermostat.Decision | None = None
         self.heater_override: bool | None = False if control_mode == "manual" else None
+        self._heater_selection: ManualHeaterSelection | None = None
+        self.last_heater_selection: ManualHeaterSelection | None = None
+        self.manual_heater_ends: list[ManualHeaterEnd] = []
         self._override_snapshot: tuple[tuple[str | None, str], tuple[bool]] | None = (
             None
         )
@@ -305,7 +332,9 @@ class Controller:
         self.control_mode = control_mode
         if self._session is not None:
             self._handoff_manual_heating(previous_override, at)
-        self._clear_heater_override()
+        self._clear_heater_override(
+            self._last_at if at is None else at, reason="control_mode"
+        )
         if control_mode == "manual":
             self.light_after_run = None
         if self._session is not None:
@@ -661,7 +690,7 @@ class Controller:
         self.advance(at, evaluate=False)
         recording_id = self._session.session_id if self._session else None
         if not enabled:
-            self._clear_heater_override()
+            self._clear_heater_override(at, reason="operation_off")
             self._door_request_pending = False
             if self.door_request.door_open:
                 self.door_request = replace(
@@ -727,10 +756,25 @@ class Controller:
         at = utc(at)
         self.advance(at, evaluate=False)
         previous_override = self.heater_override
+        selection_session_id = self._session.session_id if self._session else None
+        if heat is True and self.control_mode == "manual" and self._session is None:
+            # The choice creates this recording below. Bind its origin before
+            # _enable_recording evaluates and may revoke the same choice.
+            selection_session_id = uuid4().hex
+        self._end_heater_selection(
+            at, "return" if heat is None else "selection_replaced"
+        )
+        self.last_heater_selection = (
+            ManualHeaterSelection(
+                uuid4().hex, selection_session_id, at, heat, self.control_mode
+            )
+            if heat is not None else None
+        )
+        self._heater_selection = self.last_heater_selection
         self.heater_override = heat
         if self.control_mode == "manual":
             if heat is True:
-                self._enable_recording(at)
+                self._enable_recording(at, session_id=selection_session_id)
             else:
                 self.set_operation(False, at)
             return self.last_decision
@@ -743,7 +787,7 @@ class Controller:
                 )
         if heat is None:
             self._handoff_manual_heating(previous_override, at)
-            self._clear_heater_override()
+            self._clear_heater_override(at, reason="return")
             self._evaluate(at)
             return self.last_decision
         if self.control_mode == "automatic" and self._session is not None:
@@ -1497,7 +1541,26 @@ class Controller:
         # (etwa Mindestheizzeit). Das ist kein neuer automatischer Eingriff.
         return (decision.heat,) if decision else (False,)
 
-    def _clear_heater_override(self):
+    def _end_heater_selection(self, at, reason):
+        selection = self._heater_selection
+        if selection is None:
+            return
+        self.manual_heater_ends.append(ManualHeaterEnd(
+            selection.selection_id, selection.session_id, selection.at, utc(at),
+            selection.value, selection.control_mode, reason,
+        ))
+        self._heater_selection = None
+
+    def _clear_heater_override(self, at, *, reason):
+        selection = self._heater_selection
+        if not (
+            self.control_mode == "manual"
+            and selection is not None and selection.value is False
+            and reason in {"operation_off", "session_end"}
+        ):
+            self._end_heater_selection(at, reason)
+        # Manual OFF remains the accepted choice across recording closure.
+        # Resetting the same OFF baseline is not a withdrawal of that choice.
         # Manual operation has an explicit OFF selection, never an automatic
         # demand to inherit from the preceding session or operating mode.
         self.heater_override = False if self.control_mode == "manual" else None
@@ -1804,7 +1867,7 @@ class Controller:
         self.automatic_decision = decision
         phase_key = self._current_phase_key()
         if self.heater_override is True and not self._manual_heating_allowed():
-            self._clear_heater_override()
+            self._clear_heater_override(at, reason=decision.reason)
             if self.control_mode == "manual" and self._session is not None:
                 self.set_operation(False, at)
                 return self.last_decision
@@ -1819,7 +1882,11 @@ class Controller:
             and (phase_key, self._automatic_signature()) != self._override_snapshot
         ):
             self._handoff_manual_heating(self.heater_override, at)
-            self._clear_heater_override()
+            self._clear_heater_override(
+                at,
+                reason=("phase_change" if phase_key != self._override_snapshot[0]
+                        else "automatic_change"),
+            )
             # Nach Rückgabe der Bedienung den aktuellen automatischen Ablauf
             # sofort bestimmen; eine Kühlung bleibt dabei übergeordnet.
             return self._evaluate(at, decision_session_id=decision_session_id)
@@ -1913,7 +1980,7 @@ class Controller:
         self.completed_sessions += (replace(session, ended_at=at, deadlines=()),)
         self._session = None
         self._record_recognition_gate(at)
-        self._clear_heater_override()
+        self._clear_heater_override(at, reason="session_end")
         if light_after_run and self.light_after_run is None:
             self.start_session_light(session.session_id, at)
         return session
@@ -2090,7 +2157,7 @@ class Controller:
                     self._schedule("after_run", resumed.ends_at)
         elif deadline.purpose == "manual_override":
             self._handoff_manual_heating(self.heater_override, deadline.due_at)
-            self._clear_heater_override()
+            self._clear_heater_override(deadline.due_at, reason="timeout")
         elif deadline.purpose == "session_gap" and not session.operation_enabled:
             self._complete_session(deadline.due_at, light_after_run=False)
         return True

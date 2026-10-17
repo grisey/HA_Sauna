@@ -617,6 +617,132 @@ class ArchiveTests(unittest.IsolatedAsyncioTestCase):
              (T0 + timedelta(seconds=31)).isoformat()),
         ])
 
+    async def test_manual_heater_end_retries_with_original_choice_and_time(self):
+        p = parameters()
+        now = T0
+        runtime = SaunaRuntime(
+            Configuration(bindings(), p, control_mode="manual"), lambda: now,
+        )
+        runtime.archive = self.archive
+        temperature = p.values["target_temperature_c"] - p.values["readiness_hysteresis_c"]
+        runtime.controller.set_temperature(temperature, now)
+        await runtime.set_heater_override(True)
+        first = runtime.controller.last_heater_selection
+        identity = runtime.session.session_id
+
+        now += timedelta(seconds=1)
+        ended_at = now
+        runtime.controller.set_temperature(None, now)
+        end, = runtime.controller.manual_heater_ends
+        now += timedelta(seconds=1)
+        original_append = self.archive.append
+
+        def append(kind, at, payload, session_id=None):
+            if kind == "manual_heater" and payload.get("ends_previous_only"):
+                raise OSError("manual heater end append")
+            return original_append(kind, at, payload, session_id)
+
+        with patch.object(self.archive, "append", side_effect=append):
+            with self.assertRaisesRegex(OSError, "manual heater end append"):
+                runtime.persist()
+        self.assertEqual(runtime._saved_manual_heater_ends, 0)
+        self.assertEqual(runtime.controller.manual_heater_ends, [end])
+
+        now += timedelta(seconds=1)
+        runtime.controller.set_temperature(temperature, now)
+        await runtime.set_heater_override(True)
+        second = runtime.controller.last_heater_selection
+        runtime.persist()
+        runtime.persist()
+        await self.archive.flush()
+        stored = await asyncio.to_thread(self.archive.read, identity)
+        choices = [r for r in stored["records"] if r["kind"] == "manual_heater"]
+        starts = [r for r in choices if not r["payload"].get("ends_previous_only")]
+        ends = [r for r in choices if r["payload"].get("ends_previous_only")]
+        self.assertEqual([r["payload"]["selection_id"] for r in starts],
+                         [first.selection_id, second.selection_id])
+        self.assertEqual(len(ends), 1)
+        self.assertEqual(ends[0]["session_id"], first.session_id)
+        self.assertEqual(ends[0]["received_at"], ended_at.isoformat())
+        self.assertEqual(ends[0]["payload"]["change"], {
+            "selection_id": first.selection_id, "session_id": identity,
+            "started_at": T0.isoformat(), "at": ended_at.isoformat(),
+            "previous_value": True, "control_mode": "manual",
+            "reason": "upper_temperature_unavailable",
+        })
+        self.assertNotIn("value", ends[0]["payload"])
+        self.assertEqual(runtime._saved_manual_heater_ends, 1)
+        self.assertTrue(runtime.controller.heater_override)
+        self.assertNotIn("upper_temperature_unavailable", [
+            r["payload"]["reason"] for r in stored["records"] if r["kind"] == "decision"
+        ])
+
+    async def test_manual_heater_end_append_failure_does_not_prevent_shutdown_off(self):
+        now = T0
+        runtime = SaunaRuntime(
+            Configuration(bindings(), parameters(), control_mode="manual"), lambda: now,
+        )
+        runtime.archive = self.archive
+        runtime.controller.set_temperature(60, now)
+        await runtime.set_heater_override(True)
+        selection = runtime.controller.last_heater_selection
+        now += timedelta(seconds=1)
+        calls = []
+
+        async def close_device():
+            calls.append("off")
+
+        runtime.device = SimpleNamespace(
+            close=close_device, prepare_light_handoff=AsyncMock(return_value=True),
+        )
+        original_append = self.archive.append
+
+        def append(kind, at, payload, session_id=None):
+            if kind == "manual_heater" and payload.get("ends_previous_only"):
+                raise OSError("manual heater end append")
+            return original_append(kind, at, payload, session_id)
+
+        with patch.object(self.archive, "append", side_effect=append):
+            with self.assertRaises(ExceptionGroup) as caught:
+                await runtime.close()
+        self.assertEqual(calls, ["off"])
+        self.assertTrue(any(str(error) == "manual heater end append"
+                            for error in caught.exception.exceptions))
+        end, = runtime.controller.manual_heater_ends
+        self.assertEqual((end.selection_id, end.session_id, end.at, end.reason),
+                         (selection.selection_id, selection.session_id, now, "operation_off"))
+        self.assertEqual(runtime._saved_manual_heater_ends, 0)
+        self.assertFalse(runtime.controller.last_decision.heat)
+
+    async def test_manual_off_choice_ends_only_at_actual_unload(self):
+        now = T0
+        runtime = SaunaRuntime(
+            Configuration(bindings(), parameters(), control_mode="manual"), lambda: now,
+        )
+        runtime.archive = self.archive
+        runtime.controller.set_temperature(60, now)
+        await runtime.set_heater_override(True)
+        now += timedelta(seconds=1)
+        await runtime.set_heater_override(False)
+        off = runtime.controller.last_heater_selection
+        self.assertFalse(off.value)
+        self.assertEqual(len(runtime.controller.manual_heater_ends), 1)
+        runtime.device = SimpleNamespace(
+            close=AsyncMock(), prepare_light_handoff=AsyncMock(return_value=True),
+        )
+        now += timedelta(seconds=1)
+        await runtime.close()
+        stored = await asyncio.to_thread(self.archive.read, off.session_id)
+        ends = [r for r in stored["records"]
+                if r["kind"] == "manual_heater"
+                and r["payload"].get("ends_previous_only")
+                and r["payload"]["selection_id"] == off.selection_id]
+        self.assertEqual(len(ends), 1)
+        self.assertEqual(ends[0]["payload"]["change"]["at"], now.isoformat())
+        self.assertEqual(ends[0]["payload"]["change"]["reason"], "integration_unloaded")
+        self.assertEqual(ends[0]["session_id"], off.session_id)
+        self.assertNotIn("value", ends[0]["payload"])
+
     async def test_full_resolution_references_and_earlier_assignments_survive(self):
         self.c.set_temperature(80, T0)
         for n in range(30):

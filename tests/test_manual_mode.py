@@ -78,11 +78,25 @@ class ManualModeTests(unittest.TestCase):
                 controller = self.controller()
                 self.start(controller)
                 controller.set_heater_override(True, at(1))
+                selection = controller.last_heater_selection
+                decision_count = len(controller.decisions)
                 controller.set_temperature(temperature, at(2))
                 self.assertFalse(controller.last_decision.heat)
                 self.assertFalse(controller.heater_override)
+                end, = controller.manual_heater_ends
+                self.assertEqual(end.selection_id, selection.selection_id)
+                self.assertEqual(end.session_id, selection.session_id)
+                self.assertEqual(end.session_id, controller.session.session_id)
+                self.assertEqual((end.started_at, end.at), (at(1), at(2)))
+                self.assertIs(end.previous_value, True)
+                self.assertEqual(end.reason, "upper_temperature_unavailable")
+                self.assertEqual(
+                    [(d.heat, d.reason) for d in controller.decisions[decision_count:]],
+                    [(False, "manual_mode")],
+                )
                 controller.set_temperature(60, at(3))
                 self.assertFalse(controller.last_decision.heat)
+                self.assertEqual(controller.manual_heater_ends, [end])
 
     def test_active_automatic_operation_locks_mode_changes(self):
         controller = Controller(parameters())
@@ -197,12 +211,23 @@ class ManualModeTests(unittest.TestCase):
         controller.advance(at(21))
         self.assertFalse(controller.last_decision.heat)
         controller.set_heater_override(True, at(21))
+        selection = controller.last_heater_selection
+        decision_count = len(controller.decisions)
         controller.protection.add("heater_feedback_mismatch")
         controller.advance(at(22))
         self.assertFalse(controller.last_decision.heat)
         self.assertFalse(controller.heater_override)
         self.assertFalse(controller.session.operation_enabled)
         self.assertTrue(any(d.purpose == "session_gap" for d in controller.session.deadlines))
+        end = controller.manual_heater_ends[-1]
+        self.assertEqual(end.selection_id, selection.selection_id)
+        self.assertEqual(end.session_id, selection.session_id)
+        self.assertEqual(end.at, at(22))
+        self.assertEqual(end.reason, "protection:heater_feedback_mismatch")
+        self.assertEqual(
+            [(d.heat, d.reason) for d in controller.decisions[decision_count:]],
+            [(False, "protection:heater_feedback_mismatch")],
+        )
 
     def test_temperature_cutoff_keeps_manual_enable_without_starting_cooling(self):
         controller = self.controller(
@@ -220,6 +245,59 @@ class ManualModeTests(unittest.TestCase):
         self.assertIsNotNone(controller.session)
         self.assertIsNone(controller.session.after_run)
         self.assertFalse(controller.last_decision.heat)
+        self.assertEqual(controller.manual_heater_ends, [])
+
+    def test_heater_choice_end_tracks_identity_without_default_or_session_fallback(self):
+        controller = Controller(parameters())
+        controller.set_operation(False, at(0))
+        self.assertEqual(controller.manual_heater_ends, [])
+        controller.set_heater_override(False, at(1))
+        first = controller.last_heater_selection
+        controller.set_heater_override(False, at(1))
+        second = controller.last_heater_selection
+        self.assertNotEqual(first.selection_id, second.selection_id)
+        self.assertIsNone(first.session_id)
+        self.assertIsNone(second.session_id)
+        controller.set_control_mode("manual", at(2))
+        self.assertEqual(
+            [(end.selection_id, end.session_id, end.at, end.reason)
+             for end in controller.manual_heater_ends],
+            [(first.selection_id, None, at(1), "selection_replaced"),
+             (second.selection_id, None, at(2), "control_mode")],
+        )
+        controller.set_temperature(60, at(3))
+        controller.set_heater_override(True, at(4))
+        third = controller.last_heater_selection
+        self.assertEqual(third.session_id, controller.session.session_id)
+        controller.inhibits.add("upper_sensor_unavailable")
+        controller.advance(at(5))
+        end = controller.manual_heater_ends[-1]
+        self.assertEqual(end.selection_id, third.selection_id)
+        self.assertEqual(end.session_id, third.session_id)
+        self.assertEqual(end.at, at(5))
+        self.assertEqual(end.reason, "inhibit:upper_sensor_unavailable")
+        controller.set_operation(False, at(6))
+        self.assertEqual(len(controller.manual_heater_ends), 3)
+
+    def test_manual_off_choice_keeps_its_origin_until_a_new_choice(self):
+        controller = self.controller()
+        self.start(controller)
+        controller.set_heater_override(True, at(1))
+        original_session = controller.session.session_id
+        controller.set_heater_override(False, at(2))
+        off = controller.last_heater_selection
+        self.assertEqual(len(controller.manual_heater_ends), 1)
+        self.assertTrue(controller.manual_heater_ends[0].previous_value)
+        controller.set_operation(False, at(3))
+        controller.finish_session(at(4), light_after_run=False)
+        self.assertEqual(len(controller.manual_heater_ends), 1)
+        self.assertIs(controller.heater_override, False)
+        controller.set_heater_override(True, at(5))
+        end = controller.manual_heater_ends[-1]
+        self.assertEqual((end.selection_id, end.session_id, end.at, end.reason),
+                         (off.selection_id, original_session, at(5), "selection_replaced"))
+        self.assertIs(end.previous_value, False)
+        self.assertNotEqual(controller.session.session_id, original_session)
 
     def test_finish_session_can_defer_then_start_light(self):
         controller = Controller(parameters())

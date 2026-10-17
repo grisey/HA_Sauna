@@ -31,15 +31,22 @@ class ManualOverrideTimeoutTests(unittest.TestCase):
     def test_override_expires_at_configured_duration_and_fresh_choice_restarts_deadline(self):
         controller = self.automatic()
         controller.set_heater_override(False, at(0))
+        first = controller.last_heater_selection
         duration = controller.parameters.seconds("manual_override_minutes")
         self.assertEqual(controller.heater_override_ends_at, at(duration))
         controller.advance(at(duration - 1))
         self.assertFalse(controller.heater_override)
         controller.set_heater_override(True, at(duration - 1))
+        second = controller.last_heater_selection
         self.assertEqual(controller.heater_override_ends_at, at(2 * duration - 1))
         controller.advance(at(2 * duration - 1))
         self.assertIsNone(controller.heater_override)
         self.assertIsNone(controller.heater_override_ends_at)
+        self.assertEqual(
+            [(end.selection_id, end.at, end.reason) for end in controller.manual_heater_ends],
+            [(first.selection_id, at(duration - 1), "selection_replaced"),
+             (second.selection_id, at(2 * duration - 1), "timeout")],
+        )
 
     def test_loaded_override_duration_returns_to_current_automatic_demand(self):
         maximum = BY_KEY["manual_override_minutes"].maximum
@@ -80,8 +87,12 @@ class ManualOverrideTimeoutTests(unittest.TestCase):
     def test_explicit_return_clears_deadline_and_manual_mode_has_none(self):
         controller = self.automatic()
         controller.set_heater_override(False, at(1))
+        selection = controller.last_heater_selection
         controller.set_heater_override(None, at(2))
         self.assertIsNone(controller.heater_override_ends_at)
+        end, = controller.manual_heater_ends
+        self.assertEqual((end.selection_id, end.at, end.reason),
+                         (selection.selection_id, at(2), "return"))
 
         controller = Controller(parameters(), control_mode="manual")
         controller.set_temperature(60, at(0))
