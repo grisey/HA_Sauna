@@ -372,7 +372,7 @@ class PresenceHandoverTests(unittest.TestCase):
         self.assertEqual(completed.gang_id, original.gang_id)
         self.assertEqual(completed.infusion_events, original.infusion_events)
         self.assertEqual(completed.ended_at, at(returned + 2))
-        self.assertEqual(completed.end_reason, "ventilation")
+        self.assertEqual(completed.end_reason, "presence_exit")
         self.assertIn(
             event("exit-ventilation", Kind.VENTILATION, returned + 2),
             c.session.timeline.processed,

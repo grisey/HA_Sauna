@@ -259,7 +259,6 @@ class Timeline:
             self.active is None
             or opening is None
             or ventilation is None
-            or opening.event_id in self.rejected_start_sources
             or opening.effective_at <= self.active.started_at
         ):
             return None
@@ -272,7 +271,6 @@ class Timeline:
                 or self.anchor.door_close_evidence is None
                 or self.closed_opening is None
                 or self.closed_opening.effective_at <= self.active.started_at
-                or self.closed_opening.event_id in self.rejected_start_sources
                 or self.exit_ventilation is not None):
             return None
         return self.anchor.booking_at

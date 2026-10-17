@@ -5,7 +5,7 @@ import unittest
 from test_cooling import at, controller
 from test_durable_presence import close_event
 from test_foundation import event, selected_occupancy
-from test_presence_handover import ENTITY, PresenceRuntimeProbe, fallback, report
+from test_presence_handover import ENTITY, RECOVERY, PresenceRuntimeProbe, fallback, report
 
 from custom_components.ha_sauna.core.presence import binary_presence
 from custom_components.ha_sauna.core.timeline import Confirmation, Kind
@@ -264,3 +264,29 @@ class PresenceExitSourceChangeTests(unittest.TestCase):
         self.assertEqual(completed.ended_at, at(switched + 2))
         self.assertEqual(completed.end_reason, "ventilation")
         self.assertEqual(probe.session.timeline.gang_count, 1)
+
+    def test_recovered_sensor_requires_absence_for_a_gang_started_in_proxy_mode(self):
+        probe = PresenceRuntimeProbe()
+        switched = fallback(probe)
+        for key, kind, offset in (
+            ("entry-open", Kind.DOOR_OPEN, 1),
+            ("entry-close", Kind.DOOR_CLOSE, 2),
+            ("person", Kind.PERSON_STRONG, 3),
+            ("infusion", Kind.INFUSION, 4),
+            ("exit-open", Kind.DOOR_OPEN, 5),
+        ):
+            probe.process(event(key, kind, switched + offset))
+        original = probe.session.timeline.active
+        report(probe, "on", switched + 6)
+        returned = switched + 6 + probe.parameters.values[RECOVERY]
+        probe.advance_presence_source(at(returned))
+        self.assertEqual(probe.presence_source, "ha_presence")
+        probe.process(event("exit-vent", Kind.VENTILATION, returned + 1))
+        self.assertEqual(probe.session.timeline.active, original)
+        report(probe, "off", returned + 2)
+        self.assertIsNone(probe.session.timeline.active)
+        completed = probe.session.timeline.completed[0]
+        self.assertEqual(completed.gang_id, original.gang_id)
+        self.assertEqual(completed.recognition_kind, Kind.PERSON_STRONG)
+        self.assertEqual(completed.end_reason, "presence_exit")
+        self.assertEqual(completed.ended_at, at(returned + 2))
