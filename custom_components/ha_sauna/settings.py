@@ -29,6 +29,26 @@ class StaleFieldStandardPreview(ValueError):
         )
 
 
+def field_standard_action_arguments(body):
+    """Check transport keys and types; settings owns action and field semantics."""
+    if (
+        not isinstance(body, dict)
+        or "action" not in body
+        or set(body) - {"action", "field", "group", "all", "value", "confirmation"}
+    ):
+        raise ValueError("Ungültige Standardaktion")
+    for key in ("action", "field", "group", "confirmation"):
+        if key in body and (not isinstance(body[key], str) or not body[key]):
+            raise ValueError(f"{key} muss eine nicht leere Zeichenfolge sein")
+    if "all" in body and body["all"] is not True:
+        raise ValueError("all muss wahr sein")
+    return {
+        key: value
+        for key, value in body.items()
+        if key not in {"action", "confirmation"}
+    }
+
+
 _NO_FIELD_VALUE = object()
 
 

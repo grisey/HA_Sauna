@@ -39,6 +39,7 @@ from .settings import (
     async_apply_field_standard_action,
     async_get_field_standards,
     async_preview_field_standard_action,
+    field_standard_action_arguments,
     async_reset_parameters,
     async_set_appearance,
     async_set_button_gesture,
@@ -545,26 +546,6 @@ class AppearanceView(HomeAssistantView):
         except ValueError as error:
             return self.json({"error": str(error)}, status_code=400)
         return self.json({"success": True, "appearance": appearance})
-
-
-def field_standard_action_arguments(body):
-    """Check transport keys and types; settings owns action and field semantics."""
-    if (
-        not isinstance(body, dict)
-        or "action" not in body
-        or set(body) - {"action", "field", "group", "all", "value", "confirmation"}
-    ):
-        raise ValueError("Ungültige Standardaktion")
-    for key in ("action", "field", "group", "confirmation"):
-        if key in body and (not isinstance(body[key], str) or not body[key]):
-            raise ValueError(f"{key} muss eine nicht leere Zeichenfolge sein")
-    if "all" in body and body["all"] is not True:
-        raise ValueError("all muss wahr sein")
-    return {
-        key: value
-        for key, value in body.items()
-        if key not in {"action", "confirmation"}
-    }
 
 
 class StandardsView(HomeAssistantView):
