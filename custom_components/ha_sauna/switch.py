@@ -2,6 +2,7 @@
 
 from homeassistant.components.switch import SwitchEntity
 
+from .core.notification_recipients import ActorRef
 from .entity import SaunaEntity
 
 
@@ -23,7 +24,7 @@ class SaunaOperation(SaunaEntity, SwitchEntity):
         return self.runtime.controller.automatic_operation_enabled
 
     async def async_turn_on(self, **kwargs):
-        await self.runtime.set_operation(True)
+        await self.runtime.set_operation(True, actor=ActorRef(self._context.user_id, "ha_context"))
 
     async def async_turn_off(self, **kwargs):
-        await self.runtime.set_operation(False)
+        await self.runtime.set_operation(False, actor=ActorRef(self._context.user_id, "ha_context"))

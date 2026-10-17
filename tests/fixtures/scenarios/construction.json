@@ -1,0 +1,237 @@
+{
+  "description": "Declared synthetic session construction inputs. Product limits are read through configuration.json. Evaluation values and windows remain separate independent criteria.",
+  "numerics": {
+    "time_digits": 3,
+    "measurement_digits": 4,
+    "minimum_height_gap_c": 0.04,
+    "temperature_join_tolerance_c": 0.005,
+    "duration_join_tolerance_s": 0.001
+  },
+  "button": {
+    "short_release_seconds": 0.198062,
+    "native_classification_seconds": 0.302757,
+    "long_classification_seconds": 1,
+    "long_release_seconds": 1.3
+  },
+  "thermal_join": {
+    "cold_hot_boundary_c": 69.5,
+    "source_end_offset_c": 2,
+    "minimum_source_tail_seconds": 180,
+    "dry_chunk_seconds": 600,
+    "late_heat_source_offset_seconds": 1800,
+    "target_coast_margin_c": 0.7,
+    "target_coast_max_seconds": 600,
+    "target_coast_min_seconds": 60,
+    "target_coast_seconds_per_c": 180
+  },
+  "stay": {
+    "presence_entry_delay_seconds": 15,
+    "late_heating_seconds": 240,
+    "closed_entry_tail_seconds": 120,
+    "brief_return_presence_seconds": 75,
+    "brief_door_seconds": 120,
+    "brief_reheat_seconds": 240,
+    "brief_temperature_gain_c": -1.5,
+    "brief_lower_gain_c": -1.2,
+    "brief_close_seconds": 90,
+    "infusion_max_upper_gain_c": 4.68,
+    "infusion_max_lower_gain_c": 3.9,
+    "infusion_before_end_seconds": 300,
+    "manual_after_heat_coast_seconds": 120,
+    "unconfirmed_coast_seconds": 300,
+    "dry_duration_seconds": 900,
+    "short_duration_seconds": 180,
+    "final_infusion_seconds": {
+      "late_absence_exit": 160,
+      "mixed_absence_exit": 180
+    },
+    "absence_delay_seconds": 45,
+    "mixed_exit_heater_off_seconds": 274.096526,
+    "fallback_exit_heater_off_seconds": 93.463,
+    "manual_exit_offset_seconds": 160,
+    "outside_stop_seconds": 5,
+    "ventilation_close_tail_seconds": 90,
+    "proxy_recovery_cue_seconds": 420,
+    "after_run_margin_seconds": 60
+  },
+  "base": {
+    "manual_light_percent": 45,
+    "manual_light_at_seconds": 30,
+    "threshold_overshoot_c": 0.2,
+    "threshold_coast_seconds": 120,
+    "manual_final_coast_seconds": 90,
+    "standard_stays": 3,
+    "saved_program": "genusszeit"
+  },
+  "cases": {
+    "G02": {
+      "targets": [
+        90,
+        85,
+        80
+      ],
+      "program": {
+        "mode": "progressive",
+        "start_c": 90,
+        "end_c": 80,
+        "gangs": 3
+      }
+    },
+    "G03": {
+      "targets": [
+        80,
+        85,
+        85,
+        75,
+        75
+      ],
+      "program": {
+        "mode": "progressive",
+        "start_c": 80,
+        "end_c": 75,
+        "gangs": 4,
+        "steps": [
+          80,
+          85,
+          85,
+          75
+        ]
+      }
+    },
+    "G00": {
+      "abort_temperature_c": 55
+    },
+    "I01": {
+      "initial_program": "schnellstarter",
+      "lower_program": "liegewiese",
+      "overshoot_c": 0.2,
+      "draft_wait_seconds": 60,
+      "raised_program": {
+        "mode": "progressive",
+        "start_c": 85,
+        "end_c": 90,
+        "gangs": 3
+      },
+      "raised_temperature_c": 85.2,
+      "empty_door_wait_seconds": 300,
+      "next_temperature_c": 82,
+      "individual_program": {
+        "mode": "progressive",
+        "start_c": 85,
+        "end_c": 75,
+        "gangs": 3,
+        "steps": [
+          85,
+          85,
+          75
+        ]
+      },
+      "constant_temperature_c": 88
+    },
+    "I02": {
+      "initial_program": "hoehenwanderung",
+      "first_override_temperature_c": 45,
+      "first_light_percent": 35,
+      "first_override_coast_seconds": 180,
+      "second_override_temperature_c": 52,
+      "second_light_percent": 40,
+      "repeat_after_seconds": 45,
+      "expiry_late_margin_seconds": 3,
+      "third_override_temperature_c": 81,
+      "third_light_percent": 25,
+      "entry_coast_seconds": 45,
+      "late_absence_seconds": 429,
+      "cooling_button_after_seconds": 30,
+      "cooling_button_coast_seconds": 60,
+      "upper_program": {
+        "mode": "progressive",
+        "start_c": 100,
+        "end_c": 100,
+        "gangs": 3
+      },
+      "upper_temperature_c": 101,
+      "upper_coast_seconds": 120,
+      "thermostat_source_offset_seconds": 360,
+      "thermostat_duration_seconds": 120,
+      "reheat_lower_temperature_c": 98.8,
+      "reheat_upper_temperature_c": 100.3,
+      "demand_change_coast_seconds": 45,
+      "return_temperature_c": 82,
+      "mixed_absence_seconds": 225,
+      "mixed_presence": [
+        {
+          "after_seconds": 245,
+          "value": true
+        },
+        {
+          "after_seconds": 274,
+          "value": false
+        },
+        {
+          "after_seconds": 441,
+          "value": true
+        },
+        {
+          "after_seconds": 464,
+          "value": false
+        }
+      ],
+      "finish_cooling_after_seconds": 540,
+      "short_exit_seconds": 300,
+      "before_reentry_coast_seconds": 60
+    },
+    "I03": {
+      "manual_preheat_temperature_c": 35,
+      "manual_pause_seconds": 300,
+      "before_gesture_seconds": 10,
+      "early_entry_below_minimum_c": 1.5,
+      "presence_delay_seconds": 15,
+      "minimum_crossing_above_c": 3,
+      "joined_upper_gain_c": 0.7,
+      "joined_lower_gain_c": 0.6,
+      "brief_leave_after_seconds": 180,
+      "absence_after_seconds": 45,
+      "ventilation_tail_seconds": 90,
+      "override_temperature_c": 72,
+      "light_off_after_seconds": 5,
+      "light_on_after_seconds": 45,
+      "light_value_after_seconds": 90,
+      "light_percent": 60,
+      "override_coast_seconds": 120,
+      "return_temperature_c": 74,
+      "final_light_coast_seconds": 5,
+      "after_run_margin_seconds": 62
+    },
+    "I04": {
+      "entry_above_minimum_c": 0.6,
+      "restart_coast_seconds": 300,
+      "second_target_c": 85,
+      "presence_delay_seconds": 15,
+      "brief_door_seconds": 120,
+      "brief_upper_gain_c": -1.5,
+      "brief_lower_gain_c": -1.2,
+      "reheat_seconds": 180,
+      "outside_stop_seconds": 5,
+      "absence_after_seconds": 45,
+      "ventilation_tail_seconds": 90,
+      "after_run_light_percent": 30,
+      "after_run_light_coast_seconds": 60,
+      "after_run_margin_seconds": 95
+    },
+    "I05": {
+      "early_entry_below_target_c": 5,
+      "short_exit_seconds": 150,
+      "return_after_seconds": 120,
+      "close_after_seconds": 150,
+      "person_cue_after_seconds": 300,
+      "moisture_source_offset_seconds": 120,
+      "recovery_source_offset_seconds": 220,
+      "moisture_duration_seconds": 480,
+      "infusion_after_seconds": 90,
+      "remaining_stay_seconds": 600,
+      "outside_stop_seconds": 5,
+      "final_close_seconds": 220,
+      "after_run_margin_seconds": 60
+    }
+  }
+}

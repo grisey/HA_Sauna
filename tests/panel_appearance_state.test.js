@@ -1,4 +1,5 @@
 "use strict";
+const { panelFixture: fixturePanel } = require("./catalog_fixture.cjs");
 const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const test = require("node:test");
@@ -12,9 +13,7 @@ vm.runInNewContext(fs.readFileSync("custom_components/ha_sauna/panel.js", "utf8"
   setInterval,
   clearInterval,
 });
-const catalog = JSON.parse(
-  fs.readFileSync("custom_components/ha_sauna/defaults.json", "utf8"),
-).appearance;
+const catalog = structuredClone(require("./catalog_fixture.cjs").catalog).appearance;
 const clone = (value) => JSON.parse(JSON.stringify(value));
 const appearance = (color = "#123456") => ({
   colors: { series_temperature: color },
@@ -30,7 +29,7 @@ const state = (value = appearance()) => ({
   configuration: { appearance: value, temperature_programs: [] },
 });
 function panel(api = async () => ({ appearance: appearance() })) {
-  return Object.assign(Object.create(Panel.prototype), {
+  return Object.assign(fixturePanel(Panel), {
     entry: "first",
     generation: 0,
     isConnected: true,
@@ -144,4 +143,30 @@ test("default preview removes saved hex overrides instead of displaying stale sa
   ).default;
   assert.ok(temperature.includes(`value="${defaultColor}"`));
   assert.doesNotMatch(temperature, /#123456/);
+});
+
+test("catalog-free polls retain the bootstrap catalog and updated appearance", async () => {
+  const paths = [];
+  const next = state(appearance("#ABCDEF"));
+  delete next.appearance_catalog;
+  next.configuration.parameters = { target_temperature_c: 85 };
+  const p = panel(async (path) => {
+    paths.push(path);
+    return next;
+  });
+  const bootstrap = p.panel.config.appearance_catalog;
+  p.appearanceDraft = null;
+  await p.refresh();
+  assert.equal(p.state, next);
+  assert.equal(p.appearanceCatalog(), bootstrap);
+  assert.equal(p.appearanceColor("series_temperature"), "#ABCDEF");
+  assert.equal(
+    p.preference("detail_plot_right_padding_px"),
+    bootstrap.preferences.detail_plot_right_padding_px.default,
+  );
+  await p.waitForConfiguration("first", next.configuration.parameters);
+  assert.deepEqual(paths, [
+    "/first/state?include_catalog=false",
+    "/first/state?include_catalog=false&include_energy_intervals=false",
+  ]);
 });

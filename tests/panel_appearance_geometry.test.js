@@ -1,15 +1,18 @@
 "use strict";
+const { panelFixture: fixturePanel } = require("./catalog_fixture.cjs");
 
 const assert = require("node:assert/strict");
+const {
+  parameterValues: fixtureValues,
+  parameterDefinition: fixtureDefinition,
+} = require("./catalog_fixture.cjs");
 const fs = require("node:fs");
 const test = require("node:test");
 const vm = require("node:vm");
 
-const catalog = JSON.parse(
-  fs.readFileSync("custom_components/ha_sauna/defaults.json", "utf8"),
-).appearance;
-const frontendDefaults = JSON.parse(
-  fs.readFileSync("custom_components/ha_sauna/defaults.json", "utf8"),
+const catalog = structuredClone(require("./catalog_fixture.cjs").catalog).appearance;
+const frontendDefaults = structuredClone(
+  require("./catalog_fixture.cjs").catalog,
 ).frontend;
 
 let Panel;
@@ -34,7 +37,7 @@ vm.runInNewContext(
 const { appearanceTickValues, appearanceContrastRatio } = sandbox.appearanceTest;
 const makePanel = (appearance = { colors: {}, scales: {} }) => {
   const variables = new Map();
-  const panel = Object.assign(Object.create(Panel.prototype), {
+  const panel = Object.assign(fixturePanel(Panel), {
     state: {
       frontend_defaults: frontendDefaults,
       appearance_catalog: catalog,
@@ -42,9 +45,9 @@ const makePanel = (appearance = { colors: {}, scales: {} }) => {
       operation_enabled: true,
       configuration: {
         control_mode: "automatic",
-        parameters: { sauna_min_temperature_c: 50 },
+        parameters: fixtureValues(),
       },
-      parameters: [{ key: "target_temperature_c", minimum: 50, maximum: 100 }],
+      parameters: [fixtureDefinition("target_temperature_c")],
       phase: "aufheizen",
     },
     style: {
@@ -64,7 +67,10 @@ test("cropped instrument pointers use the SVG transform and viewBox origin", () 
     viewBox: { baseVal: { x: 25, y: 5, width: 250, height: 250 } },
     getBoundingClientRect: () => ({ left: 40, top: 80, width: 500, height: 500 }),
   };
-  assert.equal(panel.temperatureValueAt(cropped, 500, 330), 100);
+  assert.equal(
+    panel.temperatureValueAt(cropped, 500, 330),
+    fixtureDefinition("target_temperature_c").maximum,
+  );
   assert.equal(panel.lightValueAt(cropped, 290, 120), 50);
 
   // A taller viewport adds letterboxing: its CTM, not the bounding rectangle,
@@ -81,7 +87,10 @@ test("cropped instrument pointers use the SVG transform and viewBox origin", () 
       },
     }),
   };
-  assert.equal(panel.temperatureValueAt(transformed, 500, 380), 100);
+  assert.equal(
+    panel.temperatureValueAt(transformed, 500, 380),
+    fixtureDefinition("target_temperature_c").maximum,
+  );
   assert.equal(panel.lightValueAt(transformed, 290, 170), 50);
 });
 
@@ -119,9 +128,23 @@ test("finite display scales bound ticks and preserve backend target limits", () 
     ),
     86,
   );
-  assert.ok(appearanceTickValues({ minimum: -1e300, maximum: 1e300 }).length <= 8);
   assert.ok(
-    appearanceTickValues({ minimum: 0, maximum: Number.MIN_VALUE }).length <= 8,
+    appearanceTickValues(
+      { minimum: -1e300, maximum: 1e300 },
+      panel.preference("instrument_tick_target"),
+      panel.preference("instrument_tick_maximum"),
+      panel.preference("tick_epsilon"),
+      panel.preference("tick_precision"),
+    ).length <= 8,
+  );
+  assert.ok(
+    appearanceTickValues(
+      { minimum: 0, maximum: Number.MIN_VALUE },
+      panel.preference("instrument_tick_target"),
+      panel.preference("instrument_tick_maximum"),
+      panel.preference("tick_epsilon"),
+      panel.preference("tick_precision"),
+    ).length <= 8,
   );
   panel.appearanceDraft = {
     colors: {},
@@ -253,7 +276,7 @@ test("popup, plot controls, selected event and empty card use their painted surf
     scales: {},
   });
   panel.applyAppearance();
-  const css = fs.readFileSync("custom_components/ha_sauna/panel.js", "utf8");
+  const css = panel.appearanceStyles();
   assert.match(css, /\.program-info-popup\s*\{[^}]*color: var\(--sauna-card-text/);
   assert.match(css, /header\s*\{[^}]*color: var\(--sauna-page-text/);
   assert.ok(

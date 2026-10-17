@@ -10,9 +10,7 @@ from harness import create_sauna, start_hass
 class DerivedHumiditySensorTests(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self):
         self.hass, self.temp = await start_hass()
-        self.entry = await create_sauna(
-            self.hass, parameter_overrides={"sensor_timeout_seconds": 30}
-        )
+        self.entry = await create_sauna(self.hass)
         self.runtime = self.entry.runtime_data
         self.now = datetime.now(UTC)
         self.runtime._clock = lambda: self.now
@@ -63,7 +61,9 @@ class DerivedHumiditySensorTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(float(self.state("lower").state), 29.55)
 
         # Keep the lower pair current while the upper pair passes its expiry.
-        self.now += timedelta(seconds=31)
+        self.now += timedelta(seconds=
+                self.runtime.configuration.parameters.values["sensor_timeout_seconds"] + 1
+            )
         await self.set_source("lower_temperature", 70)
         await self.set_source("lower_humidity", 15)
         await self.runtime.tick()

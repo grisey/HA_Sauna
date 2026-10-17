@@ -1,0 +1,253 @@
+{
+  "schema_version": 2,
+  "source_curves": "fixtures/scenarios/source_curves.json",
+  "source_curves_sha256": "a3a98cc4f2a0f526bc40f5e45c86f3d6820390f250679c9fcaeb6f9e69a0c7e6",
+  "configuration_file": "fixtures/scenarios/configuration.json",
+  "configuration_sha256": "12dda4086d165be5f68c13e25f9736b75e8d3678658224152fcb0def0f81ddf8",
+  "configuration_policy": "Resolved parameters and programme values are bound separately from UI metadata. Declared construction inputs and measurements stay byte-bound; changed effective inputs require review before rebinding.",
+  "scenarios": [
+    {
+      "id": "G01",
+      "path": "fixtures/scenarios/G01.json",
+      "sha256": "daa5cf08a8604104c6f7f390adc6b9c6d26da5b1e77e34038cdd70b63819f5f2",
+      "presence_sources": [
+        "ha_presence"
+      ]
+    },
+    {
+      "id": "G02",
+      "path": "fixtures/scenarios/G02.json",
+      "sha256": "976fe12fb4eaca864b38a5931b01921ef235df98b3f8a8ee8715f2cba86c94ec",
+      "presence_sources": [
+        "ha_presence"
+      ]
+    },
+    {
+      "id": "G03",
+      "path": "fixtures/scenarios/G03.json",
+      "sha256": "10aadcaadaef51b8add9b1993173eb0a2af4534d5c5353cbf5dacbd67372476e",
+      "presence_sources": [
+        "ha_presence"
+      ]
+    },
+    {
+      "id": "G04",
+      "path": "fixtures/scenarios/G04.json",
+      "sha256": "c003b20e6e3de9283bff99ebd3461c5c21e6a8105a409fe5d789f16cdfdb6c01",
+      "presence_sources": [
+        "ha_presence"
+      ]
+    },
+    {
+      "id": "G01-proxy",
+      "path": "fixtures/scenarios/G01-proxy.json",
+      "sha256": "2fd9bad050c235d91da6f9c1f1b1051624ff417a0cfd187fd16693b588632705",
+      "presence_sources": [
+        "proxy"
+      ]
+    },
+    {
+      "id": "G02-proxy",
+      "path": "fixtures/scenarios/G02-proxy.json",
+      "sha256": "317fdb0dc6875dc81ac2717cca5f882ca24d9470dca65f8f930dd6b4e1fb7853",
+      "presence_sources": [
+        "proxy"
+      ]
+    },
+    {
+      "id": "G03-proxy",
+      "path": "fixtures/scenarios/G03-proxy.json",
+      "sha256": "b75169d2a13d7d34371fad15b7bdd2d6230dd29c5ca63d0a53f0bfcbbc9f3a06",
+      "presence_sources": [
+        "proxy"
+      ]
+    },
+    {
+      "id": "G04-proxy",
+      "path": "fixtures/scenarios/G04-proxy.json",
+      "sha256": "fd28c4099eefcabd9630dc7c00df0d18d78b9c9a70e39a367ea987ee29d3387f",
+      "presence_sources": [
+        "proxy"
+      ]
+    },
+    {
+      "id": "G05",
+      "path": "fixtures/scenarios/G05.json",
+      "sha256": "f679c4d9390a4302dbbab49c42266210019eb42dd21d2fa6d6573f6e01d3f52d",
+      "presence_sources": [
+        "ha_presence",
+        "proxy"
+      ]
+    },
+    {
+      "id": "I01",
+      "path": "fixtures/scenarios/I01.json",
+      "sha256": "5ca7804564a3901b38d311ca2c7b7e4ee69d8eab0df782e3b5ccf4869ef70ee1",
+      "presence_sources": [
+        "ha_presence"
+      ]
+    },
+    {
+      "id": "I02",
+      "path": "fixtures/scenarios/I02.json",
+      "sha256": "09e1df892dfbfae014327587ec01ef29a91d1d12eca386c2895f6cb8708fb0d2",
+      "presence_sources": [
+        "ha_presence"
+      ]
+    },
+    {
+      "id": "I03",
+      "path": "fixtures/scenarios/I03.json",
+      "sha256": "73f081bfc859e9e584ec8735c1b32d89bf0e566605ba826d97309ee91700bec9",
+      "presence_sources": [
+        "ha_presence"
+      ],
+      "variants": [
+        {
+          "id": "long-genusszeit",
+          "configuration": {
+            "button_session_gesture": "long",
+            "button_program": "genusszeit"
+          },
+          "action_substitutions": {
+            "session_gesture": "long_push",
+            "initial_light": 45,
+            "final_light": 0
+          },
+          "expected_substitutions": {
+            "button_target": 80,
+            "second_button_target": 83,
+            "button_mode": "progressive",
+            "button_program_id": "genusszeit"
+          }
+        },
+        {
+          "id": "long-constant",
+          "configuration": {
+            "button_session_gesture": "long",
+            "button_program": "constant"
+          },
+          "action_substitutions": {
+            "session_gesture": "long_push",
+            "initial_light": 0,
+            "final_light": 45
+          },
+          "expected_substitutions": {
+            "button_target": 90,
+            "second_button_target": 90,
+            "button_mode": "constant",
+            "button_program_id": null
+          }
+        },
+        {
+          "id": "double-genusszeit",
+          "configuration": {
+            "button_session_gesture": "double",
+            "button_program": "genusszeit"
+          },
+          "action_substitutions": {
+            "session_gesture": "double_push",
+            "initial_light": 45,
+            "final_light": 0
+          },
+          "expected_substitutions": {
+            "button_target": 80,
+            "second_button_target": 83,
+            "button_mode": "progressive",
+            "button_program_id": "genusszeit"
+          }
+        },
+        {
+          "id": "double-constant",
+          "configuration": {
+            "button_session_gesture": "double",
+            "button_program": "constant"
+          },
+          "action_substitutions": {
+            "session_gesture": "double_push",
+            "initial_light": 0,
+            "final_light": 45
+          },
+          "expected_substitutions": {
+            "button_target": 90,
+            "second_button_target": 90,
+            "button_mode": "constant",
+            "button_program_id": null
+          }
+        },
+        {
+          "id": "triple-genusszeit",
+          "configuration": {
+            "button_session_gesture": "triple",
+            "button_program": "genusszeit"
+          },
+          "action_substitutions": {
+            "session_gesture": "triple_push",
+            "initial_light": 45,
+            "final_light": 0
+          },
+          "expected_substitutions": {
+            "button_target": 80,
+            "second_button_target": 83,
+            "button_mode": "progressive",
+            "button_program_id": "genusszeit"
+          }
+        },
+        {
+          "id": "triple-constant",
+          "configuration": {
+            "button_session_gesture": "triple",
+            "button_program": "constant"
+          },
+          "action_substitutions": {
+            "session_gesture": "triple_push",
+            "initial_light": 0,
+            "final_light": 45
+          },
+          "expected_substitutions": {
+            "button_target": 90,
+            "second_button_target": 90,
+            "button_mode": "constant",
+            "button_program_id": null
+          }
+        }
+      ]
+    },
+    {
+      "id": "I04",
+      "path": "fixtures/scenarios/I04.json",
+      "sha256": "324a28431d87084d1c3fc4304ac4e2761c7615b6b0e53170f898294c70c50185",
+      "presence_sources": [
+        "ha_presence"
+      ]
+    },
+    {
+      "id": "I05-proxy",
+      "path": "fixtures/scenarios/I05-proxy.json",
+      "sha256": "fc789c6e87348090fb182b6b780323ee3382cc1da737855b0dd9e81d950a8cb4",
+      "presence_sources": [
+        "proxy"
+      ]
+    },
+    {
+      "id": "G00-automatic",
+      "path": "fixtures/scenarios/G00-automatic.json",
+      "sha256": "a655845e0faec022d96d06da60bf1d7d3a78f22fdcd5f96f46bebc62d8517795",
+      "presence_sources": [
+        "ha_presence",
+        "proxy"
+      ]
+    },
+    {
+      "id": "G00-manual",
+      "path": "fixtures/scenarios/G00-manual.json",
+      "sha256": "1433e1ff38722f300ce080167a81a01771b40a9198798edc5fdc119534441e2a",
+      "presence_sources": [
+        "ha_presence",
+        "proxy"
+      ]
+    }
+  ],
+  "construction_file": "fixtures/scenarios/construction.json",
+  "construction_sha256": "23462fe0c2991e4b635c63db50b554b3a4cd898b992e1cb704d93da82daf4f87"
+}

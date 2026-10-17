@@ -1,12 +1,14 @@
+const { panelFixture: fixturePanel } = require("./catalog_fixture.cjs");
 const assert = require("node:assert/strict");
+const { parameterValues: fixtureValues } = require("./catalog_fixture.cjs");
 const fs = require("node:fs");
 const test = require("node:test");
 const vm = require("node:vm");
 
 const panelPath = process.env.PANEL_PATH || "custom_components/ha_sauna/panel.js";
 const document = { hidden: false };
-const frontendDefaults = JSON.parse(
-  fs.readFileSync("custom_components/ha_sauna/defaults.json", "utf8"),
+const frontendDefaults = structuredClone(
+  require("./catalog_fixture.cjs").catalog,
 ).frontend;
 let Panel;
 vm.runInNewContext(fs.readFileSync(panelPath, "utf8"), {
@@ -18,7 +20,10 @@ vm.runInNewContext(fs.readFileSync(panelPath, "utf8"), {
   clearTimeout,
   document,
 });
-const turn = () => new Promise((resolve) => setTimeout(resolve, 5));
+const turn = () =>
+  new Promise((resolve) =>
+    setTimeout(resolve, require("./settings_fixture.cjs").setting("browser.poll_ms")),
+  );
 const deferred = () => {
   let resolve, reject;
   const promise = new Promise((yes, no) => {
@@ -33,7 +38,13 @@ const state = (id = "live", ended = false) => ({
   permissions: { admin: true },
   frontend_defaults: frontendDefaults,
   session: {
-    timeline: { session_id: id },
+    timeline: {
+      session_id: id,
+      completed: [],
+      active: null,
+      processed: [],
+      retracted: [],
+    },
     ...(ended ? { ended_at: "2032-01-01T12:10:00Z" } : {}),
   },
   phase_projection: { intervals: [] },
@@ -54,9 +65,11 @@ function panel(api) {
     "#detection-plots": { innerHTML: "" },
     "#control-history": { innerHTML: "" },
     "#plots": { innerHTML: "" },
-    "#history-overview": { replaceChildren() {} },
+    "[data-history-session-summary]": { innerHTML: "", hidden: true },
+    "[data-history-context-gangs]": { innerHTML: "" },
+    "#history-event-inspection": { textContent: "", hidden: true },
   };
-  const p = Object.assign(new Panel(), {
+  const p = Object.assign(fixturePanel(new Panel()), {
     entry: "e",
     generation: 0,
     selected: "live",
@@ -73,6 +86,10 @@ function panel(api) {
     draws: 0,
     statusDraws: 0,
     errors: {},
+    // Both immediate and scheduled renders use the same transport-fixture sink.
+    renderHistory(reasons) {
+      this.drawHistory(reasons);
+    },
     drawHistory() {
       this.draws++;
     },
@@ -101,7 +118,6 @@ function historyUiPanel(api) {
         this.attributes[name] = value;
       },
     },
-    "#history-overview": { replaceChildren() {} },
   });
   p.shadowRoot.addEventListener = (kind, callback) => {
     listeners.set(kind, [...(listeners.get(kind) || []), callback]);
@@ -114,6 +130,24 @@ function historyUiPanel(api) {
   return {
     p,
     nodes,
+    key(key) {
+      const target = {
+        matches: () => false,
+        closest(selector) {
+          return selector === "svg.session-chart, svg.history-time-axis" ? this : null;
+        },
+      };
+      const event = {
+        key,
+        target,
+        defaultPrevented: false,
+        preventDefault() {
+          this.defaultPrevented = true;
+        },
+      };
+      for (const callback of listeners.get("keydown") || []) callback(event);
+      assert.equal(event.defaultPrevented, true, `chart key ${key} is handled`);
+    },
     select(id) {
       for (const callback of listeners.get("change") || [])
         callback({ target: { id: "session", value: id, matches: () => false } });
@@ -194,11 +228,11 @@ test("first archive page failure replaces the loading placeholder and clears bus
 
 test("status polling is live during operation and sparse while idle", () => {
   const { p } = panel(async () => ({}));
-  assert.equal(p.statusPollInterval(), 2000);
+  assert.equal(p.statusPollInterval(), p.preference("status_active_poll_ms"));
   p.state = { ...state(), session: null, operation_enabled: false };
-  assert.equal(p.statusPollInterval(), 10000);
+  assert.equal(p.statusPollInterval(), p.preference("status_idle_poll_ms"));
   p.state.light_after_run = { ends_at: "2032-01-01T12:01:00Z" };
-  assert.equal(p.statusPollInterval(), 2000);
+  assert.equal(p.statusPollInterval(), p.preference("status_active_poll_ms"));
 });
 
 test("unrelated hass updates do not restart an in-flight status poll", async () => {
@@ -206,7 +240,7 @@ test("unrelated hass updates do not restart an in-flight status poll", async () 
   const idle = { ...state(), session: null, operation_enabled: false };
   let reads = 0;
   const { p, nodes } = panel(async (request) => {
-    if (request !== "/e/state") throw Error(request);
+    if (request !== "/e/state?include_catalog=false") throw Error(request);
     reads++;
     return response.promise;
   });
@@ -241,7 +275,7 @@ test("slow archive pages do not hold status refresh and partial pages are visibl
     lists = 0,
     pages = 0;
   const { p, nodes } = panel(async (request) => {
-    if (request.endsWith("/state")) {
+    if (request.split("?")[0].endsWith("/state")) {
       states++;
       return state();
     }
@@ -442,7 +476,7 @@ test("a completed background session refreshes the list without discarding archi
       last_session: latest?.session || null,
     });
     const { p } = panel(async (request) => {
-      if (request.endsWith("/state")) return snapshot();
+      if (request.split("?")[0].endsWith("/state")) return snapshot();
       if (request.endsWith("/archive")) {
         lists++;
         return latest === next
@@ -527,7 +561,7 @@ test("an older pending list cannot hide a newer last-session identity", async ()
 test("a confirmed empty archive list remains loaded across status cycles", async () => {
   let lists = 0;
   const { p } = panel(async (request) => {
-    if (request.endsWith("/state")) return { ...state(), session: null };
+    if (request.split("?")[0].endsWith("/state")) return { ...state(), session: null };
     lists++;
     return [];
   });
@@ -543,7 +577,7 @@ test("returning from a hidden document reconciles its archive list once", async 
   let lists = 0;
   const idle = { ...state(), session: null, operation_enabled: false };
   const { p } = panel(async (request) => {
-    if (request.endsWith("/state")) return idle;
+    if (request.split("?")[0].endsWith("/state")) return idle;
     lists++;
     return [];
   });
@@ -565,7 +599,7 @@ test("returning from a hidden document reconciles its archive list once", async 
   assert.equal(lists, 2, "a confirmed empty list remains valid afterwards");
 });
 
-test("live page polling advances without reloading the archive list", async () => {
+test("live page polling is throttled, explicit reads advance without reloading the list", async () => {
   let lists = 0,
     pages = 0;
   const { p } = panel(async (request) => {
@@ -579,12 +613,39 @@ test("live page polling advances without reloading the archive list", async () =
   await p.startHistoryLoad();
   await p.startHistoryLoad();
   await p.startHistoryLoad();
+  assert.equal(pages, 1, "background polls retain the loaded live cache");
+  await p.startHistoryLoad(true);
+  p.historyCache("live").lastFetchedAt -= p.preference("history_live_poll_ms");
+  await p.startHistoryLoad();
   assert.equal(lists, 1);
   assert.equal(pages, 3);
   assert.deepEqual(
     Array.from(p.historyCache("live").records, (item) => item.id),
     [1, 2, 3],
   );
+});
+
+test("live append has no initial loading banner and finalization bypasses its polling gate", async () => {
+  let calls = 0;
+  let resolvePage;
+  const { p, nodes } = historyUiPanel(async (request) => {
+    if (request.endsWith("/archive")) return [];
+    calls++;
+    if (calls === 2) return new Promise((resolve) => (resolvePage = resolve));
+    return page([calls], null, "live", calls > 2);
+  });
+  await p.startHistoryLoad();
+  const pending = p.startHistoryLoad(true);
+  await turn();
+  assert.equal(nodes["#history-loading"].hidden, true);
+  assert.equal(nodes["#plots"].attributes["aria-busy"], "false");
+  resolvePage(page([2]));
+  await pending;
+  p.state.session = null;
+  p.historyPendingFinalId = "live";
+  await p.startHistoryLoad();
+  assert.equal(calls, 3);
+  assert.equal(p.historyCache("live").finalSynced, true);
 });
 
 test("fixed user and admin panels load their finalized archive records", async () => {
@@ -616,7 +677,7 @@ test("fixed user and admin panels load their finalized archive records", async (
 
 test("role loss clears diagnostic consumers even while history is hidden", async () => {
   const { p, nodes } = panel(async (request) => {
-    assert.ok(request.endsWith("/state"));
+    assert.ok(request.split("?")[0].endsWith("/state"));
     return { ...state(), permissions: { admin: false } };
   });
   p.syncHistoryProjection();
@@ -624,6 +685,21 @@ test("role loss clears diagnostic consumers even while history is hidden", async
   oldCache.records.push({ id: 1, kind: "detector_trace", payload: {} });
   p.shown = { session: p.state.session, records: oldCache.records };
   p.chartDataIndex = p.historyIndex(oldCache.records);
+  p.historyValueSelection = { identity: "e:live", kind: "range", start: 0, end: 1 };
+  p.historyKeyboardTarget = { eventId: "old-admin" };
+  p.historyChart = {
+    prepared: new Map(),
+    interaction: {
+      hide() {
+        assert.equal(
+          p.historyValueSelection,
+          null,
+          "old selection is invalidated before hiding its source",
+        );
+        assert.equal(p.historyKeyboardTarget, null);
+      },
+    },
+  };
   p.historyEventKey = p.historyDiagnosticsKey = "old-admin";
   p.pendingEventFocus = { kind: "marker", eventId: "old" };
   nodes["#event-list"].innerHTML =
@@ -690,13 +766,20 @@ test("a stale admin page cannot write after role loss and return to admin", asyn
 
 test("fixed user and admin panels navigate an archive while its first page loads", async () => {
   const session = {
-    timeline: { session_id: "old", session_started_at: "2020-01-01T10:00:00Z" },
+    timeline: {
+      session_id: "old",
+      session_started_at: "2020-01-01T10:00:00Z",
+      completed: [],
+      active: null,
+      processed: [],
+      retracted: [],
+    },
     ended_at: "2020-01-01T12:00:00Z",
   };
   for (const admin of [false, true]) {
     const response = deferred(),
       entered = deferred();
-    const { p } = panel(async (request) => {
+    const { p, key } = historyUiPanel(async (request) => {
       if (request.endsWith("/archive"))
         return [
           {
@@ -732,25 +815,26 @@ test("fixed user and admin panels navigate an archive while its first page loads
     ]);
     p.setHistoryWindow(domain[0] + 30 * 60000, domain[0] + 60 * 60000);
 
-    await p.action("zoom-in");
-    assert.equal(p.zoom, 8);
+    key("+");
+    assert.equal(p.zoom, 4 * p.preference("history_zoom_factor"));
     const zoomed = Array.from(p.window);
-    p.setHistoryWindow(zoomed[0] + 60000, zoomed[1] + 60000);
+    key("ArrowRight");
     const shifted = Array.from(p.window);
-    p.overviewFraction = () => 0.5;
-    p.historyGesture = { kind: "move", fraction: 0.4, window: shifted, svg: {} };
-    p.updateHistoryGesture({ clientX: 0, preventDefault() {} });
-    assert.ok(p.window[0] > shifted[0]);
-    assert.ok(p.window[0] >= domain[0] && p.window[1] <= domain[1]);
-    await p.action("reset-zoom");
+    assert.ok(shifted[0] > zoomed[0]);
+    assert.equal(shifted[1] - shifted[0], zoomed[1] - zoomed[0]);
+    assert.ok(shifted[0] >= domain[0] && shifted[1] <= domain[1]);
+    key("ArrowLeft");
+    assert.deepEqual(Array.from(p.window), zoomed);
+    key("Home");
     assert.deepEqual(Array.from(p.window), domain);
-    await p.action("zoom-in");
+    // The next key arrives before any renderer can restore a missing window.
+    key("+");
     const navigated = Array.from(p.window);
     response.resolve({ records: [], next_after: null, session });
     await pending;
     p.ensureHistoryWindow();
     assert.deepEqual(Array.from(p.window), navigated);
-    assert.equal(p.zoom, 2);
+    assert.equal(p.zoom, p.preference("history_zoom_factor"));
     p.selected = "missing";
     p.shown = null;
     assert.ok(p.historyDomain()[0] > Date.parse("2031-01-01"));
@@ -786,7 +870,7 @@ test("six-hour four-source cold pagination indexes each original once and reuses
       session_started_at: new Date(origin).toISOString(),
     },
     ended_at: new Date(origin + 6 * 3600 * 1000).toISOString(),
-    measurement_ttl_seconds: 5,
+    measurement_ttl_seconds: fixtureValues().sensor_timeout_seconds,
   };
   let requests = 0,
     bytes = 0,

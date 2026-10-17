@@ -1,4 +1,6 @@
 #!/usr/bin/env node
+const { settings } = require("../../settings_fixture.cjs");
+const { catalog: fixtureCatalog } = require("../../catalog_fixture.cjs");
 /*
  * Real-browser interaction benchmark for the live history view.
  *
@@ -12,9 +14,14 @@ const path = require("node:path");
 const { webkit, chromium } = require("playwright");
 
 const root = path.resolve(process.env.HA_SAUNA_ROOT || process.cwd());
-const engine = process.env.ENGINE || "webkit";
-const steps = Number(process.env.INPUT_STEPS || 24);
-const tickEvery = Number(process.env.TICK_EVERY || 4);
+const defaults = structuredClone(fixtureCatalog);
+const engine = process.env.ENGINE || settings.browser.engine;
+const steps = Number(
+  process.env.INPUT_STEPS || settings.fixtures.history.interaction_steps,
+);
+const tickEvery = Number(
+  process.env.TICK_EVERY || settings.fixtures.history.tick_every,
+);
 const output = path.resolve(
   process.env.INTERACTION_EVIDENCE ||
     path.join(require("node:os").tmpdir(), "ha-sauna-smooth", "interaction.json"),
@@ -29,17 +36,17 @@ Real-browser live-history interaction benchmark
   PLAYWRIGHT_BROWSERS_PATH=/path/to/browsers \\
   ENGINE=webkit node ${path.basename(process.argv[1])}
 
-Measures the current working-tree panel.js with 57,600 archived records
-from four independent series; the history view selects its leading position.
-INPUT_STEPS must be 20..40 (default 24).  It sends real
-browser pointer moves, Ctrl-wheel zoom in/out and minimap drag moves, while
+Measures the current working-tree panel.js with the declared history dataset
+in tests/settings.json; the history view selects its leading position.
+INPUT_STEPS must be a positive integer (default ${settings.fixtures.history.interaction_steps}). It sends real
+browser pointer moves, Ctrl-wheel zoom in/out and chart drag moves, while
 calling fixture.tick() after every ${tickEvery} inputs. Results are JSON at
 INTERACTION_EVIDENCE (or ${output}).
 `);
   process.exit(0);
 }
-if (!Number.isInteger(steps) || steps < 20 || steps > 40)
-  throw Error(`INPUT_STEPS must be an integer from 20 to 40; got ${steps}`);
+if (!Number.isInteger(steps) || steps < 1)
+  throw Error(`INPUT_STEPS must be a positive integer; got ${steps}`);
 if (!Number.isInteger(tickEvery) || tickEvery < 1)
   throw Error(`TICK_EVERY must be a positive integer; got ${tickEvery}`);
 if (!["webkit", "chromium"].includes(engine))
@@ -75,15 +82,20 @@ async function addFixture(page) {
   await page.addScriptTag({
     path: path.join(root, "custom_components/ha_sauna/panel.js"),
   });
+  await page.evaluate((value) => {
+    window.testSettings = value;
+  }, settings);
   await page.addScriptTag({
     path: path.join(root, "tests/browser/live_history/fixture.js"),
   });
-  await page.evaluate(async () => {
-    window.f = await window.installHistoryFixture({ seconds: 14400 });
+  await page.evaluate(async (defaults) => {
+    window.f = await window.installHistoryFixture({ defaults });
     window.f.assertClean();
-    if (window.f.records.length !== 57600)
-      throw Error(`fixture expected 57600 records, got ${window.f.records.length}`);
-  });
+    if (window.f.records.length !== f.initialRecordCount)
+      throw Error(
+        `fixture expected ${f.initialRecordCount} records, got ${window.f.records.length}`,
+      );
+  }, defaults);
 }
 
 // This instrumentation only observes calls and DOM events. It never invokes a
@@ -153,7 +165,7 @@ async function installInstrumentation(page) {
       tooltip: panel.$("#tooltip"),
       surface: panel.$("svg.session-chart"),
       canvas: panel.$("canvas.history-curves"),
-      overview: panel.$("#history-overview svg"),
+      timeAxis: panel.$("[data-history-time-axis]"),
     };
     wrap(panel, "renderHistory", "panel.renderHistory", completeEvents);
     for (const name of [
@@ -180,22 +192,23 @@ async function installInstrumentation(page) {
       const contains = (selector) =>
         nodes.some((node) => node?.matches?.(selector) || node?.closest?.(selector));
       const inChart = contains("svg.session-chart");
-      const inMinimap = contains("#history-overview svg");
-      if (!inChart && !inMinimap) return;
-      // Moving into the minimap before pointerdown has no product gesture and
-      // consequently no render to time.  Measure the captured drag moves.
-      if (inMinimap && !panel.historyGesture) return;
+      if (!inChart) return;
+      const panning = event.type === "pointermove" && !!(event.buttons & 1);
       bench.events.push({
         id: ++bench.nextEventId,
         type: event.type,
-        stream: inMinimap ? "minimap" : event.type === "wheel" ? "wheel" : "pointer",
+        stream: panning ? "pan" : event.type === "wheel" ? "wheel" : "pointer",
         at: performance.now(),
       });
     };
     root.addEventListener("pointermove", record, true);
     root.addEventListener("wheel", record, true);
     bench.latestId = () => bench.nextEventId;
-    bench.waitForRender = (afterId, type, timeoutMs = 1500) =>
+    bench.waitForRender = (
+      afterId,
+      type,
+      timeoutMs = testSettings.browser.timeouts_ms.render,
+    ) =>
       new Promise((resolve, reject) => {
         const deadline = performance.now() + timeoutMs;
         const check = () => {
@@ -205,7 +218,7 @@ async function installInstrumentation(page) {
           if (event?.completed != null) return resolve({ ...event });
           if (performance.now() >= deadline)
             return reject(Error(`no completed render after ${type} input ${afterId}`));
-          setTimeout(check, 4);
+          setTimeout(check, testSettings.browser.render_poll_ms);
         };
         check();
       });
@@ -240,12 +253,21 @@ async function installInstrumentation(page) {
       const tooltip = panel.$("#tooltip");
       const surface = panel.$("svg.session-chart");
       const canvas = panel.$("canvas.history-curves");
-      const overview = panel.$("#history-overview svg");
+      const timeAxis = panel.$("[data-history-time-axis]");
       // The fixture's upper temperature is always 69..75 °C and humidity
       // 25..31 %. This oracle does not call the product's lookup/formatter.
-      const values = [...tooltip.querySelectorAll(".history-tooltip-values > div")]
-        .filter((row) => !row.hidden)
-        .map((row) => row.lastElementChild.textContent);
+      const values = [...tooltip.querySelectorAll(".history-tooltip-values")]
+        .filter((container) => !container.hidden)
+        .flatMap((container) => [...container.children].filter((row) => !row.hidden))
+        .flatMap((row) =>
+          [...row.querySelectorAll(".history-tooltip-value")].filter(
+            (cell) => !cell.hidden,
+          ),
+        )
+        .map(
+          (cell) =>
+            `${cell.querySelector(".history-tooltip-number").textContent} ${cell.querySelector(".history-tooltip-unit").textContent}`,
+        );
       const valueIn = (unit, minimum, maximum) =>
         values.some((text) => {
           const match = text.match(/^([0-9]+(?:[.,][0-9]+)?)\s*(°C|%)$/);
@@ -264,6 +286,7 @@ async function installInstrumentation(page) {
         zoom: panel.zoom,
         tooltip: {
           visible: !!tooltip && !tooltip.hidden,
+          selection: tooltip.getAttribute("data-selection"),
           text: tooltip?.textContent || "",
           values,
           valuesCorrect:
@@ -275,7 +298,7 @@ async function installInstrumentation(page) {
           tooltip: bench.initialNodes.tooltip === tooltip,
           surface: bench.initialNodes.surface === surface,
           canvas: bench.initialNodes.canvas === canvas,
-          overview: bench.initialNodes.overview === overview,
+          timeAxis: !!timeAxis && bench.initialNodes.timeAxis === timeAxis,
         },
       };
     };
@@ -360,7 +383,7 @@ async function runInputSequence(page) {
   }
 
   // One 24-step zoom phase contains an actual zoom-in and zoom-out portion.
-  // Its in/out imbalance leaves a narrowed window for the minimap pan.
+  // Its in/out imbalance leaves a narrowed window for the chart pan.
   const zoomInSteps = Math.ceil((steps * 2) / 3);
   for (let index = 0; index < steps; index++) {
     await doWheel(
@@ -369,13 +392,10 @@ async function runInputSequence(page) {
     );
     interleaveTick(index);
   }
-  const windowRect = page
-    .locator("ha-sauna-panel")
-    .locator("#history-overview [data-history-window]");
-  const minimapBox = await windowRect.boundingBox();
-  if (!minimapBox) throw Error("history minimap window has no bounding box");
-  const startX = minimapBox.x + minimapBox.width / 2;
-  const startY = minimapBox.y + minimapBox.height / 2;
+  const panBox = await surface.boundingBox();
+  if (!panBox) throw Error("history chart has no bounding box");
+  const startX = panBox.x + panBox.width / 2;
+  const startY = panBox.y + panBox.height / 2;
   await page.mouse.move(startX, startY);
   await page.mouse.down();
   for (let index = 0; index < steps; index++) {
@@ -385,14 +405,14 @@ async function runInputSequence(page) {
       startY,
     );
     const event = await waitForInputRender(page, before, "pointermove");
-    inputLatency.push({ ...event, stream: "minimap" });
+    inputLatency.push({ ...event, stream: "pan" });
     interleaveTick(index);
   }
   await page.mouse.up();
   const ticks = await Promise.all(pendingTicks);
-  // Re-enter the real chart after releasing the minimap capture. This gives
+  // Re-enter the real chart after releasing the chart capture. This gives
   // the endpoint assertion a sampled chart position rather than the pointerout
-  // state that deliberately hides the tooltip during minimap interactions.
+  // state that restores the session summary during chart-pan interactions.
   const finalBox = await surface.boundingBox();
   if (!finalBox) throw Error("history surface lost its bounding box");
   const finalBefore = await latestInputId(page);
@@ -422,7 +442,7 @@ function summarizeCase(raw, input) {
     ]),
   );
   const latencyByStream = Object.fromEntries(
-    ["pointer", "wheel-in", "wheel-out", "minimap"].map((stream) => [
+    ["pointer", "wheel-in", "wheel-out", "pan"].map((stream) => [
       stream,
       numericSummary(
         input.inputLatency
@@ -437,7 +457,7 @@ function summarizeCase(raw, input) {
     zoom: raw.zoom,
     inputLatency: latencyByStream,
     renderDurationByStream: Object.fromEntries(
-      ["pointer", "wheel-in", "wheel-out", "minimap"].map((stream) => [
+      ["pointer", "wheel-in", "wheel-out", "pan"].map((stream) => [
         stream,
         numericSummary(
           input.inputLatency
@@ -471,8 +491,8 @@ function summarizeCase(raw, input) {
 
 async function runCase(browser) {
   const page = await browser.newPage({
-    viewport: { width: 1440, height: 1100 },
-    deviceScaleFactor: 2,
+    viewport: settings.browser.viewports.history,
+    deviceScaleFactor: settings.browser.device_scale_factor,
   });
   const errors = [];
   page.on("pageerror", (error) => errors.push(String(error)));
@@ -481,11 +501,24 @@ async function runCase(browser) {
     await installInstrumentation(page);
     const input = await runInputSequence(page);
     const raw = await page.evaluate(() => window.__historyInteractionBench.summary());
-    if (raw.records !== 57600 + input.ticks.length * 8)
+    if (
+      raw.records !==
+      settings.fixtures.history.duration_seconds *
+        settings.fixtures.history.positions.length *
+        settings.fixtures.history.quantities.length +
+        input.ticks.length *
+          settings.fixtures.history.samples_per_tick *
+          settings.fixtures.history.positions.length *
+          settings.fixtures.history.quantities.length
+    )
       throw Error(
         `expected 8 retained measurement records per live tick; got ${raw.records}`,
       );
-    if (!raw.tooltip.visible || !raw.tooltip.valuesCorrect)
+    if (
+      !raw.tooltip.visible ||
+      raw.tooltip.selection !== "" ||
+      !raw.tooltip.valuesCorrect
+    )
       throw Error(`tooltip values outside the synthetic series: ${raw.tooltip.text}`);
     if (!Object.values(raw.persistentNodes.fixtureIdentity).every(Boolean))
       throw Error(
@@ -512,7 +545,7 @@ async function runCase(browser) {
 
 (async () => {
   const launchOptions = {
-    headless: true,
+    headless: settings.browser.headless,
     ...(engine === "chromium"
       ? { executablePath: process.env.CHROMIUM_EXECUTABLE }
       : {}),
@@ -538,12 +571,15 @@ async function runCase(browser) {
         browserVersion: browser.version(),
         panel: path.join(root, "custom_components/ha_sauna/panel.js"),
         fixture: path.join(root, "tests/browser/live_history/fixture.js"),
-        recordsPerInitialCase: 57600,
+        recordsPerInitialCase:
+          settings.fixtures.history.duration_seconds *
+          settings.fixtures.history.positions.length *
+          settings.fixtures.history.quantities.length,
         inputStepsPerStream: steps,
         tickEvery,
         notes: [
           "Fixture transport is synthetic; panel rendering, input, refresh and canvas paths are product code.",
-          "Pointer and minimap inputs use Playwright's native mouse. WebKit automation drops Control from mouse.wheel, so the Ctrl-wheel phase uses bubbling, cancelable DOM WheelEvents with ctrlKey true on the product SVG; no handlers or paints are called directly.",
+          "Pointer and chart-pan inputs use Playwright's native mouse. WebKit automation drops Control from mouse.wheel, so the Ctrl-wheel phase uses bubbling, cancelable DOM WheelEvents with ctrlKey true on the product SVG; no handlers or paints are called directly.",
           "Latency is delivered DOM input to completion of the next actual panel.renderHistory callback; it does not include device or browser event-queue time before DOM delivery.",
           "The 40 ms synthetic archive-response delay permits DOM inputs to overlap live refreshes; it is not a Companion App measurement.",
           "methods are synchronous wall-clock durations of observed product method calls; fixtureMethods are the fixture's existing method observers.",

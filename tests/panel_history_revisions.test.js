@@ -1,3 +1,4 @@
+const { panelFixture: fixturePanel } = require("./catalog_fixture.cjs");
 const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const vm = require("node:vm");
@@ -8,7 +9,7 @@ vm.runInNewContext(fs.readFileSync("custom_components/ha_sauna/panel.js", "utf8"
   customElements: { get: () => null, define: (_, value) => (Panel = value) },
 });
 test("visible revision ignores late insert outside unchanged neighbours but includes inner and edge inserts", () => {
-  const p = Object.create(Panel.prototype),
+  const p = fixturePanel(Panel),
     cache = new Map(),
     origin = Date.parse("2032-01-01T08:00Z");
   const record = (second, id) => ({
@@ -71,7 +72,7 @@ test("visible revision ignores late insert outside unchanged neighbours but incl
   );
 });
 test("phase/diagnostic records do not advance measurement-series revisions", () => {
-  const p = Object.create(Panel.prototype),
+  const p = fixturePanel(Panel),
     records = [
       {
         id: 1,

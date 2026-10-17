@@ -1,4 +1,5 @@
 "use strict";
+const { panelFixture: fixturePanel } = require("./catalog_fixture.cjs");
 
 const assert = require("node:assert/strict");
 const fs = require("node:fs");
@@ -19,6 +20,7 @@ vm.runInNewContext(fs.readFileSync("custom_components/ha_sauna/panel.js", "utf8"
   Array,
   Infinity,
   clearTimeout,
+  setTimeout,
 });
 
 const navigationPanel = () => {
@@ -44,7 +46,7 @@ const navigationPanel = () => {
   const main = ["overview", "history", "details", "settings"].map(button);
   const detail = ["detail", "detail-history", "diagnostics"].map(button);
   nodes['.main-tabs [data-action="details"]'] = main[2];
-  const panel = Object.assign(Object.create(Panel.prototype), {
+  const panel = Object.assign(fixturePanel(Panel), {
     state: { permissions: { admin: true } },
     message: () => {},
     refresh: async () => {},
@@ -147,7 +149,7 @@ test("focused button program keeps its choice while accepting a new lock", () =>
     hasAttribute: (name) => name === "disabled",
     getAttribute: (name) => (name === "disabled" ? "" : null),
   };
-  const panel = Object.assign(Object.create(Panel.prototype), {
+  const panel = Object.assign(fixturePanel(Panel), {
     shadowRoot: { activeElement: field },
   });
   panel.patchNode(field, next);
@@ -155,7 +157,7 @@ test("focused button program keeps its choice while accepting a new lock", () =>
   assert.equal(field.value, "program-a");
 });
 
-test("empty history clears the retained overview and every visible sink", () => {
+test("empty history clears the retained inspection and every visible sink", () => {
   const nodes = new Map();
   const node = (selector) => {
     if (!nodes.has(selector))
@@ -170,11 +172,15 @@ test("empty history clears the retained overview and every visible sink", () => 
         replaceChildren() {
           this.innerHTML = "";
         },
+        remove() {
+          this.innerHTML = "";
+          this.textContent = "";
+        },
       });
     return nodes.get(selector);
   };
   let destroyed = 0;
-  const panel = Object.assign(Object.create(Panel.prototype), {
+  const panel = Object.assign(fixturePanel(Panel), {
     sessions: [],
     selected: "live",
     state: {},
@@ -186,7 +192,11 @@ test("empty history clears the retained overview and every visible sink", () => 
   });
   panel.clearHistoryDisplay();
   assert.equal(destroyed, 1);
-  assert.equal(node("#history-overview").innerHTML, "");
+  assert.equal(node(".history-tooltip-events").innerHTML, "");
+  assert.equal(
+    node(".history-inspection-heading .history-tooltip-time").textContent,
+    "",
+  );
   assert.equal(node("#tooltip").innerHTML, "");
   assert.equal(node("#tooltip").hidden, true);
   assert.equal(node("#tooltip").attributes.get("data-phase"), "");
@@ -253,11 +263,11 @@ test("an entry change withdraws all old controls until its matching state arrive
   await panel.savePrograms();
   panel.beginTemperatureDrag({}, {});
   panel.beginProgramDrag({ target: { closest: () => ({ disabled: false }) } });
-  assert.deepEqual(requests, [["/a/state", "GET"]]);
+  assert.deepEqual(requests, [["/a/state?include_catalog=false", "GET"]]);
   pending[0].resolve({ label: "old a" });
   await oldPoll;
   assert.equal(panel.state, null, "an old state cannot release the new entry");
-  assert.deepEqual(requests[1], ["/b/state", "GET"]);
+  assert.deepEqual(requests[1], ["/b/state?include_catalog=false", "GET"]);
   pending[1].reject(Error("b unavailable"));
   await new Promise((resolve) => setImmediate(resolve));
   assert.equal(panel.state, null);

@@ -1,6 +1,11 @@
 "use strict";
+const { panelFixture: fixturePanel } = require("./catalog_fixture.cjs");
 
 const assert = require("node:assert/strict");
+const {
+  parameterValues: fixtureValues,
+  parameterDefinition: fixtureDefinition,
+} = require("./catalog_fixture.cjs");
 const fs = require("node:fs");
 const path = require("node:path");
 const vm = require("node:vm");
@@ -53,18 +58,9 @@ function state(admin) {
       program_mode: "constant",
       selected_program_id: null,
       temperature_programs: [],
-      parameters: {
-        preset_count: 0,
-        preset_start_c: 70,
-        preset_step_c: 5,
-        target_temperature_c: 80,
-        final_temperature_c: 90,
-        temperature_gangs: 3,
-        session_light_brightness_percent: 50,
-        readiness_hysteresis_c: 3,
-      },
+      parameters: fixtureValues(),
     },
-    parameters: [{ key: "target_temperature_c", minimum: 60, maximum: 100 }],
+    parameters: [fixtureDefinition("target_temperature_c")],
     measurements: [],
     measurement_status: {},
 
@@ -100,7 +96,7 @@ function state(admin) {
 
 function render(admin, target = "#details") {
   const nodes = new Map();
-  const panel = Object.assign(Object.create(Panel.prototype), {
+  const panel = Object.assign(fixturePanel(Panel), {
     state: state(admin),
     hass: { user: { name: "Admin", is_admin: admin } },
     progressionDraft: null,
@@ -132,7 +128,7 @@ assert.match(
 
 (async () => {
   const calls = [];
-  const panel = Object.assign(Object.create(Panel.prototype), {
+  const panel = Object.assign(fixturePanel(Panel), {
     entry: "entry-1",
     state: { permissions: { admin: false, control: true } },
     api: async (...args) => calls.push(args),

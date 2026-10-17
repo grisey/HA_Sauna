@@ -1,4 +1,9 @@
+const { panelFixture: fixturePanel } = require("./catalog_fixture.cjs");
 const assert = require("node:assert/strict");
+const {
+  catalog: fixtureCatalog,
+  parameterValues: fixtureValues,
+} = require("./catalog_fixture.cjs");
 const fs = require("node:fs");
 const test = require("node:test");
 const vm = require("node:vm");
@@ -47,13 +52,14 @@ function diagnosticPanel() {
     heating: {},
     energy: {},
   };
-  const p = Object.assign(new Panel(), {
+  const p = Object.assign(fixturePanel(new Panel()), {
     isConnected: true,
     shown: { records, session },
     historyDetail: true,
     state: {
       permissions: { admin: true },
-      configuration: { parameters: { person_step_seconds: 5, door_open_slope: -1 } },
+      configuration: { parameters: fixtureValues() },
+      session,
     },
     window: [Date.parse(at(0)), Date.parse(at(30))],
     $: (selector) => nodes[selector],
@@ -150,7 +156,7 @@ test("archive reset frees the source index and event mappings immediately", () =
   assert.equal(p.cache.size, 0);
 });
 test("record-budget LRU keeps active sources and reloads an evicted archive from zero", async () => {
-  const p = Object.assign(new Panel(), {
+  const p = Object.assign(fixturePanel(new Panel()), {
     entry: "e",
     isConnected: true,
     selected: "a",
@@ -159,18 +165,21 @@ test("record-budget LRU keeps active sources and reloads an evicted archive from
     historyAccessProjection: "admin",
     state: {
       permissions: { admin: true },
-      frontend_defaults: { history_cache_records: 4 },
+      frontend_defaults: fixtureCatalog.frontend,
       session: { timeline: { session_id: "live" } },
     },
-    $: () => ({ hidden: false }),
+    $: () => ({ hidden: false, setAttribute() {}, replaceChildren() {} }),
     drawHistory() {},
+    // This fixture observes archive eviction/loading, not canvas rendering.
+    renderHistory() {},
     syncHistorySessions() {},
     message() {},
   });
   for (const id of ["live", "loading", "a", "b", "c"]) {
     const cache = p.historyCache(id);
-    cache.records.push({ id: 1 }, { id: 2 });
-    cache.after = 2;
+    const recordCount = Math.ceil(fixtureCatalog.frontend.history_cache_records / 2);
+    for (let id = 1; id <= recordCount; id++) cache.records.push({ id });
+    cache.after = recordCount;
     cache.pageRunLoaded = cache.finalSynced = true;
     cache.session = { timeline: { session_id: id }, ended_at: at(30) };
   }
@@ -201,7 +210,7 @@ test("record-budget LRU keeps active sources and reloads an evicted archive from
   assert.equal(p.cache.has("live"), true);
 });
 test("temperature cancellation never commits and capture release during commit does not cancel", async () => {
-  const p = Object.assign(new Panel(), {
+  const p = Object.assign(fixturePanel(new Panel()), {
     drawCurrent() {},
     applyAppearance() {},
     cancelProgramDrag() {},

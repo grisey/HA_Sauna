@@ -1,9 +1,14 @@
+const { panelFixture: fixturePanel } = require("./catalog_fixture.cjs");
 // Display aggregation remains pure data work. Canvas checks below use a
 // functional FakeCanvas only to verify paths and original endpoints, never speed.
 const assert = require("node:assert/strict");
+const {
+  parameterValues: fixtureValues,
+  parameterDefinition: fixtureDefinition,
+} = require("./catalog_fixture.cjs");
 const fs = require("node:fs");
-const appearanceCatalog = JSON.parse(
-  fs.readFileSync("custom_components/ha_sauna/defaults.json", "utf8"),
+const appearanceCatalog = structuredClone(
+  require("./catalog_fixture.cjs").catalog,
 ).appearance;
 const color = (id) =>
   appearanceCatalog.colors.find((item) => item.id === id).default.toLowerCase();
@@ -81,17 +86,17 @@ const record = (second, value, position = "upper", quantity = "temperature") => 
 });
 const session = (seconds) => ({
   ended_at: iso(seconds),
-  configuration: { parameters: { sensor_timeout_seconds: 5 } },
+  configuration: { parameters: fixtureValues() },
   timeline: { session_started_at: iso(0), processed: [], completed: [] },
   heating: { intervals: [] },
 });
 const panel = (seconds, records) =>
-  Object.assign(Object.create(Panel.prototype), {
+  Object.assign(fixturePanel(Panel), {
     positions: new Set(["upper"]),
     window: [base, base + seconds * 1000],
     state: {
       now: iso(seconds),
-      configuration: { parameters: { sensor_timeout_seconds: 5 } },
+      configuration: { parameters: fixtureValues() },
     },
     shown: { records, session: session(seconds) },
   });
@@ -99,6 +104,269 @@ const modelFor = (p, records, seconds, chart) => {
   p.historyIndex(records);
   return p.historyModel(chart, session(seconds));
 };
+
+// Physical gang boundaries belong to the Timeline projection. Booked control
+// timestamps deliberately differ; they cannot fill a missing physical bound.
+{
+  const p = panel(100, [record(0, 60), record(100, 80)]),
+    gang = {
+      gang_id: "physical-gang",
+      started_at: iso(10),
+      ended_at: iso(90),
+      detected_at: iso(30),
+      confirmed: true,
+    },
+    interval = {
+      gang_id: gang.gang_id,
+      started_at: iso(20),
+      ended_at: iso(70),
+      complete: true,
+    },
+    current = p.shown.session;
+  current.timeline.session_id = "physical-session";
+  current.timeline.completed = [gang];
+  current.gang_intervals = [interval];
+  const original = JSON.stringify(gang);
+  let row = p.historyGangRows()[0];
+  assert.equal(row.originalStarted, Date.parse(iso(20)));
+  assert.equal(row.originalEnded, Date.parse(iso(70)));
+  assert.equal(row.durationSeconds, 50);
+  assert.match(row.label, /Vollständig/);
+  row = p.historyGangRows({
+    kind: "range",
+    start: base + 40_000,
+    end: base + 60_000,
+  })[0];
+  assert.equal(row.durationSeconds, 20);
+  assert.match(row.label, /Ausschnitt/);
+  assert.match(row.durationText, /ausgewählt/);
+  const revision = p.updateHistoryTimelineRevision(current);
+  interval.started_at = iso(25);
+  assert.ok(
+    p.updateHistoryTimelineRevision(current) > revision,
+    "a metadata-only boundary correction invalidates the history view",
+  );
+  assert.equal(p.historyGangRows()[0].durationSeconds, 45);
+  for (const replacement of [
+    { ...interval, started_at: null, complete: false },
+    { ...interval, ended_at: null, complete: false },
+    { ...interval, complete: false },
+    { ...interval, gang_id: "foreign-gang" },
+    null,
+  ]) {
+    current.gang_intervals = replacement ? [replacement] : null;
+    row = p.historyGangRows()[0];
+    assert.equal(row.durationSeconds, null);
+    assert.equal(row.durationText, "Dauer nicht belegt");
+    assert.doesNotMatch(row.label, /Vollständig/);
+  }
+  assert.equal(
+    JSON.stringify(gang),
+    original,
+    "booked control and confirmation evidence is immutable",
+  );
+}
+{
+  const p = panel(100, []),
+    current = p.shown.session,
+    gang = {
+      gang_id: "active-physical",
+      started_at: iso(10),
+      ended_at: null,
+      detected_at: iso(35),
+    };
+  current.ended_at = null;
+  current.timeline.session_id = "live-physical-session";
+  current.timeline.active = gang;
+  current.gang_intervals = [
+    { gang_id: gang.gang_id, started_at: iso(25), ended_at: null, complete: false },
+  ];
+  p.state.session = current;
+  p.state.gang_duration_seconds = 40;
+  let row = p.historyGangRows()[0];
+  assert.match(row.label, /Laufend/);
+  assert.equal(
+    row.durationSeconds,
+    40,
+    "running duration consumes the backend value, not now minus a booked start",
+  );
+  assert.equal(row.ended, base + 65_000);
+  p.state.gang_duration_seconds = null;
+  assert.equal(p.historyGangRows()[0].durationSeconds, null);
+  p.state.gang_duration_seconds = 40;
+  p.state.session = { timeline: { session_id: "another-session" } };
+  assert.equal(
+    p.historyGangRows()[0].durationSeconds,
+    null,
+    "another live session cannot supply historical elapsed time",
+  );
+  current.timeline.retracted = [gang];
+  assert.equal(p.historyGangRows().length, 0);
+}
+{
+  const p = panel(100, []),
+    current = p.shown.session;
+  current.timeline.session_id = "selected-physical-session";
+  current.timeline.completed = [
+    { gang_id: "bound-gang", started_at: iso(10), ended_at: iso(90), confirmed: true },
+  ];
+  current.gang_intervals = [
+    { gang_id: "bound-gang", started_at: null, ended_at: iso(70), complete: false },
+  ];
+  const phase = {
+    phase: "saunagang",
+    source_id: "bound-gang",
+    started_at: iso(10),
+    ended_at: iso(70),
+    complete: false,
+  };
+  p.shown.phase_projection = { intervals: [phase] };
+  const selection = {
+    identity: p.historyValueIdentity(),
+    kind: "range",
+    start: base + 10_000,
+    end: base + 70_000,
+  };
+  let content = p.historyInformationContent(selection, phase);
+  assert.equal(content.singleGang, true);
+  assert.equal(content.selectedGang.durationSeconds, null);
+  assert.match(
+    p.historyInformationHeading(selection, phase, "UTC", content),
+    /Dauer nicht belegt/,
+  );
+  content = p.historyInformationContent(selection, { ...phase, source_id: "foreign" });
+  assert.equal(
+    content.singleGang,
+    false,
+    "phase-to-gang attribution requires the original matching identity",
+  );
+}
+
+// Fixed interval oracles use originals, causal boundaries and time weights.
+{
+  const measured = (second, value, position = "upper", quantity = "temperature") => {
+    const item = record(second, value, position, quantity);
+    item.payload.source = `sensor.${position}_${quantity}`;
+    return item;
+  };
+  const records = [
+    measured(0, 60),
+    measured(15, 90),
+    measured(60, 80),
+    measured(0, 50, "lower"),
+    measured(45, 70, "lower"),
+    measured(60, 80, "lower"),
+  ];
+  const p = panel(60, records);
+  p.shown.session.configuration.bindings = {
+    upper_temperature: "sensor.upper_temperature",
+    lower_temperature: "sensor.lower_temperature",
+  };
+  p.shown.session.configuration.parameters.sensor_timeout_seconds = 60;
+  p.shown.session.target_history = [
+    { at: iso(0), target_c: 80 },
+    { at: iso(30), target_c: 100 },
+  ];
+  let result = p.historySectionStatistics(base, base + 60_000, "upper");
+  assert.equal(result.temperature.change, 20);
+  assert.equal(result.temperature.perMinute, 20);
+  assert.equal(result.difference.mean, 27.5);
+  assert.equal(result.target.meanAbsolute, 12.5);
+  assert.equal(result.target.maximum, 10);
+  assert.equal(result.target.minimum, -20);
+  records.push(measured(20, null));
+  result = p.historySectionStatistics(base, base + 60_000, "upper");
+  assert.match(result.temperature.reason, /Messlücke/);
+  assert.match(result.difference.reason, /Messlücke/);
+  assert.ok(result.target.reason);
+  records.push(measured(20, 90));
+  assert.equal(
+    p.historySectionStatistics(base, base + 60_000, "upper").temperature.change,
+    20,
+    "latest same-time original withdraws the null",
+  );
+  p.shown.session.measurement_context = null;
+  assert.match(
+    p.historySectionStatistics(base, base + 60_000, "upper").temperature.reason,
+    /Messkontext/,
+  );
+}
+{
+  const source = (second, value, matches = true) => ({
+    ...record(second, value),
+    payload: { ...record(second, value).payload, source_matches_binding: matches },
+  });
+  const records = [source(0, 80), source(60, 70)];
+  const p = panel(60, records);
+  delete p.shown.session.configuration;
+  p.shown.session.measurement_context = {
+    roles: ["upper_temperature", "upper_humidity"],
+    regulation_position: "upper",
+    sensor_timeout_seconds: 60,
+  };
+  p.state.configuration.parameters.sensor_timeout_seconds = 1;
+  assert.equal(
+    p.historySectionStatistics(base, base + 60_000, "upper").temperature.change,
+    -10,
+    "archived context has priority over current TTL",
+  );
+  records.push(source(30, 78, false));
+  assert.match(
+    p.historySectionStatistics(base, base + 60_000, "upper").temperature.reason,
+    /Messquelle/,
+  );
+  records.pop();
+  p.invalidateHistoryIndex();
+  p.shown.session.measurement_context.sensor_timeout_seconds = 10;
+  assert.match(
+    p.historySectionStatistics(base, base + 60_000, "upper").temperature.reason,
+    /Gültigkeitslücke/,
+  );
+  p.shown.session.measurement_context.sensor_timeout_seconds = 60;
+  const before = p.historySectionStatistics(base - 1, base + 60_000, "upper");
+  assert.match(
+    before.temperature.reason,
+    /Beginn fehlt/,
+    "a future observation cannot establish the original beginning",
+  );
+}
+{
+  const records = [0, 60].flatMap((second) => [
+    {
+      ...record(second, second ? 70 : 80),
+      payload: {
+        ...record(second, second ? 70 : 80).payload,
+        source_matches_binding: true,
+      },
+      display: {
+        absolute_humidity: {
+          value: second ? 8 : 12,
+          received_at: iso(second),
+          valid_until: iso(120),
+        },
+      },
+    },
+    {
+      ...record(second, second ? 20 : 40, "upper", "humidity"),
+      payload: {
+        ...record(second, second ? 20 : 40, "upper", "humidity").payload,
+        source_matches_binding: true,
+      },
+    },
+  ]);
+  const p = panel(60, records);
+  delete p.shown.session.configuration;
+  p.shown.session.measurement_context = {
+    roles: ["upper_temperature", "upper_humidity"],
+    regulation_position: "upper",
+    sensor_timeout_seconds: 60,
+  };
+  assert.equal(
+    p.historySectionStatistics(base, base + 60_000, "upper").humidityLoss.value,
+    0.4,
+    "uses authoritative projected AH values without JS physics",
+  );
+}
 const geometry = {
   width: 1200,
   height: 480,
@@ -140,23 +408,25 @@ const geometry = {
 
 // Missing and stale intervals connect available originals in one Canvas path.
 {
+  const afterTimeout = fixtureValues().sensor_timeout_seconds + 4;
+  const duration = afterTimeout + 1;
   const records = [
     record(0, 70),
     record(1, 71),
     record(2, null),
     record(3, 72),
-    record(20, 73),
+    record(afterTimeout, 73),
   ];
-  const p = panel(30, records);
+  const p = panel(duration, records);
   const chart = {
     prepared: new Map(),
-    domain: [base, base + 30_000],
+    domain: [base, base + duration * 1000],
   };
   const curves = new HistoryCurves(new FakeCanvas(), {
     Path2DClass: FakePath2D,
     styles: curveStyles,
   });
-  curves.update(modelFor(p, records, 30, chart), geometry);
+  curves.update(modelFor(p, records, duration, chart), geometry);
   assert.equal(
     curves.mainPaths
       .get("upper:temperature")
@@ -167,15 +437,17 @@ const geometry = {
 
 // A timeout inside a coarse bucket does not force unbounded raw-point output.
 {
-  const records = [record(0, 20), record(1, 21), record(12, 22)],
-    p = panel(32, records);
+  const ttl = fixtureValues().sensor_timeout_seconds * 1000;
+  const duration = fixtureValues().sensor_timeout_seconds + 3;
+  const records = [record(0, 20), record(1, 21), record(duration - 1, 22)],
+    p = panel(duration, records);
   p.historyIndex(records);
   const display = p.historyDisplayValues(
     "upper",
     "temperature",
     base,
-    base + 32_000,
-    5_000,
+    base + duration * 1000,
+    ttl,
     1,
   );
   assert.ok(display.length <= 3);

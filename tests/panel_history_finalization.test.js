@@ -1,3 +1,4 @@
+const { panelFixture: fixturePanel } = require("./catalog_fixture.cjs");
 const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const path = require("node:path");
@@ -14,9 +15,17 @@ vm.runInNewContext(fs.readFileSync(panelPath, "utf8"), {
   setTimeout,
 });
 
-const openSession = (id = "live") => ({ timeline: { session_id: id } });
+const openSession = (id = "live") => ({
+  timeline: {
+    session_id: id,
+    completed: [],
+    active: null,
+    processed: [],
+    retracted: [],
+  },
+});
 const closedSession = (id = "live") => ({
-  timeline: { session_id: id },
+  ...openSession(id),
   ended_at: "2032-01-01T12:10:00Z",
 });
 const state = (session = openSession()) => ({
@@ -71,8 +80,16 @@ function makePanel(api) {
   const nodes = {
     "#history": { hidden: false },
     "#session": { innerHTML: "" },
+    "#plots": { innerHTML: "" },
+    "#gangs": { innerHTML: "" },
+    "#event-list": { innerHTML: "" },
+    "#detection-plots": { innerHTML: "" },
+    "#control-history": { innerHTML: "" },
+    "[data-history-session-summary]": { innerHTML: "", hidden: true },
+    "[data-history-context-gangs]": { innerHTML: "" },
+    "#history-event-inspection": { textContent: "", hidden: true },
   };
-  const p = Object.assign(Object.create(Panel.prototype), {
+  const p = Object.assign(fixturePanel(Panel), {
     entry: "e",
     generation: 0,
     selected: "live",
@@ -84,6 +101,10 @@ function makePanel(api) {
     $: (selector) => nodes[selector],
     updateMarkup: (selector, html) => (nodes[selector].innerHTML = html),
     errors: {},
+    // Both immediate and scheduled renders use the same transport-fixture sink.
+    renderHistory(reasons) {
+      this.drawHistory(reasons);
+    },
     drawHistory(reason) {
       (this.draws ??= []).push(reason);
     },

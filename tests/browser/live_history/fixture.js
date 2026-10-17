@@ -1,31 +1,43 @@
 /* Synthetic transport only: every panel render/index/gesture method is real. */
-window.installHistoryFixture = async function ({ seconds = 14400 } = {}) {
+window.installHistoryFixture = async function ({
+  seconds,
+  defaults,
+  settings = window.testSettings,
+} = {}) {
+  const inputs = settings.fixtures.history;
+  seconds = seconds ?? inputs.duration_seconds;
+  const initialRecordCount =
+    seconds * inputs.positions.length * inputs.quantities.length;
+  const recordsPerTick =
+    inputs.samples_per_tick * inputs.positions.length * inputs.quantities.length;
   const host = document.createElement("div");
   document.body.append(host);
   const outer = host.attachShadow({ mode: "open" });
-  outer.innerHTML =
-    '<div id="scroll" style="height:960px;overflow:auto"><div id="content"></div><div style="height:600px"></div></div>';
+  outer.innerHTML = `<div id="scroll" style="height:${inputs.outer_height_px}px;overflow:auto"><div id="content"></div><div style="height:${inputs.outer_tail_px}px"></div></div>`;
   const panel = document.createElement("ha-sauna-panel");
+  panel.panel = {
+    config: {
+      appearance_catalog: defaults.appearance,
+      frontend_defaults: defaults.frontend,
+    },
+  };
   outer.querySelector("#content").append(panel);
   panel.entry = "synthetic";
   panel._hass = { user: { name: "Synthetic", is_admin: false } };
   panel.setPanelView("history");
-  const origin = Date.parse("2032-01-01T08:00:00Z"),
+  const origin = Date.parse(inputs.origin),
     iso = (t) => new Date(t).toISOString();
   const records = [];
   const addSecond = (second) => {
-    for (const [index, [position, quantity]] of [
-      ["upper", "temperature"],
-      ["upper", "humidity"],
-      ["lower", "temperature"],
-      ["lower", "humidity"],
-    ].entries()) {
+    for (const [index, [position, quantity]] of inputs.positions
+      .flatMap((position) => inputs.quantities.map((quantity) => [position, quantity]))
+      .entries()) {
       // Different source times remain four independent series, never aligned.
-      const time = origin + second * 1000 + index * 103;
+      const time = origin + second * 1000 + index * inputs.source_offset_ms;
       const value =
-        (quantity === "temperature" ? 72 : 28) +
-        (position === "lower" ? -5 : 0) +
-        Math.sin(second / 47 + index) * 3;
+        inputs[quantity] +
+        (position === "lower" ? inputs.lower_offset : 0) +
+        Math.sin(second / inputs.wave_period_seconds + index) * inputs.wave_amplitude;
       records.push({
         id: records.length + 1,
         kind: "measurement",
@@ -36,24 +48,27 @@ window.installHistoryFixture = async function ({ seconds = 14400 } = {}) {
           value,
           raw_value: String(value),
           received_at: iso(time),
-          measured_at: iso(time - 71),
+          measured_at: iso(time - inputs.measurement_lag_ms),
         },
       });
     }
   };
   for (let i = 0; i < seconds; i++) addSecond(i);
+  const definitions = new Map(defaults.parameters.map((item) => [item.key, item]));
+  const configuredValue = (key) => {
+    const value = definitions.get(key).default;
+    return value && typeof value === "object"
+      ? configuredValue(value.parameter)
+      : value;
+  };
+  const parameters = Object.fromEntries(
+    [...definitions.keys()].map((key) => [key, configuredValue(key)]),
+  );
   const configuration = {
     control_mode: "manual",
     program_mode: "constant",
     temperature_programs: [],
-    parameters: {
-      sensor_timeout_seconds: 5,
-      preset_count: 0,
-      preset_start_c: 70,
-      preset_step_c: 5,
-      session_light_brightness_percent: 50,
-      manual_override_minutes: 10,
-    },
+    parameters,
   };
   let session = {
     ended_at: null,
@@ -67,8 +82,13 @@ window.installHistoryFixture = async function ({ seconds = 14400 } = {}) {
       retracted: [],
     },
     heating: {
-      intervals: [{ started_at: iso(origin), ended_at: iso(origin + 300000) }],
-      elapsed_seconds: 300,
+      intervals: [
+        {
+          started_at: iso(origin),
+          ended_at: iso(origin + inputs.heating_seconds * 1000),
+        },
+      ],
+      elapsed_seconds: inputs.heating_seconds,
     },
   };
   const projection = () => ({
@@ -85,11 +105,38 @@ window.installHistoryFixture = async function ({ seconds = 14400 } = {}) {
     now: iso(origin + seconds * 1000),
     session,
     configuration,
-    parameters: [{ key: "target_temperature_c", minimum: 30, maximum: 100 }],
+    frontend_defaults: defaults.frontend,
+    appearance_catalog: defaults.appearance,
+    appearance: {
+      preferences: Object.fromEntries(
+        Object.entries(defaults.appearance.preferences)
+          .filter(([, spec]) => spec.configuration_surface === "panel")
+          .map(([key, spec]) => [key, spec.default]),
+      ),
+    },
+    configuration_model: {
+      measurement_positions: inputs.positions,
+      presence: { source: "proxy", direct: false, observer: false },
+      button: { session_gestures: [] },
+      regulation_causes: [],
+    },
+    temperature_control: {
+      scope: "current",
+      value: parameters.target_temperature_c,
+      current_target: parameters.target_temperature_c,
+      next_target: parameters.target_temperature_c,
+      program_mode: "constant",
+    },
+    parameters: [
+      {
+        ...definitions.get("target_temperature_c"),
+        minimum: parameters.sauna_min_temperature_c,
+      },
+    ],
     measurements: [],
     measurement_status: {},
 
-    manual_controls: { light: { normal: 25 }, heater: {} },
+    manual_controls: { light: { normal: inputs.normal_light }, heater: {} },
     permissions: { admin: false, control: true, light: true, temperature: true },
     configuration_locked: true,
     issues: [],
@@ -101,15 +148,22 @@ window.installHistoryFixture = async function ({ seconds = 14400 } = {}) {
     gang_count: 0,
     energy_kwh: 0,
     energy_source: "estimated",
-    target_temperature: 80,
+    target_temperature: parameters.target_temperature_c,
   };
   state.phase_projection = projection();
   let delay = 0,
     fail = 0,
     requests = [],
-    pageSize = 1000;
+    pageSize = inputs.page_size;
   panel.api = async (path) => {
-    if (path.endsWith("/state")) return structuredClone(state);
+    if (path.split("?")[0].endsWith("/state")) {
+      const response = structuredClone(state);
+      if (
+        new URL(path, "http://fixture").searchParams.get("include_catalog") === "false"
+      )
+        delete response.appearance_catalog;
+      return response;
+    }
     if (path.endsWith("/archive"))
       return [
         {
@@ -164,12 +218,12 @@ window.installHistoryFixture = async function ({ seconds = 14400 } = {}) {
     spy(panel, name);
   const frame = () => new Promise((resolve) => requestAnimationFrame(() => resolve()));
   const settle = async () => {
-    await frame();
-    await frame();
-    await frame();
+    for (let count = 0; count < settings.browser.settle_frames; count++) await frame();
   };
   const refresh = async () => {
-    await panel.refresh();
+    // Deliver this explicit fixture batch immediately. Background polling is
+    // exercised separately with refresh() and its real refresh interval.
+    await panel.refresh(true);
     await panel.historyLoad?.promise;
     await settle();
   };
@@ -182,28 +236,27 @@ window.installHistoryFixture = async function ({ seconds = 14400 } = {}) {
   let rendered = panel.historyChart,
     canvas = panel.$("canvas.history-curves"),
     surface = panel.$("svg.session-chart"),
-    overview = panel.$("#history-overview svg");
+    timeAxis = panel.$("[data-history-time-axis]");
   const identity = () => ({
     hasInstance: !!panel.historyChart,
     hasCanvas: !!panel.$("canvas.history-curves"),
     instance: rendered === panel.historyChart,
     canvas: canvas === panel.$("canvas.history-curves"),
     surface: surface === panel.$("svg.session-chart"),
-    overview: overview === panel.$("#history-overview svg"),
+    timeAxis: !!timeAxis && timeAxis === panel.$("[data-history-time-axis]"),
   });
   const reset = () => {
     for (const key of Object.keys(measurements)) delete measurements[key];
     for (const key of Object.keys(counts)) delete counts[key];
   };
   const tick = async () => {
-    addSecond(seconds++);
-    addSecond(seconds++);
+    for (let count = 0; count < inputs.samples_per_tick; count++) addSecond(seconds++);
     state.now = iso(origin + seconds * 1000);
     state.phase_projection = projection();
     await refresh();
   };
   const status = async () => {
-    state.now = iso(Date.parse(state.now) + 2000);
+    state.now = iso(Date.parse(state.now) + panel.preference("status_active_poll_ms"));
     state.phase_projection = projection();
     panel.state = structuredClone(state);
     panel.showHistoryCache?.();
@@ -212,6 +265,9 @@ window.installHistoryFixture = async function ({ seconds = 14400 } = {}) {
   };
   return {
     panel,
+    inputs,
+    initialRecordCount,
+    recordsPerTick,
     host,
     outer,
     records,
@@ -267,7 +323,13 @@ window.installHistoryFixture = async function ({ seconds = 14400 } = {}) {
     },
     assertClean() {
       if (panel.messages?.refresh || panel.messages?.history)
-        throw Error(JSON.stringify(panel.messages));
+        throw Error(
+          JSON.stringify(panel.messages, (_key, value) =>
+            value instanceof Error
+              ? { message: value.message, stack: value.stack }
+              : value,
+          ),
+        );
     },
   };
 };

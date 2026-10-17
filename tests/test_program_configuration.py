@@ -6,12 +6,17 @@ from pathlib import Path
 import tempfile
 import unittest
 from types import SimpleNamespace
+from unittest.mock import Mock
+
+from model_input_evidence import emit_model_input_evidence
+from test_settings import async_timeout
 
 from custom_components.ha_sauna import async_options_updated
 from custom_components.ha_sauna.archive import Archive, plain
 from custom_components.ha_sauna.bindings import ROLES, Bindings
 from custom_components.ha_sauna.const import CONF_BINDINGS, CONF_PARAMETERS
 from custom_components.ha_sauna.core.defaults import instance_default
+from custom_components.ha_sauna.core.configuration_model import ConfigurationModel
 from custom_components.ha_sauna.core.parameters import (
     BY_KEY,
     EDITABLE_DEFINITIONS,
@@ -53,7 +58,84 @@ def options(parameters=None, **configuration):
     }
 
 
+class _NativeButtonRuntime(SaunaRuntime):
+    """Configuration fixture for metadata normally supplied by the event entity."""
+
+    @property
+    def configuration_model(self):
+        return ConfigurationModel.from_configuration(
+            self.configuration,
+            button_event_types=(
+                "btn_down", "btn_up", "single_push", "long_push",
+                "double_push", "triple_push",
+            ),
+        )
+
+
 class ProgramConfigurationTests(unittest.TestCase):
+    def test_notification_actor_reports_effective_temperature_and_mode_changes(self):
+        from custom_components.ha_sauna.core.notification_recipients import ActorRef
+
+        async def exercise():
+            runtime = SaunaRuntime(Configuration.from_options(options()), clock=lambda: T0)
+            entry = SimpleNamespace(runtime_data=runtime,
+                                    options=runtime.configuration.as_options())
+            hass = _FakeHass()
+            await async_set_program(hass, entry, runtime.configuration.temperature_programs[0].id)
+            runtime._set_operation(True)
+            actor = ActorRef("user-a", "ha_authenticated_request")
+            runtime._record_notification_participant = Mock()
+            await async_set_parameters(hass, entry, {"target_temperature_c": 88.5},
+                                       partial=True, actor=actor)
+            runtime._record_notification_participant.assert_called_once_with(actor)
+            runtime._record_notification_participant.reset_mock()
+            await async_set_parameters(hass, entry, {"target_temperature_c": 88.5},
+                                       partial=True, actor=actor)
+            runtime._record_notification_participant.assert_not_called()
+            with self.assertRaises(ParameterError):
+                await async_set_parameters(hass, entry, {"target_temperature_c": "invalid"},
+                                           partial=True, actor=actor)
+            runtime._record_notification_participant.assert_not_called()
+            with self.assertRaisesRegex(ValueError, "ausgeschaltetem Automatikbetrieb"):
+                await async_set_control_mode(hass, entry, "manual", actor=actor)
+            runtime._record_notification_participant.assert_not_called()
+            self.assertEqual(runtime.configuration.control_mode, "automatic")
+            runtime._set_operation(False)
+            self.assertTrue(runtime.controller.control_mode_change_allowed)
+            await async_set_control_mode(hass, entry, "manual", actor=actor)
+            runtime._record_notification_participant.assert_called_once_with(actor)
+            runtime._record_notification_participant.reset_mock()
+            await async_set_control_mode(hass, entry, "manual", actor=actor)
+            runtime._record_notification_participant.assert_not_called()
+            await runtime.close()
+
+        asyncio.run(exercise())
+
+    def test_configuration_exposes_source_neutral_regulation(self):
+        for mode, source, policy in (
+            ("automatic", "ha_presence", "evidence_quality"),
+            ("automatic", "proxy", "evidence_quality"),
+            ("manual", "ha_presence", "none"),
+            ("manual", "proxy", "none"),
+        ):
+            with self.subTest(mode=mode, source=source):
+                configured = options(control_mode=mode, presence_source=source)
+                configured[CONF_BINDINGS]["presence"] = "binary_sensor.presence"
+                model = ConfigurationModel.from_configuration(
+                    Configuration.from_options(configured),
+                )
+                self.assertEqual(model.cooling_presence_policy, policy)
+                self.assertEqual(model.as_dict()["cooling_presence_policy"], policy)
+                causes = (
+                    ("gang_heat", "provisional_door_heat", "cooling")
+                    if mode == "automatic" else ()
+                )
+                self.assertEqual(model.regulation_causes, causes)
+                self.assertEqual(
+                    model.as_dict()["regulation_causes"], causes,
+                )
+                self.assertNotIn("gang_start_interrupts_cooling", model.as_dict())
+
     def test_live_target_only_preserves_named_program_options_and_archive(self):
         async def exercise(directory):
             runtime = SaunaRuntime(Configuration.from_options(options()), clock=lambda: T0)
@@ -76,10 +158,10 @@ class ProgramConfigurationTests(unittest.TestCase):
                 self.assertEqual(runtime.controller.target_temperature, 89)
                 self.assertEqual(runtime.controller.next_gang_temperature, 89)
                 self.assertEqual(runtime.session.timeline.gang_count, 0)
-                await asyncio.wait_for(archive.flush(), timeout=10)
+                await asyncio.wait_for(archive.flush(), timeout=async_timeout("reload"))
                 stored = archive.read(runtime.session.session_id)["session"]
                 self.assertEqual(stored["next_gang_temperature_c"], 89)
-                self.assertEqual(stored["configuration"], plain(configuration.as_options()))
+                self.assertEqual(stored["configuration"], plain(configuration.as_snapshot()))
                 for value in (True, float("nan"),
                               configuration.parameters.minimum_for("target_temperature_c") - .1,
                               BY_KEY["target_temperature_c"].maximum + .1):
@@ -144,7 +226,7 @@ class ProgramConfigurationTests(unittest.TestCase):
                          instance_default("button_session_gesture"))
 
     def test_button_gesture_save_resets_pending_input_and_keeps_session_lock(self):
-        runtime = SaunaRuntime(
+        runtime = _NativeButtonRuntime(
             Configuration.from_options(options(control_input_mode="button")), clock=lambda: T0
         )
         entry = SimpleNamespace(runtime_data=runtime, options=runtime.configuration.as_options())
@@ -160,7 +242,7 @@ class ProgramConfigurationTests(unittest.TestCase):
         self.assertEqual(entry.options["button_session_gesture"], "double")
 
     def test_button_gesture_change_waits_for_end_hold_release(self):
-        runtime = SaunaRuntime(
+        runtime = _NativeButtonRuntime(
             Configuration.from_options(options(control_input_mode="button")), clock=lambda: T0
         )
         entry = SimpleNamespace(runtime_data=runtime, options=runtime.configuration.as_options())
@@ -168,6 +250,9 @@ class ProgramConfigurationTests(unittest.TestCase):
         runtime.controller.set_operation(True, T0)
         asyncio.run(runtime._handle_button_event("press", T0))
         asyncio.run(runtime._handle_button_event("long", T0))
+        self.assertFalse(runtime.session.operation_enabled)
+        # Isolate the outstanding physical release from the recording lock.
+        runtime.controller.finish_session(T0)
         self.assertIsNone(runtime.session)
         with self.assertRaises(ConfigurationLocked):
             asyncio.run(async_set_button_gesture(hass, entry, "double"))
@@ -177,16 +262,15 @@ class ProgramConfigurationTests(unittest.TestCase):
         self.assertEqual(entry.options["button_session_gesture"], "double")
 
     def test_button_gesture_change_preserves_start_release_after_external_finish(self):
-        runtime = SaunaRuntime(
+        runtime = _NativeButtonRuntime(
             Configuration.from_options(options(control_input_mode="button")), clock=lambda: T0
         )
         entry = SimpleNamespace(runtime_data=runtime, options=runtime.configuration.as_options())
         asyncio.run(runtime._handle_button_event("press", T0))
         asyncio.run(runtime._handle_button_event("long", T0))
         asyncio.run(runtime.set_operation(False))
-        token = next(deadline.token for deadline in runtime.session.deadlines
-                     if deadline.purpose == "session_gap")
-        asyncio.run(runtime.finish_session_gap(token))
+        # A deliberate internal finalization isolates the stale release guard.
+        runtime.controller.finish_session(T0)
         self.assertIsNone(runtime.session)
         with self.assertRaises(ConfigurationLocked):
             asyncio.run(async_set_button_gesture(_FakeHass(), entry, "double"))
@@ -247,15 +331,22 @@ class ProgramConfigurationTests(unittest.TestCase):
         asyncio.run(async_set_temperature_steps(hass, entry, [80.5, 82.5, 89.49]))
         self.assertEqual(runtime.configuration.temperature_steps, (81, 83, 89))
         self.assertEqual(entry.options["temperature_steps"], (81, 83, 89))
-        for value in (59.9, 100.1):
+        for value in (
+            runtime.configuration.parameters.minimum_for("target_temperature_c") - .1,
+            BY_KEY["target_temperature_c"].maximum + .1,
+        ):
             before = dict(entry.options)
             with self.subTest(value=value), self.assertRaises(ValueError):
                 asyncio.run(async_set_temperature_steps(hass, entry, [80, value]))
             self.assertEqual(entry.options, before)
 
     def test_target_bounds_apply_before_and_after_rounding(self):
-        for value in (59.9, 100.1):
-            for key in ("target_temperature_c", "final_temperature_c", "preset_start_c"):
+        parameters = Parameters({})
+        for key in ("target_temperature_c", "final_temperature_c", "preset_start_c"):
+            for value in (
+                parameters.minimum_for(key) - .1,
+                BY_KEY[key].maximum + .1,
+            ):
                 with self.subTest(value=value, key=key), self.assertRaises(ParameterError):
                     Parameters({key: value})
         with self.assertRaises(ParameterError):
@@ -629,10 +720,25 @@ class ProgramConfigurationTests(unittest.TestCase):
     def test_entering_manual_uses_standard_without_replacing_later_choice(self):
         runtime = SaunaRuntime(Configuration.from_options(options({
             "standard_temperature_c": 87, "target_temperature_c": 74,
-        })))
+        })), clock=lambda: T0)
+        consume = Mock(wraps=runtime.controller.consume_control_mode_input)
+        runtime.controller.consume_control_mode_input = consume
+        previous_session_id = runtime.session.session_id if runtime.session else None
         runtime._set_control_mode("manual")
+        emit_model_input_evidence(
+            self.id() + "/initial_manual", runtime, [consume.call_args.args[0]],
+            previous_session_id=previous_session_id,
+        )
         self.assertEqual(runtime.controller.target_temperature, 87)
         self.assertEqual(runtime.configuration.parameters.values["target_temperature_c"], 87)
+        self.assertFalse(runtime.controller.heater_override)
+        self.assertIsNone(runtime.session)
+        value = consume.call_args.args[0]
+        self.assertEqual(value.mode, "manual")
+        self.assertIsNone(value.timing.effective_at)
+        self.assertIsNone(value.timing.received_at)
+        self.assertIsNone(value.timing.first_usable_at)
+        self.assertEqual(value.timing.evaluated_at, T0)
         changed = Parameters({
             **runtime.configuration.parameters.as_dict(), "target_temperature_c": 82,
         })
@@ -665,10 +771,91 @@ class ProgramConfigurationTests(unittest.TestCase):
             self.assertEqual(runtime.controller.target_temperature, original_target)
             self.assertEqual(runtime.configuration.selected_program_id, program.id)
             self.assertEqual(entry.options["selected_program_id"], program.id)
-            self.assertEqual(entry.options["parameters"], original)
+            self.assertEqual(
+                entry.options["parameters"],
+                runtime.configuration.parameters.as_options(),
+            )
             reloaded = Configuration.from_options(entry.options)
             self.assertEqual(reloaded.parameters.as_dict(), original)
             self.assertEqual(reloaded.selected_program_id, program.id)
+
+        asyncio.run(exercise())
+
+    def test_waiting_mode_commands_preserve_receipt_program_and_recording(self):
+        async def exercise():
+            now = T0
+            runtime = SaunaRuntime(Configuration.from_options(options({
+                "standard_temperature_c": 89,
+            })), clock=lambda: now)
+            entry = SimpleNamespace(
+                runtime_data=runtime, options=runtime.configuration.as_options(),
+            )
+            hass = _FakeHass()
+            program = runtime.configuration.temperature_programs[0]
+            await async_set_program(hass, entry, program.id)
+            original_parameters = runtime.configuration.parameters.as_dict()
+            runtime.controller.set_temperature(60, now)
+            consume = Mock(wraps=runtime.controller.consume_control_mode_input)
+            runtime.controller.consume_control_mode_input = consume
+
+            async def change_mode(mode):
+                nonlocal now
+                received_at = now
+                previous_session_id = (
+                    runtime.session.session_id if runtime.session else None
+                )
+                await runtime._lock.acquire()
+                pending = asyncio.create_task(async_set_control_mode(hass, entry, mode))
+                await asyncio.sleep(0)
+                now += timedelta(seconds=5)
+                runtime._lock.release()
+                configuration = await pending
+                emit_model_input_evidence(
+                    self.id(), runtime, [consume.call_args.args[0]],
+                    previous_session_id=previous_session_id,
+                )
+                self.assertEqual(configuration.control_mode, mode)
+                return received_at, now
+
+            received_manual, manual_at = await change_mode("manual")
+            self.assertEqual(runtime.controller.target_temperature, 89)
+            self.assertFalse(runtime.controller.last_decision.heat)
+            self.assertFalse(runtime.controller.heater_override)
+            self.assertIsNone(runtime.session)
+            now += timedelta(seconds=1)
+            await runtime.set_heater_override(True)
+            identity = runtime.session.session_id
+            started_at = runtime.session.timeline.session_started_at
+            self.assertTrue(runtime.controller.last_decision.heat)
+            now += timedelta(seconds=1)
+            await runtime.set_heater_override(False)
+            stopped_at = now
+            deadline = next(d for d in runtime.session.deadlines if d.purpose == "session_gap")
+            now += timedelta(seconds=1)
+            received_automatic, automatic_at = await change_mode("automatic")
+            self.assertEqual(runtime.configuration.parameters.as_dict(), original_parameters)
+            self.assertEqual(
+                entry.options["parameters"],
+                runtime.configuration.parameters.as_options(),
+            )
+            self.assertEqual(runtime.configuration.selected_program_id, program.id)
+            self.assertEqual(runtime.session.session_id, identity)
+            self.assertEqual(runtime.session.timeline.session_started_at, started_at)
+            self.assertEqual(runtime.session.operation_off_at, stopped_at)
+            self.assertIn(deadline, runtime.session.deadlines)
+            self.assertIsNone(runtime.controller.heater_override)
+            self.assertFalse(runtime.controller.last_decision.heat)
+            self.assertEqual(runtime.controller.completed_sessions, ())
+            for call, mode, received_at, evaluated_at in zip(
+                consume.call_args_list, ("manual", "automatic"),
+                (received_manual, received_automatic), (manual_at, automatic_at), strict=True,
+            ):
+                value = call.args[0]
+                self.assertEqual(value.mode, mode)
+                self.assertEqual(value.timing.effective_at, received_at)
+                self.assertEqual(value.timing.received_at, received_at)
+                self.assertIsNone(value.timing.first_usable_at)
+                self.assertEqual(value.timing.evaluated_at, evaluated_at)
 
         asyncio.run(exercise())
 
@@ -730,7 +917,11 @@ class ProgramConfigurationTests(unittest.TestCase):
         self.assertEqual(Configuration.from_options(configuration.as_options()), configuration)
         with self.assertRaises(ValueError):
             Configuration(
-                Bindings(bindings()), Parameters({}), temperature_steps=(59, 80)
+                Bindings(bindings()), Parameters({}),
+                temperature_steps=(
+                    configuration.parameters.minimum_for("target_temperature_c") - .1,
+                    80,
+                ),
             )
 
     def test_manual_steps_use_the_live_program_path_and_direct_target_clears_them(self):
@@ -851,6 +1042,13 @@ class ProgramConfigurationTests(unittest.TestCase):
         self.assertEqual(runtime.configuration.temperature_programs[0].name, "Abendruhe")
 
     def test_reset_restores_all_software_options_but_not_hardware_inputs(self):
+        from custom_components.ha_sauna.core.notification_recipients import (
+            RecipientAssignment, RecipientRef,
+        )
+
+        assignments = (RecipientAssignment("user-a", frozenset({
+            RecipientRef("entity", "notify.test", "home_assistant"),
+        })),)
         configuration = Configuration(
             Bindings(bindings()),
             Parameters({"nominal_power_kw": 7, "session_gap_minutes": 17}),
@@ -860,6 +1058,7 @@ class ProgramConfigurationTests(unittest.TestCase):
             button_program="genusszeit",
             selected_program_id="genusszeit",
             control_mode="manual",
+            notification_assignments=assignments,
         )
         runtime = SaunaRuntime(configuration)
         entry = SimpleNamespace(runtime_data=runtime, options=configuration.as_options())
@@ -879,6 +1078,7 @@ class ProgramConfigurationTests(unittest.TestCase):
         self.assertEqual(reset.selected_program_id, None)
         self.assertEqual(reset.control_mode, "automatic")
         self.assertEqual(reset.bindings, configuration.bindings)
+        self.assertEqual(reset.notification_assignments, assignments)
         self.assertEqual(reset.control_input_mode, "button")
         self.assertEqual(reset.button_event_type, "press")
         self.assertTrue(runtime.reconfiguring)

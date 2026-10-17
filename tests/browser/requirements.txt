@@ -15,6 +15,9 @@ pyspeex-noise==1.0.2
 mutagen==1.48.1
 ha-ffmpeg==3.2.2
 PyTurboJPEG==1.8.3
+# Stream imports reached by the real optional mobile_app device-action fixture.
+av==19.0.0
+numpy==2.3.2
 # Recorder requirements from the same target Core manifest.
 SQLAlchemy==2.0.54
 fnv-hash-fast==2.0.3

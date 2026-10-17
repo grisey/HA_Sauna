@@ -1,0 +1,475 @@
+const { panelFixture: fixturePanel } = require("./catalog_fixture.cjs");
+const assert = require("node:assert/strict");
+const fs = require("node:fs");
+const vm = require("node:vm");
+const test = require("node:test");
+const { parameterValues, preferences } = require("./catalog_fixture.cjs");
+let Panel;
+vm.runInNewContext(fs.readFileSync("custom_components/ha_sauna/panel.js", "utf8"), {
+  HTMLElement: class {},
+  customElements: { get: () => null, define: (_name, value) => (Panel = value) },
+});
+const iso = (second) => new Date(Date.UTC(2026, 9, 12, 10, 0, second)).toISOString();
+const record = (id, kind, payload) => ({ id, kind, received_at: iso(id), payload });
+const panel = () =>
+  Object.assign(fixturePanel(Panel), {
+    state: {
+      permissions: { admin: true },
+      configuration: { parameters: parameterValues() },
+    },
+  });
+const light = (id, brightness, extra = {}) =>
+  record(id, "light_command", {
+    phase: "aufheizen",
+    purpose: "aufheizen",
+    brightness_pct: brightness,
+    service: "turn_on",
+    sent_at: iso(id),
+    completed_at: iso(id),
+    service_error: null,
+    ...extra,
+  });
+
+test("manual heater ends bind original selection and session, including a later page", () => {
+  const p = panel(),
+    selection = {
+      selection_id: "choice-1",
+      session_id: "original",
+      at: iso(1),
+      value: false,
+      control_mode: "manual",
+    },
+    start = {
+      ...record(1, "manual_heater", {
+        value: false,
+        selection_id: selection.selection_id,
+        selection,
+      }),
+      session_id: "original",
+    },
+    end = {
+      ...record(12, "manual_heater", {
+        ends_previous_only: true,
+        selection_id: selection.selection_id,
+        change: {
+          selection_id: selection.selection_id,
+          session_id: "original",
+          started_at: iso(1),
+          at: iso(8),
+          previous_value: false,
+          control_mode: "manual",
+          reason: "selection_replaced",
+        },
+      }),
+      session_id: "original",
+    };
+  const records = [
+    start,
+    record(3, "decision", { at: iso(3), heat: true, reason: "operation_off" }),
+  ];
+  assert.match(
+    p.historyManualActivity(records).get(start).detail,
+    /kein Gültigkeitsende belegt/,
+  );
+  records.push(end);
+  let item = p.historyManualActivity(records).get(start);
+  assert.equal(
+    item.endedAt,
+    Date.parse(iso(8)),
+    "original end time wins over archive receipt",
+  );
+  assert.equal(item.endReason, "Neue Auswahl");
+  assert.equal(
+    p.historyAdditionalActivity(records).filter((item) => item.label === "Ofenwahl")
+      .length,
+    1,
+    "end-only is no second intervention",
+  );
+  const foreign = structuredClone(end);
+  foreign.session_id = foreign.payload.change.session_id = "other-session";
+  assert.equal(p.historyManualActivity([start, foreign]).get(start).endedAt, undefined);
+  const contradiction = structuredClone(end);
+  contradiction.payload.change.started_at = iso(0);
+  item = p.historyManualActivity([start, end, contradiction]).get(start);
+  assert.equal(item.endedAt, undefined);
+  assert.match(item.detail, /widersprüchliche Endbelege/);
+  const outside = structuredClone(start),
+    outsideEnd = structuredClone(end);
+  outside.session_id = outside.payload.selection.session_id = null;
+  outsideEnd.session_id = outsideEnd.payload.change.session_id = null;
+  assert.equal(
+    p.historyManualActivity([outside, outsideEnd]).get(outside).endedAt,
+    Date.parse(iso(8)),
+    "genuine absent session is retained",
+  );
+});
+
+test("diagnostic snapshots count incident starts, retain status changes and partial clearances", () => {
+  const records = [
+    record(1, "diagnostic", { faults: {}, messages: [] }),
+    record(2, "diagnostic", {
+      faults: { heater: "pending" },
+      messages: ["Heizung wird geprüft"],
+    }),
+    record(3, "diagnostic", {
+      faults: { heater: "confirmed" },
+      messages: ["Heizung bestätigt"],
+    }),
+    record(4, "diagnostic", {
+      faults: { heater: "confirmed", light: "failed" },
+      messages: ["Heizung bestätigt", "Lichtfehler"],
+    }),
+    record(5, "diagnostic", { faults: { light: "failed" }, messages: ["Lichtfehler"] }),
+    record(6, "diagnostic", { faults: {}, messages: [] }),
+    record(7, "diagnostic", {
+      faults: { heater: "pending" },
+      messages: ["Heizung erneut geprüft"],
+    }),
+  ];
+  const original = JSON.stringify(records),
+    p = panel();
+  const result = p.historyFaultEvents(records);
+  assert.equal(result.count, 3);
+  assert.deepEqual(
+    Array.from(result.events, (event) => event.label),
+    [
+      "Fehler aufgetreten",
+      "Fehlerstatus geändert",
+      "Fehler aufgetreten",
+      "Entwarnung",
+      "Entwarnung",
+      "Fehler aufgetreten",
+    ],
+  );
+  assert.equal(new Set(result.events.map((event) => event.id)).size, 6);
+  assert.equal(JSON.stringify(records), original);
+  assert.match(p.historyFaultMarkup(records.slice(0, 1)), /data-fault-count="0"/);
+  assert.doesNotMatch(
+    p.historyFaultMarkup(records.slice(0, 1)),
+    /Historisch|Keine Störung gemeldet/,
+  );
+  p.state.permissions.admin = false;
+  assert.equal(
+    p.historyFaultMarkup([]),
+    "",
+    "public history is not evidence of fault freedom",
+  );
+});
+
+test("light ramps keep recorded boundaries, manual interruptions and every failure", () => {
+  const records = [
+    light(1, 10),
+    light(2, 30),
+    light(3, 50),
+    record(4, "manual_light", { value: 20 }),
+    light(5, 20),
+    light(6, 20, { service_error: "TimeoutError" }),
+    light(7, 20),
+    record(8, "phase", { phase: "bereit" }),
+    light(9, 60, { phase: "bereit", purpose: "bereit" }),
+    light(10, null, {
+      service: "turn_off",
+      phase: "session_light",
+      purpose: "session_end",
+    }),
+  ];
+  const p = panel(),
+    original = JSON.stringify(records);
+  const activity = p.historyLightActivity(records);
+  assert.equal(activity.length, 6);
+  assert.equal(activity[0].records.length, 3);
+  assert.equal(activity[0].first, records[0]);
+  assert.equal(activity[0].last, records[2]);
+  assert.match(activity[0].detail, /letzter belegter Wert/);
+  assert.equal(activity.filter((event) => event.error).length, 1);
+  assert.equal(activity.at(-1).label, "Lichtbefehl Aus");
+  assert.doesNotMatch(activity.at(-1).label, /ausgeschaltet/);
+  assert.equal(JSON.stringify(records), original);
+  const open = p.historyLightActivity([light(1, 10), light(2, 20)]);
+  assert.match(open[0].detail, /kein Abschluss belegt/);
+  const appended = p.historyLightActivity([light(1, 10), light(2, 20), light(3, 30)]);
+  assert.equal(open[0].id, appended[0].id);
+  const late = p.historyLightActivity([
+    light(1, 10),
+    light(2, 20),
+    light(3, 5, { sent_at: iso(0) }),
+  ]);
+  assert.equal(
+    late[0].id,
+    open[0].id,
+    "earlier sent command arriving later preserves section identity",
+  );
+  assert.equal(late[0].first.payload.brightness_pct, 5);
+  assert.equal(late[0].last.payload.brightness_pct, 20);
+  assert.match(
+    p.historyLightActivity([light(1, null)])[0].detail,
+    /Helligkeit nicht aufgezeichnet/,
+  );
+  assert.equal(p.historyLightValue(light(1, 0)), "0 %");
+});
+
+test("values retain missing sources and use authoritative power projection without unit assumptions", () => {
+  const records = [
+    record(1, "measurement", {
+      position: "upper",
+      quantity: "temperature",
+      value: 0,
+      received_at: iso(1),
+    }),
+    record(2, "measurement", {
+      position: "upper",
+      quantity: "temperature",
+      value: null,
+      received_at: iso(2),
+    }),
+    {
+      ...record(3, "source_state", {
+        role: "heater_power",
+        state: "6",
+        attributes: { unit_of_measurement: "kW" },
+      }),
+      display: { power_w: 6000 },
+    },
+    {
+      ...record(4, "source_state", {
+        role: "heater_power",
+        state: "2",
+        attributes: { unit_of_measurement: "MW" },
+      }),
+      display: { power_w: null },
+    },
+    record(5, "source_state", { role: "heater_power", state: "2", attributes: {} }),
+    record(6, "illuminance", { state: "0", attributes: { unit_of_measurement: "lx" } }),
+    record(7, "illuminance", { state: "2", attributes: { unit_of_measurement: "fc" } }),
+  ];
+  const p = panel();
+  const series = p.historyValueSeries(records);
+  const power = series.find((item) => item.key === "power");
+  assert.deepEqual(
+    Array.from(power.values, (point) => point.value),
+    [6000, null, null],
+  );
+  assert.equal(
+    series.find((item) => item.key === "upper:temperature").values[0].value,
+    0,
+  );
+  assert.equal(series.filter((item) => item.key.startsWith("illuminance:")).length, 2);
+  assert.match(
+    p.renderHistoryValues(
+      records,
+      Date.parse(iso(0)),
+      Date.parse(iso(10)),
+      Date.parse(iso(2)),
+    ),
+    /Quelle nicht aufgezeichnet/,
+  );
+  records.push(
+    record(8, "measurement", {
+      position: "upper",
+      quantity: "temperature",
+      value: 42,
+      received_at: iso(8),
+    }),
+  );
+  const next = p.historyValueSeries(records);
+  assert.equal(
+    next.find((item) => item.key === "power"),
+    power,
+    "unchanged series keeps its identity",
+  );
+  assert.equal(
+    next.find((item) => item.key === "upper:temperature").values.at(-1).value,
+    42,
+  );
+});
+
+test("detail plots consume catalog geometry for curves, cursor and labels", () => {
+  const p = panel();
+  const geometry = {
+    detail_plot_width_px: 680,
+    detail_plot_height_px: 160,
+    detail_plot_side_padding_px: 40,
+    detail_plot_right_padding_px: 40,
+    detail_plot_top_padding_px: 30,
+    detail_plot_bottom_padding_px: 30,
+    detail_axis_top_padding_px: 20,
+    detail_axis_bottom_padding_px: 20,
+    detail_value_label_top_padding_px: 32,
+    detail_time_label_bottom_padding_px: 5,
+    detail_curve_width_px: 2.5,
+  };
+  for (const [key, value] of Object.entries(geometry))
+    p.panel.config.appearance_catalog.preferences[key].default = value;
+  const records = [
+    record(0, "measurement", {
+      position: "upper",
+      quantity: "temperature",
+      value: 10,
+    }),
+    record(10, "measurement", {
+      position: "upper",
+      quantity: "temperature",
+      value: 20,
+    }),
+  ];
+  const html = p.renderHistoryValues(
+    records,
+    Date.parse(iso(0)),
+    Date.parse(iso(10)),
+    Date.parse(iso(0)) + 2500,
+  );
+  assert.match(html, /viewBox="0 0 680 160"/);
+  assert.match(html, /d="M40\.00,130\.00 L640\.00,30\.00"[^>]*stroke-width="2\.5"/);
+  assert.match(html, /<line x1="190" x2="190" y1="20" y2="140"/);
+  assert.match(html, /<text x="0" y="32">20/);
+  assert.match(html, /<text x="0" y="140">10/);
+  assert.match(html, /<text x="40" y="155">/);
+  assert.match(html, /<text x="640" y="155" text-anchor="end">/);
+});
+
+test("record access consumes configured page sizes and keeps all pages reachable", () => {
+  const defaults = preferences();
+  for (const change of [0, 1]) {
+    const p = panel();
+    const recordPage = defaults.detail_records_per_page + change;
+    const eventPage = defaults.detail_events_per_page + change;
+    p.state.appearance = {
+      preferences: {
+        ...defaults,
+        detail_records_per_page: recordPage,
+        detail_events_per_page: eventPage,
+      },
+    };
+    const remaining = 13;
+    const total = recordPage * 2 + remaining;
+    const records = Array.from({ length: total }, (_, index) =>
+      record(index + 1, "decision", { heat: false, reason: "operation_off" }),
+    );
+    assert.equal(
+      (p.renderHistoryRecords(records).match(/<details data-record-id=/g) || []).length,
+      recordPage,
+    );
+    p.detailRecordPage = 2;
+    const last = p.renderHistoryRecords(records);
+    assert.equal((last.match(/<details data-record-id=/g) || []).length, remaining);
+    assert.match(last, new RegExp(`data-record-id="${total}"`));
+    assert.match(last, /Seite 3 von 3/);
+    assert.match(
+      p.detailFields({ false_value: false, zero: 0, missing: null }),
+      /Nein/,
+    );
+    assert.match(
+      p.detailFields({ false_value: false, zero: 0, missing: null }),
+      /Nicht aufgezeichnet/,
+    );
+    const errorIndex = eventPage + remaining;
+    const events = Array.from({ length: errorIndex + 1 }, (_, index) => ({
+      id: `event-${index}`,
+      at: Date.parse(iso(index)),
+      label: "Ereignis",
+      detail: "Beleg",
+      source: "Regelung",
+      error: index === errorIndex,
+    }));
+    const activity = p.renderControlEvents(events, null);
+    assert.equal((activity.match(/<tr data-record-id=/g) || []).length, eventPage);
+    assert.match(
+      activity,
+      new RegExp(`data-record-id="error-event-${errorIndex}"`),
+      "errors outside the current page remain immediately visible",
+    );
+  }
+});
+
+test("live detail applicability follows configuration model while archive values keep their own evidence", () => {
+  const p = panel();
+  p.state = {
+    ...p.state,
+    configuration_model: {
+      measurement_positions: ["upper"],
+      presence: { direct: true },
+      regulation_causes: ["gang_heat", "cooling"],
+      power_sensor_configured: false,
+    },
+    measurements: [
+      { position: "upper", quantity: "temperature", value: 75 },
+      { position: "lower", quantity: "temperature", value: 55 },
+    ],
+    rule_inputs: { gang_heat_demand: false, temporary_door_heat: true, cooling: false },
+    heating_observation: { source: "contactor", heating: false, power_w: null },
+  };
+  const direct = p.renderLiveEvidence();
+  assert.doesNotMatch(
+    direct,
+    /temporary_door_heat|Türhilfe|power_w|Leistung \(W\)|Untere|>55[< ]/,
+  );
+  p.state.configuration_model.regulation_causes = [
+    "gang_heat",
+    "provisional_door_heat",
+    "cooling",
+  ];
+  assert.match(p.renderLiveEvidence(), /Türhilfe/);
+  const archived = [
+    record(1, "measurement", { position: "lower", quantity: "temperature", value: 55 }),
+  ];
+  assert.equal(
+    p.historyValueSeries(archived)[0].key,
+    "lower:temperature",
+    "current one-height configuration cannot erase historical evidence",
+  );
+  p.state.configuration_model.regulation_causes = [];
+  const manual = p.renderDetailView({
+    targetTemperature: "75",
+    thermostatTarget: "77",
+    restartThreshold: "73",
+    temperatureProgram: "90 → 70 °C",
+    nextGangTemperature: "70",
+  });
+  assert.match(manual, /Konstante Temperaturregelung \(manuell\)/);
+  assert.match(manual, /Wiedereinschaltschwelle<\/dt><dd>73 °C/);
+  assert.match(manual, /Obere Regeltemperatur<\/dt><dd data-readiness>77 °C/);
+  assert.doesNotMatch(manual, /90 → 70|Solltemperatur des nächsten Gangs/);
+});
+
+test("status-only counter updates patch evidence at the slower cadence without rebuilding plots", () => {
+  const p = panel(),
+    patches = [];
+  const session = {
+    ended_at: null,
+    timeline: {
+      session_id: "retained",
+      session_started_at: iso(0),
+      processed: [],
+      completed: [],
+      retracted: [],
+      active: null,
+    },
+    energy: { measured_kwh: 1 },
+    configuration: p.state.configuration,
+  };
+  p.state = { ...p.state, now: iso(40), session, phase: "aufheizen" };
+  p.shown = { session, records: [], phase_projection: { intervals: [] } };
+  p.shadowRoot = {};
+  p.$ = () => ({});
+  p.updateMarkup = (selector, html) => patches.push({ selector, html });
+  let plots = 0;
+  p.renderHistoryValues = () => {
+    plots++;
+    return "";
+  };
+  p.renderControlHistory();
+  p.state.now = iso(41);
+  p.renderControlHistory(); // Enable the explicit newest-data button once.
+  plots = 0;
+  patches.length = 0;
+  session.energy.measured_kwh = 2;
+  p.state.now = iso(46);
+  p.renderControlHistory();
+  assert.equal(plots, 0);
+  assert.deepEqual(
+    patches.map((item) => item.selector),
+    ["#control-session-evidence"],
+  );
+  assert.match(patches[0].html, /Gemessene Energie \(kWh\)<\/dt><dd>2<\/dd>/);
+  assert.equal(p.controlHistoryEnd, Date.parse(iso(40)));
+});

@@ -14,8 +14,9 @@ class GangTemperatureDeviceTests(unittest.TestCase):
     def test_upper_priority_and_lower_fallback_keep_the_same_start_rule(self):
         fixture = fixture_module.DeviceFeedbackTests()
         runtime, adapter, clock = fixture.detection_device(
-            both_positions=True, sensor_timeout_seconds=10,
+            both_positions=True,
         )
+        ttl = runtime.configuration.parameters.values["sensor_timeout_seconds"]
         minimum = runtime.configuration.parameters.values["sauna_min_temperature_c"]
         adapter.ingest("upper_temperature", state("25", unit="°C"), T0)
         adapter.ingest("lower_temperature", state("80", unit="°C"), T0)
@@ -24,41 +25,42 @@ class GangTemperatureDeviceTests(unittest.TestCase):
         self.assertEqual(runtime.controller.temperature, 25)
         self.assertFalse(runtime.controller.recognition_allowed(Kind.INFUSION))
 
-        clock[0] = T0 + timedelta(seconds=5)
+        clock[0] = T0 + timedelta(seconds=ttl / 2)
         adapter.ingest("lower_temperature", state(str(minimum), unit="°C"), clock[0])
-        clock[0] = T0 + timedelta(seconds=11)
+        clock[0] = T0 + timedelta(seconds=ttl + 1)
         adapter.refresh(clock[0])
         self.assertEqual(runtime.controller.temperature, minimum)
         for kind in (Kind.DOOR_OPEN, Kind.DOOR_CLOSE):
             runtime.controller.process(Event(kind.value, "s", kind, clock[0], clock[0]))
         self.assertTrue(runtime.controller.recognition_allowed(Kind.INFUSION))
         self.assertEqual(runtime.controller._temperature_valid_until,
-                         T0 + timedelta(seconds=15))
+                         T0 + timedelta(seconds=ttl * 1.5))
 
     def test_received_selection_expires_before_next_refresh_and_new_warm_input_recovers(self):
         async def exercise():
             fixture = fixture_module.DeviceFeedbackTests()
             runtime, adapter, clock = fixture.detection_device(
-                both_positions=True, sensor_timeout_seconds=10,
+                both_positions=True,
             )
+            ttl = runtime.configuration.parameters.values["sensor_timeout_seconds"]
             runtime.controller.set_operation(True, T0, session_id="s")
             for kind in (Kind.DOOR_OPEN, Kind.DOOR_CLOSE):
                 runtime._process_event(Event(kind.value, "s", kind, T0, T0))
-            clock[0] = T0 + timedelta(seconds=5)
+            clock[0] = T0 + timedelta(seconds=ttl / 2)
             await runtime.device_input(fixture.detection_edge(runtime, "lower_temperature", 25))
             self.assertEqual(runtime.controller.temperature, 90)
             self.assertEqual(runtime.controller._temperature_valid_until,
-                             T0 + timedelta(seconds=10))
+                             T0 + timedelta(seconds=ttl))
 
             # The runtime delivers detector events before its next refresh.
-            clock[0] = T0 + timedelta(seconds=11)
+            clock[0] = T0 + timedelta(seconds=ttl + 1)
             runtime._process_event(Event("expired", "s", Kind.INFUSION, clock[0], clock[0]))
             self.assertIsNone(runtime.session.timeline.active)
             adapter.refresh(clock[0])
             self.assertEqual(runtime.controller.temperature, 25)
             self.assertFalse(runtime.controller.recognition_allowed(Kind.INFUSION))
 
-            clock[0] = T0 + timedelta(seconds=12)
+            clock[0] = T0 + timedelta(seconds=ttl + 2)
             await runtime.device_input(fixture.detection_edge(
                 runtime, "lower_temperature",
                 runtime.configuration.parameters.values["sauna_min_temperature_c"],

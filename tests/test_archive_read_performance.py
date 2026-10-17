@@ -19,7 +19,7 @@ from custom_components.ha_sauna.archive import Archive
 from test_archive_projection_reads import T0, session
 from test_foundation import bindings
 from archive_performance_fixture import (
-    KEYS, ORIGINAL_RECORD_COUNT, seed_volume, old_page_query, seed_legacy_evidence,
+    KEYS, INPUTS, PARAMETERS, BACKGROUND_RECORD_COUNT, ORIGINAL_RECORD_COUNT, seed_volume, old_page_query, seed_legacy_evidence,
 )
 
 
@@ -28,7 +28,7 @@ class ArchiveReadPerformanceTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             archive = Archive(Path(directory) / "volume.sqlite", "entry")
             archive._initialize(now=T0)
-            end = T0 + timedelta(hours=6)
+            end = T0 + timedelta(seconds=INPUTS["duration_seconds"])
             now = end + timedelta(hours=1)
             stored = session("volume", ended_at=end, base_phases=[
                 {"at": T0.isoformat(), "phase": "bereit", "operation_enabled": True}
@@ -74,7 +74,7 @@ class ArchiveReadPerformanceTests(unittest.TestCase):
                     patch.object(archive_module.json, "loads", measured_loads),
                 ):
                     while True:
-                        page = archive.read("volume", after=after, limit=5000,
+                        page = archive.read("volume", after=after, limit=PARAMETERS["archive_history_page_records"],
                                             kinds=("measurement",), now=now)
                         pages.append(page)
                         metrics["response_bytes"] += len(json.dumps(page).encode())
@@ -87,15 +87,15 @@ class ArchiveReadPerformanceTests(unittest.TestCase):
                 results[mode] = pages
             self.assertEqual(results["after"], results["before"])
             count = sum(len(page["records"]) for page in results["after"])
-            self.assertEqual(count, 46_804)
+            self.assertEqual(count, ORIGINAL_RECORD_COUNT)
             self.assertEqual(measurements["after"]["json_decodes"],
                              count + measurements["after"]["pages"])
             self.assertLess(measurements["after"]["vm_steps"],
                             measurements["before"]["vm_steps"] / 3,
                             json.dumps(measurements))
             print("ARCHIVE_VOLUME_BENCHMARK " + json.dumps({
-                "background_records": 250_000, "selected_original_records": count,
-                "session_hours": 6, "sources": 4, "measurement": measurements,
+                "background_records": BACKGROUND_RECORD_COUNT, "selected_original_records": count,
+                "session_hours": INPUTS["duration_seconds"] / 3600, "sources": len(KEYS), "measurement": measurements,
             }, sort_keys=True), flush=True)
 
             self.assert_legacy_cold_and_warm(archive, stored, now)
@@ -162,7 +162,7 @@ class ArchiveReadPerformanceTests(unittest.TestCase):
             ):
                 while True:
                     page_start = time.perf_counter()
-                    page = archive.read("volume", after=after, limit=5000,
+                    page = archive.read("volume", after=after, limit=PARAMETERS["archive_history_page_records"],
                                         kinds=("measurement",), now=now)
                     metrics["page_seconds"].append(time.perf_counter() - page_start)
                     pages.append(page)
@@ -187,7 +187,7 @@ class ArchiveReadPerformanceTests(unittest.TestCase):
                               if interval["phase"] == "saunagang"}), 12)
         self.assertTrue(projection["readiness_pauses"])
         print("ARCHIVE_LEGACY_VOLUME_BENCHMARK " + json.dumps({
-            "original_measurement_records": ORIGINAL_RECORD_COUNT, "session_hours": 6,
+            "original_measurement_records": ORIGINAL_RECORD_COUNT, "session_hours": INPUTS["duration_seconds"] / 3600,
             "gangs": 12, "evidence_counts": counts,
             "all_evidence_records": evidence_count,
             "semantically_relevant_evidence_records": relevant_count,

@@ -1,24 +1,36 @@
-"""Parameterentitäten schreiben ausschließlich ConfigEntry.options."""
+"""Live temperature choices; permanent settings have one owning HA-Sauna form."""
 
 from homeassistant.components.number import NumberEntity, NumberMode
-from homeassistant.const import EntityCategory
-from homeassistant.exceptions import Unauthorized
+from homeassistant.helpers import entity_registry as er
 
-from .core.parameters import EDITABLE_DEFINITIONS, LIVE_TEMPERATURE_KEYS
+from .const import DOMAIN
+from .core.configuration_model import temperature_control
+from .core.notification_recipients import ActorRef
+from .core.parameters import BY_KEY, LIVE_TEMPERATURE_KEYS
 from .entity import SaunaEntity
 from .settings import async_set_entity_parameter
 
 
 async def async_setup_entry(hass, entry, async_add_entities):
+    """Remove former permanent-setting numbers and preserve live operating choices."""
+    registry = er.async_get(hass)
+    live_ids = {f"{entry.entry_id}_{key}" for key in LIVE_TEMPERATURE_KEYS}
+    for entity in er.async_entries_for_config_entry(registry, entry.entry_id):
+        if (
+            entity.platform == DOMAIN and entity.entity_id.startswith("number.")
+            and entity.unique_id not in live_ids
+        ):
+            registry.async_remove(entity.entity_id)
     async_add_entities(entities_for_entry(entry))
 
 
 def entities_for_entry(entry):
-    return [SaunaNumber(entry, definition) for definition in EDITABLE_DEFINITIONS]
+    return [SaunaNumber(entry, BY_KEY[key]) for key in sorted(LIVE_TEMPERATURE_KEYS)]
 
 
 class SaunaNumber(SaunaEntity, NumberEntity):
-    _attr_entity_category = EntityCategory.CONFIG
+    """Operate the current temperature program without a second standard editor."""
+
     _attr_mode = NumberMode.BOX
 
     def __init__(self, entry, definition):
@@ -34,17 +46,32 @@ class SaunaNumber(SaunaEntity, NumberEntity):
         return self.runtime.configuration.parameters.minimum_for(self.definition.key)
 
     @property
+    def available(self):
+        return super().available and self.runtime.configuration_model.parameter_applicable(
+            self.definition
+        )
+
+    @property
     def native_value(self):
+        if not self.available:
+            return None
         if self.definition.key == "target_temperature_c":
-            return self.runtime.controller.target_temperature
-        return self.runtime.configuration.parameters.values.get(self.definition.key)
+            return temperature_control(self.runtime.controller).value
+        return self.runtime.configuration.parameters.values[self.definition.key]
+
+    @property
+    def extra_state_attributes(self):
+        if self.definition.key != "target_temperature_c":
+            return None
+        target = temperature_control(self.runtime.controller)
+        return {
+            "target_scope": target.scope,
+            "current_target_temperature": target.current_target,
+            "next_gang_temperature": target.next_target,
+        }
 
     async def async_set_native_value(self, value):
-        context = self._context
-        if self.definition.key not in LIVE_TEMPERATURE_KEYS and context and context.user_id:
-            user = await self.hass.auth.async_get_user(context.user_id)
-            if user is None or not user.is_admin:
-                raise Unauthorized(context=context, entity_id=self.entity_id)
         await async_set_entity_parameter(
-            self.hass, self.entry, self.definition.key, value
+            self.hass, self.entry, self.definition.key, value,
+            actor=ActorRef(self._context.user_id, "ha_context"),
         )
