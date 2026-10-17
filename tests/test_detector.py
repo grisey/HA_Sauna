@@ -1931,10 +1931,10 @@ class DetectorTests(unittest.TestCase):
                 (candidate["humidity_windows"], candidate["temperature_windows"]), bound_windows,
             )
             self.assertNotIn(Kind.VENTILATION_COMPLETE, [item.kind for item in found])
-        self.assertFalse(humidity_support.fresh(T0 + timedelta(seconds=received - step)),
+        self.assertFalse(humidity_support.pairing_fresh(T0 + timedelta(seconds=received - step)),
                          "The existing waiting interval must exceed the carrier's RH cadence")
-        # The received RH original exposes an unobserved interval; it is
-        # neither a physical counterform nor permission to bridge that gap.
+        # The new RH original remains native evidence. Its old derived-pair
+        # restriction still cannot provide a new AH confirmation.
         found += self._feed_ventilation(detector, received, values)
         self.assertIs(detector.door_episode, opening)
         self.assertIs(opening.get("original_ventilation"), candidate)
@@ -1943,7 +1943,11 @@ class DetectorTests(unittest.TestCase):
             (candidate["humidity_windows"], candidate["temperature_windows"]), bound_windows,
         )
         new_support = detector._original_time_support_cache[owner, Quantity.HUMIDITY][2]
-        self.assertFalse(new_support.covers(humidity_support.newest_at, new_support.newest_at))
+        self.assertTrue(new_support.covers(humidity_support.newest_at, new_support.newest_at))
+        self.assertFalse(new_support.pairing_covers(humidity_support.newest_at, new_support.newest_at))
+        native = detector._original_window_cache[owner, Quantity.HUMIDITY][1]
+        self.assertIsNotNone(native, "Unresolved water pairing cannot invalidate native RH")
+        self.assertTrue(new_support.covers(native.start_at, native.newest_at))
         self.assertEqual(detector._original_context(), epochs)
         self.assertNotIn(Kind.VENTILATION_COMPLETE, [item.kind for item in found])
 
@@ -2279,14 +2283,14 @@ class DetectorTests(unittest.TestCase):
                     self.assertTrue(detector._position_available(
                         Position.UPPER, (Quantity.TEMPERATURE, Quantity.HUMIDITY), at,
                     ))
-                    # The independent thermal fallback asks for usable RH
-                    # original forms, not for permission to replace this sensor.
-                    self.assertFalse(detector._original_humidity_available(detector.positions, at))
+                    # The existing RH form remains available; waiting does not
+                    # license a different opening route or confirm its candidate.
+                    self.assertTrue(detector._original_humidity_available(detector.positions, at))
                     support = detector._original_time_support_cache[
                         Position.UPPER, Quantity.HUMIDITY
                     ][2]
                     self.assertIsNotNone(support)
-                    self.assertFalse(support.fresh(at))
+                    self.assertFalse(support.pairing_fresh(at))
                     self.assertNotIn("confirmation_received_at", detector.door_episode["original_open"])
 
 

@@ -37,7 +37,7 @@ class SingleSensorOpeningGapTests(unittest.TestCase):
         context = detector._original_context()
         last_at = fixture.at(fixture.recovery_start - 1)
         self.assertFalse(
-            support.fresh(last_at), "The unchanged falling section must exceed RH cadence",
+            support.pairing_fresh(last_at), "The unchanged falling section must exceed RH cadence",
         )
         self.assertLess(
             (last_at - humidity.measured_at).total_seconds(),

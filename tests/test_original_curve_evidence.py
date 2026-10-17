@@ -499,7 +499,7 @@ class OriginalCurveEvidenceTests(unittest.TestCase):
             jumped,
         )
 
-    def test_kink_history_gap_and_configured_minimum_preserve_zero_evidence(self):
+    def test_kink_history_minimum_and_native_time_intervals_are_independent(self):
         values = Parameters({"curve_original_kink_history_windows": 3}).values
         count = values["curve_original_samples"]
         curvature = values["curve_original_noise_humidity_upper"]
@@ -517,7 +517,7 @@ class OriginalCurveEvidenceTests(unittest.TestCase):
             for stamp, value in samples[: -2 * count]
         )
         insufficient = original_kink_tolerance(
-            old + samples, window, **kink_arguments(values)
+            samples, window, **kink_arguments(values)
         )
         self.assertIsNotNone(insufficient)
         self.assertEqual(insufficient.status, "insufficient")
@@ -528,25 +528,25 @@ class OriginalCurveEvidenceTests(unittest.TestCase):
         self.assertEqual(insufficient.used_scale, insufficient.catalog_scale)
         lower_minimum = Parameters({**values, "curve_original_kink_history_windows": 2})
         sufficient = original_kink_tolerance(
-            old + samples,
+            samples,
             window,
             **kink_arguments(lower_minimum.values),
         )
         self.assertEqual(sufficient.status, "history")
         self.assertEqual(sufficient.history_scale, insufficient.history_scale)
         self.assertEqual(sufficient.used_scale, sufficient.history_scale)
+        extended = original_kink_tolerance(old + samples, window, **kink_arguments(values))
+        self.assertIsNotNone(extended)
+        self.assertEqual(extended.history_start, old[0][0])
+        self.assertGreater(extended.history_count, insufficient.history_count)
         detached = tuple((stamp - gap, value) for stamp, value in samples[: -2 * count])
-        disconnected = original_kink_tolerance(
-            detached + samples[-2 * count :],
-            window,
-            **kink_arguments(values),
+        retained = original_kink_tolerance(
+            detached + samples[-2 * count :], window, **kink_arguments(values),
         )
-        self.assertIsNotNone(disconnected)
-        self.assertEqual(disconnected.status, "insufficient")
-        self.assertEqual(disconnected.history_count, 0)
-        for field in ("history_start", "history_end", "history_scale"):
-            self.assertIsNone(getattr(disconnected, field))
-        self.assertEqual(disconnected.used_scale, disconnected.catalog_scale)
+        self.assertIsNotNone(retained)
+        self.assertEqual(retained.history_count, insufficient.history_count)
+        self.assertEqual(retained.history_start, detached[0][0])
+        self.assertAlmostEqual(retained.history_scale, insufficient.history_scale)
         straight, _ = kink_history_originals(values, lambda index: -index)
         straight_window = original_window(
             straight,
@@ -1051,8 +1051,6 @@ class OriginalCurveEvidenceTests(unittest.TestCase):
                 + points[count + 1 :],
                 at,
             ),
-            ("gap between windows", gap_points, gap_points[-1][0]),
-            ("stale newest original", points, at + unsupported_gap),
         )
         for reason, samples, evaluated_at in variants:
             with self.subTest(reason=reason):
@@ -1063,6 +1061,12 @@ class OriginalCurveEvidenceTests(unittest.TestCase):
                         **arguments,
                     )
                 )
+
+        for samples, evaluated_at in ((gap_points, gap_points[-1][0]), (points, at + unsupported_gap)):
+            with self.subTest(native_times=[stamp for stamp, _ in samples]):
+                result = original_window(samples, at=evaluated_at, **arguments)
+                self.assertIsNotNone(result)
+                self.assertEqual(result.previous + result.current, tuple(samples))
 
     def test_water_pair_waits_for_right_original_and_consumes_moisture_formula(self):
         values = Parameters({}).values

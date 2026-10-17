@@ -136,7 +136,7 @@ class SingleSensorClosingTests(unittest.TestCase):
                         ),
                         "support_newest_at": support.newest_at if support is not None else None,
                         "support_next_gap_seconds": support.next_gap_seconds if support is not None else None,
-                        "support_fresh": support.fresh(prefix.received_at) if support is not None else None,
+                        "support_fresh": support.pairing_fresh(prefix.received_at) if support is not None else None,
                     },
                 }
                 return result

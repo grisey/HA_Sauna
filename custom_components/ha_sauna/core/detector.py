@@ -1440,13 +1440,6 @@ class Detector:
                         series["version"], feature, dict(window_record), received_at,
                     )
                     window_record.update(cache_hit=False, evaluated_at=received_at)
-                if feature is not None and not support.fresh(received_at):
-                    feature = None
-                    window_record.update(
-                        reason="detector_support_age_exceeded", evaluated_at=received_at,
-                        age_seconds=(received_at - support.newest_at).total_seconds(),
-                        limit_seconds=support.next_gap_seconds,
-                    )
                 window_diagnostics.append((position.value, quantity.value, {
                     "source": series["source"], "epoch": series["epoch"],
                     "version": series["version"], "time_basis": series["time_basis"],
@@ -1639,8 +1632,10 @@ class Detector:
         for position in positions:
             for quantity in quantities:
                 support = self._original_prefix_time_support(prefix, position, quantity)
-                if support is not None and support.spans:
-                    starts.append(support.spans[-1][0])
+                if support is not None:
+                    # A real missing anchor/context needs subsequent evidence;
+                    # a mere report interval no longer reaches this path.
+                    starts.append(support.newest_at)
         if starts:
             previous = record.get("unknown_after")
             record["unknown_after"] = max(starts + ([previous] if previous is not None else []))
@@ -1648,9 +1643,9 @@ class Detector:
 
     def _original_segment_points(self, prefix, position, quantity):
         support = self._original_prefix_time_support(prefix, position, quantity)
-        if support is None or not support.spans:
+        if support is None:
             return ()
-        start = support.spans[-1][0]
+        start = support.start_at
         samples = next((temperature if quantity == Quantity.TEMPERATURE else humidity
                         for role, temperature, humidity in prefix.points if role == position), ())
         return tuple(point for point in samples if point[0] >= start)
@@ -2384,7 +2379,7 @@ class Detector:
             and (support := self._original_time_support(
                 position, Quantity.HUMIDITY,
                 self._original_points_cache[position, Quantity.HUMIDITY][1], now,
-            )) is not None and support.fresh(now)
+            )) is not None and support.covers(cached[1].start_at, cached[1].newest_at)
             for position in positions
         )
 
@@ -2491,8 +2486,8 @@ class Detector:
                 return "invalid", {}, {"reason": "original_time_support_unknown", "position": position.value}
             for point in humidities[first:]:
                 if (state["last_rh_at"] is not None
-                        and not humidity_support.covers(state["last_rh_at"], point[0])):
-                    return "invalid", {}, {"reason": "humidity_original_gap", "position": position.value}
+                        and not humidity_support.pairing_covers(state["last_rh_at"], point[0])):
+                    return "unresolved", {}, {"reason": "humidity_pairing_unresolved", "position": position.value}
                 if len(state["pending"]) >= limit:
                     return "invalid", {}, {"reason": "water_pair_pending_overflow", "position": position.value}
                 state["pending"].append(point)
@@ -2521,7 +2516,8 @@ class Detector:
                     waiting = True
                     break
                 if paired.status != "ready" or paired.pair.temperature_before[0] < floor:
-                    return "invalid", {}, {
+                    status = "unresolved" if paired.reason == "temperature_pairing_unresolved" else "invalid"
+                    return status, {}, {
                         "reason": paired.reason or "water_support_before_opening_segment",
                         "position": position.value,
                     }
@@ -2535,7 +2531,8 @@ class Detector:
                 )
                 state["window_status"], state["features"] = window.status, window.features
                 if window.status == "invalid":
-                    return "invalid", {}, {"reason": window.reason, "position": position.value}
+                    status = "unresolved" if window.reason == "humidity_pairing_unresolved" else "invalid"
+                    return status, {}, {"reason": window.reason, "position": position.value}
                 pending_stage = episode.get("original_ventilation")
                 if window.features is not None and pending_stage is not None:
                     significance = self.p["curve_original_significance"]
@@ -2918,7 +2915,8 @@ class Detector:
                         "temperature_windows": episode["original_ventilation_rh"]["temperature_windows"],
                         "published": False,
                     }
-        if status == "invalid":
+        if status in ("invalid", "unresolved"):
+            # Die begrenzte AH-Zuordnung entwertet keine native RH-/T-Stütze.
             # Fehlende Paarstützen widerlegen keine historische AH-Form.
             # Ein neuer Versuch beginnt mit echten aktuellen Paaren; die
             # alten gebundenen Fenster werden nicht mit ihnen vermischt.
@@ -4667,9 +4665,9 @@ class Detector:
         window_start = now - timedelta(seconds=self.p["curve_window_seconds"])
         samples = tuple(self._curve_series[position, quantity]["points"])
         support = self._original_time_support(position, quantity, samples, now)
-        if support is None or not support.spans or self._value(position, quantity, now) is None:
+        if support is None or self._value(position, quantity, now) is None:
             return ()
-        window_start = max(window_start, support.spans[-1][0])
+        window_start = max(window_start, support.start_at)
         return tuple(
             point for point in samples if window_start <= point[0] <= now
             and (points_not_before is None or point[0] >= points_not_before)

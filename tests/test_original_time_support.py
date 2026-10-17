@@ -1,8 +1,8 @@
-"""Sampling support from existing synthetic originals, independent of events.
+"""Native originals and bounded derived pairing have distinct contracts.
 
-Cadence variants change only the measurement time axis. All configurable
-parameters and value scales come from the product catalogue; no replay IDs,
-private files, desired gang counts or skipped tests are used here.
+Existing fixtures supply values and consumed parameters. Irregular times do
+not imply source loss; pairing restrictions do not invalidate native windows.
+No private recordings, desired event counts or skipped tests are used here.
 """
 
 from collections.abc import Sequence
@@ -82,7 +82,7 @@ class OriginalTimeSupportTests(unittest.TestCase):
                         self.assertTrue(window.time_support.covers(window.start_at, window.newest_at))
                         self.assertIsNone(window.time_support.intervals)
 
-    def test_faster_originals_keep_the_existing_explicit_gap_contract(self):
+    def test_native_windows_agree_with_and_without_sequence_support(self):
         samples = self.originals["upper_humidity"]
         legacy = self.window(samples, None)
         supported = self.window(samples, self.support(samples))
@@ -91,66 +91,61 @@ class OriginalTimeSupportTests(unittest.TestCase):
         for field in ("previous", "current", "v", "b", "e", "e_minus", "r", "r_minus", "mean", "mean_minus"):
             self.assertEqual(getattr(legacy, field), getattr(supported, field))
 
-    def test_unknown_initial_slow_cadence_is_not_invented(self):
+    def test_native_originals_do_not_need_cadence_warmup(self):
         samples, _ = self.slow_stream()
         initial = samples[: 2 * self.count]
         support = self.support(initial)
         self.assertIsNotNone(support)
-        self.assertFalse(support.covers(initial[0][0], initial[-1][0]))
+        self.assertTrue(support.covers(initial[0][0], initial[-1][0]))
+        self.assertFalse(support.pairing_covers(initial[0][0], initial[-1][0]))
         diagnostic = {}
-        self.assertIsNone(self.window(initial, support, diagnostic=diagnostic))
-        self.assertEqual(diagnostic["reason"], "unsupported_original_window")
-        self.assertEqual(diagnostic["selected_count"], 2 * self.count)
-        self.assertEqual(diagnostic["start_at"], initial[0][0])
-        self.assertEqual(diagnostic["newest_at"], initial[-1][0])
-        self.assertEqual(diagnostic["spans"], support.spans)
-        self.assertEqual(diagnostic["breaks"], support.breaks)
-        self.assertTrue(diagnostic["breaks"])
-        self.assertIsNotNone(self.window(samples, self.support(samples)))
+        window = self.window(initial, support, diagnostic=diagnostic)
+        self.assertIsNotNone(window)
+        self.assertEqual(diagnostic["reason"], "ready")
+        self.assertEqual(diagnostic["required_count"], 2 * self.count)
+        self.assertEqual(diagnostic["selected_count"], len(initial))
+        self.assertEqual(window.previous + window.current, initial)
+        self.assertFalse(window.time_support.pairing_covers(initial[0][0], initial[-1][0]))
 
-    def test_long_gap_cannot_train_itself_or_be_healed_by_later_cadence(self):
+    def test_report_outlier_preserves_native_window_without_widening_pairing(self):
         samples, interval = self.slow_stream()
         before = samples[-1][0]
         after = before + 2 * self.count * interval
         broken = samples + ((after, samples[-1][1]),)
         previous = self.support(samples)
         support = self.support(broken, previous=previous)
-        rejected_interval = (before, after, (after - before).total_seconds(), previous.next_gap_seconds)
-        self.assertIn(rejected_interval, support.breaks)
-        self.assertFalse(support.covers(before, after))
-        diagnostic = {}
-        self.assertIsNone(self.window(broken, support, diagnostic=diagnostic))
-        self.assertEqual(diagnostic["reason"], "unsupported_original_window")
-        self.assertIn(rejected_interval, diagnostic["breaks"])
-        # A genuinely different later cadence may be learned, but cannot alter
-        # the retained rejection of the earlier gap.
-        later = tuple((after + index * (after - before), samples[-1][1]) for index in range(1, 4 * self.count))
+        rejected_pair = (before, after, (after - before).total_seconds(), previous.next_gap_seconds)
+        self.assertIn(rejected_pair, support.breaks)
+        self.assertTrue(support.covers(before, after))
+        self.assertFalse(support.pairing_covers(before, after))
+        window = self.window(broken, support)
+        self.assertIsNotNone(window)
+        self.assertEqual(window.previous + window.current, broken[-2 * self.count :])
+        # Clipping a native proof must not expand the separate pairing policy.
+        self.assertFalse(window.time_support.pairing_covers(before, after))
+        later = tuple((after + index * (after - before), samples[-1][1])
+                      for index in range(1, 4 * self.count))
         final = self.support(broken + later, previous=support)
-        self.assertFalse(final.covers(before, after))
-        self.assertIn(rejected_interval, final.breaks)
-        self.assertFalse(final.covers(before, later[-1][0]))
+        self.assertTrue(final.covers(before, later[-1][0]))
+        self.assertFalse(final.pairing_covers(before, after))
+        self.assertIn(rejected_pair, final.breaks)
         self.assertIsNotNone(self.window(broken + later, final))
 
-    def test_receipt_wait_and_future_suffix_cannot_expand_freshness(self):
+    def test_waiting_preserves_native_evidence_and_future_cannot_rewrite_it(self):
         samples, interval = self.slow_stream()
         support = self.support(samples)
         boundary = samples[-1][0] + interval
-        self.assertTrue(support.fresh(boundary))
-        self.assertFalse(support.fresh(boundary + timedelta.resolution))
-        self.assertIsNotNone(self.window(samples, support, at=boundary))
-        diagnostic = {}
-        self.assertIsNone(self.window(
-            samples, support, at=boundary + timedelta.resolution, diagnostic=diagnostic,
-        ))
-        self.assertEqual(diagnostic["reason"], "support_age_exceeded")
-        self.assertEqual(diagnostic["limit_seconds"], support.next_gap_seconds)
-        self.assertEqual(diagnostic["newest_at"], samples[-1][0])
-        self.assertGreater(diagnostic["age_seconds"], diagnostic["limit_seconds"])
+        self.assertTrue(support.pairing_fresh(boundary))
+        later = boundary + timedelta.resolution
+        self.assertFalse(support.pairing_fresh(later))
+        original = self.window(samples, support)
+        self.assertEqual(self.window(samples, support, at=later), original)
         future = samples + ((boundary + self.count * interval, samples[-1][1]),)
         self.assertEqual(self.support(future, at=samples[-1][0]), support)
-        self.assertEqual(self.support(samples, at=boundary + timedelta.resolution), support)
+        self.assertEqual(self.support(samples, at=later), support)
+        self.assertEqual(self.window(future, support, at=samples[-1][0]), original)
 
-    def test_ring_buffer_keeps_cadence_and_existing_breaks(self):
+    def test_ring_buffer_keeps_native_sequence_and_separate_pair_restrictions(self):
         samples, interval = self.slow_stream()
         split = 2 * self.count
         shifted = tuple((stamp + 2 * self.count * interval, value) for stamp, value in samples[split:])
@@ -165,8 +160,13 @@ class OriginalTimeSupportTests(unittest.TestCase):
             self.assertEqual(updated.next_gap_seconds, full.next_gap_seconds)
             for left, right in zip(retained, retained[1:]):
                 self.assertEqual(updated.covers(left[0], right[0]), full.covers(left[0], right[0]))
+                self.assertEqual(updated.pairing_covers(left[0], right[0]), full.pairing_covers(left[0], right[0]))
             previous = updated
-        self.assertFalse(previous.covers(samples[split - 1][0], samples[split][0]))
+        # The old endpoints may be outside the bounded ring; compare the
+        # retained proof with full history before asserting its pair restriction.
+        full = self.support(samples)
+        self.assertTrue(full.covers(samples[split - 1][0], samples[split][0]))
+        self.assertFalse(full.pairing_covers(samples[split - 1][0], samples[split][0]))
 
     def test_append_does_not_scan_old_original_history(self):
         samples, interval = self.slow_stream()
@@ -220,18 +220,20 @@ class OriginalTimeSupportTests(unittest.TestCase):
         bound = previous.restrict(samples[-2][0], samples[-1][0])
         self.assertIsNone(self.support(samples, previous=bound))
 
-    def test_kink_history_uses_same_break_and_restarts_after_it(self):
+    def test_report_interval_does_not_erase_known_kink_history(self):
         samples, interval = self.slow_stream()
         start = samples[-1][0] + 2 * self.count * interval
         newer = tuple((start + index * interval, samples[-1][1]) for index in range(4 * self.count))
-        samples += newer
-        support = self.support(samples)
-        window = self.window(samples, support)
+        originals = samples + newer
+        support = self.support(originals)
+        window = self.window(originals, support)
         self.assertIsNotNone(window)
-        kink = original_kink_tolerance(samples, window, **kink_arguments(self.values), time_support=support)
+        kink = original_kink_tolerance(originals, window, **kink_arguments(self.values), time_support=support)
         self.assertIsNotNone(kink)
-        self.assertEqual(kink.history_start, newer[0][0])
+        self.assertEqual(kink.history_start, originals[0][0])
         self.assertLess(kink.history_end, window.start_at)
+        self.assertTrue(support.covers(samples[-1][0], newer[0][0]))
+        self.assertFalse(support.pairing_covers(samples[-1][0], newer[0][0]))
 
     def test_water_waits_for_real_temperature_partner_and_rejects_broken_bracket(self):
         temperatures, interval = self.slow_stream(quantity="temperature")
@@ -252,6 +254,10 @@ class OriginalTimeSupportTests(unittest.TestCase):
         broken_support = self.support(temperatures + (far_right,), quantity="temperature", previous=support)
         invalid = original_water_pair_support(humidity, (left, far_right), **water_arguments(self.values), at=far_right[0], time_support=broken_support)
         self.assertEqual(invalid.status, "invalid")
+        self.assertEqual(invalid.reason, "temperature_pairing_unresolved")
+        self.assertTrue(broken_support.covers(left[0], far_right[0]))
+        self.assertFalse(broken_support.pairing_covers(left[0], far_right[0]))
+        self.assertIsNotNone(self.window(temperatures + (far_right,), broken_support, quantity="temperature"))
 
     def test_water_window_uses_native_humidity_support_without_receipt_timeout(self):
         humidity, _ = self.slow_stream()
@@ -271,7 +277,7 @@ class OriginalTimeSupportTests(unittest.TestCase):
         )
         self.assertEqual(result.status, "ready")
         self.assertEqual(result.features.newest_at, humidity[-1][0])
-        self.assertFalse(humidity_support.fresh(later))
+        self.assertFalse(humidity_support.pairing_fresh(later))
 
 
 class OriginalTimeAdapterTests(unittest.TestCase):
@@ -364,7 +370,7 @@ class OriginalTimeAdapterTests(unittest.TestCase):
             current_humidity, witness, current_window, "upper", support
         ))
 
-    def test_live_prefix_consumers_share_cadence_and_source_reset(self):
+    def test_live_prefix_consumers_share_sequence_and_real_source_reset(self):
         parameters = Parameters({})
         values = parameters.values
         count = values["curve_original_samples"]
@@ -419,7 +425,8 @@ class OriginalTimeAdapterTests(unittest.TestCase):
             prefix, prefix.temperatures
         )
         self.assertTrue(all(value is not None for _, value in thermal_backgrounds))
-        self.assertFalse(detector._original_humidity_available(
+        self.assertLess(2 * interval.total_seconds(), values["sensor_timeout_seconds"])
+        self.assertTrue(detector._original_humidity_available(
             detector.positions, at + 2 * interval
         ))
         # A new real source is a new epoch; its one report cannot borrow the
@@ -444,8 +451,8 @@ class OriginalTimeAdapterTests(unittest.TestCase):
         self.assertEqual(reset["window"]["selected_count"], reset["available_count"])
         self.assertLess(reset["window"]["selected_count"], reset["window"]["required_count"])
         self.assertEqual(records, saved_records, "later source changes cannot rewrite the captured prefix")
-        # Only lower RH reports again; the held upper T window now exceeds
-        # its own already learned cadence without a second fit.
+        # Only lower RH reports again. Upper T stays a historical native
+        # window; absence of a new upper original neither refutes nor confirms it.
         late_at = at + 2 * interval
         self.assertTrue(detector.accept(measurement(
             Position.LOWER, Quantity.HUMIDITY, trace(0)[1],
@@ -455,11 +462,10 @@ class OriginalTimeAdapterTests(unittest.TestCase):
         late_records = {(position, quantity): record
                         for position, quantity, record in late.window_diagnostics}
         thermal = late_records[Position.UPPER.value, Quantity.TEMPERATURE.value]
-        self.assertFalse(thermal["window_ready"])
+        self.assertTrue(thermal["window_ready"])
         self.assertTrue(thermal["window"]["cache_hit"])
-        self.assertEqual(thermal["window"]["reason"], "detector_support_age_exceeded")
-        self.assertEqual(thermal["window"]["limit_seconds"], thermal["time_support"]["next_gap_seconds"])
-        self.assertGreater(thermal["window"]["age_seconds"], thermal["window"]["limit_seconds"])
+        self.assertEqual(thermal["window"]["reason"], "ready")
+        self.assertEqual(thermal["window"]["newest_at"], records[Position.UPPER.value, Quantity.TEMPERATURE.value]["window"]["newest_at"])
         self.assertEqual(records, saved_records)
 
 
