@@ -1764,7 +1764,7 @@ class Controller:
         report = (
             next((report for report in reversed(self._direct_presence_history)
                   if report.timing.effective_at is not None
-                  and report.timing.effective_at <= closure.confirmation_at
+                  and report.timing.effective_at <= closure.effective_at
                   and report.timing.received_at is not None
                   and report.timing.received_at <= self._received_at(at)), None)
             if closure is not None else (

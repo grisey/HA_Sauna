@@ -2268,6 +2268,7 @@ class Detector:
                     "water_state": {},
                     "onset_witnesses": {},
                     "onset_intervals": intervals,
+                    "initial_historical_onsets": valid_onsets,
                 }
                 self._original_infusion_candidate = component
             if component is not None and not component["fall_confirmed"]:
@@ -2281,6 +2282,15 @@ class Detector:
                             component["branch_floors"][position],
                         )
                         if candidate is not None:
+                            interval = component["onset_intervals"].get(position)
+                            if (interval is not None
+                                    and position not in component["initial_historical_onsets"]
+                                    and not interval.previous[0] <= candidate.onset_at
+                                    <= interval.current[0]):
+                                # The native interval was already the first
+                                # onset proof. A later broad fit cannot move it
+                                # into another portion of the humidity curve.
+                                continue
                             original = component["onset_witnesses"].get(position)
                             # Der zuerst belegte Beginn gehört zu diesem Anstieg.
                             # Ein späterer Fit mit Spitze und Fall darf ihn nicht

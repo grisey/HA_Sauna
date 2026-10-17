@@ -3201,3 +3201,36 @@ class NativeInfusionOnsetTests(unittest.TestCase):
         self.assertEqual(detector._original_infusion_assignment(
             {"phase": "ended", "level_end_at": ORIGIN + timedelta(seconds=9)},
             windows, (ORIGIN + timedelta(seconds=8),), intervals), "continuation")
+
+    def test_later_curve_fit_cannot_replace_the_first_native_onset_interval(self):
+        from test_detector import InfusionLifecycleTests, T0
+
+        fixture = InfusionLifecycleTests()
+        fixture.setUp()
+        points, _, _, _ = fixture._scenario(merged=False)
+        detector = Detector(fixture.parameters, T0)
+        events = []
+        peak = fixture.begin + fixture.width
+        with patch.object(detector, "_original_rise_witness", return_value=None):
+            for second in range(0, peak + fixture.step, fixture.step):
+                fixture._send(detector, second, fixture._value(points, second), events)
+                if detector._original_infusion_candidate is not None:
+                    break
+        component = detector._original_infusion_candidate
+        self.assertIsNotNone(component)
+        intervals = dict(component["onset_intervals"])
+        self.assertEqual(set(intervals), set(detector.positions))
+        beginnings = {position: interval.previous[0] for position, interval in intervals.items()}
+        candidates = {
+            position: replace(detector._curve_candidates["infusion", position, Quantity.HUMIDITY],
+                              onset_at=beginning - timedelta(seconds=fixture.step))
+            for position, beginning in beginnings.items()
+        }
+        with patch.object(detector, "_original_rise_witness",
+                          side_effect=lambda position, *_: candidates[position]):
+            fixture._feed(detector, peak + fixture.width, points, events)
+        infusions = fixture._infusions(events)
+        self.assertEqual(len(infusions), 1)
+        self.assertEqual(infusions[0].effective_at, min(beginnings.values()))
+        self.assertEqual(component["onset_intervals"], intervals)
+        self.assertEqual(component["onset_witnesses"], {})

@@ -292,6 +292,18 @@ class DirectPresenceControlTests(unittest.TestCase):
         self.assertEqual(self.c.session.timeline.active.started_at, at(3))
         self.assertEqual(self.c.session.timeline.active.confirmation, Confirmation.CONFIRMED)
 
+    def test_entry_presence_uses_door_time_not_later_confirmation_grid(self):
+        for present_at in (9, 11):
+            with self.subTest(present_at=present_at):
+                self.setUp()
+                self.door(Kind.DOOR_OPEN, 5)
+                self.report("on", present_at)
+                self.c.process(Event("delayed-close", "s", Kind.DOOR_CLOSE,
+                                     at(10), at(13), at(13), at(12)))
+                self.assertEqual(self.c.session.timeline.active is not None, present_at == 9)
+                if present_at == 9:
+                    self.assertEqual(self.c.session.timeline.active.started_at, at(10))
+
     def test_presence_before_delayed_entry_does_not_use_old_door_cycle(self):
         self.report("off", 0)
         self.door(Kind.DOOR_OPEN, 1)
