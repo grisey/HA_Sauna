@@ -1641,7 +1641,7 @@
       "default": 7,
       "minimum": 2,
       "integer": true,
-      "description": "Zahl K zeitlich verschiedener Originalmesspunkte je aktuellem und unmittelbar vorherigem, disjunktem linearem Fenster. Je Kanal werden mindestens 2K Originale benötigt. Nach der RH-Knickbindung benötigt der gemeinsame Absenkungszeuge K neue Originale aller gebundenen Temperatur- und Feuchterollen. Die Öffnungsbestätigung benötigt anschließend je Temperaturrolle zwei vollständig neue K-Fenster strikt nach diesem Zeugen. Die gewöhnliche Schließbestätigung benötigt K neue Temperaturoriginale nach ihrem Kandidaten; der Niveauzweig benötigt zwei neue K-Fenster nach dem gespeicherten tatsächlichen Fallfenster jeder Temperaturrolle. Die Obergrenze entspricht der Standardkapazität von 96 Kurvenproben.",
+      "description": "Zahl K zeitlich verschiedener Originalmesspunkte je aktuellem und unmittelbar vorherigem, disjunktem linearem Fenster. Je Kanal werden mindestens 2K Originale für Steigungen und Knickprüfung benötigt. Die Türöffnung wird durch die aufgelöste gemeinsame Absenkung auf den seit der RH-Knickbindung hinzugekommenen Originalen bestätigt; vollständige neue K-Blöcke sind dafür keine Wartebedingung. Die gewöhnliche Schließbestätigung benötigt K neue Temperaturoriginale nach ihrem Kandidaten; der Niveauzweig benötigt zwei neue K-Fenster nach dem gespeicherten tatsächlichen Fallfenster jeder Temperaturrolle. Die Obergrenze entspricht der Standardkapazität von 96 Kurvenproben.",
       "group": "detection",
       "expert": true,
       "step": 1,

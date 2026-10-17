@@ -142,6 +142,21 @@ class OriginalEdgeChange:
 
 
 @dataclass(frozen=True)
+class OriginalDeclineEvidence:
+    """Fall and level loss on the available originals after a fixed binding."""
+
+    points: tuple[tuple[datetime, float], ...]
+    reference: OriginalWindowFeatures
+    slope: float
+    slope_error: float
+    mean: float
+    direction: float
+    level_loss: float
+    level_center: float
+    level_scale: float
+
+
+@dataclass(frozen=True)
 class OriginalKinkTolerance:
     """Causal background scale and the remaining signed raw slope change.
 
@@ -155,6 +170,9 @@ class OriginalKinkTolerance:
     An exactly zero historical scale is valid. Insufficient history retains
     its evidence, while used_scale falls back to the calibrated catalogue.
     The detector owns direction requirements and all admission decisions.
+    The same historical blocks provide the median absolute mean change and
+    its MAD in value units. These are retained separately from slope changes
+    for a later comparison with the observed level loss.
     """
 
     window: OriginalWindowFeatures
@@ -169,6 +187,8 @@ class OriginalKinkTolerance:
     tolerance: float
     delta: float
     effective_change: float
+    level_change_median: float | None
+    level_change_mad: float | None
 
 
 @dataclass(frozen=True)
@@ -462,6 +482,20 @@ class OriginalFlattening:
     temperature_not_braking: OriginalFlatteningContrast
 
     @property
+    def current_nonrising(self) -> OriginalFlatteningContrast:
+        """Allow a continuing humidity fall, but no resolved humidity rise."""
+        window = self.humidity_window
+        bound = self.significance * window.e
+        return OriginalFlatteningContrast(window.v, "<=", bound, window.v <= bound)
+
+    @property
+    def abating(self) -> bool:
+        """Resolved slowing of humidity while temperature keeps falling."""
+        return (self.previous_fall.result and self.braking.result
+                and self.current_nonrising.result and self.temperature_falling.result
+                and self.temperature_not_braking.result)
+
+    @property
     def maintained(self) -> bool:
         """Flat humidity while temperature still falls without braking."""
         return (
@@ -743,6 +777,63 @@ def original_followup(
         return None
 
 
+def original_decline_evidence(
+    samples: Sequence[tuple[datetime, float]], reference: OriginalWindowFeatures,
+    *, background: OriginalKinkTolerance | None = None,
+) -> OriginalDeclineEvidence | None:
+    """Assess the growing original suffix, without waiting for full K blocks.
+
+    At least two distinct times are required to determine a slope. The slope
+    bound follows from the supplied value-deviation scale and actual time
+    support; elapsed time and sample count alone never confirm a fall. The
+    The optional bound background supplies ordinary absolute changes between
+    adjacent K-original means. Their median is subtracted from the observed
+    loss; their normal-consistent MAD enlarges the catalogue difference scale.
+    This compares the drop with the already observed background, including
+    its ordinary drift. It does not estimate an event probability. Source
+    continuity, retained reference identity and admissibility belong to the
+    caller.
+    """
+    try:
+        if not _original_window_valid(reference):
+            return None
+        points = tuple((stamp, value) for stamp, value in samples
+                       if stamp > reference.newest_at)
+        if len(points) < 2:
+            return None
+        if any(not isinstance(stamp, datetime) or not _profile_number(value)
+               or index and stamp <= points[index - 1][0]
+               for index, (stamp, value) in enumerate(points)):
+            return None
+        line = _original_line(points, reference.scale)
+        if line is None:
+            return None
+        slope, error, mean, _ = line
+        direction = slope / error
+        level_center, level_scale = 0.0, 2 * reference.scale
+        if background is not None:
+            if background.window != reference:
+                return None
+            if background.status == "history":
+                if any(not _profile_number(value) or value < 0 for value in (
+                    background.level_change_median, background.level_change_mad,
+                )):
+                    return None
+                level_center = background.level_change_median
+                level_scale = max(level_scale, _MAD_NORMALIZATION * background.level_change_mad)
+            elif background.status != "insufficient":
+                return None
+        level_loss = (reference.mean_minus - mean - level_center) / level_scale
+        if not all(_profile_number(value) for value in (direction, level_loss)):
+            return None
+        return OriginalDeclineEvidence(
+            points, reference, slope, error, mean, direction, level_loss,
+            level_center, level_scale,
+        )
+    except (AttributeError, IndexError, OverflowError, TypeError, ValueError):
+        return None
+
+
 def original_edge_change(
     window: OriginalWindowFeatures,
     reference: OriginalWindowFeatures,
@@ -856,7 +947,7 @@ def original_kink_tolerance(
             history.append((stamp, float(value)))
         if history and (start_at - history[-1][0]).total_seconds() > max_gap_seconds:
             history.clear()
-        historical_changes = []
+        historical_changes, historical_levels = [], []
         for end in range(2 * count, len(history) + 1):
             old = _original_line(
                 tuple(history[end - 2 * count : end - count]),
@@ -869,8 +960,15 @@ def original_kink_tolerance(
             if not _profile_number(difference):
                 return None
             historical_changes.append(difference)
+            level_difference = abs(new[2] - old[2])
+            if not _profile_number(level_difference):
+                return None
+            historical_levels.append(level_difference)
         history_count = len(historical_changes)
         history_scale = median(historical_changes) if history_count else None
+        level_median = median(historical_levels) if history_count else None
+        level_mad = (median(abs(value - level_median) for value in historical_levels)
+                     if history_count else None)
         catalog_scale = window.e + window.e_minus
         if not _original_positive(catalog_scale) or (
             history_scale is not None and not _profile_number(history_scale)
@@ -899,6 +997,8 @@ def original_kink_tolerance(
             tolerance=tolerance,
             delta=delta,
             effective_change=effective_change,
+            level_change_median=level_median,
+            level_change_mad=level_mad,
         )
     except (AttributeError, IndexError, OverflowError, TypeError, ValueError):
         return None
@@ -1332,11 +1432,10 @@ def original_water_window(
 
 def original_flattening(
     humidity_window: OriginalWindowFeatures | OriginalWaterWindowFeatures,
-    temperature_window: OriginalWindowFeatures,
-    *,
-    significance: float,
+    temperature_window: OriginalWindowFeatures, *, significance: float,
+    reference_humidity: OriginalWindowFeatures | OriginalWaterWindowFeatures | None = None,
 ) -> OriginalFlattening | None:
-    """Compare a humidity fall-to-flat transition with its temperature form.
+    """Compare a slowing humidity fall with its temperature form.
 
     The caller supplies significance and owns support continuity, causal
     availability and stage identity. The same product comparisons accept
@@ -1375,11 +1474,20 @@ def original_flattening(
         else:
             return None
         humidity, temperature = humidity_window, temperature_window
-        humidity_change = humidity.v - humidity.b
-        humidity_change_error = humidity.e + humidity.e_minus
+        reference = humidity if reference_humidity is None else reference_humidity
+        if reference_humidity is not None:
+            # A retained earlier transition supplies its preceding fall.
+            # The current slope always comes from the current original support.
+            if (type(reference) is not type(humidity)
+                    or reference.newest_at > humidity.newest_at
+                    or not all(_profile_number(value) for value in (reference.b, reference.e_minus))
+                    or reference.e_minus < 0):
+                return None
+        humidity_change = humidity.v - reference.b
+        humidity_change_error = humidity.e + reference.e_minus
         temperature_change = temperature.v - temperature.b
         temperature_change_error = temperature.e + temperature.e_minus
-        humidity_previous_bound = significance * humidity.e_minus
+        humidity_previous_bound = significance * reference.e_minus
         humidity_current_bound = significance * humidity.e
         humidity_change_bound = significance * humidity_change_error
         temperature_current_bound = significance * temperature.e
@@ -1404,10 +1512,8 @@ def original_flattening(
             temperature_window=temperature_window,
             significance=significance,
             previous_fall=OriginalFlatteningContrast(
-                -humidity.b,
-                ">",
-                humidity_previous_bound,
-                -humidity.b > humidity_previous_bound,
+                -reference.b, ">", humidity_previous_bound,
+                -reference.b > humidity_previous_bound,
             ),
             current_flat=OriginalFlatteningContrast(
                 abs(humidity.v),
@@ -3669,6 +3775,7 @@ def curve_change(
     onset_at: datetime | None = None,
     direction: int | None = None,
     onset_not_before: datetime | None = None,
+    onset_bounds: tuple[datetime, datetime] | None = None,
     hinge_order: int = 1,
 ) -> CurveFeatures | None:
     """Compare local smooth and changed curves without retaining any state.
@@ -3685,6 +3792,9 @@ def curve_change(
     onset_not_before restricts candidate knots before the search budget is
     applied; earlier original observations still support every fit and its noise
     scale. Fixed-onset and replacement comparisons use the same query limits.
+    Optional inclusive onset_bounds narrow only the searched knot positions;
+    they do not trim observations or change the before/after context. The
+    caller supplies these bounds from an already bound original transition.
     A supported hinge remains usable when its separate right-hand direction is
     insufficient; the caller must require after_trend for a directed route.
     Independent lines on the original sides use onset_not_before, retaining
@@ -3709,6 +3819,12 @@ def curve_change(
         ):
             return None
         if onset_not_before is not None and not isinstance(onset_not_before, datetime):
+            return None
+        if onset_bounds is not None and (
+            not isinstance(onset_bounds, tuple) or len(onset_bounds) != 2
+            or not all(isinstance(bound, datetime) for bound in onset_bounds)
+            or onset_bounds[0] > onset_bounds[1]
+        ):
             return None
         if not _policy_valid(policy) or len(samples) < 2 * policy.min_side_samples:
             return None
@@ -3755,6 +3871,7 @@ def curve_change(
                 policy.min_side_samples - 1, len(times) - policy.min_side_samples
             )
             if onset_not_before is None or stamps[index] >= onset_not_before
+            if onset_bounds is None or onset_bounds[0] <= stamps[index] <= onset_bounds[1]
         ]
         if not eligible:
             return None

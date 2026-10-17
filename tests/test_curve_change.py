@@ -823,6 +823,53 @@ class CurveChangeTests(unittest.TestCase):
             self.assertEqual(len(times), len(values))
             self.assertLessEqual(len(knots), policy.max_candidates)
 
+    def test_bound_transition_localizes_original_knot_without_trimming_context(self):
+        points = trace_points(80)
+        policy = curve_policy()
+        onset = T0 + timedelta(seconds=70)
+        bounds = (T0 + timedelta(seconds=69), T0 + timedelta(seconds=71))
+        with patch.object(curves, "_models", wraps=curves._models) as fits:
+            result = curve_change(points, policy=policy, direction=-1, onset_bounds=bounds)
+        self.assertIsNotNone(result)
+        self.assertEqual(result.evidence, "supports")
+        self.assertEqual(result.onset_at, onset)
+        self.assertEqual(result.newest_at, points[-1][0])
+        self.assertEqual(result.before_count + result.after_count, len(points))
+        full_times, _, _, knots, _ = fits.call_args_list[0].args
+        self.assertEqual(len(full_times), len(points))
+        self.assertEqual({points[index][0] for index, _ in knots}, {
+            stamp for stamp, _ in points if bounds[0] <= stamp <= bounds[1]
+        })
+        self.assertLessEqual(len(knots), policy.max_candidates)
+        # Independent changes of value units and clock origin preserve the
+        # known fixture change, without prescribing the fit coefficients.
+        moved = timedelta(days=1)
+        transformed = curve_change(
+            [(stamp + moved, 10 * value + 100) for stamp, value in points],
+            policy=policy, direction=-1,
+            onset_bounds=tuple(stamp + moved for stamp in bounds),
+        )
+        self.assertIsNotNone(transformed)
+        self.assertEqual(transformed.evidence, "supports")
+        self.assertEqual(transformed.onset_at, onset + moved)
+
+    def test_onset_bounds_are_inclusive_and_do_not_reassign_fixed_onset(self):
+        points = trace_points(80)
+        policy = curve_policy()
+        onset = T0 + timedelta(seconds=70)
+        result = curve_change(points, policy=policy, onset_bounds=(onset, onset))
+        self.assertIsNotNone(result)
+        self.assertEqual(result.onset_at, onset)
+        for bounds in (
+            (onset + timedelta(seconds=1), onset + timedelta(seconds=2)),
+            (onset + timedelta(seconds=1), onset),
+            (onset,), (None, onset), ("earlier", "later"),
+        ):
+            with self.subTest(bounds=bounds):
+                self.assertIsNone(curve_change(
+                    points, policy=policy, onset_at=onset, onset_bounds=bounds,
+                ))
+
     def test_integrated_hinge_has_continuous_slope_and_physical_curvature_units(self):
         policy = curve_policy()
         source = level_trace_points()
