@@ -185,8 +185,13 @@ class DetectorTests(unittest.TestCase):
         d.report_heating(True, T0)
         found = []
         statistics_heat = []
+        stage_proofs = []
 
         def received(detection):
+            if detection.kind in (Kind.VENTILATION, Kind.VENTILATION_COMPLETE):
+                key = ("original_ventilation_rh_confirmed" if detection.kind == Kind.VENTILATION
+                       else "original_ventilation_complete")
+                stage_proofs.append(dict(d.door_episode[key]))
             found.append(detection)
             c.process(Event(f"detected:{detection.kind}:{detection.trace_at}", "s",
                             detection.kind, detection.effective_at,
@@ -217,8 +222,29 @@ class DetectorTests(unittest.TestCase):
         self.assertEqual(len(ventilation), 1)
         self.assertEqual(len(complete), 1)
         self.assertLess(ventilation[0].trace_at, T0 + timedelta(seconds=plateau))
-        self.assertGreater(complete[0].trace_at, T0 + timedelta(seconds=plateau))
         self.assertLess(ventilation[0].trace_at, complete[0].trace_at)
+        # Constant RH already slows AH while T falls. The later constant-water
+        # branch is not a lower bound for either stage's mathematical evidence.
+        self.assertEqual(len(stage_proofs), 2)
+        significance = d.p["curve_original_significance"]
+        for detection, proof in zip((ventilation[0], complete[0]), stage_proofs, strict=True):
+            self.assertEqual(detection.effective_at, detection.trace_at)
+            self.assertLessEqual(proof["confirmation_received_at"], detection.trace_at)
+            self.assertGreater(proof["confirmation_received_at"], proof["candidate_at"])
+            temperatures = dict(proof["temperature_windows"])
+            for position, humidity in proof["windows"]:
+                temperature = temperatures[position]
+                self.assertGreater(-humidity.b, significance * humidity.e_minus)
+                self.assertLessEqual(humidity.v, significance * humidity.e)
+                self.assertGreater(humidity.v - humidity.b,
+                                   significance * (humidity.e + humidity.e_minus))
+                self.assertGreater(-temperature.v, significance * temperature.e)
+                self.assertLessEqual(temperature.v - temperature.b,
+                                     significance * (temperature.e + temperature.e_minus))
+            bound = {name: (t, h) for name, t, h in proof["candidate_originals"]}
+            for name, temperature_at, humidity_at in proof["confirmation_originals"]:
+                self.assertGreater(temperature_at, bound[name][0])
+                self.assertGreater(humidity_at, bound[name][1])
         self.assertNotIn(Kind.DOOR_CLOSE, [e.kind for e in found])
         self.assertIsNone(c.session.timeline.active)
         self.assertEqual(c.session.timeline.gang_count, 1)
@@ -1337,24 +1363,30 @@ class DetectorTests(unittest.TestCase):
 
 
     def test_runtime_positions_confirm_one_position_available_when_the_door_opens(self):
-        """Die Runtime behält beide Rollen, obwohl unten vor der Öffnung fehlt."""
+        """Unused lower reports cannot finish or destroy the upper AH candidate."""
         prepared = Detector(parameters(), T0)
-        _, plateau, end, values = self._ventilation_curve(prepared)
-        initial = self._feed_ventilation(prepared, plateau, values, positions=(Position.UPPER,))
+        _, _, end, values = self._ventilation_curve(prepared)
+        pending_at, initial = self._feed_pending_completion(
+            prepared, end, values, positions=(Position.UPPER,),
+        )
         self.assertEqual(prepared.positions, (Position.UPPER, Position.LOWER))
         self.assertTrue(prepared.open)
         self.assertEqual(prepared.door_episode["positions"], (Position.UPPER,))
+        self.assertNotIn(Kind.VENTILATION_COMPLETE, [item.kind for item in initial])
         step = prepared.grid_seconds
-        lower_stamp = T0 + timedelta(seconds=plateau + step)
-        lower_temperature = values(plateau)[0]
+        probe = pending_at + step
+        lower_stamp = T0 + timedelta(seconds=probe)
+        lower_temperature = values(pending_at)[0]
         lower_noise = prepared.p["curve_original_noise_temperature_lower"]
 
         for interleave in ("none", "unavailable", "same_stamp_correction"):
             with self.subTest(lower=interleave):
                 detector = deepcopy(prepared, {id(prepared.p): prepared.p})
                 opening = detector.door_episode
+                candidate = opening["original_ventilation"]
+                bound_windows = candidate["humidity_windows"], candidate["temperature_windows"]
+                upper_epochs = dict(detector._original_context())[Position.UPPER]
                 events = list(initial)
-                observed_pending = False
 
                 def report_lower(target, second):
                     if interleave == "none":
@@ -1365,18 +1397,53 @@ class DetectorTests(unittest.TestCase):
                             Position.LOWER, Quantity.TEMPERATURE, None, second, measured=now,
                         )))
                         return
-                    if second == plateau + step:
+                    if second == probe:
                         self.assertTrue(target.accept(measurement(
                             Position.LOWER, Quantity.TEMPERATURE, lower_temperature, second,
                             measured=lower_stamp,
                         )))
                     self.assertTrue(target.accept(measurement(
                         Position.LOWER, Quantity.TEMPERATURE,
-                        lower_temperature + (second - plateau) / step * lower_noise / 2,
+                        lower_temperature + (second - pending_at) / step * lower_noise / 2,
                         second, measured=lower_stamp,
                     )))
 
-                for second in range(plateau + step, end + step, step):
+                # A tick or only an unused role is not new upper evidence.
+                report_lower(detector, probe)
+                events += detector.advance(T0 + timedelta(seconds=probe), enabled=True)
+                self.assertIs(opening.get("original_ventilation"), candidate)
+                self.assertEqual((candidate["humidity_windows"], candidate["temperature_windows"]),
+                                 bound_windows)
+                self.assertEqual(dict(detector._original_context())[Position.UPPER], upper_epochs)
+                self.assertNotIn(Kind.VENTILATION_COMPLETE, [item.kind for item in events])
+
+                # Processing a correction of an actually used upper original
+                # invalidates that candidate without adding a fresh sample.
+                isolated = deepcopy(detector, {id(detector.p): detector.p})
+                _, _, used_rh_at = candidate["newest"][0]
+                isolated_candidate = isolated.door_episode["original_ventilation"]
+                received = probe + step
+                self.assertTrue(isolated.accept(measurement(
+                    Position.UPPER, Quantity.HUMIDITY,
+                    values((used_rh_at - T0).total_seconds())[1]
+                    + isolated.p["curve_original_noise_humidity_upper"] / 2,
+                    received, measured=used_rh_at,
+                )))
+                # accept only queues the correction. Inspect invalidation once
+                # advance has consumed it through the ordinary input path.
+                output = isolated.advance(T0 + timedelta(seconds=received), enabled=True)
+                self.assertIsNot(isolated._position_state(Position.UPPER)["door"].get(
+                    "original_ventilation"), isolated_candidate)
+                self.assertNotIn("original_ventilation", isolated._position_state(Position.UPPER)["door"])
+                self.assertEqual(dict(isolated._original_context())[Position.UPPER], upper_epochs)
+                self.assertNotIn(Kind.VENTILATION_COMPLETE, [item.kind for item in output])
+
+                proofs = []
+                def received_stage(item):
+                    if item.kind is Kind.VENTILATION_COMPLETE:
+                        proofs.append(dict(detector.door_episode["original_ventilation_complete"]))
+
+                for second in range(probe + step, end + step, step):
                     now = T0 + timedelta(seconds=second)
                     for quantity, value in zip(
                         (Quantity.TEMPERATURE, Quantity.HUMIDITY), values(second), strict=True,
@@ -1384,53 +1451,119 @@ class DetectorTests(unittest.TestCase):
                         self.assertTrue(detector.accept(measurement(
                             Position.UPPER, quantity, value, second, measured=now,
                         )))
-                    # An unbound role arrives after both fresh Upper originals.
                     report_lower(detector, second)
-                    events += detector.advance(now, enabled=True)
-                    if observed_pending or "original_ventilation" not in opening:
-                        continue
-                    observed_pending = True
-                    self.assertIn("original_ventilation", opening)
-                    self.assertNotIn(Kind.VENTILATION_COMPLETE, [event.kind for event in events])
-                    if interleave == "none":
-                        continue
-                    isolated = deepcopy(detector, {id(detector.p): detector.p})
-                    candidate = isolated.door_episode["original_ventilation"]
-                    received = second + step
-                    report_lower(isolated, received)
-                    found = isolated.advance(T0 + timedelta(seconds=received), enabled=True)
-                    self.assertIs(isolated.door_episode["original_ventilation"], candidate)
-                    self.assertNotIn(Kind.VENTILATION_COMPLETE, [event.kind for event in found])
-                    # A correction of the bound Upper role still discards it.
-                    received += step
-                    self.assertTrue(isolated.accept(measurement(
-                        Position.UPPER, Quantity.HUMIDITY,
-                        values(second)[1] + isolated.p["curve_original_noise_humidity_upper"] / 2,
-                        received, measured=now,
-                    )))
-                    found += isolated.advance(T0 + timedelta(seconds=received), enabled=True)
-                    self.assertNotIn("original_ventilation", isolated.door_episode)
-                    self.assertNotIn(Kind.VENTILATION_COMPLETE, [event.kind for event in found])
-
-                ventilation = [event for event in events if event.kind is Kind.VENTILATION_COMPLETE]
-                self.assertTrue(observed_pending)
-                self.assertEqual([event.kind for event in events].count(Kind.DOOR_OPEN), 1)
-                self.assertEqual([event.kind for event in events].count(Kind.VENTILATION), 1)
+                    events += detector.advance(now, enabled=True, on_detection=received_stage)
+                ventilation = [item for item in events if item.kind is Kind.VENTILATION_COMPLETE]
+                self.assertEqual([item.kind for item in events].count(Kind.DOOR_OPEN), 1)
+                self.assertEqual([item.kind for item in events].count(Kind.VENTILATION), 1)
                 self.assertEqual(len(ventilation), 1)
                 self.assertEqual(ventilation[0].channels, ("upper",))
+                self.assertEqual(len(proofs), 1)
+                bound = {name: (t, h) for name, t, h in proofs[0]["candidate_originals"]}
+                for name, temperature_at, humidity_at in proofs[0]["confirmation_originals"]:
+                    self.assertEqual(name, "upper")
+                    self.assertGreater(temperature_at, bound[name][0])
+                    self.assertGreater(humidity_at, bound[name][1])
                 self.assertIs(detector.door_episode, opening)
                 self.assertEqual(opening["positions"], (Position.UPPER,))
+                self.assertEqual(dict(detector._original_context())[Position.UPPER], upper_epochs)
                 self.assertIn("lower_unavailable", detector.faults)
 
     def test_used_single_position_source_change_cannot_confirm_the_opening(self):
         detector = Detector(parameters(), T0)
-        _, plateau, end, values = self._ventilation_curve(detector)
-        events = self._feed_ventilation(detector, plateau, values, positions=(Position.UPPER,))
-        events += self._feed_ventilation(detector, end, values, positions=(Position.UPPER,),
-                                         source="sensor.upper_replaced")
-        self.assertIn(Kind.DOOR_OPEN, [event.kind for event in events])
-        self.assertNotIn(Kind.VENTILATION_COMPLETE, [event.kind for event in events])
-        self.assertTrue(detector.ventilation_degraded)
+        _, _, end, values = self._ventilation_curve(detector)
+        positions = (Position.UPPER,)
+        pending_at, events = self._feed_pending_completion(
+            detector, end, values, positions=positions,
+        )
+        self.assertTrue(detector.open)
+        opening = detector._position_state(Position.UPPER)["door"]
+        previous = opening["original_ventilation"]
+        old_epochs = dict(detector._original_context())
+        historical = tuple(events)
+        self.assertIn(Kind.VENTILATION, [item.kind for item in historical])
+        self.assertNotIn(Kind.VENTILATION_COMPLETE, [item.kind for item in historical])
+        count, step = detector.p["curve_original_samples"], detector.grid_seconds
+        source = "sensor.upper_replaced"
+        first_new = T0 + timedelta(seconds=pending_at + step)
+        completed = []
+
+        def received(item):
+            if item.kind is Kind.VENTILATION_COMPLETE:
+                completed.append({
+                    **dict(detector.door_episode["original_ventilation_complete"]),
+                    "bound_context": detector.door_episode["original_ventilation"]["context"],
+                })
+
+        for index, second in enumerate(range(pending_at + step, end + step, step), 1):
+            now = T0 + timedelta(seconds=second)
+            for position in positions:
+                for quantity, value in zip(
+                    (Quantity.TEMPERATURE, Quantity.HUMIDITY), values(second), strict=True,
+                ):
+                    self.assertTrue(detector.accept(measurement(
+                        position, quantity, value, second, source=source, measured=now,
+                    )))
+            output = detector.advance(now, enabled=True, on_detection=received)
+            events += output
+            # Only advance consumes the queued source changes. One original
+            # per new role cannot yet supply an independent two-K-block form.
+            self.assertFalse(detector.pending)
+            opening = detector._position_state(Position.UPPER)["door"]
+            if index == 1:
+                self.assertIsNot(opening.get("original_ventilation"), previous)
+                self.assertNotIn("original_ventilation", opening)
+                for position in positions:
+                    for offset, quantity in enumerate((Quantity.TEMPERATURE, Quantity.HUMIDITY)):
+                        series = detector._curve_series[position, quantity]
+                        self.assertGreater(series["epoch"], old_epochs[position][offset])
+                        self.assertEqual(series["source"], source)
+                        self.assertEqual(tuple(series["points"]), ((now, values(second)[offset]),))
+            # Preserve already delivered events and require no duplicate RH
+            # publication; no identity requirement for an internal reset field.
+            self.assertEqual(tuple(events[:len(historical)]), historical)
+            self.assertIsNot(opening.get("original_ventilation"), previous)
+            if index < 2 * count:
+                # Both new source series still lack their own two K blocks.
+                self.assertNotIn(Kind.VENTILATION_COMPLETE, [item.kind for item in output])
+                self.assertEqual(completed, [])
+            replacement = opening.get("original_ventilation")
+            if replacement is not None:
+                self.assertGreaterEqual(replacement["received_at"], first_new)
+                self.assertEqual(dict(replacement["context"])[Position.UPPER],
+                                 dict(detector._original_context())[Position.UPPER])
+                for _, water in replacement["water_windows"]:
+                    self.assertEqual((len(water.previous), len(water.current)), (count, count))
+                    self.assertGreaterEqual(water.start_at, first_new)
+            for proof in completed:
+                self.assertGreaterEqual(proof["candidate_at"], first_new)
+                self.assertEqual(dict(proof["bound_context"])[Position.UPPER],
+                                 dict(detector._original_context())[Position.UPPER])
+                self.assertEqual(opening["sources"][Position.UPPER], (source, source))
+                temperature_windows = dict(proof["temperature_windows"])
+                significance = detector.p["curve_original_significance"]
+                for position, water in proof["windows"]:
+                    temperature = temperature_windows[position]
+                    self.assertGreaterEqual(water.start_at, first_new)
+                    self.assertGreaterEqual(temperature.start_at, first_new)
+                    self.assertGreater(-water.b, significance * water.e_minus)
+                    self.assertLessEqual(water.v, significance * water.e)
+                    self.assertGreater(water.v - water.b,
+                                       significance * (water.e + water.e_minus))
+                    self.assertGreater(-temperature.v, significance * temperature.e)
+                    self.assertLessEqual(temperature.v - temperature.b,
+                                         significance * (temperature.e + temperature.e_minus))
+                bound = {name: (t, h) for name, t, h in proof["candidate_originals"]}
+                for carrier, temperature_at, humidity_at in proof["confirmation_originals"]:
+                    self.assertGreater(temperature_at, bound[carrier][0])
+                    self.assertGreater(humidity_at, bound[carrier][1])
+        self.assertEqual([item.kind for item in events].count(Kind.DOOR_OPEN), 1)
+        self.assertEqual([item.kind for item in events].count(Kind.VENTILATION), 1)
+        # The unchanged curve later supplies its own fall-to-flat AH branch
+        # with enough new-source originals. It must be usable independently.
+        self.assertEqual(len(completed), 1)
+        self.assertEqual([item.kind for item in events].count(Kind.VENTILATION_COMPLETE), 1)
+        # No never-again-ventilation assertion or legacy invalid/degraded flag.
 
     def test_unused_lower_loss_does_not_block_upper_ventilation_completion(self):
         detector = self._ventilation_detector()
@@ -1446,11 +1579,99 @@ class DetectorTests(unittest.TestCase):
 
     def test_source_replacement_during_opening_invalidates_its_reference(self):
         detector = self._ventilation_detector()
-        _, plateau, end, values = self._ventilation_curve(detector)
-        events = self._feed_ventilation(detector, plateau, values)
-        events += self._feed_ventilation(detector, end, values, source="sensor.replaced")
-        self.assertNotIn(Kind.VENTILATION_COMPLETE, [item.kind for item in events])
-        self.assertIn(Position.UPPER, detector.ventilation_invalid)
+        _, _, end, values = self._ventilation_curve(detector)
+        positions = detector.positions
+        pending_at, events = self._feed_pending_completion(
+            detector, end, values, positions=positions,
+        )
+        self.assertTrue(detector.open)
+        opening = detector._position_state(Position.UPPER)["door"]
+        previous = opening["original_ventilation"]
+        old_epochs = dict(detector._original_context())
+        historical = tuple(events)
+        self.assertIn(Kind.VENTILATION, [item.kind for item in historical])
+        self.assertNotIn(Kind.VENTILATION_COMPLETE, [item.kind for item in historical])
+        count, step = detector.p["curve_original_samples"], detector.grid_seconds
+        source = "sensor.replaced"
+        first_new = T0 + timedelta(seconds=pending_at + step)
+        completed = []
+
+        def received(item):
+            if item.kind is Kind.VENTILATION_COMPLETE:
+                completed.append({
+                    **dict(detector.door_episode["original_ventilation_complete"]),
+                    "bound_context": detector.door_episode["original_ventilation"]["context"],
+                })
+
+        for index, second in enumerate(range(pending_at + step, end + step, step), 1):
+            now = T0 + timedelta(seconds=second)
+            for position in positions:
+                for quantity, value in zip(
+                    (Quantity.TEMPERATURE, Quantity.HUMIDITY), values(second), strict=True,
+                ):
+                    self.assertTrue(detector.accept(measurement(
+                        position, quantity, value, second, source=source, measured=now,
+                    )))
+            output = detector.advance(now, enabled=True, on_detection=received)
+            events += output
+            # Only advance consumes the queued source changes. One original
+            # per new role cannot yet supply an independent two-K-block form.
+            self.assertFalse(detector.pending)
+            opening = detector._position_state(Position.UPPER)["door"]
+            if index == 1:
+                self.assertIsNot(opening.get("original_ventilation"), previous)
+                self.assertNotIn("original_ventilation", opening)
+                for position in positions:
+                    for offset, quantity in enumerate((Quantity.TEMPERATURE, Quantity.HUMIDITY)):
+                        series = detector._curve_series[position, quantity]
+                        self.assertGreater(series["epoch"], old_epochs[position][offset])
+                        self.assertEqual(series["source"], source)
+                        self.assertEqual(tuple(series["points"]), ((now, values(second)[offset]),))
+            # Preserve already delivered events and require no duplicate RH
+            # publication; no identity requirement for an internal reset field.
+            self.assertEqual(tuple(events[:len(historical)]), historical)
+            self.assertIsNot(opening.get("original_ventilation"), previous)
+            if index < 2 * count:
+                # Both new source series still lack their own two K blocks.
+                self.assertNotIn(Kind.VENTILATION_COMPLETE, [item.kind for item in output])
+                self.assertEqual(completed, [])
+            replacement = opening.get("original_ventilation")
+            if replacement is not None:
+                self.assertGreaterEqual(replacement["received_at"], first_new)
+                self.assertEqual(dict(replacement["context"])[Position.UPPER],
+                                 dict(detector._original_context())[Position.UPPER])
+                for _, water in replacement["water_windows"]:
+                    self.assertEqual((len(water.previous), len(water.current)), (count, count))
+                    self.assertGreaterEqual(water.start_at, first_new)
+            for proof in completed:
+                self.assertGreaterEqual(proof["candidate_at"], first_new)
+                self.assertEqual(dict(proof["bound_context"])[Position.UPPER],
+                                 dict(detector._original_context())[Position.UPPER])
+                self.assertEqual(opening["sources"][Position.UPPER], (source, source))
+                temperature_windows = dict(proof["temperature_windows"])
+                significance = detector.p["curve_original_significance"]
+                for position, water in proof["windows"]:
+                    temperature = temperature_windows[position]
+                    self.assertGreaterEqual(water.start_at, first_new)
+                    self.assertGreaterEqual(temperature.start_at, first_new)
+                    self.assertGreater(-water.b, significance * water.e_minus)
+                    self.assertLessEqual(water.v, significance * water.e)
+                    self.assertGreater(water.v - water.b,
+                                       significance * (water.e + water.e_minus))
+                    self.assertGreater(-temperature.v, significance * temperature.e)
+                    self.assertLessEqual(temperature.v - temperature.b,
+                                         significance * (temperature.e + temperature.e_minus))
+                bound = {name: (t, h) for name, t, h in proof["candidate_originals"]}
+                for carrier, temperature_at, humidity_at in proof["confirmation_originals"]:
+                    self.assertGreater(temperature_at, bound[carrier][0])
+                    self.assertGreater(humidity_at, bound[carrier][1])
+        self.assertEqual([item.kind for item in events].count(Kind.DOOR_OPEN), 1)
+        self.assertEqual([item.kind for item in events].count(Kind.VENTILATION), 1)
+        # The unchanged curve later supplies its own fall-to-flat AH branch
+        # with enough new-source originals. It must be usable independently.
+        self.assertEqual(len(completed), 1)
+        self.assertEqual([item.kind for item in events].count(Kind.VENTILATION_COMPLETE), 1)
+        # No never-again-ventilation assertion or legacy invalid/degraded flag.
 
     def test_completion_needs_new_paired_originals_not_ticks_or_same_stamp_corrections(self):
         detector = self._ventilation_detector()
@@ -1495,7 +1716,11 @@ class DetectorTests(unittest.TestCase):
 
     def test_complete_paired_completion_windows_bind_and_confirm_with_trailing_pending_rh(self):
         detector = self._ventilation_detector()
-        _, plateau, _, values = self._ventilation_curve(detector)
+        begin, water_level, _, values = self._ventilation_curve(detector)
+        # Start the unchanged quarter-step protocol at the fixture's first
+        # physical RH plateau, before its possible AH braking. Feeding all the
+        # way to the later constant-water branch has already completed Stage 2.
+        plateau = begin + (water_level - begin) // 2
         count, step = detector.p["curve_original_samples"], detector.grid_seconds
         found = self._feed_ventilation(detector, plateau, values)
         self.assertTrue(detector.open)
@@ -1522,8 +1747,9 @@ class DetectorTests(unittest.TestCase):
                 second, measured=T0 + timedelta(seconds=second),
             )))
 
-        # Alternating U-T/U-RH/L-T/L-RH receipts leave the other position's
-        # later RH pending whenever a T completes the preceding RH pair.
+        # The carrier's newest RH awaits its right-hand T partner; unused
+        # lower receipts neither supply that partner nor confirmation freshness.
+        saw_waiting_before_binding = False
         for index in range(1, count + 1):
             second = plateau + index * step
             for position, quantity, offset in schedule:
@@ -1531,6 +1757,12 @@ class DetectorTests(unittest.TestCase):
             found += detector.advance(T0 + timedelta(seconds=second), enabled=True)
             if "original_ventilation" in detector.door_episode:
                 break
+            support = detector.diagnostic["original_ventilation"]["paired_support"]["upper"]
+            self.assertGreater(support["pending_count"], 0)
+            self.assertGreater(support["pending_rh_at"], support["rh_newest_at"])
+            self.assertNotIn(Kind.VENTILATION_COMPLETE, [item.kind for item in found])
+            saw_waiting_before_binding = True
+        self.assertTrue(saw_waiting_before_binding)
         self.assertIn("original_ventilation", detector.door_episode)
         self.assertNotIn(Kind.VENTILATION_COMPLETE, [item.kind for item in found])
         candidate = detector.door_episode["original_ventilation"]
@@ -1542,6 +1774,16 @@ class DetectorTests(unittest.TestCase):
         for _, water in candidate["water_windows"]:
             self.assertEqual(len(water.previous), count)
             self.assertEqual(len(water.current), count)
+            temperature = dict(candidate["temperature_windows"])[Position.UPPER]
+            significance = detector.p["curve_original_significance"]
+            self.assertGreater(-water.b, significance * water.e_minus)
+            self.assertLessEqual(water.v, significance * water.e)
+            self.assertGreater(water.v - water.b, significance * (water.e + water.e_minus))
+            self.assertGreater(-temperature.v, significance * temperature.e)
+            self.assertLessEqual(temperature.v - temperature.b,
+                                 significance * (temperature.e + temperature.e_minus))
+            self.assertTrue(all(pair.available_at <= candidate["received_at"]
+                                for pair in water.previous + water.current))
         for support in bound["paired_support"].values():
             self.assertEqual(support["paired_count"], 2 * count)
             self.assertGreater(support["pending_count"], 0)
@@ -1665,12 +1907,14 @@ class DetectorTests(unittest.TestCase):
                     self.assertTrue(detector.accept(original))
         self.assertEqual(tuple(detector.pending), tuple(originals))
         completion_originals = []
+        completion_proofs = []
 
         def received(detection):
             if detection.kind is Kind.VENTILATION_COMPLETE:
                 completion_originals.append(
                     detector.door_episode["original_ventilation_complete"]["confirmation_received_at"],
                 )
+                completion_proofs.append(dict(detector.door_episode["original_ventilation_complete"]))
 
         raster_at = T0 + timedelta(seconds=pending_at + step)
         batch = detector.advance(raster_at, enabled=True, on_detection=received)
@@ -1683,10 +1927,28 @@ class DetectorTests(unittest.TestCase):
         self.assertIn(close_original, original_times)
         self.assertLess(completion_originals[0], close_original)
         self.assertLess(close_original, raster_at)
-        # A later original confirms the close after COMPLETE, while its
-        # retrospectively attributed onset remains at 52 s, with COMPLETE at 53 s.
-        self.assertEqual(doors[0].effective_at, T0 + timedelta(seconds=53))
-        self.assertEqual(doors[1].effective_at, T0 + timedelta(seconds=52))
+        # Publication uses the current raster. The source-supported close may
+        # begin earlier, although its later original confirms after COMPLETE.
+        self.assertEqual(doors[0].effective_at, raster_at)
+        self.assertEqual(len(completion_proofs), 1)
+        proof = completion_proofs[0]
+        self.assertEqual(proof["confirmation_received_at"], completion_originals[0])
+        self.assertGreater(proof["confirmation_received_at"], proof["candidate_at"])
+        bound = {name: (t, h) for name, t, h in proof["candidate_originals"]}
+        for name, temperature_at, humidity_at in proof["confirmation_originals"]:
+            self.assertGreater(temperature_at, bound[name][0])
+            self.assertGreater(humidity_at, bound[name][1])
+            self.assertLessEqual(max(temperature_at, humidity_at), completion_originals[0])
+        significance = detector.p["curve_original_significance"]
+        temperatures = dict(proof["temperature_windows"])
+        for position, water in proof["windows"]:
+            temperature = temperatures[position]
+            self.assertGreater(-water.b, significance * water.e_minus)
+            self.assertLessEqual(water.v, significance * water.e)
+            self.assertGreater(water.v - water.b, significance * (water.e + water.e_minus))
+            self.assertGreater(-temperature.v, significance * temperature.e)
+            self.assertLessEqual(temperature.v - temperature.b,
+                                 significance * (temperature.e + temperature.e_minus))
         self.assertGreater(doors[0].effective_at, doors[1].effective_at)
         self.assertEqual(tuple(item.trace_at for item in doors), (raster_at, raster_at))
         self.assertEqual(tuple(item.detected_at for item in doors), (raster_at, raster_at))
@@ -3628,8 +3890,69 @@ class InfusionLifecycleTests(unittest.TestCase):
         self.assertEqual(active.phase, "active")
         temperatures = [(0, self.temperature), (peak, self.temperature),
                         (fall, trace(85)[0])]
-        self._feed(detector, fall, points, events, temperatures=temperatures)
-        self.assertEqual([item.kind for item in events].count(Kind.DOOR_OPEN), 1)
+        guard_records, first_current_block, references, last_record = [], {}, {}, {}
+        original_guard = detector._original_opening_infusion_guard
+
+        def observe_guard(candidate, prefix, positions, state):
+            result = original_guard(candidate, prefix, positions, state)
+            admitted, guard = result
+            local = guard["new_local_temperature_fall"]
+            row = deepcopy({
+                "prefix_at": prefix.received_at,
+                "candidate_at": candidate["received_at"],
+                "positions": tuple(position.value for position in positions),
+                "admitted": admitted, "reason": guard["reason"],
+                "baseline_temperature_loss": guard.get("baseline_temperature_loss"),
+                "local_temperature_fall": local,
+            })
+            key = tuple(positions)
+            if last_record.get(key) != row:
+                guard_records.append(row)
+                last_record[key] = row
+            for position in positions:
+                name = position.value
+                reference = candidate.get("temperature_fall_witnesses", {}).get(name)
+                background = candidate.get("temperature_fall_backgrounds", {}).get(name)
+                if reference is not None:
+                    reference_key = f"{name}:{reference.newest_at}"
+                    if reference_key not in references:
+                        references[reference_key] = {
+                            "candidate_at": candidate["received_at"],
+                            "first_observed_at": prefix.received_at,
+                            "start_at": reference.start_at, "newest_at": reference.newest_at,
+                            "previous": reference.previous, "current": reference.current,
+                            "previous_slope": reference.b, "current_slope": reference.v,
+                            "previous_error": reference.e_minus, "current_error": reference.e,
+                            "effective_change": (background.effective_change
+                                                 if background is not None else None),
+                            "tolerance": background.tolerance if background is not None else None,
+                        }
+                role = local["positions"].get(name, {})
+                form = (role.get("followup") or {}).get(name, {}).get(Quantity.TEMPERATURE.value)
+                if (name not in first_current_block and form is not None
+                        and form["fresh_current"] == self.side):
+                    first_current_block[name] = deepcopy({
+                        "prefix_at": prefix.received_at,
+                        "candidate_at": candidate["received_at"],
+                        "reference_newest_at": role.get("reference_newest_at"),
+                        "supported": role.get("supported"), "followup": form,
+                    })
+            return result
+
+        with patch.object(detector, "_original_opening_infusion_guard", side_effect=observe_guard):
+            self._feed(detector, fall, points, events, temperatures=temperatures)
+        self.assertEqual(
+            [item.kind for item in events].count(Kind.DOOR_OPEN), 1,
+            msg="ACTIVE_INFUSION_DOOR_EVIDENCE=" + json.dumps({
+                "peak_at": self._at(peak), "fall_at": self._at(fall),
+                "original_samples": self.side,
+                "temperature_points": temperatures,
+                "first_current_block": first_current_block,
+                "local_references": references, "guard_records": guard_records,
+                "final_forms": detector.diagnostic.get("original_forms"),
+                "position_selection": detector.diagnostic.get("position_selection"),
+            }, default=str, sort_keys=True),
+        )
         self.assertTrue(detector.open)
         self.assertIsNone(detector.infusion_episode)
         candidate = detector.door_episode["original_open"]
