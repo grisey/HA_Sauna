@@ -757,18 +757,53 @@ class Detector:
         )
 
     def _original_temperature_braking_form(self, episode, prefix, position, fall):
-        """Den ersten diskreten Bremsknick im bestehenden Fallbesitzer halten."""
-        if fall.get("braking_form") is not None:
-            return
+        """Den gebundenen Bremsknick durch spätere eigene Originale nachprüfen."""
+        held = fall.get("braking_form")
         floor = max(episode["started_at"], fall["window"].newest_at)
-        start = prefix.received_at - timedelta(seconds=self.p["curve_window_seconds"])
         samples = next(temperature for role, temperature, _ in prefix.points if role == position)
-        points = tuple(point for point in samples if start <= point[0] <= prefix.received_at)
         support = self._original_prefix_time_support(prefix, position, Quantity.TEMPERATURE)
-        if not points or support is None or not support.covers(points[0][0], points[-1][0]):
-            return
         key = ("door_close", position, Quantity.TEMPERATURE)
         source = self._curve_series[position, Quantity.TEMPERATURE]["source"]
+        if held is not None:
+            last_at = held.original_points[-1][0]
+            if not samples or samples[-1][0] <= last_at:
+                return
+            if support is None or not support.covers(last_at, samples[-1][0]):
+                fall["braking_form"] = replace(
+                    held, fresh_newest_at=None, fresh_observed_at=None,
+                )
+                return
+            # Die ursprüngliche Stütze gehört zum festen Beginn. Ein rollendes
+            # Suchfenster darf sie nicht nachträglich abschneiden. Nur kausal
+            # anschließende eigene Originale erweitern denselben Formbeleg.
+            points = held.original_points + tuple(
+                point for point in samples if point[0] > last_at
+            )
+            features = self._fit_candidate_form(
+                "door_close", points, floor, Quantity.TEMPERATURE,
+                candidate=held,
+                fit_context=("original_temperature_braking", position, source, fall["epoch"]),
+            )
+            if features is None or features.evidence == "unresolved":
+                fall["braking_form"] = replace(
+                    held, original_points=points,
+                    fresh_newest_at=None, fresh_observed_at=None,
+                )
+            elif self._curve_supports(
+                "door_close", features, floor, Quantity.TEMPERATURE,
+            ):
+                fall["braking_form"] = replace(
+                    held, features=features, original_points=points,
+                    fresh_newest_at=features.newest_at,
+                    fresh_observed_at=prefix.received_at,
+                )
+            else:
+                fall.pop("braking_form")
+            return
+        start = prefix.received_at - timedelta(seconds=self.p["curve_window_seconds"])
+        points = tuple(point for point in samples if start <= point[0] <= prefix.received_at)
+        if not points or support is None or not support.covers(points[0][0], points[-1][0]):
+            return
         candidate = self._curve_candidates.get(key)
         status = self._curve_status.get(key, {})
         originals = dict(points)
@@ -778,8 +813,10 @@ class Detector:
                 or not self._curve_supports(
                     "door_close", candidate.features, floor, Quantity.TEMPERATURE,
                 )
-                or candidate.features.newest_at > prefix.received_at
+                or candidate.features.newest_at != points[-1][0]
                 or candidate.first_observed_at > prefix.received_at
+                or candidate.fresh_observed_at is not None
+                and candidate.fresh_observed_at > prefix.received_at
                 or not all(originals.get(stamp) == value
                            for stamp, value in candidate.original_points)):
             fit_key = ("original_temperature_braking", self.curve_policy, points, floor)
@@ -803,7 +840,10 @@ class Detector:
     def _original_temperature_braking_forms(episode, positions):
         falls = episode.get("original_temperature_falls", {})
         return bool(positions) and all(
-            position in falls and falls[position].get("braking_form") is not None
+            position in falls
+            and (witness := falls[position].get("braking_form")) is not None
+            and witness.fresh_newest_at is not None
+            and witness.fresh_newest_at > witness.first_newest_at
             for position in positions
         )
 
@@ -2522,6 +2562,9 @@ class Detector:
                         "candidate_id": witness.candidate_id,
                         "onset_at": witness.onset_at,
                         "first_observed_at": witness.first_observed_at,
+                        "first_newest_at": witness.first_newest_at,
+                        "fresh_newest_at": witness.fresh_newest_at,
+                        "fresh_observed_at": witness.fresh_observed_at,
                         "newest_at": witness.features.newest_at,
                         "hinge_order": witness.features.hinge_order,
                         "slope_before": witness.features.slope_before,

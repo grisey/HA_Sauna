@@ -54,6 +54,35 @@ class R04DoorRecoveryTests(unittest.TestCase):
                 } for item in row["curve_proposals"].get("door_close", ())],
             }, default=str, sort_keys=True))
 
+    def _print_native_opening_trace(self, observed, case):
+        """Expose existing native decisions when the expected opening is missing."""
+        previous = None
+        for row in observed:
+            form = row.get("original_forms", {})
+            payload = {
+                "original_forms": {key: form[key] for key in (
+                    "received_at", "positions", "evaluable", "new_original",
+                    "binding_humidity_fall_onset", "binding_humidity_fall_kink",
+                    "binding_humidity_fall", "candidate_received_at", "binding_onsets",
+                    "onset_witness_received_at", "lowering_witness_received_at",
+                    "complete_fresh_original_block", "contiguous_candidate_support",
+                    "lower_level", "resolved_joint_fall", "bound_humidity_onsets",
+                    "infusion_decay_guard", "confirmation_branch", "opening_confirmation",
+                    "opening_candidate_reset_reason", "humidity_branch_counterform",
+                    "temperature_fall_counterform", "ended_fall_retained_by_level",
+                    "retained_temperature_fall", "current_temperature_recovery",
+                    "confirmation_received_at", "confirmation_originals",
+                ) if key in form},
+                "decisions": {key: value for key, value in row.get("decisions", {}).items()
+                              if key in ("door_open", "door_open_heating")},
+            }
+            if payload == previous:
+                continue
+            previous = payload
+            print("R04 executed native opening diagnosis: " + json.dumps({
+                "case": case, "at": row["at"], **payload,
+            }, default=str, sort_keys=True))
+
     def _assert_native_close_fallback(self, row, event, inputs, values, floor):
         """No earlier attribution still requires the complete native close proof."""
         self.assertEqual(event.kind, Kind.DOOR_CLOSE)
@@ -95,6 +124,23 @@ class R04DoorRecoveryTests(unittest.TestCase):
                 else form["followup"]
             )
             quantities = {"temperature"}
+            if form["discrete_temperature_braking"]["result"]:
+                witnesses = form["temperature_braking_witnesses"]
+                self.assertEqual(set(witnesses), set(event.channels))
+                for position, witness in witnesses.items():
+                    self.assertIsNotNone(witness["fresh_newest_at"])
+                    self.assertIsNotNone(witness["fresh_observed_at"])
+                    self.assertGreater(witness["fresh_newest_at"], witness["first_newest_at"])
+                    self.assertEqual(witness["newest_at"], witness["fresh_newest_at"])
+                    self.assertLessEqual(witness["first_observed_at"], witness["fresh_observed_at"])
+                    self.assertLessEqual(witness["fresh_newest_at"], witness["fresh_observed_at"])
+                    self.assertLessEqual(witness["fresh_observed_at"], confirmed)
+                    originals = {
+                        item.received_at for item in inputs
+                        if item.position.value == position and item.quantity == Quantity.TEMPERATURE
+                    }
+                    for key in ("onset_at", "first_newest_at", "fresh_newest_at"):
+                        self.assertIn(witness[key], originals)
         else:
             self.assertEqual(event.kind, Kind.DOOR_OPEN)
             self.assertLess(form["candidate_received_at"], confirmed)
@@ -138,6 +184,11 @@ class R04DoorRecoveryTests(unittest.TestCase):
             self.assertEqual(package["attribution_basis"], "original_open_binding")
         elif native_close:
             self.assertTrue(row["original_forms"]["discrete_temperature_braking"]["result"])
+            held = row["original_forms"]["temperature_braking_witnesses"]
+            self.assertEqual(
+                set(package["consumed_candidate_ids"]),
+                {witness["candidate_id"] for witness in held.values()},
+            )
         else:
             self.assertEqual(package["attribution_basis"], "curve_proposal")
             # This optional historical proposal can be assembled on the same
@@ -1782,6 +1833,10 @@ class R04DoorRecoveryTests(unittest.TestCase):
                 }
                 diagnostic = repr(diagnostics)
                 self._print_native_closures(observed, name)
+                if name == "short_under_heating" and not any(
+                    event.kind == Kind.DOOR_OPEN for event in events
+                ):
+                    self._print_native_opening_trace(observed, name)
                 print(
                     f"R04 {name}: samples={cursor} ticks={len(observed)} "
                     f"wall_seconds={perf_counter() - started:.6f} "

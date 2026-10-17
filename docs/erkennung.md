@@ -480,10 +480,17 @@ hält die erste solche Form aus einem eigenen neuen T-Originalpräfix samt
 unveränderten Originalen, Quelle und Epoche. Ihr Beginn liegt frühestens am
 jüngsten Original der gehaltenen Fallreferenz. Sie darf vor der späteren nativen
 Bremsbindung derselben Rolle entstehen; ihr lückenloser Anschluss bleibt
-maßgeblich. Eine bis zur Bremsbindung verstärkte Fallreferenz verwirft diese
-Form. Die anschließend erforderlichen nativen Bremskontraste und zwei neuen
-Originalblöcke bleiben eigenständige Bedingungen. Eine negative Nachsteigung
-bleibt zulässig.
+maßgeblich. Erst ein späteres eigenes T-Original darf dieselbe Form am festen
+Beginn und mit unveränderter Formordnung bestätigen. Die ursprünglichen
+Stützpunkte bleiben erhalten und werden durch kausal anschließende Originale
+ergänzt; das rollende Suchfenster begrenzt die Erstsuche, nicht die Lebensdauer
+eines bereits gebundenen Belegs. Eine nicht auswertbare Fortsetzung liefert
+keine Bestätigung, erhält aber die gebundene Identität und ihre Originale.
+Eine aufgelöste Gegenform verwirft die Form. Eine bis zur Bremsbindung
+verstärkte Fallreferenz verwirft sie ebenfalls. Die anschließend erforderlichen
+nativen Bremskontraste und zwei neuen Originalblöcke bleiben eigenständige
+Bedingungen; ihre Frische ersetzt keine spätere Bestätigung des Formbelegs.
+Eine negative Nachsteigung bleibt zulässig.
 
 Trägt ein solcher reiner Bremsweg die Schlussbestätigung, stammt der frühere
 Beginn aus genau diesen gehaltenen T-Formen. Das gilt auch, wenn der

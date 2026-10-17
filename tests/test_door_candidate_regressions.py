@@ -39,6 +39,8 @@ class DoorCandidateRegressionTests(unittest.TestCase):
         for isolated_edge in (False, True):
             with self.subTest(isolated_edge=isolated_edge):
                 detector, events = self._open_door()
+                observed = []
+                detector.observer = observed.append
                 braking_at = fixture._at(detector.index)
                 delta = tuple(
                     value / fixture.count if role.endswith("temperature") else 0
@@ -66,6 +68,16 @@ class DoorCandidateRegressionTests(unittest.TestCase):
                 self.assertGreater(closes[0].trace_at, braking_at)
                 self.assertLessEqual(closes[0].effective_at, closes[0].trace_at)
                 self.assertFalse(detector.open)
+                row = next(item for item in observed if item["at"] == closes[0].trace_at)
+                form = row["original_forms"]
+                self.assertTrue(form["discrete_temperature_braking"]["result"])
+                witnesses = form["temperature_braking_witnesses"]
+                self.assertEqual(set(witnesses), set(closes[0].channels))
+                for witness in witnesses.values():
+                    self.assertIsNotNone(witness["fresh_newest_at"])
+                    self.assertIsNotNone(witness["fresh_observed_at"])
+                    self.assertGreater(witness["fresh_newest_at"], witness["first_newest_at"])
+                    self.assertLessEqual(witness["fresh_observed_at"], form["confirmation_received_at"])
 
     def test_smooth_open_cooling_is_not_a_discrete_closing_transition(self):
         fixture = self.fixture
