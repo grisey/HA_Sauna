@@ -15,6 +15,7 @@ import unittest
 from unittest.mock import patch
 
 from curve_slope_diagnostics import SlopeTransitionDiagnostics
+from closing_lifecycle_diagnostics import ClosingLifecycleDiagnostics
 from test_detector import detection_parameters, measurement
 from test_settings import fixture
 
@@ -420,6 +421,7 @@ class R04DoorRecoveryTests(unittest.TestCase):
         parameters = detection_parameters()
         observed = []
         detector = Detector(parameters, begin, observer=observed.append)
+        ClosingLifecycleDiagnostics(self, detector, "r04_first_two_doors")
         slope_diagnostic = SlopeTransitionDiagnostics(self, detector)
         # R04 actuator evidence: continuously ON 12:52:18.386868–13:24:17.414544.
         # Starting at the slice boundary gives no original before that boundary.
@@ -1123,6 +1125,7 @@ class R04DoorRecoveryTests(unittest.TestCase):
                 begin = opening_reference - warmup
                 observed = []
                 detector = Detector(parameters, begin, observer=observed.append)
+                ClosingLifecycleDiagnostics(self, detector, "r04_" + name)
                 slope_diagnostic = SlopeTransitionDiagnostics(self, detector)
                 # Completed R04 replay 38609533414 actuator history: OFF until
                 # 14:50:13.541953, then ON until 15:12:15.892999; OFF until

@@ -1827,10 +1827,10 @@ class DetectorTests(unittest.TestCase):
                     humidity if thermal else humidity - .06 * 2 * step,
                     detector.positions, humidity_cadence=cadence,
                 )
-                openings = [item for item in events if item.kind == Kind.DOOR_OPEN]
-                self.assertEqual(len(openings), 1)
-                self.assertEqual(openings[0].trace_at, T0 + timedelta(seconds=received))
+                first_openings = [item for item in events if item.kind == Kind.DOOR_OPEN]
                 if thermal:
+                    self.assertEqual(len(first_openings), 1)
+                    self.assertEqual(first_openings[0].trace_at, T0 + timedelta(seconds=received))
                     consumed = detector._curve_proposal_status[proposal_key]
                     self.assertEqual(consumed["status"], "consumed")
                     self.assertIn(witness.candidate_id, consumed["candidate_ids"])
@@ -1838,13 +1838,11 @@ class DetectorTests(unittest.TestCase):
                                         if item["candidate_id"] == witness.candidate_id)
                     self.assertGreater(confirmation["fresh_newest_at"], witness.first_newest_at)
                 else:
-                    self.assertIs(detector.door_episode["original_open"], witness)
-                    self.assertGreater(witness["confirmation_received_at"], witness["received_at"])
-                    original = {name: (temperature, humidity)
-                                for name, temperature, humidity in witness["newest"]}
-                    for name, pair in witness["confirmation_windows"]:
-                        self.assertGreater(pair.temperature.newest_at, original[name][0])
-                        self.assertGreater(pair.humidity.newest_at, original[name][1])
+                    # One new pair is not the complete own native confirmation
+                    # block. Time advancing without originals was already checked.
+                    self.assertEqual(first_openings, [])
+                # Reuse the existing bounded continuation; do not search for a
+                # convenient confirmation time or add a new threshold/duration.
                 tail = self._segment(
                     detector, 2 * detector.p["curve_original_samples"] * step,
                     (temperature - .04 * 2 * step, humidity if thermal else humidity - .06 * 2 * step),
@@ -1852,7 +1850,28 @@ class DetectorTests(unittest.TestCase):
                      humidity if thermal else humidity - .06 * (2 + 2 * detector.p["curve_original_samples"]) * step),
                     heating=thermal, humidity_cadence=cadence,
                 )
-                self.assertNotIn(Kind.DOOR_OPEN, [item.kind for item in tail])
+                events += tail
+                openings = [item for item in events if item.kind == Kind.DOOR_OPEN]
+                self.assertEqual(len(openings), 1, detector.diagnostic)
+                if thermal:
+                    self.assertNotIn(Kind.DOOR_OPEN, [item.kind for item in tail])
+                else:
+                    self.assertIs(detector.door_episode["original_open"], witness)
+                    self.assertGreater(witness["confirmation_received_at"], witness["received_at"])
+                    self.assertEqual(openings[0].trace_at, witness["confirmation_received_at"])
+                    self.assertGreater(openings[0].trace_at, T0 + timedelta(seconds=received))
+                    original = {name: (temperature, humidity)
+                                for name, temperature, humidity in witness["newest"]}
+                    for name, pair in witness["confirmation_windows"]:
+                        for window, bound in zip(
+                            (pair.temperature, pair.humidity), original[name], strict=True,
+                        ):
+                            self.assertGreater(window.newest_at, bound)
+                            self.assertEqual(
+                                sum(stamp > bound for stamp, _ in window.current),
+                                detector.p["curve_original_samples"],
+                            )
+                            self.assertLessEqual(window.newest_at, openings[0].trace_at)
 
 
     def test_ticks_and_repeated_originals_cannot_confirm_a_stale_opening_candidate(self):

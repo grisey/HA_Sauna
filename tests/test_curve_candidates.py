@@ -5,6 +5,7 @@ from math import ceil
 import unittest
 from unittest.mock import patch
 
+import test_detector as detector_fixtures
 from test_detector import detection_parameters, measurement, sample, trace
 from test_foundation import T0
 
@@ -362,6 +363,15 @@ class CurveCandidateTests(unittest.TestCase):
         selected = detection_parameters()
         observed = []
         detector = Detector(selected, T0, (Position.UPPER,), observer=observed.append)
+        fixture = detector_fixtures.DetectorTests()
+        cadence = fixture._thermal_humidity_cadence(detector)
+        baseline = fixture._settling_time(detector)
+        # Same baseline and fall as the existing continuous/catch-up heating
+        # fixture. RH keeps its actual role and the established sparse cadence.
+        initial = (50, 30)
+        duration = 80
+        final = (initial[0] - .03 * duration, initial[1])
+        onset = at(baseline - detector.grid_seconds)
 
         def temperature_only(
             points,
@@ -373,15 +383,15 @@ class CurveCandidateTests(unittest.TestCase):
             onset_bounds=None,
             hinge_order=1,
         ):
-            # Reuse the supplied fixture channels in opposite input roles:
-            # its large RH fall then precedes the shared minimum T loss.
-            onset_at = onset_at or at(70)
+            # Declared fit for this provenance contract; the supplied original
+            # roles, heating history and later confirmation inputs stay real.
+            onset_at = onset_at or onset
             if (
                 not points
                 or hinge_order != 1
                 or onset_bounds is not None
                 and not onset_bounds[0] <= onset_at <= onset_bounds[1]
-                or points[0][1] != trace(0)[1]
+                or points[0][1] != initial[0]
                 or onset_at not in {stamp for stamp, _ in points}
                 or sum(stamp > onset_at for stamp, _ in points)
                 < policy.min_side_samples
@@ -395,26 +405,25 @@ class CurveCandidateTests(unittest.TestCase):
                 onset_not_before=onset_not_before,
             )
 
-        events = []
         with patch(
             "custom_components.ha_sauna.core.detector.curve_change",
             side_effect=temperature_only,
         ):
-            for second in range(90):
-                now = at(second)
-                detector.report_heating(True, now)
-                events += sample(
-                    detector, second, *reversed(trace(second)), detector.positions
-                )
+            events = fixture._segment(
+                detector, baseline, initial, heating=True, humidity_cadence=cadence,
+            )
+            events += fixture._segment(
+                detector, duration, initial, final, heating=True, humidity_cadence=cadence,
+            )
         openings = [event for event in events if event.kind == Kind.DOOR_OPEN]
-        self.assertEqual(len(openings), 1)
+        self.assertEqual(len(openings), 1, detector.diagnostic)
         opening = openings[0]
         row = next(row for row in observed if row["at"] == opening.trace_at)
         self.assertTrue(row["conditions"]["door_heating"])
         self.assertFalse(row["conditions"]["door_open"])
         candidates = row["curve_candidates"]["door_open"]["upper"]
         self.assertEqual(candidates[Quantity.TEMPERATURE.value]["status"], "supported")
-        self.assertEqual(candidates[Quantity.TEMPERATURE.value]["onset_at"], at(70))
+        self.assertEqual(candidates[Quantity.TEMPERATURE.value]["onset_at"], onset)
         self.assertNotEqual(candidates[Quantity.HUMIDITY.value]["status"], "supported")
         self.assertTrue(
             any(
@@ -433,20 +442,19 @@ class CurveCandidateTests(unittest.TestCase):
         self.assertEqual(len(consumed), 1)
         self.assertEqual(consumed[0]["quantities"], ("temperature",))
         self.assertTrue(all(item["supported"] for item in consumed[0]["confirmation"]))
-        self.assertEqual(opening.effective_at, at(70))
+        self.assertEqual(opening.effective_at, onset)
 
-        # A heater starting after the observed fall cannot make the earlier,
-        # unheated original segment into a temperature-only heating witness.
+        # The same original fall starts before the late heater's evidence
+        # history. Its unheated baseline cannot become a heated witness.
         late = Detector(selected, T0, detector.positions)
-        late_events = []
         with patch(
             "custom_components.ha_sauna.core.detector.curve_change",
             side_effect=temperature_only,
         ):
-            for second in range(90):
-                if second >= 71:
-                    late.report_heating(True, at(second))
-                late_events += sample(
-                    late, second, *reversed(trace(second)), late.positions
-                )
+            late_events = fixture._segment(
+                late, baseline, initial, heating=False, humidity_cadence=cadence,
+            )
+            late_events += fixture._segment(
+                late, duration, initial, final, heating=True, humidity_cadence=cadence,
+            )
         self.assertFalse(any(event.kind == Kind.DOOR_OPEN for event in late_events))

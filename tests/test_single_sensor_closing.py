@@ -310,10 +310,13 @@ class SingleSensorClosingTests(unittest.TestCase):
         _, completed, _ = self.run_inputs(positions=(Position.UPPER,), stop=stop)
         self.one_close(completed)  # Own continued originals are the positive control.
 
-    def test_lower_counterform_does_not_veto_a_clear_upper_close(self):
+    def test_pending_lower_close_does_not_veto_a_clear_upper_close(self):
+        # The unchanged delayed counter-curve has no resolved counterform at
+        # the upper close. Its later counterform is a separate observation,
+        # not evidence of simultaneous contradiction at this decision.
         _, expected, _ = self.run_inputs(positions=(Position.UPPER,))
         lower_choices, combined_choices = [], []
-        _, _, lower_observed = self.run_inputs(
+        self.run_inputs(
             positions=(Position.LOWER,), lower="counter", lower_delay=self.count,
             selection_records=lower_choices,
         )
@@ -323,21 +326,34 @@ class SingleSensorClosingTests(unittest.TestCase):
             selection_records=combined_choices,
         )
         lower_counterforms = self.counterform_records(lower_choices)
-        diagnostic = self.fixture_diagnostic("clear-upper-counterform", {
+        diagnostic = self.fixture_diagnostic("clear-upper-pending-lower", {
             "upper_close_at": close_at,
             "lower_delay_ticks": self.count,
             "lower_counterform_times": sorted({r["at"] for r in lower_counterforms}),
-            "lower_choices_at_upper_close": [self.brief_choice(r) for r in lower_choices if r["at"] == close_at],
-            "combined_choices_at_upper_close": [self.brief_choice(r) for r in combined_choices if r["at"] == close_at],
+            "combined_choices_at_upper_close": [self.brief_choice(r) for r in combined_choices
+                                                 if r["at"] == close_at],
             "combined_door_events": [self.signature(item) for item in self.doors(actual)],
         }, {"lower": lower_choices, "combined": combined_choices})
-        self.assertTrue(any(
-            row["at"] == close_at
-            and row.get("original_forms", {}).get(
-                "temperature_counterform", {},
-            ).get("result") is True
-            for row in lower_observed
-        ), "Fixture must supply an actual lower counterform at the upper decision: " + diagnostic)
+        upper, lower = Position.UPPER.value, Position.LOWER.value
+        closing_choices = [
+            record for record in combined_choices
+            if record["at"] == close_at and record["local_proofs"][upper]["local_closing"]
+        ]
+        self.assertTrue(closing_choices, diagnostic)
+        for record in closing_choices:
+            selection, proofs = record["selection"], record["local_proofs"]
+            self.assertEqual(selection["leading"], upper)
+            self.assertEqual(selection["results"][upper]["status"], "confirmed")
+            self.assertEqual(selection["results"][lower]["status"], "pending",
+                             "This fixed variant covers a pending secondary, not a counterform: " + diagnostic)
+            self.assertIsNotNone(proofs[lower]["bound_after_local"])
+            self.assertFalse(proofs[lower]["local_closing"])
+            self.assertFalse(self.counterform_records([record]))
+            self.assertEqual(selection["selected"], upper)
+            self.assertEqual(selection["role"], "leading")
+        self.assertTrue(lower_counterforms, diagnostic)
+        self.assertTrue(all(record["at"] > close_at for record in lower_counterforms),
+                        "Do not relabel an earlier/simultaneous counterform as this later-tail variant")
         self.assertEqual([self.signature(item) for item in self.doors(actual)],
                          [self.signature(item) for item in self.doors(expected)])
         self.assertEqual(self.one_close(actual).channels, (Position.UPPER.value,))

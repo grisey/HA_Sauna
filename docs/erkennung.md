@@ -979,9 +979,10 @@ Beleg bestehen, ohne eine neue Bestätigung zu liefern. Ein Quellenwechsel,
 ein ungültiger Messwert oder eine widersprechende Korrektur tragender Originale
 entwertet die betroffenen Stützen. Mit denselben Quellen
 können im noch offenen Türvorgang Fall und Abflachung aus zusammenhängenden
-Originalen erneut vollständig belegt werden. Ein tatsächlicher Wechsel der
-anfangs gebundenen Quellen erlaubt diesen Wiedererwerb für dieselbe Öffnung
-nicht.
+Originalen erneut vollständig belegt werden. Bei einem Quellenwechsel beginnt
+auch der Folgebeleg mit einem neuen eigenen Quellenabschnitt. Die Zuordnung
+zur offenen Tür bleibt bestehen; alte und neue Quellenstützen werden nicht
+zu einer Bestätigung verbunden.
 
 Ein noch unbestätigter Aufgusskandidat wird bei einem Bruch seiner Quellen
 oder seines Tür- und Betriebskontexts verworfen. Fehlende spätere Meldungen

@@ -1,7 +1,9 @@
 """Bound close evidence survives unknown intervals, not actual invalidation.
 
 Reuse the existing manifest-bound closing fixture without moving its values,
-changing policy parameters, or selecting a passing time from detector output.
+changing policy parameters, or selecting a passing event time. The correction
+variant targets an actually stored proof original at its identical causal input
+prefix; it does not alter the fixture's climate or original timestamps.
 Delivery and invalidation variants are sensor-input checks, not human sessions.
 """
 
@@ -188,28 +190,137 @@ class SingleSensorClosingGapTests(unittest.TestCase):
             self.assertIsNone(detector._value(sample.position, sample.quantity, last_at))
         self.assertNotIn(Kind.VENTILATION_COMPLETE, [item.kind for item in events])
 
+    def continue_fixture(self, detector, events, *, through=None,
+                         temperature_change=None, humidity_change=None, **advance):
+        """Original fixture values; change only delivery/source metadata."""
+        fixture = self.fixture
+        stop = fixture.end if through is None else through
+        for tick in range(detector.index + 1, stop):
+            now = fixture.at(tick)
+            for position in detector.positions:
+                values = fixture.pair(position, tick if position is Position.UPPER else -1)
+                for quantity, value in zip(
+                    (Quantity.TEMPERATURE, Quantity.HUMIDITY), values, strict=True,
+                ):
+                    previous = detector.latest[position, quantity]
+                    report = replace(previous, received_at=now, measured_at=now,
+                                     value=value, raw_value=str(value))
+                    if position is Position.UPPER:
+                        change = (temperature_change if quantity is Quantity.TEMPERATURE
+                                  else humidity_change)
+                        if change == "source_replacement":
+                            report = replace(report, source=(
+                                f"sensor.followup_upper_{quantity.value}_replacement"
+                            ))
+                        elif change == "received_time":
+                            report = replace(report, measured_at=None)
+                        elif change == "unavailable":
+                            report = replace(report, value=None, raw_value="unavailable")
+                    self.assertTrue(detector.accept(report))
+            events.extend(detector.advance(now, enabled=True, **advance))
+
     def test_explicit_temperature_invalidation_discards_the_bound_close(self):
-        for cause in ("source_replacement", "unavailable"):
+        for cause in ("source_replacement", "received_time", "unavailable"):
             with self.subTest(cause=cause):
                 detector, events, candidate, _, tick = self.seed_bound_upper_close()
-                now = self.fixture.at(tick + 1)
-                original = detector.latest[Position.UPPER, Quantity.TEMPERATURE]
-                epoch = detector._curve_series[Position.UPPER, Quantity.TEMPERATURE]["epoch"]
+                series = detector._curve_series[Position.UPPER, Quantity.TEMPERATURE]
+                epoch = series["epoch"]
                 opening_at = detector._curve_open_effective_at
-                if cause == "source_replacement":
-                    report = replace(
-                        original, received_at=now, source=original.source + "_replacement",
-                    )
-                else:
-                    report = replace(original, received_at=now, value=None, raw_value="unavailable")
-                self.assertTrue(detector.accept(report))
-                events.extend(detector.advance(now, enabled=True))
-                self.assertGreater(
-                    detector._curve_series[Position.UPPER, Quantity.TEMPERATURE]["epoch"], epoch,
-                    "An actual source/loss report must invalidate the old source segment",
+                boundary = self.fixture.at(tick + 1)
+                self.continue_fixture(
+                    detector, events, through=tick + 2, temperature_change=cause,
                 )
+                self.assertGreater(series["epoch"], epoch)
                 self.assertIsNot(self.upper_candidate(detector), candidate)
                 self.assert_opening_preserved(detector, events, opening_at)
+                if cause == "unavailable":
+                    self.continue_fixture(detector, events, temperature_change=cause)
+                    self.assert_opening_preserved(detector, events, opening_at)
+                    continue
+                self.assertTrue(all(stamp >= boundary for stamp, _ in series["points"]))
+                self.assertEqual(series["time_basis"],
+                                 "received" if cause == "received_time" else "measured")
+                # This boundary lies inside the existing recovery ramp. Its
+                # unchanged remainder has no new decline -> close form after
+                # the source reset. Do not invent a successful new close from
+                # warming alone, or move the fixture to manufacture one.
+                self.assertIsNone(self.upper_candidate(detector))
+                local = detector._position_state(Position.UPPER)["door"]
+                self.assertIsNotNone(local)
+                self.assertNotIn(Position.UPPER, local.get("original_temperature_falls", {}))
+                self.assertEqual(tuple(series["points"]), ((
+                    boundary, self.fixture.pair(Position.UPPER, tick + 1)[0],
+                ),))
+
+    def test_humidity_source_or_loss_does_not_invalidate_own_temperature_close(self):
+        for cause in ("source_replacement", "received_time", "unavailable"):
+            with self.subTest(cause=cause):
+                detector, events, candidate, _, tick = self.seed_bound_upper_close()
+                thermal = detector._curve_series[Position.UPPER, Quantity.TEMPERATURE]
+                epoch = thermal["epoch"]
+                context, bound = candidate["context"], candidate["received_at"]
+                self.continue_fixture(
+                    detector, events, through=tick + 2, humidity_change=cause,
+                )
+                self.assertIs(self.upper_candidate(detector), candidate)
+                self.assertEqual(candidate["context"], context)
+                self.assertEqual(candidate["received_at"], bound)
+                self.assertEqual(thermal["epoch"], epoch)
+                self.continue_fixture(detector, events, humidity_change=cause)
+                closes = [event for event in events if event.kind == Kind.DOOR_CLOSE]
+                self.assertEqual(len(closes), 1)
+                self.assertEqual(closes[0].channels, (Position.UPPER.value,))
+                self.assertIsNotNone(closes[0].door_close_evidence)
+                self.assertEqual(closes[0].door_close_evidence.candidate_at, bound)
+                self.assertEqual(thermal["epoch"], epoch)
+
+    def test_native_close_callback_and_onset_admission_share_one_confirmation(self):
+        results = {}
+        for earlier_allowed in (True, False):
+            with self.subTest(earlier_allowed=earlier_allowed):
+                detector, events, _, _, _ = self.seed_bound_upper_close()
+                emitted, checked = [], []
+                own_originals = set()
+
+                def admission(kind, onset, now):
+                    if kind == Kind.DOOR_CLOSE:
+                        checked.append((kind, onset, now))
+                        return earlier_allowed
+                    return True
+
+                def receive(event):
+                    emitted.append(event)
+                    if event.kind == Kind.DOOR_CLOSE:
+                        own_originals.update(stamp for stamp, _ in
+                                             detector._curve_series[
+                                                 Position.UPPER, Quantity.TEMPERATURE
+                                             ]["points"])
+
+                self.continue_fixture(
+                    detector, events, on_detection=receive, onset_allowed=admission,
+                )
+                closes = [event for event in events if event.kind == Kind.DOOR_CLOSE]
+                callbacks = [event for event in emitted if event.kind == Kind.DOOR_CLOSE]
+                self.assertEqual(len(closes), 1)
+                self.assertEqual(len(callbacks), 1)
+                self.assertIs(callbacks[0], closes[0])
+                close = closes[0]
+                self.assertEqual(close.channels, (Position.UPPER.value,))
+                self.assertIsNotNone(close.door_close_evidence)
+                self.assertEqual(close.detected_at, close.trace_at)
+                self.assertTrue(checked, "The unchanged fixture must exercise actual earlier attribution")
+                self.assertEqual(len(checked), 1)
+                self.assertEqual(checked[0][2], close.trace_at)
+                if earlier_allowed:
+                    self.assertEqual(close.effective_at, checked[0][1])
+                    self.assertIn(close.effective_at, own_originals)
+                    self.assertLess(close.effective_at, close.trace_at)
+                else:
+                    self.assertEqual(close.effective_at, close.trace_at)
+                self.assertFalse(detector.open)
+                results[earlier_allowed] = close
+        self.assertEqual(results[True].door_close_evidence, results[False].door_close_evidence)
+        self.assertEqual(results[True].trace_at, results[False].trace_at)
 
     def test_first_original_after_silence_cannot_bridge_missing_close_support(self):
         detector, events, candidate, support, tick = self.seed_bound_upper_close()
@@ -277,10 +388,41 @@ class SingleSensorClosingGapTests(unittest.TestCase):
             "Retaining a bound proof must not connect originals across the observed gap",
         )
 
+    def seed_correctable_bound_upper_close(self):
+        """Target an actually bound original while it is still the latest input.
+
+        This is state-targeted fault injection, not event-time assessment: the
+        unchanged full seed identifies the stored proof's last original. A
+        second identical input prefix ends exactly there, before later originals
+        would make that old report rejectable. No climate value or timestamp is
+        replaced, and no cutoff is searched for a passing close decision.
+        """
+        _, _, reference, _, _ = self.seed_bound_upper_close()
+        windows = [window for name, window in reference["windows"]
+                   if name == Position.UPPER.value]
+        self.assertEqual(len(windows), 1)
+        used_at = windows[0].newest_at
+        seconds = (used_at - self.fixture.origin).total_seconds()
+        tick = int(seconds // self.fixture.step)
+        self.assertEqual(self.fixture.at(tick), used_at)
+        detector, events, _ = self.fixture.run_inputs(stop=tick + 1)
+        candidate = self.upper_candidate(detector)
+        self.assertIsNotNone(candidate,
+                             "The same causal prefix must already own this bound proof")
+        self.assertEqual(candidate["received_at"], reference["received_at"])
+        self.assertEqual(candidate["windows"], reference["windows"])
+        original = detector.latest[Position.UPPER, Quantity.TEMPERATURE]
+        self.assertEqual(original.measured_at, used_at)
+        self.assertEqual(tuple(detector._curve_series[
+            Position.UPPER, Quantity.TEMPERATURE
+        ]["points"])[-1], (used_at, original.value))
+        self.assert_opening_preserved(detector, events, detector._curve_open_effective_at)
+        return detector, events, candidate, tick
+
     def test_same_stamp_correction_of_used_temperature_invalidates_bound_close(self):
         for expired in (False, True):
             with self.subTest(after_current_sensor_timeout=expired):
-                detector, events, candidate, _, tick = self.seed_bound_upper_close()
+                detector, events, candidate, tick = self.seed_correctable_bound_upper_close()
                 delay = (int(self.fixture.parameters.values["sensor_timeout_seconds"]
                              // self.fixture.step) + 1 if expired else 1)
                 now = self.fixture.at(tick + delay)

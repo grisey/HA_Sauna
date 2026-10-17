@@ -19,6 +19,7 @@ import unittest
 from unittest.mock import call, patch
 
 from test_detector import trace
+from closing_lifecycle_diagnostics import ClosingLifecycleDiagnostics
 from test_settings import fixture
 
 from custom_components.ha_sauna.core import curve_change as curves
@@ -2568,6 +2569,9 @@ class OriginalCurveFollowupTests(unittest.TestCase):
 
     def _detector(self):
         detector = Detector(self.parameters, ORIGIN)
+        case = getattr(self, "_closing_lifecycle_diagnostic_case", None)
+        if case is not None:
+            ClosingLifecycleDiagnostics(self, detector, case)
         detector.report_heating(False, ORIGIN)
         return detector
 
@@ -2862,6 +2866,9 @@ class OriginalCurveFollowupTests(unittest.TestCase):
     ):
         for tail in ("cooling", "early_rh_plateau", "plateau", "staggered_plateau"):
             with self.subTest(temperature_tail=tail):
+                self._closing_lifecycle_diagnostic_case = (
+                    "staggered_plateau" if tail == "staggered_plateau" else None
+                )
                 detector, events, _ = self._bind("opening")
                 cooling = tail in ("cooling", "early_rh_plateau")
                 cooling_delta = tuple(
