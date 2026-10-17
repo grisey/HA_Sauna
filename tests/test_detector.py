@@ -1750,28 +1750,42 @@ class DetectorTests(unittest.TestCase):
         # The carrier's newest RH awaits its right-hand T partner; unused
         # lower receipts neither supply that partner nor confirmation freshness.
         unpaired_carrier_originals = []
-        for index in range(1, count + 1):
-            second = plateau + index * step
-            for position, quantity, offset in schedule:
-                report(detector, second - step + offset * interval, position, quantity)
-            found += detector.advance(T0 + timedelta(seconds=second), enabled=True)
-            # Before evaluable windows, paired_support may instead contain a
-            # waiting/invalid reason. Prove the unpaired carrier input directly
-            # from its held pair queue, without requiring a diagnostic schema
-            # that only complete water windows can provide.
-            own = detector._position_state(Position.UPPER)["door"]
-            water = own.get("original_ventilation_water", {}).get(Position.UPPER)
-            if water is not None and water["pending"]:
-                pending_rh = water["pending"][-1]
-                temperatures = detector._curve_series[Position.UPPER, Quantity.TEMPERATURE]["points"]
-                if temperatures and pending_rh[0] > temperatures[-1][0]:
-                    self.assertEqual(pending_rh[0], T0 + timedelta(seconds=second - step / 2))
-                    self.assertFalse(any(pair.humidity_sample[0] == pending_rh[0]
-                                         for pair in water["pairs"]))
-                    unpaired_carrier_originals.append(pending_rh)
-            self.assertNotIn(Kind.VENTILATION_COMPLETE, [item.kind for item in found])
-            if "original_ventilation" in detector.door_episode:
-                break
+        selections = []
+        select_position = detector._select_position
+
+        def observe_selection(route, results, owner, trace):
+            selected = select_position(route, results, owner, trace)
+            if route in ("door_close", "ventilation", "ventilation_complete"):
+                # Observe the real decision once; return it without alteration.
+                selections.append({
+                    "route": route, "owner_argument": owner,
+                    "selection": deepcopy(trace["position_selection"][route]),
+                })
+            return selected
+
+        with patch.object(detector, "_select_position", side_effect=observe_selection):
+            for index in range(1, count + 1):
+                second = plateau + index * step
+                for position, quantity, offset in schedule:
+                    report(detector, second - step + offset * interval, position, quantity)
+                found += detector.advance(T0 + timedelta(seconds=second), enabled=True)
+                # Before evaluable windows, paired_support may instead contain a
+                # waiting/invalid reason. Prove the unpaired carrier input directly
+                # from its held pair queue, without requiring a diagnostic schema
+                # that only complete water windows can provide.
+                own = detector._position_state(Position.UPPER)["door"]
+                water = own.get("original_ventilation_water", {}).get(Position.UPPER)
+                if water is not None and water["pending"]:
+                    pending_rh = water["pending"][-1]
+                    temperatures = detector._curve_series[Position.UPPER, Quantity.TEMPERATURE]["points"]
+                    if temperatures and pending_rh[0] > temperatures[-1][0]:
+                        self.assertEqual(pending_rh[0], T0 + timedelta(seconds=second - step / 2))
+                        self.assertFalse(any(pair.humidity_sample[0] == pending_rh[0]
+                                             for pair in water["pairs"]))
+                        unpaired_carrier_originals.append(pending_rh)
+                self.assertNotIn(Kind.VENTILATION_COMPLETE, [item.kind for item in found])
+                if "original_ventilation" in detector.door_episode:
+                    break
         self.assertTrue(unpaired_carrier_originals)
         self.assertIn("original_ventilation", detector.door_episode)
         self.assertNotIn(Kind.VENTILATION_COMPLETE, [item.kind for item in found])
@@ -1780,7 +1794,35 @@ class DetectorTests(unittest.TestCase):
         bound = detector.diagnostic["original_ventilation"]
         self.assertEqual(bound["water_status"], "pending")
         self.assertTrue(bound["absolute_humidity"]["initial_form"])
-        self.assertEqual(tuple(name for name, _ in candidate["water_windows"]), ("upper",))
+        # The adopted global door may belong to the RH decision. Capture the
+        # independent AH holder and its native local candidates before assuming
+        # that global adoption proves an AH carrier or a clarification result.
+        local_candidates = {}
+        for position in detector.positions:
+            episode = detector._position_state(position)["door"]
+            pending = episode.get("original_ventilation") if episode else None
+            local_candidates[position.value] = {
+                "candidate_at": pending["received_at"] if pending else None,
+                "candidate_context": pending["context"] if pending else None,
+                "window_positions": tuple(name for name, _ in pending["water_windows"])
+                if pending else (),
+                "completed": bool(episode and episode.get("original_ventilation_complete")),
+                "sources": episode["sources"].get(position) if episode else None,
+                "epochs": episode["epochs"].get(position) if episode else None,
+            }
+        diagnostic = {
+            "global_door_owner": detector._door_owner,
+            "decision_owners": detector._door_decision_owners,
+            "local_AH_candidates": local_candidates,
+            "last_RH_selection": next((s for s in reversed(selections)
+                                       if s["route"] == "ventilation"), None),
+            "last_AH_selection": next((s for s in reversed(selections)
+                                       if s["route"] == "ventilation_complete"), None),
+            "clarifications": [s for s in selections
+                               if s["selection"]["role"] == "clarification"],
+        }
+        self.assertEqual(tuple(name for name, _ in candidate["water_windows"]), ("upper",),
+                         "AH_STAGE_OWNER_EVIDENCE=" + json.dumps(diagnostic, default=str, sort_keys=True))
         for _, water in candidate["water_windows"]:
             self.assertEqual(len(water.previous), count)
             self.assertEqual(len(water.current), count)
