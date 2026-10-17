@@ -2699,12 +2699,29 @@ class OriginalCurveFollowupTests(unittest.TestCase):
                 self.assertIs(detector.door_episode[key], candidate)
 
     def test_clear_continued_original_shapes_confirm_once_after_binding(self):
+        initial_bindings = []
+        original_onsets = Detector._original_opening_onset_witnesses
+
+        def observe_onsets(detector, episode, prefix, windows, **kwargs):
+            witnesses = original_onsets(detector, episode, prefix, windows, **kwargs)
+            if kwargs.get("transitions") is None:
+                initial_bindings.extend(
+                    (detector, key, witness.candidate_id, witness.onset_at,
+                     witness.context, witness.original_points, prefix.received_at)
+                    for key, witness in witnesses
+                )
+            return witnesses
+
         for route, kind, delta, lower_plateau in (
             ("opening", Kind.DOOR_OPEN, self.fall_step, False),
             ("closing", Kind.DOOR_CLOSE, self.recovery_step, False),
             ("opening", Kind.DOOR_OPEN, (0,) * len(CLIMATE), True),
         ):
-            with self.subTest(route=route, lower_plateau=lower_plateau):
+            initial_bindings.clear()
+            with (
+                self.subTest(route=route, lower_plateau=lower_plateau),
+                patch.object(Detector, "_original_opening_onset_witnesses", new=observe_onsets),
+            ):
                 short_fall = (
                     tuple(
                         (after - before) / (self.count - 1)
@@ -2730,6 +2747,31 @@ class OriginalCurveFollowupTests(unittest.TestCase):
                 if route == "opening":
                     if not lower_plateau:
                         self.assertIs(detector.door_episode["original_open"], candidate)
+                        # Observe the real initial helper result through publication;
+                        # all curve calculations and detector decisions run unchanged.
+                        witnesses = candidate["onset_witnesses"]
+                        self.assertEqual(
+                            {key[1].value for key, _ in witnesses},
+                            set(confirmations[0].channels),
+                        )
+                        for key, witness in witnesses:
+                            bindings = [item for item in initial_bindings
+                                        if item[0] is detector and item[1] == key
+                                        and item[2] == witness.candidate_id]
+                            self.assertTrue(bindings, "Published witness bypassed initial binding")
+                            for _, _, _, onset, context, originals, received_at in bindings:
+                                self.assertEqual(
+                                    (witness.onset_at, witness.context, witness.original_points),
+                                    (onset, context, originals),
+                                )
+                                self.assertLessEqual(witness.features.newest_at, received_at)
+                        self.assertEqual(
+                            confirmations[0].effective_at,
+                            min(witness.onset_at for _, witness in witnesses),
+                        )
+                        self.assertLessEqual(
+                            confirmations[0].effective_at, confirmations[0].trace_at,
+                        )
                     newest = {
                         name: (temperature, humidity)
                         for name, temperature, humidity in candidate["newest"]

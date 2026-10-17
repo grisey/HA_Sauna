@@ -2091,8 +2091,8 @@ class Detector:
                 ):
                     continue
                 current_native_branch = bool(
-                    current_candidate and transitions is not None and native is not None
-                    and bounds[0] <= candidate.onset_at <= bounds[1]
+                    current_candidate and native is not None
+                    and (bounds is None or bounds[0] <= candidate.onset_at <= bounds[1])
                     and native["window"].previous[-1][0] <= candidate.onset_at
                     <= native["window"].newest_at
                     and candidate.features.onset_at == candidate.onset_at
