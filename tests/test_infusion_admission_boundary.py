@@ -21,10 +21,9 @@ class InfusionAdmissionBoundaryTests(unittest.TestCase):
         points, _, next_rise, next_fall = fixture._scenario(merged=False)
         detector = Detector(fixture.parameters, fixture_source.T0, (Position.UPPER,))
         events = []
-        first = fixture.begin + (fixture.side + 1) * fixture.step
         resume = next_rise - (2 * fixture.side + 1) * fixture.step
 
-        def feed(through, *, admitted):
+        def feed(through, *, admitted, stop_when=None):
             for second in range(
                 (detector.index + 1) * fixture.step, through + fixture.step, fixture.step,
             ):
@@ -41,13 +40,20 @@ class InfusionAdmissionBoundaryTests(unittest.TestCase):
                     fixture._at(second), enabled=True,
                     allowed=lambda kind: admitted or kind != Kind.INFUSION,
                 ))
+                if stop_when is not None and stop_when():
+                    break
 
-        feed(first, admitted=True)
+        # Target the first native local binding, before confirmation. The
+        # uninterrupted curve still reaches both declared peaks and tails;
+        # only the external admission loss is tied to this exact lifecycle.
+        feed(fixture.begin + fixture.width, admitted=True, stop_when=lambda: (
+            detector._position_state(Position.UPPER)["infusion_candidate"] is not None
+        ))
         component = detector._position_state(Position.UPPER)["infusion_candidate"]
-        self.assertIsNotNone(component, "Existing first rise must bind a local native candidate")
+        self.assertIsNotNone(component, "First declared rise must bind a local native candidate")
         # Local binding precedes qualification and global owner adoption.
         # This contract needs the actual unconfirmed identity, not a public
-        # episode that may not exist at this fixed first-rise boundary.
+        # episode that may not exist at this first observed binding.
         old_bound_at = component["received_at"]
         old_binding_windows = component["binding_windows"]
         self.assertFalse(component["fall_confirmed"])

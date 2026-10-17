@@ -2876,6 +2876,18 @@ class OriginalCurveFollowupTests(unittest.TestCase):
                     for role, change in zip(CLIMATE, self.fall_step, strict=True)
                 )
                 if tail == "early_rh_plateau":
+                    native_openings = []
+                    original_door = detector._original_door_evidence
+
+                    def observe_opening(prefixes, channels, now, decision_at, trace, emit):
+                        result = original_door(prefixes, channels, now, decision_at, trace, emit)
+                        if result[0]:
+                            opening = detector.door_episode["original_open"]
+                            native_openings.append((opening["newest"], opening["confirmation_windows"]))
+                        return result
+
+                    detector._original_door_evidence = observe_opening
+                    self.addCleanup(setattr, detector, "_original_door_evidence", original_door)
                     events += self._ramp(detector, self.count - 1, self.fall_step)
                     self.assertFalse(detector.open)
                     self.assertNotIn(Kind.DOOR_OPEN, [item.kind for item in events])
@@ -2893,13 +2905,17 @@ class OriginalCurveFollowupTests(unittest.TestCase):
                             ),
                             2 * self.count - 1,
                         )
-                    opening = detector.door_episode["original_open"]
+                    events += self._ramp(detector, self.count, cooling_delta)
+                    # Later stage ownership can expose another position's still
+                    # pending opening. Check the actual published native proof,
+                    # after the unchanged declared input section is complete.
+                    self.assertEqual(len(native_openings), 1)
+                    newest, confirmed_windows = native_openings[0]
                     bound = {name: (temperature, humidity)
-                             for name, temperature, humidity in opening["newest"]}
-                    for name, pair in opening["confirmation_windows"]:
+                             for name, temperature, humidity in newest}
+                    for name, pair in confirmed_windows:
                         self.assertGreater(pair.temperature.current[0][0], bound[name][0])
                         self.assertGreater(pair.humidity.current[0][0], bound[name][1])
-                    events += self._ramp(detector, self.count, cooling_delta)
                 else:
                     events += self._ramp(detector, 4 * self.count, self.fall_step)
                 self.assertTrue(detector.open)

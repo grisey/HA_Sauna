@@ -295,6 +295,7 @@ class Detector:
         self._original_infusion_candidate = None
         self._position_evidence = {}
         self._door_owner = None
+        self._door_decision_owners = {}
         self._infusion_owner = None
         self._door_published_stages = set()
         self._person_owner = {}
@@ -460,6 +461,37 @@ class Detector:
         }
         return selected
 
+    @staticmethod
+    def _door_decision_identity(route, result):
+        if result["bound_at"] is None:
+            return None
+        # A T-only close is independent of an unrelated RH source change.
+        roles = slice(0, 1) if route == "door_close" else slice(None)
+        return (result["context"], result["bound_at"],
+                result["sources"][roles], result["epochs"][roles],
+                result["time_bases"][roles])
+
+    def _door_decision_owner(self, route, results):
+        held = self._door_decision_owners.get(route)
+        if held is None:
+            return None
+        position, identity = held
+        if (position not in results
+                or self._door_decision_identity(route, results[position]) != identity):
+            self._door_decision_owners.pop(route, None)
+            return None
+        return position
+
+    def _remember_door_decision_owner(self, route, selected, results):
+        result = results.get(selected)
+        if result is not None and result["status"] == "unavailable":
+            return  # Missing measurements do not rewrite an existing own binding.
+        identity = self._door_decision_identity(route, result) if result is not None else None
+        if result is not None and result["status"] in ("pending", "confirmed") and identity is not None:
+            self._door_decision_owners[route] = (selected, identity)
+        else:
+            self._door_decision_owners.pop(route, None)
+
     def _adopt_door_position(self, position, now):
         episode = self._position_state(position)["door"]
         if episode is None:
@@ -492,6 +524,7 @@ class Detector:
         for state in self._position_evidence.values():
             state["door"] = None
         self._door_owner = None
+        self._door_decision_owners.clear()
         self._door_published_stages.clear()
 
     def _bind_opening_identity(self, owner, effective_at):
@@ -570,7 +603,10 @@ class Detector:
                     candidate=candidate or before_candidate, reason=reason,
                 )
                 records[position] = local
-            selected = self._select_position(route, outcomes, self._door_owner, trace)
+            selected = self._select_position(
+                route, outcomes, self._door_decision_owner(route, outcomes), trace,
+            )
+            self._remember_door_decision_owner(route, selected, outcomes)
             if selected is None:
                 continue
             choice = outcomes[selected]
@@ -624,7 +660,10 @@ class Detector:
                         refuted=former is not None and local_stage.get("counterform", False),
                         candidate=candidate_info,
                     )
-                carrier = self._select_position(stage, candidates, self._door_owner, trace)
+                carrier = self._select_position(
+                    stage, candidates, self._door_decision_owner(stage, candidates), trace,
+                )
+                self._remember_door_decision_owner(stage, carrier, candidates)
                 if carrier is not None and candidates[carrier]["status"] == "refuted":
                     for state in self._position_evidence.values():
                         if state["door"] is not None:
@@ -1034,7 +1073,11 @@ class Detector:
             }, reason="retained_heating_only")
             records[position] = local
             flags[position] = (opening, confirmation)
-        selected = self._select_position("door_open_heating", results, self._door_owner, trace)
+        selected = self._select_position(
+            "door_open_heating", results,
+            self._door_decision_owner("door_open_heating", results), trace,
+        )
+        self._remember_door_decision_owner("door_open_heating", selected, results)
         if selected is None:
             return False, False
         self._copy_position_trace(trace, records[selected])
@@ -1820,9 +1863,9 @@ class Detector:
             form = original_followup(window, reference) if window and reference else None
             supported = bool(
                 contiguous and form is not None
-                and form.fresh_previous == count and form.fresh_current == count
-                and form.previous_direction < -threshold and form.current_direction < -threshold
-                and form.previous_change < -significance and form.current_change < -significance
+                and form.fresh_current == count
+                and form.current_direction < -threshold
+                and form.current_change < -significance
             )
             local_roles[name] = {
                 "supported": supported,
@@ -3648,7 +3691,16 @@ class Detector:
             fall_followups = self._original_temperature_fall_followups(
                 episode, prefix, closing_positions,
             )
-            level_close = own_new_support and discrete_braking and self._original_temperature_braking(fall_followups)
+            continued_braking = self._original_temperature_braking(fall_followups)
+            # Two complete new flat T blocks after the held fall establish
+            # the settled level directly. A rolling polynomial's loss of its
+            # old kink does not erase these own original level witnesses.
+            plateau_close = continued_braking and all(
+                abs(form.previous_direction) <= significance
+                and abs(form.current_direction) <= significance
+                for form in fall_followups.values()
+            )
+            level_close = own_new_support and continued_braking and (discrete_braking or plateau_close)
             close_candidate = candidate is not None or level_close
             correction_fresh = self._original_close_confirmation_fresh(
                 episode, prefix, closing_positions,
@@ -3687,6 +3739,7 @@ class Detector:
                     "warming_close": warming_close,
                     "humidity_braking_close": humidity_braking_close,
                     "sustained_braking": sustained_braking,
+                    "plateau_close": plateau_close,
                     "discrete_braking": discrete_braking,
                 },
                 temperature_braking_witnesses={

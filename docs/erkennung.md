@@ -46,6 +46,10 @@ Entscheidet ein vollständiger unterer Eigenbeleg den unklaren Vorgang, bleiben
 seine Quellen, Originale und eigenen Beginn- und Bestätigungszeiten zusammen
 gebunden. Eine spätere obere Meldung verändert die bereits gebuchte
 Entscheidung nicht. Beim nächsten neuen Vorgang gilt wieder oberer Vorrang.
+Türöffnung, Türschluss und jede Lüftungsstufe besitzen jeweils eine eigene
+Führungsbindung. Diese gilt für den konkreten Beleg mit seiner Bindezeit,
+seinem Türkontext und seinen Quellenabschnitten. Eine unten bestätigte
+Lüftungsstufe bestimmt daher nicht die Führung einer neuen Schlussentscheidung.
 Jedes erkannte Ereignis wird einmal veröffentlicht. Die Messpositionen erzeugen
 keine doppelten Buchungen.
 
@@ -397,19 +401,17 @@ Sᵏ_Tp = max(E_Tp + E⁻_Tp, Median_j |v_Tpj − b_Tpj|)
 
 Bei zu kurzer Historie ist `Sᵏ_Tp = E_Tp + E⁻_Tp`. Der erste gebundene
 T-Abwärtsknick benötigt `δ_eff,Tp < 0` und `v_Tp < −s E_Tp`. Seine feste
-Vorgängersteigung heißt `bᵈ_Tp`, ihre Grenze `Eᵈ⁻_Tp`. Danach müssen je Rolle
-beide disjunkten Fenster vollständig aus Originalen strikt nach dem jüngsten
+Vorgängersteigung heißt `bᵈ_Tp`, ihre Grenze `Eᵈ⁻_Tp`. Danach muss je Rolle
+das aktuelle Fenster vollständig aus Originalen strikt nach dem jüngsten
 Original dieser eigenen Knickreferenz bestehen und erfüllen:
 
 ```text
-b_Tp/E⁻_Tp < −γO
-v_Tp/E_Tp  < −γO
-(b_Tp − bᵈ_Tp)/(E⁻_Tp + Eᵈ⁻_Tp) < −s
-(v_Tp − bᵈ_Tp)/(E_Tp + Eᵈ⁻_Tp)  < −s
+v_Tp/E_Tp < −γO
+(v_Tp − bᵈ_Tp)/(E_Tp + Eᵈ⁻_Tp) < −s
 ```
 
-Mit erhaltenem Originalanschluss, den beiden vollständig neuen Blöcken und
-allen vier erfüllten Vergleichen ist der lokale T-Fall der jeweiligen Rolle
+Mit erhaltenem Originalanschluss, dem vollständig neuen aktuellen Block und
+beiden erfüllten Vergleichen ist der lokale T-Fall der jeweiligen Rolle
 im aktuellen Präfix unterstützt. Genau dann verwendet der gemeinsame
 T-Absenkungsbeweis für diese Rolle den Mittelwert `T̄ᵈ_p` des aktuellen
 `K`-Fensters der gehaltenen T-Knickreferenz und den genau bei deren Bindung
@@ -549,7 +551,8 @@ diesen Weg nicht erforderlich. Eine Feuchteerholung ist ebenfalls keine
 Bedingung. Ein Wechsel der verwendeten Temperaturpositionsmenge erfordert im
 gemeinsamen Kandidatenweg eine neue Bindung.
 
-Beide reinen Temperaturbremswege und der Feuchte-Erholungszweig benötigen je Rolle eine
+Die beiden Wege mit weiterhin fallender Temperatur und der
+Feuchte-Erholungszweig benötigen je Rolle eine
 unterstützte lokale Steigungsänderungsform des bestehenden Kurvenvergleichs
 mit `hinge_order = 1`: Der Vorlauf fällt, die Steigungsänderung ist positiv,
 und der Vergleich mit glatten Verläufen trägt die Änderung. Der Fallbesitzer
@@ -569,7 +572,15 @@ nativen Bremskontraste und zwei neuen Originalblöcke bleiben eigenständige
 Bedingungen; ihre Frische ersetzt keine spätere Bestätigung des Formbelegs.
 Eine negative Nachsteigung bleibt zulässig.
 
-Trägt ein solcher reiner Bremsweg die Schlussbestätigung, stammt der frühere
+Erreichen beide vollständig neuen Temperaturblöcke nach der eigenen
+Bremsbindung ein aufgelöst flaches Niveau, kann dieses den Schluss unmittelbar
+belegen. Dafür gelten zusätzlich zu den positiven Bremskontrasten
+`|b_Tp/E⁻_Tp| ≤ s` und `|v_Tp/E_Tp| ≤ s`. Die eigenen neuen Originale,
+der Quellenanschluss und die Korrektur- und Gegenformprüfungen bleiben
+erforderlich. Ein verlorener Knickfit verhindert diesen belegten
+Plateauabschluss nicht.
+
+Trägt die bestätigte Steigungsänderungsform die Schlussbestätigung, stammt der frühere
 Beginn aus genau diesen gehaltenen T-Formen. Das gilt auch, wenn der
 Feuchte-Erholungszweig trägt und die Erwärmungszweige keinen Schluss belegen.
 Die bestehende Prüfung des Tür- und Betriebskontexts bleibt erhalten.
@@ -1056,8 +1067,9 @@ Steigung, die begrenzte Wasserqualifikation und der nach der Spitze belegte
 Abfall getrennt geführt.
 Die Türöffnung benötigt den gemeinsamen Fall mit einem vollständig neuen
 aktuellen Block je Rolle und die weiterhin verbundenen Feuchtebeginne. Der
-lokale T-Fallweg bei vorhandenem Aufgusskontext und die Schlusswege verlangen
-zwei vollständig neue Blöcke nach ihrer jeweiligen Referenz. Die
+lokale T-Fallweg bei vorhandenem Aufgusskontext benötigt einen vollständig
+neuen aktuellen Block nach seiner eigenen Knickreferenz. Die Schlusswege
+behalten ihre jeweils beschriebenen Frischebedingungen. Die
 Aufgusszweige behalten ihre eigenen Frischebedingungen. Der
 Hintergrundnachweis trennt den ersten Kandidaten vom durch neue Originale
 bestätigten Abschluss.

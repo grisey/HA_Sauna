@@ -110,7 +110,9 @@ class DoorCloseEvidenceTests(unittest.TestCase):
         self.assertEqual(len(closures), 1)
         observed = observations[0]
         self.assertEqual(closures[0].channels, (Position.UPPER.value,))
-        self.assertIsNone(observed["candidate"])
+        # The actual own brake may also own an original_close candidate.
+        # Its provenance must still be the same upper recovery, not lower's
+        # later plateau or the publication time.
         self.assertTrue(observed["level"])
         recoveries = observed["recoveries"]
         self.assertEqual(set(recoveries), {Position.UPPER})

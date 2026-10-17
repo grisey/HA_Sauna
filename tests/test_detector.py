@@ -1749,20 +1749,30 @@ class DetectorTests(unittest.TestCase):
 
         # The carrier's newest RH awaits its right-hand T partner; unused
         # lower receipts neither supply that partner nor confirmation freshness.
-        saw_waiting_before_binding = False
+        unpaired_carrier_originals = []
         for index in range(1, count + 1):
             second = plateau + index * step
             for position, quantity, offset in schedule:
                 report(detector, second - step + offset * interval, position, quantity)
             found += detector.advance(T0 + timedelta(seconds=second), enabled=True)
+            # Before evaluable windows, paired_support may instead contain a
+            # waiting/invalid reason. Prove the unpaired carrier input directly
+            # from its held pair queue, without requiring a diagnostic schema
+            # that only complete water windows can provide.
+            own = detector._position_state(Position.UPPER)["door"]
+            water = own.get("original_ventilation_water", {}).get(Position.UPPER)
+            if water is not None and water["pending"]:
+                pending_rh = water["pending"][-1]
+                temperatures = detector._curve_series[Position.UPPER, Quantity.TEMPERATURE]["points"]
+                if temperatures and pending_rh[0] > temperatures[-1][0]:
+                    self.assertEqual(pending_rh[0], T0 + timedelta(seconds=second - step / 2))
+                    self.assertFalse(any(pair.humidity_sample[0] == pending_rh[0]
+                                         for pair in water["pairs"]))
+                    unpaired_carrier_originals.append(pending_rh)
+            self.assertNotIn(Kind.VENTILATION_COMPLETE, [item.kind for item in found])
             if "original_ventilation" in detector.door_episode:
                 break
-            support = detector.diagnostic["original_ventilation"]["paired_support"]["upper"]
-            self.assertGreater(support["pending_count"], 0)
-            self.assertGreater(support["pending_rh_at"], support["rh_newest_at"])
-            self.assertNotIn(Kind.VENTILATION_COMPLETE, [item.kind for item in found])
-            saw_waiting_before_binding = True
-        self.assertTrue(saw_waiting_before_binding)
+        self.assertTrue(unpaired_carrier_originals)
         self.assertIn("original_ventilation", detector.door_episode)
         self.assertNotIn(Kind.VENTILATION_COMPLETE, [item.kind for item in found])
         candidate = detector.door_episode["original_ventilation"]
@@ -1953,7 +1963,23 @@ class DetectorTests(unittest.TestCase):
         self.assertEqual(tuple(item.trace_at for item in doors), (raster_at, raster_at))
         self.assertEqual(tuple(item.detected_at for item in doors), (raster_at, raster_at))
         self.assertFalse(detector.pending)
+        # A published door transition stops this pass. Its already consumed
+        # later input prefixes are an ordered suffix, retained for the next
+        # ordinary advance rather than silently dropped or cleared by the test.
+        suffix = tuple(detector._original_prefixes)
+        if suffix:
+            self.assertEqual(
+                tuple((item.received_at, item.changed_position, item.changed_quantity) for item in suffix),
+                tuple((item.received_at, item.position, item.quantity)
+                      for item in originals[-len(suffix):]),
+            )
+            self.assertTrue(all(close_original <= item.received_at <= raster_at for item in suffix))
+        remaining = detector.advance(raster_at + timedelta(seconds=step), enabled=True)
+        self.assertFalse(detector.pending)
         self.assertFalse(detector._original_prefixes)
+        self.assertFalse(any(item.kind in (Kind.DOOR_OPEN, Kind.DOOR_CLOSE,
+                                          Kind.VENTILATION, Kind.VENTILATION_COMPLETE)
+                             for item in remaining))
         self.assertEqual(detector._original_context(), epochs)
         self.assertEqual(detector.rejected, rejected)
         for position in detector.positions:
@@ -1962,8 +1988,8 @@ class DetectorTests(unittest.TestCase):
                                  if item.position is position and item.quantity is quantity)
                 points = tuple(detector._curve_series[position, quantity]["points"])
                 self.assertEqual(points[-len(accepted):], accepted)
-        self.assertEqual([item.kind for item in found + batch].count(Kind.VENTILATION_COMPLETE), 1)
-        self.assertEqual([item.kind for item in found + batch].count(Kind.DOOR_CLOSE), 1)
+        self.assertEqual([item.kind for item in found + batch + remaining].count(Kind.VENTILATION_COMPLETE), 1)
+        self.assertEqual([item.kind for item in found + batch + remaining].count(Kind.DOOR_CLOSE), 1)
         self.assertFalse(detector.open)
         self.assertIsNone(detector.door_episode)
 
