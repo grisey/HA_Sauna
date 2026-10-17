@@ -9,7 +9,7 @@ from harness import create_sauna, start_hass
 from test_settings import async_timeout
 
 from custom_components.ha_sauna.archive import plain
-from custom_components.ha_sauna.core.timeline import Confirmation, Event, Kind
+from custom_components.ha_sauna.core.timeline import Confirmation, DoorCloseEvidence, Event, Kind
 from custom_components.ha_sauna.core.presence import ProxyPresenceSource, binary_presence
 from custom_components.ha_sauna.runtime import Configuration, SaunaRuntime
 
@@ -217,11 +217,7 @@ class PresenceRuntimeIntegrationTests(unittest.IsolatedAsyncioTestCase):
             await self.hass.async_block_till_done()
 
         async def door(name, kind):
-            now = runtime._clock()
-            await runtime.receive(Event(
-                name, runtime.session.session_id, kind, now, now,
-            ))
-            await self.hass.async_block_till_done()
+            await self.semantic_door(runtime, name, kind)
 
         await presence("off")
         await presence("on")
@@ -292,10 +288,18 @@ class PresenceRuntimeIntegrationTests(unittest.IsolatedAsyncioTestCase):
         await runtime.set_operation(True)
         return runtime, source
 
-    async def semantic_door(self, runtime, name, kind):
+    async def semantic_door(self, runtime, name, kind, *, effective_at=None):
         # This seam tests semantic door handoff, not thermal door detection.
+        candidate_at = None
+        if kind == Kind.DOOR_CLOSE:
+            candidate_at = runtime._clock()
+            await asyncio.sleep(0)
         now = runtime._clock()
-        await runtime.receive(Event(name, runtime.session.session_id, kind, now, now))
+        await runtime.receive(Event(
+            name, runtime.session.session_id, kind, effective_at or now, now,
+            door_close_evidence=(DoorCloseEvidence(candidate_at, now)
+                                 if candidate_at is not None else None),
+        ))
         await self.hass.async_block_till_done()
         return now
 
@@ -315,13 +319,17 @@ class PresenceRuntimeIntegrationTests(unittest.IsolatedAsyncioTestCase):
                 state = self.hass.states.get(source)
                 await asyncio.wait_for(entered.wait(), async_timeout("service"))
                 self.assertEqual(runtime.controller.direct_presence.occupancy, "absent")
+                candidate_at = runtime._clock()
+                await asyncio.sleep(0)
                 closed_at = runtime._clock()
                 self.assertLess(state.last_changed, closed_at)
+                self.assertLessEqual(state.last_changed, candidate_at)
                 # The lock owner processes the recognized closure while the real
                 # HA presence callback is waiting to enter the same runtime.
                 runtime._process_event(Event(
                     "delayed-entry-close", runtime.session.session_id,
                     Kind.DOOR_CLOSE, closed_at, closed_at,
+                    door_close_evidence=DoorCloseEvidence(candidate_at, closed_at),
                 ))
                 await runtime._cycle()
                 self.assertIsNone(runtime.session.timeline.active)
@@ -338,11 +346,15 @@ class PresenceRuntimeIntegrationTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(sum(e.kind == "gang_confirmed" for e in runtime.consumer_events), 1)
 
         # The binary absence can precede a slow thermal exit indication.
+        exit_opened_at = runtime._clock()
         self.hass.states.async_set(source, "off")
         await self.hass.async_block_till_done()
         absent_at = runtime.controller.direct_presence.timing.effective_at
         self.assertEqual(runtime.session.timeline.active.gang_id, gang.gang_id)
-        opened_at = await self.semantic_door(runtime, "slow-exit-open", Kind.DOOR_OPEN)
+        opened_at = await self.semantic_door(
+            runtime, "slow-exit-open", Kind.DOOR_OPEN, effective_at=exit_opened_at,
+        )
+        self.assertLessEqual(exit_opened_at, absent_at)
         self.assertLess(absent_at, opened_at)
         await self.semantic_door(runtime, "slow-exit-ventilation", Kind.VENTILATION)
         self.assertIsNone(runtime.session.timeline.active)
@@ -381,9 +393,7 @@ class PresenceRuntimeIntegrationTests(unittest.IsolatedAsyncioTestCase):
             await self.hass.async_block_till_done()
 
         async def door(name, kind):
-            now = runtime._clock()
-            await runtime.receive(Event(name, runtime.session.session_id, kind, now, now))
-            await self.hass.async_block_till_done()
+            await self.semantic_door(runtime, name, kind)
 
         await temperature(minimum - 1)
         await runtime.set_operation(True)

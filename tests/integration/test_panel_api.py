@@ -948,7 +948,7 @@ class PanelAPITests(unittest.IsolatedAsyncioTestCase):
         )
         from custom_components.ha_sauna.core.presence import binary_presence
         from custom_components.ha_sauna.core.system_handoff import ArchiveSessionOutput
-        from custom_components.ha_sauna.core.timeline import Event, Kind
+        from custom_components.ha_sauna.core.timeline import DoorCloseEvidence, Event, Kind
         from custom_components.ha_sauna.archive import plain
         from custom_components.ha_sauna.presentation import public_state
 
@@ -1002,9 +1002,14 @@ class PanelAPITests(unittest.IsolatedAsyncioTestCase):
         await runtime.set_operation(True)
         session_id = runtime.session.session_id
 
-        async def door(name, kind, milliseconds):
+        async def door(name, kind, milliseconds, *, closing_candidate=None):
             clock[0] = start + timedelta(milliseconds=milliseconds)
-            await runtime.receive(Event(name, session_id, kind, clock[0], clock[0]))
+            await runtime.receive(Event(
+                name, session_id, kind, clock[0], clock[0],
+                door_close_evidence=(DoorCloseEvidence(
+                    start + timedelta(milliseconds=closing_candidate), clock[0],
+                ) if kind == Kind.DOOR_CLOSE else None),
+            ))
 
         async def presence(state, milliseconds):
             clock[0] = start + timedelta(milliseconds=milliseconds)
@@ -1014,7 +1019,7 @@ class PanelAPITests(unittest.IsolatedAsyncioTestCase):
 
         await door("entry-open", Kind.DOOR_OPEN, 10)
         await presence("on", 20)
-        await door("entry-close", Kind.DOOR_CLOSE, 30)
+        await door("entry-close", Kind.DOOR_CLOSE, 30, closing_candidate=20)
         clock[0] = start + timedelta(milliseconds=35)
 
         def expected_cycles(gang_id, *, completed=False):
@@ -1086,7 +1091,7 @@ class PanelAPITests(unittest.IsolatedAsyncioTestCase):
             self.assertIsNotNone(runtime.session.timeline.active)
             self.assertIsNone(runtime.session.after_run)
             await door("exit-ventilation", Kind.VENTILATION, 55)
-            await door("exit-close", Kind.DOOR_CLOSE, 60)
+            await door("exit-close", Kind.DOOR_CLOSE, 60, closing_candidate=55)
             clock[0] = start + timedelta(milliseconds=70)
             runtime.persist()
             await runtime.archive.flush()

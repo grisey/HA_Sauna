@@ -11,7 +11,7 @@ from test_presence_handover import ENTITY, runtime_with_clock
 from custom_components.ha_sauna.archive import plain
 from custom_components.ha_sauna.core.detector import Detection
 from custom_components.ha_sauna.core.presence import binary_presence
-from custom_components.ha_sauna.core.timeline import Confirmation, Event, Kind
+from custom_components.ha_sauna.core.timeline import Confirmation, DoorCloseEvidence, Event, Kind
 
 
 class CurveConfirmationTimeTests(unittest.TestCase):
@@ -117,7 +117,11 @@ class CurveConfirmationTimeTests(unittest.TestCase):
         owner.advance(clock[0])
         clock[0] = at(50)
         runtime.archive = Mock()
-        detection = Detection(Kind.DOOR_CLOSE, at(20), at(50), ("upper",), at(40))
+        evidence = DoorCloseEvidence(at(30), at(40))
+        detection = Detection(
+            Kind.DOOR_CLOSE, at(20), at(50), ("upper",), at(40),
+            door_close_evidence=evidence,
+        )
         advance = runtime.detector.advance
 
         def deliver(through, **kwargs):
@@ -142,6 +146,7 @@ class CurveConfirmationTimeTests(unittest.TestCase):
         self.assertIs(runtime.controller, owner)
         self.assertIs(processed.call_args.args[0], canonical)
         self.assertIs(owner.session.timeline.processed[-1], canonical)
+        self.assertIs(canonical.door_close_evidence, evidence)
         self.assertEqual(
             (
                 canonical.effective_at,
@@ -165,6 +170,7 @@ class CurveConfirmationTimeTests(unittest.TestCase):
         self.assertEqual((record.args[1], record.args[3]), (at(50), "s"))
         self.assertIs(record.args[2]["event"], canonical)
         saved = plain(record.args[2])
+        self.assertEqual(saved["event"]["door_close_evidence"], plain(evidence))
         self.assertEqual(saved["trace_at"], at(40).isoformat())
         self.assertEqual(
             {
@@ -204,6 +210,7 @@ class DirectCurveConfirmationTimeTests(unittest.IsolatedAsyncioTestCase):
                         at(40),
                         booking_at=at(40),
                         trace_at=trace_at,
+                        door_close_evidence=DoorCloseEvidence(at(30), at(40)),
                     )
                 )
                 self.assertIsNone(runtime.session.timeline.active)
@@ -256,6 +263,7 @@ class DirectCurveConfirmationTimeTests(unittest.IsolatedAsyncioTestCase):
                         at(50),
                         booking_at=at(50),
                         trace_at=trace_at,
+                        door_close_evidence=DoorCloseEvidence(at(30), at(40)),
                     )
                 )
                 clock[0] = at(55)
