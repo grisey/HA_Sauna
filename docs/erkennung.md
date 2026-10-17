@@ -415,6 +415,14 @@ Alterssperre oder dauerhafte Sperrflagge. Aktuelle Knick- und Folgefenster
 benötigen ihre eigene gültige Originalstütze. Aufgusszählung und Gangendregel
 bleiben bei ihren vorhandenen Besitzern.
 
+Für den späteren lokalen RH-Knick beginnt die Hintergrundhistorie am späteren
+von zwei vorhandenen Ankern: dem jüngsten Original des ersten eigenen
+RH-Rücklaufs und dem Beginn der gehaltenen lokalen T-Fallstütze. Diese T-Stütze
+begrenzt auch die zugehörige RH-Sekante. Das aktuelle RH-Fenster bleibt
+unverändert; nur seine historische Toleranzstütze wird auf diesen Vorlauf
+begrenzt. Faktor, Mindesthistorie und Instrumentuntergrenze der Knicktoleranz
+bleiben gleich. Bei zu kurzer eigener Historie gilt der vorhandene Katalogfall.
+
 Derselbe native RH-Anstiegsbesitzer liefert seine gebundenen
 Temperaturbaselines zur Diagnose.
 Berücksichtigt werden die aktuelle Aufgusskomponente sowie Anfangs- und

@@ -308,13 +308,26 @@ class DevicePathTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_infusion_confirms_presence_and_person_checks_stop_while_further_infusions_work(self):
         from custom_components.ha_sauna.core.timeline import Confirmation, Event, Kind
+        from test_detector import InfusionLifecycleTests
+
+        fixture = InfusionLifecycleTests()
+        fixture.setUp()
+        points, _, _, final_fall = fixture._scenario(merged=False)
+        # Retain the original entry and all pre-infusion HA inputs through69s.
+        pulse_start = 70
+        pulse_offset = pulse_start - fixture.begin
+        through = ceil(pulse_offset + final_fall + fixture.width)
         await self.runtime.set_operation(True)
         await self.hass.async_block_till_done()
         provisional_gang = first_gang = None
-        for second in range(161):
+        for second in range(through + 1):
             self.now = self.base + timedelta(seconds=second)
             temperature = 70 + second*.01
-            humidity = 20 + second*.001 + max(0, second-70)*.02 + (2 if second>=70 else 0) + (2 if second>=140 else 0)
+            humidity = 20 + second*.001
+            if second >= pulse_start:
+                # Only reuse fixture inputs; never patch the detector's maths.
+                humidity = (20 + pulse_start*.001
+                            + fixture._value(points, second - pulse_offset) - fixture.baseline)
             for position in ("upper", "lower"):
                 await self.set_source(position + "_temperature", temperature)
                 await self.set_source(position + "_humidity", humidity)
@@ -328,6 +341,9 @@ class DevicePathTests(unittest.IsolatedAsyncioTestCase):
             active = self.runtime.session.timeline.active
             if active and not active.infusion_events:
                 provisional_gang = provisional_gang or active
+            if second == pulse_start - 1:
+                self.assertIsNotNone(provisional_gang, "The unchanged entry prefix must supply PERSON_STRONG before either pulse")
+                self.assertEqual(provisional_gang.recognition_kind, Kind.PERSON_STRONG)
             if active and active.infusion_events:
                 first_gang = first_gang or active
                 self.assertEqual(active.gang_id, first_gang.gang_id)
@@ -346,6 +362,11 @@ class DevicePathTests(unittest.IsolatedAsyncioTestCase):
                           provisional_gang.recognition_kind, provisional_gang.recognition_event_id))
         self.assertLessEqual(provisional_gang.detected_at, first_gang.confirmed_at)
         self.assertEqual(len(self.runtime.session.timeline.active.infusion_events), 2)
+        infusions = self.runtime.session.timeline.active.infusion_events
+        self.assertNotEqual(infusions[0].event_id, infusions[1].event_id)
+        first_end = self.runtime.session.timeline.active.infusions[0].end
+        self.assertIsNotNone(first_end)
+        self.assertLess(first_end.effective_at, infusions[1].effective_at)
         people = [e for e in self.runtime.session.timeline.processed
                   if e.kind in (Kind.PERSON_STRONG, Kind.PERSON_WEAK)]
         self.assertEqual([e.event_id for e in people], [provisional_gang.recognition_event_id])
@@ -357,6 +378,10 @@ class DevicePathTests(unittest.IsolatedAsyncioTestCase):
         # Entry events were supplied directly; only the real detector outputs
         # belong to detection records in this sensor-path test.
         self.assertEqual(detections, [Kind.PERSON_STRONG, Kind.INFUSION, Kind.INFUSION])
+        archived_infusions = [r["payload"]["event"]["event_id"] for r in data["records"]
+                             if r["kind"] == "detection"
+                             and r["payload"]["event"]["kind"] == Kind.INFUSION]
+        self.assertEqual(archived_infusions, [event.event_id for event in infusions])
         self.assertEqual(first_gang.start_source_event_id, f"entry:{Kind.DOOR_CLOSE.value}")
 
     async def test_light_uses_real_service_for_temperature_curve_and_phase_ramps(self):
@@ -1364,8 +1389,17 @@ class DevicePathTests(unittest.IsolatedAsyncioTestCase):
         saved = self.runtime.archive.read(identity)
         self.assertEqual(saved["session"]["ended_at"], ended_at.isoformat())
         records = saved["records"]
-        self.assertEqual([r["payload"]["value"] for r in records if r["kind"] == "manual_heater"],
-                         [True, False])
+        heater_records = [r["payload"] for r in records if r["kind"] == "manual_heater"]
+        heater_choices = [row for row in heater_records if not row.get("ends_previous_only")]
+        heater_ends = [row for row in heater_records if row.get("ends_previous_only")]
+        self.assertEqual([row["value"] for row in heater_choices], [True, False])
+        self.assertTrue(heater_ends)
+        choices_by_id = {row["selection_id"]: row for row in heater_choices}
+        for ended in heater_ends:
+            choice = choices_by_id[ended["selection_id"]]
+            self.assertEqual(ended["change"]["previous_value"], choice["value"])
+            self.assertEqual(ended["change"]["session_id"], identity)
+            self.assertNotIn("value", ended)
         self.assertEqual([r["payload"]["value"] for r in records if r["kind"] == "manual_light"], [40])
         self.assertTrue(any(r["kind"] == "consumer_event" and
                             r["payload"]["kind"] == "gang_ended" for r in records))

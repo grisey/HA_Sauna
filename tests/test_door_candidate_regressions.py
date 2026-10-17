@@ -196,9 +196,13 @@ class DoorCandidateRegressionTests(unittest.TestCase):
                         "binding_onsets", "native_humidity_onset_intervals",
                         "infusion_decay_guard", "opening_confirmation",
                         "resolved_joint_fall", "bound_humidity_onsets",
+                        "local_humidity_fall_kink", "binding_humidity_fall_kink",
                     )},
                 }))
-                del pending_openings[:-(2 * fixture.count + 2)]
+                # Keep the prelude and all actual exit prefixes. A final
+                # rolling window alone has already lost the admission failure.
+                if exit_at is None:
+                    del pending_openings[:-(2 * fixture.count + 2)]
             if Kind.DOOR_OPEN in row.get("signals", ()):
                 diagnostic = detector_fixtures.opening_diagnostic(detector, row)
                 diagnostic["position_selection"] = row.get("position_selection", {})

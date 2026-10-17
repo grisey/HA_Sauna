@@ -3802,7 +3802,9 @@ class InfusionLifecycleTests(unittest.TestCase):
         detector = Detector(self.parameters, T0, (Position.UPPER,))
         events = []
         first = self.begin + (self.side + 1) * self.step
-        resume = next_rise - (2 * self.side + 1) * self.step
+        # Supply both flat K-blocks and K fresh background originals before
+        # the next rise; the missing interval itself closes no candidate.
+        resume = next_rise - (3 * self.side + 1) * self.step
         self.assertGreater(resume - first, max(
             self.p[f"curve_original_gap_{quantity.value}_upper_seconds"]
             for quantity in (Quantity.TEMPERATURE, Quantity.HUMIDITY)
@@ -4017,7 +4019,18 @@ class InfusionLifecycleTests(unittest.TestCase):
         guard_records, first_current_block, references, last_record = [], {}, {}, {}
         original_guard = detector._original_opening_infusion_guard
         original_onsets = detector._original_opening_onset_witnesses
-        local_supports = []
+        local_supports, local_humidity_prefixes = [], []
+
+        def observe_local_humidity(row):
+            forms = row.get("original_forms", {})
+            background = forms.get("local_humidity_fall_kink", {})
+            if background.get("positions"):
+                local_humidity_prefixes.append(deepcopy({
+                    "at": row["at"], "background": background,
+                    "intervals": forms.get("native_humidity_onset_intervals", {}),
+                }))
+
+        detector.observer = observe_local_humidity
 
         def observe_onsets(episode, prefix, windows, **kwargs):
             witnesses = original_onsets(episode, prefix, windows, **kwargs)
@@ -4091,6 +4104,7 @@ class InfusionLifecycleTests(unittest.TestCase):
                 "temperature_points": temperatures,
                 "first_current_block": first_current_block,
                 "local_references": references, "guard_records": guard_records,
+                "local_humidity_prefixes": local_humidity_prefixes,
                 "final_forms": detector.diagnostic.get("original_forms"),
                 "position_selection": detector.diagnostic.get("position_selection"),
             }, default=str, sort_keys=True),
@@ -4112,6 +4126,17 @@ class InfusionLifecycleTests(unittest.TestCase):
             self.assertGreaterEqual(local["interval"].previous[0], self._at(door_at))
             self.assertGreater(local["received_at"], self._at(door_at))
             self.assertLess(local["kink"].effective_change, 0)
+            self.assertEqual(local["return_newest_at"], returns[key[1].value]["window"].newest_at)
+            self.assertEqual(local["temperature_reference_start_at"],
+                             candidate["temperature_fall_witnesses"][key[1].value].start_at)
+            self.assertEqual(local["background_after"], max(
+                local["return_newest_at"], local["temperature_reference_start_at"],
+            ))
+            self.assertEqual(local["kink"].factor, self.p["curve_original_kink_factor"])
+            self.assertGreaterEqual(local["kink"].used_scale, local["kink"].catalog_scale)
+            if local["kink"].history_start is not None:
+                self.assertGreaterEqual(local["kink"].history_start, local["background_after"])
+                self.assertLess(local["kink"].history_end, local["window"].start_at)
             self.assertGreaterEqual(witness.onset_at, local["window"].previous[-1][0])
             self.assertLessEqual(witness.onset_at, local["window"].newest_at)
             self.assertGreaterEqual(witness.first_observed_at, self._at(door_at))
@@ -4119,6 +4144,172 @@ class InfusionLifecycleTests(unittest.TestCase):
             self.assertGreater(local["window"].start_at, returns[key[1].value]["window"].newest_at)
             self.assertGreater(candidate["confirmation_received_at"], local["received_at"])
         self.assertGreater(candidate["confirmation_received_at"], candidate["received_at"])
+
+    def test_local_rh_followup_small_change_and_asynchronous_originals(self):
+        for variant in ("small_kink", "asynchronous_rh"):
+            with self.subTest(variant=variant):
+                points, _, door_at, end = self._infusion_then_independent_door()
+                position = Position.UPPER
+                detector = Detector(self.parameters, T0, positions=(position,))
+                events, rows, originals = [], [], {}
+                self._feed(detector, door_at, points, events)
+                self.assertEqual(len(self._infusions(events)), 1)
+                self.assertEqual(detector.infusion_episode.phase, "active")
+                for quantity in (Quantity.TEMPERATURE, Quantity.HUMIDITY):
+                    originals[quantity] = dict(detector._curve_series[position, quantity]["points"])
+                detector.observer = rows.append
+                temperatures = [(0, self.temperature), (door_at, self.temperature),
+                                (end, trace(85)[0])]
+                if variant == "small_kink":
+                    # Same fixture and timing; only its later RH turn is placed
+                    # halfway below the calibrated native slope-error bound.
+                    centered = tuple((index - (self.side - 1) / 2) * self.step
+                                     for index in range(self.side))
+                    weight = sum(abs(value) for value in centered) / sum(
+                        value * value for value in centered
+                    )
+                    catalog = 2 * self.p["curve_original_noise_humidity_upper"] * weight
+                    change = self.p["curve_original_kink_factor"] * catalog / 2
+                    self.assertGreater(change, 0)
+                    (previous_at, previous), (_, level) = points[-3:-1]
+                    previous_slope = (level - previous) / (door_at - previous_at)
+                    points[-1] = (end, level + (previous_slope - change) * (end - door_at))
+                    self._feed(detector, end, points, events, temperatures=temperatures)
+                else:
+                    # Keep the physical turn and its observed original at
+                    # door_at. Subsequent RH originals precede each T receipt
+                    # by half the configured raster; no sample is invented.
+                    for second in range(door_at + self.step, end + self.step, self.step):
+                        for quantity, measured_second, value in (
+                            (Quantity.TEMPERATURE, second, self._value(temperatures, second)),
+                            (Quantity.HUMIDITY, second - self.step / 2,
+                             self._value(points, second - self.step / 2)),
+                        ):
+                            stamp = self._at(measured_second)
+                            self.assertTrue(detector.accept(measurement(
+                                position, quantity, value, second, measured=stamp,
+                            )))
+                            originals[quantity][stamp] = value
+                        events.extend(detector.advance(self._at(second), enabled=True))
+                local_rows = [row for row in rows if row.get("original_forms", {}).get(
+                    "local_humidity_fall_kink", {},
+                ).get("positions")]
+                self.assertTrue(local_rows, "The actual T-bound local RH evaluation must run")
+                diagnostic = json.dumps({
+                    "variant": variant,
+                    "prefixes": [{"at": row["at"], "forms": row["original_forms"]}
+                                 for row in local_rows],
+                    "events": [(event.kind, event.effective_at, event.detected_at, event.trace_at)
+                               for event in events],
+                }, default=str, sort_keys=True)
+                if variant == "small_kink":
+                    gates = [row["original_forms"]["local_humidity_fall_kink"]["positions"]["upper"]
+                             for row in local_rows]
+                    negative = [gate for gate in gates if gate["delta"] < 0]
+                    self.assertTrue(negative, diagnostic)
+                    for gate in negative:
+                        self.assertLessEqual(abs(gate["delta"]), gate["factor"] * gate["catalog_scale"])
+                        self.assertEqual(gate["effective_change"], 0)
+                        self.assertFalse(gate["result"])
+                        self.assertGreaterEqual(gate["used_scale"], gate["catalog_scale"])
+                        self.assertEqual(gate["background_after"], max(
+                            gate["return_newest_at"], gate["temperature_reference_start_at"],
+                        ))
+                    self.assertFalse(any(row["original_forms"].get(
+                        "native_humidity_onset_intervals", {},
+                    ).get("local") for row in local_rows), diagnostic)
+                    self.assertNotIn(Kind.DOOR_OPEN, [event.kind for event in events], diagnostic)
+                    self.assertFalse(detector.open)
+                else:
+                    opened = [event for event in events if event.kind == Kind.DOOR_OPEN]
+                    self.assertEqual(len(opened), 1, diagnostic)
+                    opening = opened[0]
+                    self.assertGreaterEqual(opening.effective_at, self._at(door_at))
+                    self.assertLessEqual(opening.effective_at, opening.detected_at)
+                    self.assertLessEqual(opening.detected_at, opening.trace_at)
+                    self.assertTrue(detector.open)
+                    self.assertIsNone(detector.infusion_episode)
+                    candidate = detector.door_episode["original_open"]
+                    local = candidate["local_humidity_onset_intervals"]["upper"]
+                    window = local["window"]
+                    temperature = candidate["temperature_fall_witnesses"]["upper"]
+                    self.assertIs(local["kink"].window, window)
+                    self.assertNotEqual(window.newest_at, temperature.newest_at)
+                    for quantity, support in ((Quantity.HUMIDITY, window),
+                                              (Quantity.TEMPERATURE, temperature)):
+                        self.assertEqual(support.previous + support.current, tuple(
+                            (stamp, originals[quantity][stamp])
+                            for stamp, _ in support.previous + support.current
+                        ))
+                    confirmed = dict(candidate["confirmation_windows"])["upper"].humidity
+                    self.assertTrue(all(stamp > window.newest_at for stamp, _ in confirmed.current))
+                    self.assertTrue(all(stamp <= candidate["confirmation_received_at"]
+                                        for stamp, _ in confirmed.previous + confirmed.current))
+                    for key, witness in candidate["onset_witnesses"]:
+                        self.assertEqual(key[1:], (position, Quantity.HUMIDITY))
+                        self.assertEqual(witness.original_points, tuple(
+                            (stamp, originals[Quantity.HUMIDITY][stamp])
+                            for stamp, _ in witness.original_points
+                        ))
+                        self.assertLessEqual(witness.features.newest_at,
+                                             candidate["confirmation_received_at"])
+                        self.assertLess(local["received_at"], candidate["confirmation_received_at"])
+                self.assertEqual(len(self._infusions(events)), 1)
+
+    def test_local_rh_consumed_support_correction_invalidates_owner(self):
+        points, _, door_at, end = self._infusion_then_independent_door()
+        position = Position.UPPER
+        detector = Detector(self.parameters, T0, positions=(position,))
+        events = []
+        self._feed(detector, door_at, points, events)
+        self.assertEqual(len(self._infusions(events)), 1)
+        temperatures = [(0, self.temperature), (door_at, self.temperature),
+                        (end, trace(85)[0])]
+        candidate = local = None
+        for second in range(door_at + self.step, end + self.step, self.step):
+            self._send(detector, second, self._value(points, second), events,
+                       temperature=self._value(temperatures, second))
+            candidate = (detector._position_state(position)["door"] or {}).get("original_open")
+            local = (candidate or {}).get("local_humidity_onset_intervals", {}).get("upper")
+            if local is not None:
+                break
+        self.assertIsNotNone(local, "Bind the actual local RH support before correcting it")
+        self.assertNotIn(Kind.DOOR_OPEN, [event.kind for event in events])
+        self.assertNotIn("confirmation_received_at", candidate)
+        window, kink = local["window"], local["kink"]
+        self.assertIs(kink.window, window)
+        self.assertLess(kink.effective_change, 0)
+        self.assertEqual(local["background_after"], max(
+            local["return_newest_at"], local["temperature_reference_start_at"],
+        ))
+        self.assertEqual(kink.catalog_scale, window.e + window.e_minus)
+        series = detector._curve_series[position, Quantity.HUMIDITY]
+        original_points = tuple(series["points"])
+        used_at, used_value = window.current[-1]
+        self.assertEqual(original_points[-1], (used_at, used_value))
+        context = series["source"], series["time_basis"], series["epoch"]
+        changed = used_value + self.p["curve_original_noise_humidity_upper"] / 2
+        received = second + self.step
+        self.assertTrue(detector.accept(measurement(
+            position, Quantity.HUMIDITY, changed, received, measured=used_at,
+        )))
+        correction_events = detector.advance(self._at(received), enabled=True)
+        current = (detector._position_state(position)["door"] or {}).get("original_open")
+        self.assertIsNot(current, candidate)
+        self.assertIsNone(current)
+        self.assertNotIn(Kind.DOOR_OPEN, [event.kind for event in correction_events])
+        self.assertEqual((series["source"], series["time_basis"], series["epoch"]), context)
+        self.assertEqual(tuple(series["points"]), original_points[:-1] + ((used_at, changed),))
+        self.assertEqual(len(self._infusions(events + correction_events)), 1)
+        # This is the public latest-original correction, not a fictitious
+        # historical editing API. Report exactly which local scale was used.
+        print("LOCAL_RH_SUPPORT_CORRECTION=" + json.dumps({
+            "corrected_at": used_at, "received_at": self._at(received),
+            "background_after": local["background_after"], "status": kink.status,
+            "history_start": kink.history_start, "history_end": kink.history_end,
+            "history_count": kink.history_count, "consumed_window": (window.start_at, window.newest_at),
+            "owner_invalidated": current is None, "source_context_unchanged": True,
+        }, default=str, sort_keys=True))
 
     def test_independent_door_kink_can_accelerate_an_unbraked_infusion_return(self):
         points, _, door_at, end = self._infusion_then_independent_door(accelerating=True)

@@ -1892,25 +1892,30 @@ class Detector:
                     "peak": peak, "window": window, "received_at": prefix.received_at,
                 }
 
+    @staticmethod
+    def _original_opening_return_reference(candidate, position):
+        """Den jüngsten zugehörigen Aufgussbesitzer gemeinsam konsumieren."""
+        applicable = tuple(
+            (received_at, reference["component"])
+            for received_at, reference in candidate.get("infusion_references", {}).items()
+            if position in reference["component"]["positions"]
+            and (reference["component"].get("strong") or reference["component"].get("qualified"))
+        )
+        return max(applicable, key=lambda item: item[0]) if applicable else None
+
     def _original_opening_return_evidence(self, candidate, prefix, positions):
         """Einen späteren RH-Knick mit eigenem Vorlauf und Folgeblock belegen."""
         witnesses = dict(candidate["onset_witnesses"])
-        references = candidate.get("infusion_references", {})
         current = dict(prefix.humidities)
         significance = self.p["curve_original_significance"]
         threshold = self.p["curve_original_open_contrast"]
         count = self.p["curve_original_samples"]
         roles = {}
         for position in positions:
-            applicable = tuple(
-                (received_at, reference["component"])
-                for received_at, reference in references.items()
-                if position in reference["component"]["positions"]
-                and (reference["component"].get("strong") or reference["component"].get("qualified"))
-            )
-            if not applicable:
+            reference = self._original_opening_return_reference(candidate, position)
+            if reference is None:
                 continue
-            received_at, component = max(applicable, key=lambda item: item[0])
+            received_at, component = reference
             name = position.value
             held = component.get("humidity_returns", {}).get(name)
             witness = witnesses.get(("door_open", position, Quantity.HUMIDITY))
@@ -2097,11 +2102,11 @@ class Detector:
         self._original_humidity_connection_memo[name] = (arguments, connected)
         return connected
 
-    def _original_local_fall_intervals(self, prefix, windows):
+    def _original_local_fall_intervals(self, prefix, windows, *, kinks=None):
         """Den ersten Originalschritt eines eigenen belegten RH-Knicks halten."""
         result = {}
         significance = self.p["curve_original_significance"]
-        kinks = dict(prefix.humidity_kinks)
+        kinks = dict(prefix.humidity_kinks) if kinks is None else kinks
         for name, pair in windows:
             kink = kinks.get(name)
             if kink is None or kink.window is not pair.humidity:
@@ -2118,6 +2123,51 @@ class Detector:
                 }
                 break
         return result
+
+    def _original_opening_local_fall_intervals(self, candidate, prefix, windows):
+        """Den späteren RH-Ast mit seinem eigenen Originalvorlauf bewerten."""
+        kinks, boundaries = {}, {}
+        transitions = candidate.get("temperature_fall_witnesses", {})
+        held_intervals = candidate.get("local_humidity_onset_intervals", {})
+        for name, pair in windows:
+            if name not in transitions or name in held_intervals:
+                continue
+            position = Position(name)
+            reference = self._original_opening_return_reference(candidate, position)
+            if reference is None:
+                continue
+            received_at, component = reference
+            held = component.get("humidity_returns", {}).get(name)
+            if (held is None or held["peak"] != component["peaks"].get(position)
+                    or pair.humidity.start_at <= held["window"].newest_at):
+                continue
+            after = max(held["window"].newest_at, transitions[name].start_at)
+            samples = tuple(point for point in self._original_segment_points(
+                prefix, position, Quantity.HUMIDITY,
+            ) if point[0] >= after)
+            support = self._original_prefix_time_support(prefix, position, Quantity.HUMIDITY)
+            # Der gehaltene lokale T-Fall begrenzt schon die zulässige
+            # RH-Sekante. Sein eigener Vorlauf begrenzt auch deren Hintergrund;
+            # der erste Aufgussrücklauf bleibt die früheste mögliche Grenze.
+            # Instrumentmaßstab, Historienminimum und Faktor bleiben gleich.
+            kinks[name] = original_kink_tolerance(
+                samples, pair.humidity, factor=self.p["curve_original_kink_factor"],
+                min_history_windows=self.p["curve_original_kink_history_windows"],
+                max_gap_seconds=self.p[f"curve_original_gap_humidity_{name}_seconds"],
+                time_support=support,
+            ) if support is not None else None
+            boundaries[name] = {
+                "component_received_at": received_at, "background_after": after,
+                "return_newest_at": held["window"].newest_at,
+                "temperature_reference_start_at": transitions[name].start_at,
+            }
+        intervals = self._original_local_fall_intervals(prefix, windows, kinks=kinks)
+        for name, interval in intervals.items():
+            interval.update(boundaries[name])
+        diagnostic = self._original_humidity_kink_gate(tuple(kinks.items()), rising=False)
+        for name, boundary in boundaries.items():
+            diagnostic["positions"][name].update(boundary)
+        return intervals, diagnostic
 
     def _original_opening_onset_witnesses(
         self, episode, prefix, windows, *, quantities=(Quantity.HUMIDITY,),
@@ -3327,7 +3377,11 @@ class Detector:
                                 changed = True
                     transitions = candidate.get("temperature_fall_witnesses", {})
                     local_intervals = candidate.setdefault("local_humidity_onset_intervals", {})
-                    for name, interval in current_intervals.items():
+                    local_candidates, local_background = self._original_opening_local_fall_intervals(
+                        candidate, prefix, contrasts.positions,
+                    )
+                    forms["local_humidity_fall_kink"] = local_background
+                    for name, interval in local_candidates.items():
                         # Der spätere lokale Ast gehört zur aktuellen eigenen
                         # RH-Stütze, nicht zur ersten Sekante des alten Falls.
                         # Erst der aufgelöste Gesamtknick wird fest gehalten;
@@ -3478,6 +3532,16 @@ class Detector:
                                 "change": native["interval"].change,
                                 "background_tolerance": native["kink"].tolerance,
                                 "background_effective_change": native["kink"].effective_change,
+                                "background_after": native.get("background_after"),
+                                "background_component_received_at": native.get("component_received_at"),
+                                "background_return_newest_at": native.get("return_newest_at"),
+                                "background_temperature_reference_start_at": native.get("temperature_reference_start_at"),
+                                "background_history_start": native["kink"].history_start,
+                                "background_history_end": native["kink"].history_end,
+                                "background_history_count": native["kink"].history_count,
+                                "background_status": native["kink"].status,
+                                "background_catalog_scale": native["kink"].catalog_scale,
+                                "background_used_scale": native["kink"].used_scale,
                             } for name, native in intervals.items()
                         } for group, intervals in (
                             ("binding", candidate["humidity_onset_intervals"]),
