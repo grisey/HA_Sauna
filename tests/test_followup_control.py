@@ -137,8 +137,15 @@ class FollowupControlTests(unittest.TestCase):
         c.advance(at(40))
         projected = c.phase_projection(at(40)).intervals
         self.assertEqual([(i.phase, i.started_at, i.ended_at) for i in projected], [
+            ("aufheizen", at(0), at(5)), ("saunagang", at(5), at(30)),
+            ("aufheizen", at(30), at(35)),
+            ("nachlauf", at(35), at(40))])
+        control = c.phase_projection(at(40), physical_gangs=False).intervals
+        self.assertEqual([(i.phase, i.started_at, i.ended_at) for i in control], [
             ("aufheizen", at(0), at(5)), ("saunagang", at(5), at(35)),
             ("nachlauf", at(35), at(40))])
+        self.assertEqual(c.session.timeline.completed[0].ended_at, at(35))
+        self.assertEqual(c.session.after_run.requested_at, at(35))
         self.assertEqual(sum((i.ended_at-i.started_at).total_seconds() for i in projected), 40)
         self.assertTrue(all(a.at <= b.at for a, b in zip(c.decisions, c.decisions[1:])))
         ids = [e.event_id for e in c.consumer_events]
