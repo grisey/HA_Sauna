@@ -47,7 +47,7 @@ from custom_components.ha_sauna.core.parameters import (
 )
 from custom_components.ha_sauna.core.phases import project_session
 from custom_components.ha_sauna.core.presence import binary_presence
-from custom_components.ha_sauna.core.timeline import Event, Kind, project_door_cycles
+from custom_components.ha_sauna.core.timeline import Event, Kind, project_door_cycles, project_gang_intervals
 from custom_components.ha_sauna.history_humidity import project_absolute_humidity
 from custom_components.ha_sauna.presentation import (
     decision_message,
@@ -250,6 +250,9 @@ class Preview:
         if energy_delta is not None:
             session["energy"] = {**session["energy"], "interval_delta": energy_delta}
         session["door_cycles"] = plain(project_door_cycles(session.get("timeline", {})))
+        session["gang_intervals"] = project_gang_intervals(
+            session.get("timeline", {}), door_cycles=session["door_cycles"],
+        )
         projection = stored["phase_projection"]
         window = measurement_window(
             datetime.fromisoformat(session["timeline"]["session_started_at"]),
@@ -530,6 +533,10 @@ class Preview:
             if serialized_session is not None:
                 serialized_session["door_cycles"] = plain(
                     project_door_cycles(serialized_session.get("timeline", {}))
+                )
+                serialized_session["gang_intervals"] = project_gang_intervals(
+                    serialized_session.get("timeline", {}),
+                    door_cycles=serialized_session["door_cycles"],
                 )
                 if not include_energy_intervals:
                     continue

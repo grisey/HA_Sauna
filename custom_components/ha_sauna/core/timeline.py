@@ -303,6 +303,59 @@ def update_infusion_end(
     return replace(state, active=active, completed=completed, retracted=retracted)
 
 
+def _projection_value(value, key, default=None):
+    return (value.get(key, default) if isinstance(value, Mapping)
+            else getattr(value, key, default))
+
+
+def _projection_time(value):
+    try:
+        return utc(datetime.fromisoformat(value) if isinstance(value, str) else value)
+    except (TypeError, ValueError):
+        return None
+
+
+def project_gang_intervals(timeline: Timeline | Mapping, *, door_cycles=None) -> list[dict]:
+    """Statistische Gangzeiten aus den zugeordneten Türquellen ableiten.
+
+    Steuerungszeiten im Gangobjekt bleiben unverändert. Nur ein zugeordneter
+    Eintritt liefert seinen Türschluss als Beginn; nur der belegte Austritt
+    liefert seine Öffnung als Ende. Betrieb-AUS und fehlende Altarchivquellen
+    erzeugen keine physischen Türzeiten. Alle Bezüge kommen aus derselben
+    Türzyklusprojektion und behalten deren Mehrdeutigkeitsprüfung.
+    """
+    get = _projection_value
+    cycles = project_door_cycles(timeline) if door_cycles is None else door_cycles
+    links = {}
+    for cycle in cycles:
+        for link in cycle["gang_links"]:
+            links.setdefault(link["gang_id"], {}).setdefault(link["role"], []).append(cycle)
+    retracted = {get(gang, "gang_id") for gang in get(timeline, "retracted", ()) or ()}
+    active = get(timeline, "active")
+    result = []
+    for gang in (*get(timeline, "completed", ()), *([active] if active else [])):
+        identity = get(gang, "gang_id")
+        if not identity or identity in retracted:
+            continue
+        roles = links.get(identity, {})
+        entries, exits = roles.get("entry", ()), roles.get("exit", ())
+        entry = entries[0] if len(entries) == 1 else None
+        exit_cycle = exits[0] if len(exits) == 1 else None
+        start = entry["ended_at"] if entry is not None else None
+        end = exit_cycle["started_at"] if exit_cycle is not None else None
+        if start is not None and end is not None and _projection_time(end) < _projection_time(start):
+            end, exit_cycle = None, None
+        result.append({
+            "gang_id": identity,
+            "started_at": start,
+            "ended_at": end,
+            "start_source_event_id": entry["event_ids"][-1] if entry is not None else None,
+            "end_source_event_id": exit_cycle["id"] if exit_cycle is not None else None,
+            "complete": start is not None and end is not None,
+        })
+    return result
+
+
 def project_door_cycles(timeline: Timeline | Mapping) -> list[dict]:
     """Historische Türquellen und vorhandene Gangbezüge rein lesend zuordnen.
 
@@ -315,15 +368,7 @@ def project_door_cycles(timeline: Timeline | Mapping) -> list[dict]:
     Die beiden Lüftungsstufen erhalten eigene Zeit- und Quellfelder; sie ändern
     weder ``event_ids`` der Türpaarung noch die vorhandenen Gangbezüge.
     """
-    def get(value, key, default=None):
-        return (value.get(key, default) if isinstance(value, Mapping)
-                else getattr(value, key, default))
-
-    def time(value):
-        try:
-            return utc(datetime.fromisoformat(value) if isinstance(value, str) else value)
-        except (TypeError, ValueError):
-            return None
+    get, time = _projection_value, _projection_time
 
     session_id = get(timeline, "session_id")
     cycles, evidence = [], []

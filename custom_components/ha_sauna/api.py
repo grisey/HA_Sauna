@@ -17,7 +17,7 @@ from .notification_options import CONF_NOTIFICATION_ASSIGNMENTS
 from .core.display import phase_timer, start_availability
 from .core.parameters import EDITABLE_DEFINITIONS, LIVE_TEMPERATURE_KEYS, ParameterError
 from .core.power import watts
-from .core.timeline import project_door_cycles
+from .core.timeline import project_door_cycles, project_gang_intervals
 from .environment import environment_snapshot
 from .log import LEVELS
 from .runtime import Configuration
@@ -322,6 +322,10 @@ class StateView(HomeAssistantView):
                 if serialized_session is not None:
                     serialized_session["door_cycles"] = plain(
                         project_door_cycles(serialized_session.get("timeline", {}))
+                    )
+                    serialized_session["gang_intervals"] = project_gang_intervals(
+                        serialized_session.get("timeline", {}),
+                        door_cycles=serialized_session["door_cycles"],
                     )
                     if request.query.get("include_energy_intervals", "true") == "false":
                         continue
@@ -905,6 +909,9 @@ class ArchiveView(HomeAssistantView):
             session = result["session"]
             session["door_cycles"] = plain(
                 project_door_cycles(session.get("timeline", {}))
+            )
+            session["gang_intervals"] = project_gang_intervals(
+                session.get("timeline", {}), door_cycles=session["door_cycles"],
             )
             session["measurement_ttl_seconds"] = historical_measurement_ttl(
                 session, runtime.configuration.parameters.values["sensor_timeout_seconds"]

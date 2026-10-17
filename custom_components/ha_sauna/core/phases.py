@@ -5,7 +5,7 @@ from collections.abc import Mapping
 from datetime import datetime
 
 from .contracts import PhaseInterval, PhaseProjection, ReadinessPause
-from .timeline import utc
+from .timeline import project_gang_intervals, utc
 
 
 def _get(value, key, default=None):
@@ -28,10 +28,12 @@ def _merge(items, item):
     items.append(item)
 
 
-def project_session(session, now) -> PhaseProjection:
+def project_session(session, now, *, physical_gangs=True) -> PhaseProjection:
     """Project [session start, min(now, end)) from independent factual tracks.
 
-    Gang objects overlay base phases at their effective start. Retractions remove
+    Display/statistics use associated door times. The cooling policy explicitly
+    selects the existing booked gang times; it must not acquire new readiness
+    pauses from a historical door attribution. Retractions remove
     only that overlay, exposing the independently maintained base phase. Missing
     evidence remains unknown, including unknown contactor state (never a pause).
     """
@@ -51,13 +53,26 @@ def project_session(session, now) -> PhaseProjection:
     if not contacts or contacts[0][0] > start:
         notes.append("contactor_history_incomplete")
     overlays = []
+    gang_intervals = ({item["gang_id"]: item for item in project_gang_intervals(timeline)}
+                      if physical_gangs else {})
     retracted = {_get(g, "gang_id") for g in _get(timeline, "retracted", ())}
     for gang in (*_get(timeline, "completed", ()), *([_get(timeline, "active")] if _get(timeline, "active") else [])):
         if _get(gang, "gang_id") in retracted:
             continue
         if _get(gang, "detected_at") and _time(_get(gang, "started_at")) < _time(_get(gang, "detected_at")):
             notes.append("gang_start_backdated")
-        overlays.append((_time(_get(gang, "started_at")), _time(_get(gang, "ended_at") or end), "saunagang", _get(gang, "gang_id"), True))
+        bounds = gang_intervals.get(_get(gang, "gang_id"), {})
+        physical_start, physical_end = bounds.get("started_at"), bounds.get("ended_at")
+        complete = not physical_gangs or physical_start is not None and (
+            _get(gang, "ended_at") is None or physical_end is not None
+        )
+        if not complete:
+            notes.append("gang_door_bounds_incomplete")
+        overlays.append((
+            _time(physical_start or _get(gang, "started_at")),
+            _time(physical_end or _get(gang, "ended_at") or end),
+            "saunagang", _get(gang, "gang_id"), complete,
+        ))
     if retracted:
         notes.append("retracted_gangs_removed")
     for phase in (*_get(session, "after_run_history", ()), *([_get(session, "after_run")] if _get(session, "after_run") else [])):
