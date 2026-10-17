@@ -1875,8 +1875,32 @@ class DetectorTests(unittest.TestCase):
                     )
                     self.assertGreater(support["rh_newest_at"], humidity)
                 upper = paired_support["upper"]
-                self.assertGreater(upper["pending_count"], 0)
-                self.assertGreater(upper["pending_rh_at"], upper["rh_newest_at"])
+                # The first new Upper T pairs the RH held pending at binding.
+                # Its completed proof is frozen before the later Upper RH of
+                # this same consumed batch; that later RH is not new evidence
+                # for the earlier confirmation.
+                confirmation = record["absolute_humidity"]["confirmation_received_at"]
+                first_temperature = T0 + timedelta(seconds=second + interval)
+                later_humidity = T0 + timedelta(seconds=second + 2 * interval)
+                self.assertEqual(confirmation, first_temperature)
+                self.assertLess(confirmation, later_humidity)
+                self.assertLessEqual(upper["partner_available_at"], confirmation)
+                self.assertEqual(upper["right_temperature_at"], first_temperature)
+                previous_pending = bound["paired_support"]["upper"]["pending_rh_at"]
+                self.assertEqual(upper["rh_newest_at"], previous_pending)
+                newest_temperature = continued._curve_series[
+                    Position.UPPER, Quantity.TEMPERATURE]["points"][-1][0]
+                newest_humidity = continued._curve_series[
+                    Position.UPPER, Quantity.HUMIDITY]["points"][-1][0]
+                self.assertEqual(newest_temperature, first_temperature)
+                self.assertEqual(newest_humidity, later_humidity)
+                self.assertGreater(newest_humidity, newest_temperature)
+                self.assertGreater(newest_humidity, upper["rh_newest_at"])
+                for carrier, temperature_at, humidity_at in record["absolute_humidity"]["confirmation_originals"]:
+                    self.assertEqual(carrier, "upper")
+                    self.assertEqual(temperature_at, first_temperature)
+                    self.assertEqual(humidity_at, previous_pending)
+                    self.assertLess(humidity_at, later_humidity)
 
     def test_original_gap_keeps_pending_water_evidence_without_bridging(self):
         detector = self._ventilation_detector()
