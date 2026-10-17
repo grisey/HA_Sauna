@@ -140,7 +140,12 @@ class DoorCandidateRegressionTests(unittest.TestCase):
                     supplied_originals[role][at] = value
                 events.extend(detector.advance(at, enabled=True))
             if name == "occupied_infusion":
-                self.assertNotIn(Kind.DOOR_OPEN, [event.kind for event in events])
+                self.assertNotIn(
+                    Kind.DOOR_OPEN, [event.kind for event in events],
+                    msg="CLOSED_DOOR_OPENING_EVIDENCE=" + json.dumps(
+                        observed_openings, default=str, sort_keys=True,
+                    ),
+                )
                 self.assertIn(Kind.INFUSION, [event.kind for event in events])
                 elapsed += curve["duration_s"]
                 exit_at = ORIGIN + timedelta(seconds=elapsed)

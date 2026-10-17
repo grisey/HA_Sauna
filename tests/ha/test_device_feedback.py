@@ -489,6 +489,9 @@ class DeviceFeedbackTests(unittest.TestCase):
             if f"{position}_temperature" in runtime.configuration.bindings.values
         )
         self.assertTrue(positions)
+        # Both input pairs remain present; the clear leading sensor alone
+        # owns the pending infusion and its water evidence.
+        leading_position = positions[0]
         prior_infusions = tuple(
             event.event_id for event in runtime.session.timeline.processed
             if event.kind == Kind.INFUSION
@@ -530,7 +533,11 @@ class DeviceFeedbackTests(unittest.TestCase):
             self.assertIsNotNone(episode, runtime.detector.diagnostic)
             self.assertEqual(episode["phase"], "pending")
             self.assertIsNone(episode["confirmed_at"])
-            self.assertEqual(set(episode["water_change"]), set(positions))
+            self.assertEqual(set(episode["water_change"]), {leading_position})
+            self.assertEqual(
+                tuple(position.value for position in runtime.detector.infusion_episode.positions),
+                (leading_position,),
+            )
             self.assertTrue(all(
                 change > 0 for change in episode["water_change"].values()
             ))
