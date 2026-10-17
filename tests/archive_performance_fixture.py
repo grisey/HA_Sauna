@@ -50,7 +50,7 @@ def seed_volume(archive, stored, start, *, identity="volume"):
                        "measurement", at, payload)
 
     with closing(sqlite3.connect(archive.path)) as db, db:
-        db.execute("INSERT INTO sessions VALUES(?,?,?,?,?,?)", (
+        db.execute("INSERT INTO sessions(session_id,entry_id,started_at,updated_at,ended_at,payload) VALUES(?,?,?,?,?,?)", (
             identity, archive.entry_id, start.isoformat(), end.isoformat(), end.isoformat(),
             json.dumps(stored),
         ))

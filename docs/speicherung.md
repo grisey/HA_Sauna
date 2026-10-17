@@ -23,6 +23,14 @@ aufbewahrt. Der Nachlauf kann eine bereits beendete Sitzung noch ergänzen.
 Nach einem Neustart bleibt eine unterbrochene Sitzung historisch offen; ein
 Endzeitpunkt wird nicht erfunden. Sie setzt den Ofenbetrieb nicht fort.
 
+Im normalen Betrieb bleiben Originalmessungen, erkannte Ereignisse und ihre
+Bestätigungs- und Zuordnungsbelege sowie Phasen, Kühlung, Schaltentscheidungen,
+Ausgaben und Fehlerzustände erhalten. Die vollständigen internen Prüfverläufe
+der Erkennung werden nur bei ausdrücklich gewählter Analyseaufzeichnung
+zusätzlich gespeichert. Die aktuelle Live-Diagnose bleibt in beiden Profilen
+verfügbar; Erkennung und Regelung verwenden dieselben Eingänge und Regeln.
+Bereits gespeicherte Prüfverläufe bleiben lesbar und im Export enthalten.
+
 ## Sitzungen exportieren
 
 **Archiv als ZIP herunterladen** unter **Einstellungen → Daten und Wartung**
@@ -41,6 +49,24 @@ Er enthält einen konsistenten Stand, auch während einer laufenden Aufzeichnung
 Je Sauna liegt eine SQLite-Datei unter
 `<HA-Konfigurationsverzeichnis>/ha_sauna/<entry-id>.sqlite`.
 Sie wird im Home-Assistant-Backup konsistent gesichert.
+
+Die Datenbank speichert vollständige Konfigurationen in einer gemeinsamen
+Tabelle unveränderlicher Versionen. Jeder Sitzungsschnappschuss verweist auf
+die damals geltende Version. Eine Änderung während einer Sitzung erzeugt
+eine weitere Version; unveränderte Werte werden auch über mehrere Sitzungen
+hinweg wiederverwendet. Parameterwerte, Gerätezuordnungen und weitere
+Konfigurationsfelder bleiben vollständig erhalten. Die Version enthält keine
+Verweise auf später veränderbare Standardeinstellungen.
+
+Das interne SQLite-Schema 2 ergänzt bestehende Archive, ohne alte Datensätze,
+IDs oder eingebettete Konfigurationen umzuschreiben. Neue Version,
+Sitzungsrevision und aktueller Sitzungsstand werden gemeinsam in einer
+Transaktion gespeichert. Alte Archive im Schema 1 bleiben auch ohne vorherige
+Migration lesbar. Die öffentlichen Archivantworten und der ZIP-Export behalten
+Schema 1 mit vollständig eingebetteter Konfiguration; interne Versions-IDs
+werden dort nicht ausgegeben. Das Backup enthält die Versionstabelle mit allen
+Referenzen. Erst wenn nach einer Sitzungs- oder Archivlöschung keine erhaltene
+Revision mehr auf eine Version verweist, wird diese ebenfalls entfernt.
 
 ## Sitzungen löschen
 

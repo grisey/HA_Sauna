@@ -897,7 +897,8 @@ class DeviceFeedbackTests(unittest.TestCase):
     def test_physical_session_start_delivers_all_following_measurements_in_one_batch(self):
         async def exercise(queued, path):
             runtime, adapter, clock = self.detection_device()
-            await runtime.start_archive(path, "start-entry")
+            # Preserve the trace evidence exercised by this analysis fixture.
+            await runtime.start_archive(path, "start-entry", trace_profile="analysis")
             pending = []
             if queued:
                 await runtime._lock.acquire()
@@ -1047,7 +1048,8 @@ class DeviceFeedbackTests(unittest.TestCase):
             adapter.report_received_feedback(T0)
             adapter.apply = AsyncMock()
             runtime.controller.begin_session("fifo", T0)
-            await runtime.start_archive(path, "fifo-entry")
+            # Preserve the trace evidence exercised by this analysis fixture.
+            await runtime.start_archive(path, "fifo-entry", trace_profile="analysis")
             await runtime.tick()
 
             def edge(role, value):

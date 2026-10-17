@@ -618,7 +618,9 @@ class SaunaRuntime:
 
         def observed(trace):
             self.log.debug("detection_check", "Erkennungsprüfung: %s", trace)
-            if self.archive:
+            # The detector keeps its live diagnostic in either recording profile.
+            # Only an explicit analysis archive receives every internal check.
+            if self.archive and self.archive.trace_profile == "analysis":
                 try:
                     self.archive.append("detector_trace", self._clock(), trace, session_id)
                 except (ValueError, OverflowError) as error:
@@ -1051,11 +1053,12 @@ class SaunaRuntime:
                 self._record_notification_participant(actor)
             await self._cycle()
 
-    async def start_archive(self, path, entry_id):
+    async def start_archive(self, path, entry_id, *, trace_profile="normal"):
         from .archive import Archive
 
         self.archive = Archive(
-            path, entry_id, sessions_only=True, parameters=self.configuration.parameters
+            path, entry_id, sessions_only=True, parameters=self.configuration.parameters,
+            trace_profile=trace_profile,
         )
         await self.archive.start()
         self._consumer_ids = await asyncio.to_thread(self.archive.consumer_event_ids)

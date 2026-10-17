@@ -352,6 +352,17 @@ Python- und Panelprüfung erhalten. Leere Testsuiten, Fehler und übersprungene
 Python-Tests führen zu einem fehlgeschlagenen Core-Prozess. Das Artefakt
 `core-tests` enthält Commit, Tree, Prozessprotokoll, Exitcode und Abschlussstatus.
 
+Ein Replay über `SaunaRuntime` wählt vollständige interne Erkennungsverläufe
+vor der ersten Messung ausdrücklich mit
+`await runtime.start_archive(path, entry_id, trace_profile="analysis")`.
+Bei direkter Archivkonstruktion gilt entsprechend
+`Archive(path, entry_id, trace_profile="analysis")`. Der Standard `normal`
+speichert diese laufenden `detector_trace`-Datensätze nicht; Live-Diagnostik und
+fachliche Ereignis- und Steuerungsbelege bleiben erhalten. Das Profil ist eine
+Aufzeichnungsoption und gehört nicht zur historischen Sauna-Konfiguration.
+Explizit über `Archive.append` eingespielte historische Traces bleiben in beiden
+Profilen zulässig und unverändert lesbar.
+
 Die manuelle Auslösung (`workflow_dispatch`) des Workflows `HA Sauna` mit
 `detector_replay=true` führt ausschließlich die gebundenen Messreplays aus
 [`replay_measurement_manifest.json`](replay_measurement_manifest.json) aus.
