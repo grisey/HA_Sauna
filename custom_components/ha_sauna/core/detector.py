@@ -2417,8 +2417,11 @@ class Detector:
                 )
                 if pending is not None:
                     temperature_reference = dict(pending["temperature_windows"]).get(position)
+                    # Auch AH-Paare bleiben auf der Zeitachse ihrer RH-Originale.
+                    humidity_current_at = (humidity.current[0].humidity_sample[0]
+                                           if paired else humidity.current[0][0])
                     counterform |= bool(
-                        reference is not None and humidity.current[0][0] > reference.newest_at
+                        reference is not None and humidity_current_at > reference.newest_at
                         and humidity.v > significance * humidity.e
                         or temperature_reference is not None
                         and temperature.current[0][0] > temperature_reference.newest_at

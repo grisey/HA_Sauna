@@ -9,6 +9,9 @@ Fault/role variants are input robustness checks, not invented human sessions.
 from copy import deepcopy
 from dataclasses import replace
 from datetime import timedelta
+import json
+import os
+from pathlib import Path
 import unittest
 
 import test_original_curve_evidence as fixture_source
@@ -84,12 +87,32 @@ class SingleSensorClosingTests(unittest.TestCase):
             original_select = detector._select_position
 
             def observe_local(prefixes, channels, now, decision_at, trace, state):
+                position = channels[0]
+                before = detector._close_position_binding(state["door"])
+                bound_before = before.get("received_at") if before is not None else None
+                original_before = (state["door"] or {}).get("original_close")
+                original_bound_before = original_before.get("received_at") if original_before is not None else None
                 result = original_local(
                     prefixes, channels, now, decision_at, trace, state,
                 )
                 forms = trace.get("original_forms", {})
+                prefix = prefixes[-1]
+                sample = detector.latest.get((position, Quantity.TEMPERATURE))
+                support = detector._original_prefix_time_support(
+                    prefix, position, Quantity.TEMPERATURE,
+                )
+                window = dict(prefix.temperatures).get(position.value)
+                after = detector._close_position_binding(state["door"])
+                original_after = (state["door"] or {}).get("original_close")
                 local_proofs[channels[0].value] = {
-                    "prefix_at": prefixes[-1].received_at,
+                    "prefix_at": prefix.received_at,
+                    "decision_at": decision_at,
+                    "changed_position": prefix.changed_position,
+                    "bound_before_local": bound_before,
+                    "bound_after_local": after.get("received_at") if after is not None else None,
+                    "original_close_before_local": original_bound_before,
+                    "original_close_after_local": original_after.get("received_at") if original_after is not None else None,
+                    "rejected_close_after": (state["door"] or {}).get("rejected_close_after"),
                     "candidate_received_at": forms.get("candidate_received_at"),
                     "closing_candidate_reset_reason": forms.get(
                         "closing_candidate_reset_reason",
@@ -97,6 +120,24 @@ class SingleSensorClosingTests(unittest.TestCase):
                     "temperature_fall_reset_reason": trace.get(
                         "temperature_fall_support", {},
                     ).get(channels[0].value, {}).get("reset_reason"),
+                    "temperature_counterform": forms.get("temperature_counterform"),
+                    "local_closing": result[2],
+                    "temperature_input": {
+                        "now": now,
+                        "received_at": sample.received_at if sample is not None else None,
+                        "measured_at": sample.measured_at if sample is not None else None,
+                        "value": sample.value if sample is not None else None,
+                        "value_available": detector._value(position, Quantity.TEMPERATURE, now) is not None,
+                        "sensor_timeout_seconds": detector.p["sensor_timeout_seconds"],
+                        "prefix_window_present": window is not None,
+                        "prefix_window_newest_at": window.newest_at if window is not None else None,
+                        "prefix_context_valid": detector._original_prefix_valid(
+                            prefix, (position,), (Quantity.TEMPERATURE,),
+                        ),
+                        "support_newest_at": support.newest_at if support is not None else None,
+                        "support_next_gap_seconds": support.next_gap_seconds if support is not None else None,
+                        "support_fresh": support.fresh(prefix.received_at) if support is not None else None,
+                    },
                 }
                 return result
 
@@ -158,6 +199,54 @@ class SingleSensorClosingTests(unittest.TestCase):
         return detector, events, observed
 
     @staticmethod
+    def counterform_records(records):
+        return [
+            record for record in records
+            if any(
+                proof.get("closing_candidate_reset_reason") == "temperature_counterform"
+                or proof.get("temperature_fall_reset_reason") == "renewed_temperature_fall"
+                or (proof.get("temperature_counterform") or {}).get("result") is True
+                for proof in record["local_proofs"].values()
+            )
+        ]
+
+    @staticmethod
+    def brief_choice(record):
+        if record is None:
+            return None
+        selection = record["selection"]
+        return {
+            "at": record["at"],
+            "leading": selection["leading"], "selected": selection["selected"],
+            "role": selection["role"],
+            "positions": {
+                position: {
+                    "status": result["status"], "bound_at": result["bound_at"],
+                    "prefix_at": record["local_proofs"][position]["prefix_at"],
+                    "local_closing": record["local_proofs"][position]["local_closing"],
+                    "temperature_counterform": record["local_proofs"][position]["temperature_counterform"],
+                    "closing_reset": record["local_proofs"][position]["closing_candidate_reset_reason"],
+                    "fall_reset": record["local_proofs"][position]["temperature_fall_reset_reason"],
+                } for position, result in selection["results"].items()
+            },
+        }
+
+    @staticmethod
+    def fixture_diagnostic(name, summary, records):
+        # CI preserves all original-prefix choices. Assertions show only the
+        # decision boundary and first availability loss, without choosing a
+        # passing interval or changing the input curve from detector output.
+        evidence = os.environ.get("SAUNA_CORE_EVIDENCE")
+        if evidence:
+            target = Path(evidence) / "closing-fixture-diagnostics" / f"{name}.json"
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_text(json.dumps(
+                {"diagnostic_only": True, "summary": summary, "records": records},
+                default=str, ensure_ascii=False, indent=2,
+            ) + "\n", encoding="utf-8")
+        return json.dumps(summary, default=str, ensure_ascii=False, sort_keys=True)
+
+    @staticmethod
     def doors(events):
         return [item for item in events if item.kind in (Kind.DOOR_OPEN, Kind.DOOR_CLOSE)]
 
@@ -173,12 +262,15 @@ class SingleSensorClosingTests(unittest.TestCase):
         self.assertIsNotNone(closes[0].door_close_evidence)
         return closes[0]
 
-    def pending_upper(self):
+    def pending_upper(self, selection_records=None):
         freeze = self.recovery_start + self.count - 1
         stop = self.recovery_end
         self.assertLess((stop - freeze) * self.step,
                         self.parameters.values["sensor_timeout_seconds"])
-        _, events, observed = self.run_inputs(positions=(Position.UPPER,), upper_freeze=freeze, stop=stop)
+        _, events, observed = self.run_inputs(
+            positions=(Position.UPPER,), upper_freeze=freeze, stop=stop,
+            selection_records=selection_records,
+        )
         self.assertEqual([item.kind for item in self.doors(events)], [Kind.DOOR_OPEN])
         self.assertTrue(any(row.get("original_forms", {}).get("candidate_received_at") is not None
                             and row["at"] >= self.at(self.recovery_start) for row in observed),
@@ -220,18 +312,32 @@ class SingleSensorClosingTests(unittest.TestCase):
 
     def test_lower_counterform_does_not_veto_a_clear_upper_close(self):
         _, expected, _ = self.run_inputs(positions=(Position.UPPER,))
+        lower_choices, combined_choices = [], []
         _, _, lower_observed = self.run_inputs(
             positions=(Position.LOWER,), lower="counter", lower_delay=self.count,
+            selection_records=lower_choices,
         )
         close_at = self.one_close(expected).detected_at
+        _, actual, _ = self.run_inputs(
+            lower="counter", lower_delay=self.count,
+            selection_records=combined_choices,
+        )
+        lower_counterforms = self.counterform_records(lower_choices)
+        diagnostic = self.fixture_diagnostic("clear-upper-counterform", {
+            "upper_close_at": close_at,
+            "lower_delay_ticks": self.count,
+            "lower_counterform_times": sorted({r["at"] for r in lower_counterforms}),
+            "lower_choices_at_upper_close": [self.brief_choice(r) for r in lower_choices if r["at"] == close_at],
+            "combined_choices_at_upper_close": [self.brief_choice(r) for r in combined_choices if r["at"] == close_at],
+            "combined_door_events": [self.signature(item) for item in self.doors(actual)],
+        }, {"lower": lower_choices, "combined": combined_choices})
         self.assertTrue(any(
             row["at"] == close_at
             and row.get("original_forms", {}).get(
                 "temperature_counterform", {},
             ).get("result") is True
             for row in lower_observed
-        ), "Fixture must supply an actual lower counterform at the upper decision")
-        _, actual, _ = self.run_inputs(lower="counter", lower_delay=self.count)
+        ), "Fixture must supply an actual lower counterform at the upper decision: " + diagnostic)
         self.assertEqual([self.signature(item) for item in self.doors(actual)],
                          [self.signature(item) for item in self.doors(expected)])
         self.assertEqual(self.one_close(actual).channels, (Position.UPPER.value,))
@@ -258,7 +364,8 @@ class SingleSensorClosingTests(unittest.TestCase):
                                 self.at(self.recovery_start + delay))
 
     def test_bound_lower_counterform_rejects_pending_upper_close_without_rebinding(self):
-        freeze, stop = self.pending_upper()
+        upper_choices = []
+        freeze, stop = self.pending_upper(selection_records=upper_choices)
         choices = []
         detector, events, _ = self.run_inputs(
             lower="counter", upper_freeze=freeze, stop=stop,
@@ -273,9 +380,38 @@ class SingleSensorClosingTests(unittest.TestCase):
             and record["selection"]["results"][upper]["status"] == "pending"
             and record["selection"]["results"][lower]["status"] == "refuted"
         ]
+        first_refutation_index = refutations[0][0] if refutations else None
+        continuation = choices[first_refutation_index + 1:] if refutations else []
+        unavailable = [
+            r for r in continuation
+            if r["selection"]["results"][upper]["status"] == "unavailable"
+        ]
+        upper_only_unavailable = [
+            r for r in upper_choices
+            if r["selection"]["results"][upper]["status"] == "unavailable"
+            and r["at"] >= self.at(freeze)
+        ]
+        upper_only_candidate_loss = [
+            r for r in upper_choices
+            if r["local_proofs"][upper]["original_close_before_local"] is not None
+            and r["local_proofs"][upper]["original_close_after_local"] is None
+        ]
+        diagnostic = self.fixture_diagnostic("bound-counterform-continuation", {
+            "upper_freeze_at": self.at(freeze),
+            "input_end_exclusive": self.at(stop),
+            "sensor_timeout_seconds": self.parameters.values["sensor_timeout_seconds"],
+            "first_refutation": self.brief_choice(refutations[0][1] if refutations else None),
+            "first_later_choice": self.brief_choice(continuation[0] if continuation else None),
+            "first_unavailable": self.brief_choice(unavailable[0] if unavailable else None),
+            "first_unavailable_upper_input": unavailable[0]["local_proofs"][upper] if unavailable else None,
+            "upper_only_first_unavailable": upper_only_unavailable[0]["local_proofs"][upper] if upper_only_unavailable else None,
+            "upper_only_first_candidate_loss": upper_only_candidate_loss[0]["local_proofs"][upper] if upper_only_candidate_loss else None,
+            "last_choice": self.brief_choice(choices[-1] if choices else None),
+            "door_events": [self.signature(item) for item in self.doors(events)],
+        }, {"combined": choices, "upper_only": upper_choices})
         self.assertTrue(
             refutations,
-            "Fixture qualification failed: no actual lower refutation of a pending upper close",
+            "Fixture qualification failed: no actual lower refutation of a pending upper close: " + diagnostic,
         )
         index, rejected = refutations[0]
         selection = rejected["selection"]
@@ -300,7 +436,7 @@ class SingleSensorClosingTests(unittest.TestCase):
         self.assertTrue(all(
             record["selection"]["results"][upper]["status"] != "unavailable"
             for record in later
-        ), "Fixture qualification failed: later upper loss would allow a separate replacement")
+        ), "Fixture qualification failed: later upper loss would allow a separate replacement: " + diagnostic)
 
         # The same fixed lower curve later supplies a complete own close in
         # isolation. It cannot restore the already rejected upper hypothesis.
