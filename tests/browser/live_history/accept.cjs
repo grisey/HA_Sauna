@@ -923,14 +923,15 @@ fs.mkdirSync(output, { recursive: true });
     await settleSelection();
   }
   assert.deepEqual(await selectedValues(), range);
-  await readout.scrollIntoViewIfNeeded();
-  const readoutBox = await readout.boundingBox(),
-    scrollBefore = await selectionPage.evaluate(() => {
+  await readout.hover();
+  const scrollBefore = await selectionPage.evaluate(() => {
       const readout = f.panel.$(".history-readout"),
         history = f.panel.$("#history"),
         outer = f.outer.querySelector("#scroll"),
         target = [readout, history, outer].find(
-          (node) => node.scrollHeight > node.clientHeight,
+          (node) =>
+            /^(auto|scroll|overlay)$/.test(getComputedStyle(node).overflowY) &&
+            node.scrollHeight > node.clientHeight,
         );
       if (!target) throw Error("selection fixture has no actual scroll path");
       const up = target.scrollTop,
@@ -942,19 +943,31 @@ fs.mkdirSync(output, { recursive: true });
         wheel: down >= up ? down : -up,
       };
     });
-  await selectionPage.mouse.move(
-    readoutBox.x + readoutBox.width / 2,
-    readoutBox.y + readoutBox.height / 2,
-  );
   await selectionPage.mouse.wheel(0, scrollBefore.wheel);
-  await selectionPage.waitForFunction(
-    (before) =>
-      f.panel.$(".history-readout").scrollTop !== before.readout ||
-      f.panel.$("#history").scrollTop !== before.history ||
-      f.outer.querySelector("#scroll").scrollTop !== before.outer,
-    scrollBefore,
-    { timeout: settings.browser.timeouts_ms.interaction },
-  );
+  try {
+    await selectionPage.waitForFunction(
+      (before) =>
+        f.panel.$(".history-readout").scrollTop !== before.readout ||
+        f.panel.$("#history").scrollTop !== before.history ||
+        f.outer.querySelector("#scroll").scrollTop !== before.outer,
+      scrollBefore,
+      { timeout: settings.browser.timeouts_ms.interaction },
+    );
+  } catch (error) {
+    const geometry = await selectionPage.evaluate(() =>
+      [f.panel.$(".history-readout"), f.panel.$("#history"), f.outer.querySelector("#scroll")].map((node) => ({
+        selector: node.id || node.className,
+        overflowY: getComputedStyle(node).overflowY,
+        top: node.scrollTop,
+        height: node.clientHeight,
+        scrollHeight: node.scrollHeight,
+        bounds: node.getBoundingClientRect().toJSON(),
+      })),
+    );
+    fs.writeFileSync(path.join(output, `${engine}-selection-scroll-failure.json`), JSON.stringify({scrollBefore, geometry}, null, 2));
+    await selectionPage.screenshot({path: path.join(output, `${engine}-selection-scroll-failure.png`), fullPage: true});
+    throw error;
+  }
   await selectionPage.waitForFunction(
     (frames) => {
       const position = `${f.panel.$(".history-readout").scrollTop}:${f.panel.$("#history").scrollTop}:${f.outer.querySelector("#scroll").scrollTop}`,
@@ -1409,8 +1422,8 @@ fs.mkdirSync(output, { recursive: true });
   });
   assert.equal(
     narrowMetrics.valueFontPx,
-    await selectionPage.evaluate(() => f.panel.preference("font_size_large_px")),
-    "narrow values retain the catalogue's actual text size",
+    await selectionPage.evaluate(() => f.panel.preference("font_size_compact_px")),
+    "narrow values retain the catalogue's actual compact text size",
   );
   for (const action of ["clear-history-selection"]) {
     const button = selectionPanel.locator(`[data-action="${action}"]`);
