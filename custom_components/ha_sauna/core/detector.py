@@ -1049,9 +1049,10 @@ class Detector:
         kinks = dict(prefix.humidity_kinks)
         for name, pair in windows:
             kink = kinks.get(name)
-            if (kink is None or kink.window is not pair.humidity
-                    or kink.effective_change >= 0):
+            if kink is None or kink.window is not pair.humidity:
                 continue
+            # Der Gesamtknick qualifiziert die Bindung; den eigenen Beginn
+            # löst hier die Sekante mit derselben Knicktoleranz auf.
             changes = original_window_changes(pair.humidity, tolerance=kink.tolerance)
             for change in changes or ():
                 if max(change.direction, change.change) >= -significance:
@@ -2011,14 +2012,14 @@ class Detector:
                     current_kinks = dict(humidity_kinks)
                     for name, pair in contrasts.positions:
                         kink = current_kinks.get(name)
-                        if (kink is not None and kink.window is pair.humidity
+                        if name in current_intervals:
+                            # Der erste eigene RH-Schritt bleibt auch ohne
+                            # T-Zuordnung derselbe. Ein nichtnegativer Gesamtknick
+                            # beendet ihn erst ohne eigene aufgelöste Sekante.
+                            active_intervals.setdefault(name, current_intervals[name])
+                        elif (kink is not None and kink.window is pair.humidity
                                 and kink.effective_change >= 0):
                             active_intervals.pop(name, None)
-                        elif name in current_intervals:
-                            # Der erste eigene RH-Schritt bleibt auch bei
-                            # fehlender T-Zuordnung derselbe. Unbekannte
-                            # Knickstützen eröffnen keine neue Transition.
-                            active_intervals.setdefault(name, current_intervals[name])
                     for name, interval in active_intervals.items():
                         onset_intervals.setdefault(name, interval)
                     changed = False

@@ -276,6 +276,8 @@ u_Hpi/Eⁱ_Hpi < −s
 (u_Hpi − b_Hp)/max(Eⁱ_Hpi + E⁻_Hp, κ_p) < −s
 ```
 
+Bei einem gebundenen Kandidaten gelten diese Sekantenvergleiche mit derselben
+Knicktoleranz unabhängig vom effektiven Gesamtknick.
 Das erste passende Intervall, sein RH-Fenster und sein Knickhintergrund werden
 gehalten. Bei einem Formbeginn innerhalb dieser Sekantenstütze verlangt die
 Übernahme des linken Originalpunkts als Beginn einen eigenen vollständigen
@@ -375,9 +377,10 @@ späteren eigenen RH-Abwärtsknicks unabhängig vom priorisierten Diagnosegrund
 der zusätzlichen Aufgussprüfung aus. Sein erstes signifikantes natives
 RH-Intervall wird mit denselben Vergleichen lokalisiert und festgehalten.
 Der erste eigene RH-Schritt wird bereits vor der T-Zuordnung gehalten, auch
-wenn keine passende T-Stütze vorliegt. Erst ein gültiges aktuelles eigenes
-RH-Fenster mit `δ_eff,p ≥ 0` beendet die aktive lokale Transition und ermöglicht
-einen neuen Knickanker; fehlende oder unbekannte Knickstützen eröffnen keine
+wenn keine passende T-Stütze vorliegt. Ein eigenes qualifiziertes Intervall
+hat Vorrang; nur ohne ein solches Intervall beendet ein gültiges aktuelles
+eigenes RH-Fenster mit `δ_eff,p ≥ 0` die aktive lokale Transition und ermöglicht
+einen neuen Knickanker. Fehlende oder ungültige Knickstützen eröffnen keine
 neue Transition. Ein bereits zuordenbarer Intervallvorschlag bleibt für
 später eintreffende T-Belege erhalten; ein eigener neuer zulässiger RH-Knick
 kann ihn ablösen. Das bestätigt für sich kein Ereignis.

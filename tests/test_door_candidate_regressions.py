@@ -355,6 +355,19 @@ class DoorCandidateRegressionTests(unittest.TestCase):
             })
             previous = state
         opens = [event for event in events if event.kind == Kind.DOOR_OPEN]
+        confirmation_state = {}
+        confirmed_rows = []
+        for row in observed_openings:
+            confirmation_state.update(row["changes"])
+            if Kind.DOOR_OPEN in row["signals"]:
+                confirmed_rows.append({
+                    **row, "retained_state": dict(confirmation_state),
+                })
+        print("Recorded exit native opening diagnosis: " + json.dumps({
+            "openings": [{"effective_at": event.effective_at, "trace_at": event.trace_at}
+                         for event in opens],
+            "confirmed_rows": confirmed_rows,
+        }, default=str, sort_keys=True))
         self.assertEqual(len(opens), 1)
         self.assertGreaterEqual(opens[0].effective_at, exit_at, msg=json.dumps(
             observed_openings, default=str, sort_keys=True,
