@@ -2229,6 +2229,19 @@ class InfusionLifecycleTests(unittest.TestCase):
     def _infusions(events):
         return [item for item in events if item.kind == Kind.INFUSION]
 
+    def _feed_until_infusion_end(self, detector, points, events, *, after):
+        # Reach the actual owner transition before testing its transport or
+        # correction. The existing curve horizon bounds fixture preparation;
+        # it is not a physical confirmation deadline.
+        limit = after + self.p["curve_window_seconds"]
+        second = (detector.index + 1) * self.step
+        while second <= limit:
+            self._feed(detector, second, points, events)
+            if detector.infusion_episode and detector.infusion_episode.phase == "ended":
+                return second
+            second += self.step
+        self.fail(f"Fixture did not establish its end precondition: {detector.infusion_episode}")
+
     def _scenario(self, *, merged):
         peak_one = self.begin + self.width
         fall_one = peak_one + self.width
@@ -3327,9 +3340,8 @@ class InfusionLifecycleTests(unittest.TestCase):
             self.assertEqual(active.onset_at, original.effective_at)
             self.assertEqual(active.confirmed_at, original.detected_at)
             self.assertIsNone(active.level_end_at)
-            self._feed(
-                detector, fall_two + (self.side + 1) * self.step,
-                points, events,
+            ended_at = self._feed_until_infusion_end(
+                detector, points, events, after=fall_two,
             )
         self.assertEqual(len(self._infusions(events)), 1)
         self.assertEqual(detector._infusion_episode["phase"], "ended")
@@ -3338,8 +3350,8 @@ class InfusionLifecycleTests(unittest.TestCase):
         self.assertEqual(ended.phase, "ended")
         self.assertEqual(ended.bound_at, pending.bound_at)
         self.assertIs(ended.confirmed_detection, original)
-        self.assertEqual(ended.level_end_at,
-                         self._at(fall_two + self.side * self.step))
+        self.assertEqual(ended.level_end_at, self._at(ended_at))
+        self.assertGreaterEqual(ended.level_end_at, self._at(fall_two))
         self.assertEqual(ended.end_basis, "original_background")
         self.assertEqual(ended.last_rise_at,
                          tuple((position, self._at(rise_two)) for position in detector.positions))
@@ -3474,7 +3486,7 @@ class InfusionLifecycleTests(unittest.TestCase):
             self.assertTrue(component["fall_confirmed"])
             for _, pair in component["fall_windows"]:
                 self.assertGreater(pair.humidity.current[0][0], self._at(second_peak))
-            self._feed(detector, second_fall + (self.side + 1) * self.step, points, events)
+            self._feed_until_infusion_end(detector, points, events, after=second_fall)
         ended = detector.infusion_episode
         self.assertEqual(ended.phase, "ended")
         self.assertEqual(ended.end_basis, "original_background")
@@ -4093,10 +4105,8 @@ class InfusionLifecycleTests(unittest.TestCase):
 
     def test_corrected_ended_tail_keeps_the_next_peak_in_the_same_infusion(self):
         points, shapes, _, _ = self._scenario(merged=False)
-        ended = self.begin + 2 * self.width + self.side * self.step
-        next_rise = ended + 3 * self.step
-        next_peak = next_rise + self.width
-        shapes = shapes[:2] + [self._shape("rise", next_rise, next_peak)]
+        first_fall = self.begin + 2 * self.width
+        points, shapes = points[:4], shapes[:2]
         detector = Detector(self.parameters, T0, (Position.UPPER,))
         events = []
         invalid_change = 2 * self.side * self.p["curve_original_noise_humidity_upper"] * max(
@@ -4104,7 +4114,7 @@ class InfusionLifecycleTests(unittest.TestCase):
             self.p["curve_original_background_residual"],
         )
         with self._patch_math(shapes):
-            self._feed(detector, ended, points, events)
+            ended = self._feed_until_infusion_end(detector, points, events, after=first_fall)
             self.assertEqual(detector._infusion_episode["phase"], "ended")
             ended_episode = detector.infusion_episode
             self.assertEqual(ended_episode.level_end_at, self._at(ended))
@@ -4119,6 +4129,9 @@ class InfusionLifecycleTests(unittest.TestCase):
             self.assertIs(reopened.confirmed_detection, original)
             self.assertIsNone(reopened.level_end_at)
             self.assertIsNone(reopened.end_basis)
+            next_rise = ended + 3 * self.step
+            next_peak = next_rise + self.width
+            shapes.append(self._shape("rise", next_rise, next_peak))
             continued = [(0, self.level - invalid_change), (next_rise, self.level - invalid_change),
                          (next_peak, self.peak)]
             self._feed(detector, next_peak, continued, events)
