@@ -685,6 +685,21 @@ test("role loss clears diagnostic consumers even while history is hidden", async
   oldCache.records.push({ id: 1, kind: "detector_trace", payload: {} });
   p.shown = { session: p.state.session, records: oldCache.records };
   p.chartDataIndex = p.historyIndex(oldCache.records);
+  p.historyValueSelection = { identity: "e:live", kind: "range", start: 0, end: 1 };
+  p.historyKeyboardTarget = { eventId: "old-admin" };
+  p.historyChart = {
+    prepared: new Map(),
+    interaction: {
+      hide() {
+        assert.equal(
+          p.historyValueSelection,
+          null,
+          "old selection is invalidated before hiding its source",
+        );
+        assert.equal(p.historyKeyboardTarget, null);
+      },
+    },
+  };
   p.historyEventKey = p.historyDiagnosticsKey = "old-admin";
   p.pendingEventFocus = { kind: "marker", eventId: "old" };
   nodes["#event-list"].innerHTML =

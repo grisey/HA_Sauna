@@ -3381,7 +3381,9 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
         await editor.locator('[data-action="appearance-discard"]').click()
         await expect(self.panel.locator('input[name="preset_start_c"]')).to_be_disabled()
         await self.open_settings_section("maintenance")
-        await expect(self.panel.get_by_role("button", name="Werkseinstellungen wiederherstellen", exact=True)).to_be_disabled()
+        # Inventory/preview stays available while the owner locks writes that
+        # would change session parameters; there is no immediate global reset.
+        await expect(self.panel.get_by_role("button", name="Standards für alle Bereiche", exact=True)).to_be_enabled()
         async with self.page.expect_download() as result:
             await self.open_settings_section("maintenance")
             await self.panel.locator('[data-action="export"]').click()
@@ -3405,6 +3407,9 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
         await self.select_dropdown(self.panel.locator("#session"), identity)
         gang = await selected_gang_details(self.panel)
         await expect(gang).to_contain_text("Bestätigt", timeout=browser_timeout("update"))
+        # Recording closure without a physical exit must not supply an end.
+        await expect(gang).to_contain_text("Zeitgrenzen unbelegt")
+        await expect(gang).to_contain_text("Ende · Nicht belegt")
         self.assertEqual(await gang.get_attribute("data-start"), start)
         await expect(gang.locator("time")).to_have_attribute("datetime", start)
         tokens = await self.page.evaluate("localStorage.getItem('hassTokens')")

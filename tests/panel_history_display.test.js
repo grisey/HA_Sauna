@@ -105,6 +105,143 @@ const modelFor = (p, records, seconds, chart) => {
   return p.historyModel(chart, session(seconds));
 };
 
+// Physical gang boundaries belong to the Timeline projection. Booked control
+// timestamps deliberately differ; they cannot fill a missing physical bound.
+{
+  const p = panel(100, [record(0, 60), record(100, 80)]),
+    gang = {
+      gang_id: "physical-gang",
+      started_at: iso(10),
+      ended_at: iso(90),
+      detected_at: iso(30),
+      confirmed: true,
+    },
+    interval = {
+      gang_id: gang.gang_id,
+      started_at: iso(20),
+      ended_at: iso(70),
+      complete: true,
+    },
+    current = p.shown.session;
+  current.timeline.session_id = "physical-session";
+  current.timeline.completed = [gang];
+  current.gang_intervals = [interval];
+  const original = JSON.stringify(gang);
+  let row = p.historyGangRows()[0];
+  assert.equal(row.originalStarted, Date.parse(iso(20)));
+  assert.equal(row.originalEnded, Date.parse(iso(70)));
+  assert.equal(row.durationSeconds, 50);
+  assert.match(row.label, /Vollständig/);
+  row = p.historyGangRows({
+    kind: "range",
+    start: base + 40_000,
+    end: base + 60_000,
+  })[0];
+  assert.equal(row.durationSeconds, 20);
+  assert.match(row.label, /Ausschnitt/);
+  assert.match(row.durationText, /ausgewählt/);
+  const revision = p.updateHistoryTimelineRevision(current);
+  interval.started_at = iso(25);
+  assert.ok(
+    p.updateHistoryTimelineRevision(current) > revision,
+    "a metadata-only boundary correction invalidates the history view",
+  );
+  assert.equal(p.historyGangRows()[0].durationSeconds, 45);
+  for (const replacement of [
+    { ...interval, started_at: null, complete: false },
+    { ...interval, ended_at: null, complete: false },
+    { ...interval, complete: false },
+    { ...interval, gang_id: "foreign-gang" },
+    null,
+  ]) {
+    current.gang_intervals = replacement ? [replacement] : null;
+    row = p.historyGangRows()[0];
+    assert.equal(row.durationSeconds, null);
+    assert.equal(row.durationText, "Dauer nicht belegt");
+    assert.doesNotMatch(row.label, /Vollständig/);
+  }
+  assert.equal(
+    JSON.stringify(gang),
+    original,
+    "booked control and confirmation evidence is immutable",
+  );
+}
+{
+  const p = panel(100, []),
+    current = p.shown.session,
+    gang = {
+      gang_id: "active-physical",
+      started_at: iso(10),
+      ended_at: null,
+      detected_at: iso(35),
+    };
+  current.ended_at = null;
+  current.timeline.session_id = "live-physical-session";
+  current.timeline.active = gang;
+  current.gang_intervals = [
+    { gang_id: gang.gang_id, started_at: iso(25), ended_at: null, complete: false },
+  ];
+  p.state.session = current;
+  p.state.gang_duration_seconds = 40;
+  let row = p.historyGangRows()[0];
+  assert.match(row.label, /Laufend/);
+  assert.equal(
+    row.durationSeconds,
+    40,
+    "running duration consumes the backend value, not now minus a booked start",
+  );
+  assert.equal(row.ended, base + 65_000);
+  p.state.gang_duration_seconds = null;
+  assert.equal(p.historyGangRows()[0].durationSeconds, null);
+  p.state.gang_duration_seconds = 40;
+  p.state.session = { timeline: { session_id: "another-session" } };
+  assert.equal(
+    p.historyGangRows()[0].durationSeconds,
+    null,
+    "another live session cannot supply historical elapsed time",
+  );
+  current.timeline.retracted = [gang];
+  assert.equal(p.historyGangRows().length, 0);
+}
+{
+  const p = panel(100, []),
+    current = p.shown.session;
+  current.timeline.session_id = "selected-physical-session";
+  current.timeline.completed = [
+    { gang_id: "bound-gang", started_at: iso(10), ended_at: iso(90), confirmed: true },
+  ];
+  current.gang_intervals = [
+    { gang_id: "bound-gang", started_at: null, ended_at: iso(70), complete: false },
+  ];
+  const phase = {
+    phase: "saunagang",
+    source_id: "bound-gang",
+    started_at: iso(10),
+    ended_at: iso(70),
+    complete: false,
+  };
+  p.shown.phase_projection = { intervals: [phase] };
+  const selection = {
+    identity: p.historyValueIdentity(),
+    kind: "range",
+    start: base + 10_000,
+    end: base + 70_000,
+  };
+  let content = p.historyInformationContent(selection, phase);
+  assert.equal(content.singleGang, true);
+  assert.equal(content.selectedGang.durationSeconds, null);
+  assert.match(
+    p.historyInformationHeading(selection, phase, "UTC", content),
+    /Dauer nicht belegt/,
+  );
+  content = p.historyInformationContent(selection, { ...phase, source_id: "foreign" });
+  assert.equal(
+    content.singleGang,
+    false,
+    "phase-to-gang attribution requires the original matching identity",
+  );
+}
+
 // Fixed interval oracles use originals, causal boundaries and time weights.
 {
   const measured = (second, value, position = "upper", quantity = "temperature") => {

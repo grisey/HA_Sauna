@@ -62,8 +62,15 @@ Konfiguration unbekannt; vorhandene Messungen werden trotzdem angezeigt.
 Phasen und Ereignisse erscheinen in eigenen Bändern am Diagramm. Ein Klick auf
 einen Zeitpunkt markiert dessen Messwerte, ein zweiter einen Zeitraum. Ein
 weiterer Klick oder **Auswahl aufheben** stellt die Sitzungsübersicht wieder her.
-Für einen ausgewählten Saunagang enthält **Weitere Daten** den ursprünglichen
-Beginn und den Bestätigungsstand **Vorläufig** oder **Bestätigt**.
+Für einen ausgewählten Saunagang enthält **Weitere Daten** den belegten
+Türschluss beim Eintritt, die Türöffnung beim Austritt und den Bestätigungsstand
+**Vorläufig** oder **Bestätigt**. Die physische Gangdauer verwendet diese
+zugeordneten Grenzen. Fehlende oder unvollständige Grenzen bleiben unbelegt;
+gebuchte Steuerungszeiten füllen sie nicht auf. Bei einem laufenden Gang mit
+belegtem Eintritt wird die vom Backend ermittelte bisherige Dauer angezeigt.
+Kennzahlen einer unvollständigen Gangphase beziehen sich ausdrücklich auf den
+ausgewählten Zeitraum. Gebuchte Gang- und Bestätigungszeiten bleiben separat
+in den Sitzungsdaten der Detailansicht erhalten.
 Für Zeiträume stehen Temperaturänderung und Änderung je Minute an der ausgewerteten
 Messposition zur Verfügung. **Weitere Daten** enthält die zeitgewichtete
 Temperaturdifferenz oben minus unten, die mittlere absolute Abweichung vom

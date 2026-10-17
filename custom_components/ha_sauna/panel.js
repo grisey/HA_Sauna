@@ -6310,6 +6310,8 @@ class SaunaPanel extends HTMLElement {
     // Permission-specific cursors and data cannot be reused by another
     // projection. The generation also rejects responses from an earlier stream.
     this.historyProjectionGeneration = (this.historyProjectionGeneration || 0) + 1;
+    this.cancelHistoryInput();
+    this.resetHistorySelectionState();
     this.cache.clear();
     this.sessions = null;
     this.historyListStale = true;
@@ -6493,7 +6495,12 @@ class SaunaPanel extends HTMLElement {
     let session = live || cache?.session;
     if (live && cache?.session?.timeline?.session_id === live.timeline?.session_id) {
       const metadata = Object.fromEntries(
-        ["configuration", "measurement_ttl_seconds", "measurement_context"]
+        [
+          "configuration",
+          "measurement_ttl_seconds",
+          "measurement_context",
+          "gang_intervals",
+        ]
           .filter((key) => !(key in live) && key in cache.session)
           .map((key) => [key, cache.session[key]]),
       );
@@ -9728,6 +9735,8 @@ class SaunaPanel extends HTMLElement {
       timeline,
       session.ended_at,
       session.contactor_history,
+      session.gang_intervals,
+      Number.isFinite(this.state.gang_duration_seconds),
       (projection?.intervals || []).map((item) => [
         item.phase,
         item.started_at,
@@ -9781,17 +9790,6 @@ class SaunaPanel extends HTMLElement {
       spans.push({ ...previous, end });
       return spans.filter((v) => v.end >= v.at);
     };
-    const intervals = (items, label, role) =>
-      changes(
-        items.flatMap((item) => [
-          { at: stamp(item.started_at), label, color: color(role) },
-          ...(item.ended_at
-            ? [{ at: stamp(item.ended_at), label: "Inaktiv", color: neutral }]
-            : []),
-        ]),
-        "Inaktiv",
-        neutral,
-      );
     const presenceProjection = this.historyPresenceProjection(),
       presenceReports = this.historyPresenceReports(start, end);
     const occupancy = (r) =>
@@ -9829,7 +9827,8 @@ class SaunaPanel extends HTMLElement {
         "Ohne Begründung"
       );
     };
-    const phaseIntervals = projection?.intervals || [];
+    const phaseIntervals = projection?.intervals || [],
+      physicalGangs = this.historyGangRows().map((row) => row.bounds);
     const coolingState = (phase, at) => ({
       at,
       label:
@@ -9885,10 +9884,20 @@ class SaunaPanel extends HTMLElement {
       ],
       [
         "Saunagang",
-        intervals(
-          [...timeline.completed, ...(timeline.active ? [timeline.active] : [])],
-          "Aktiv",
-          "phase-session",
+        changes(
+          physicalGangs
+            .filter((bounds) => bounds.complete || bounds.ongoing)
+            .flatMap((bounds) => [
+              {
+                at: bounds.start,
+                label: bounds.ongoing ? "Laufend" : "Aktiv",
+                color: color("phase-session"),
+              },
+              ...(bounds.complete
+                ? [{ at: bounds.end, label: "Kein belegter Gang", color: null }]
+                : []),
+            ]),
+          "Kein belegter Gang",
         ),
       ],
       [
@@ -10060,48 +10069,123 @@ class SaunaPanel extends HTMLElement {
     this.controlHistoryRenderCache = { records, count: records.length, key: renderKey };
     this.controlEvidenceTick = evidenceTick;
   }
+  historyGangBounds(session, gang) {
+    const matches =
+      typeof gang.gang_id === "string" &&
+      gang.gang_id &&
+      Array.isArray(session.gang_intervals)
+        ? session.gang_intervals.filter((span) => span.gang_id === gang.gang_id)
+        : [];
+    const span = matches.length === 1 ? matches[0] : null,
+      start = stamp(span?.started_at),
+      end = stamp(span?.ended_at),
+      validStart = Number.isFinite(start),
+      validEnd = Number.isFinite(end) && (!validStart || end >= start),
+      complete = span?.complete === true && validStart && validEnd,
+      active =
+        session.timeline.active?.gang_id === gang.gang_id &&
+        !gang.ended_at &&
+        !session.ended_at &&
+        session.timeline.session_id === this.state?.session?.timeline?.session_id,
+      elapsed = this.state?.gang_duration_seconds,
+      ongoing =
+        active &&
+        validStart &&
+        !validEnd &&
+        typeof elapsed === "number" &&
+        Number.isFinite(elapsed) &&
+        elapsed >= 0;
+    return {
+      span,
+      complete,
+      ongoing,
+      start: validStart ? start : NaN,
+      end: validEnd ? end : NaN,
+      startedAt: validStart ? span.started_at : null,
+      endedAt: validEnd ? span.ended_at : null,
+      observedEnd: ongoing ? start + elapsed * 1000 : NaN,
+      elapsedSeconds: ongoing ? elapsed : null,
+      reason: !validStart
+        ? "Beginn des Gangs nicht belegt"
+        : !validEnd
+          ? ongoing
+            ? "Laufende Dauer ab belegtem Türschluss; Ende noch offen"
+            : "Ende des Gangs nicht belegt"
+          : !complete
+            ? "Ganggrenzen unvollständig belegt"
+            : null,
+    };
+  }
   historyGangRows(selection = null) {
     const session = this.shown?.session;
     if (!session) return [];
     const timeline = session.timeline,
-      gangs = [...timeline.completed, ...(timeline.active ? [timeline.active] : [])];
+      gangs = [...timeline.completed, ...(timeline.active ? [timeline.active] : [])],
+      retracted = new Set((timeline.retracted || []).map((gang) => gang.gang_id));
     return gangs.flatMap((gang, index) => {
-      const originalStarted = stamp(gang.started_at),
-        originalEnded = stamp(gang.ended_at),
-        horizon = stamp(gang.ended_at || session.ended_at || this.state.now),
-        open = !gang.ended_at && !session.ended_at,
-        ongoing =
-          open &&
-          gang === timeline.active &&
-          this.state?.operation_enabled &&
-          timeline.session_id === this.state?.session?.timeline?.session_id,
+      if (retracted.has(gang.gang_id)) return [];
+      const bounds = this.historyGangBounds(session, gang),
+        originalStarted = bounds.start,
+        originalEnded = bounds.end,
+        horizon = bounds.complete ? originalEnded : bounds.observedEnd,
         range = selection?.kind === "range",
         started = range ? Math.max(originalStarted, selection.start) : originalStarted,
-        ended = range ? Math.min(horizon, selection.end) : horizon;
+        ended = range ? Math.min(horizon, selection.end) : horizon,
+        // Incomplete owner phases locate an unknown gang in the selected view;
+        // neither they nor booked control times supply a physical duration.
+        phases = (this.shown.phase_projection?.intervals || []).filter(
+          (phase) => phase.phase === "saunagang" && phase.source_id === gang.gang_id,
+        ),
+        locatedStart = Number.isFinite(originalStarted)
+          ? originalStarted
+          : phases.length
+            ? Math.min(...phases.map((phase) => stamp(phase.started_at)))
+            : stamp(gang.started_at),
+        locatedEnd = Number.isFinite(horizon)
+          ? horizon
+          : phases.length
+            ? Math.max(...phases.map((phase) => stamp(phase.ended_at)))
+            : stamp(gang.ended_at || session.ended_at || this.state.now);
       if (
         selection?.kind === "point" &&
         !(
-          started <= selection.start &&
-          (selection.start < ended || (open && selection.start === ended))
+          locatedStart <= selection.start &&
+          (selection.start < locatedEnd ||
+            (bounds.ongoing && selection.start === locatedEnd))
         )
       )
         return [];
-      if (range && !(ended > started)) return [];
+      if (
+        range &&
+        !(Math.min(locatedEnd, selection.end) > Math.max(locatedStart, selection.start))
+      )
+        return [];
       const complete =
-          Number.isFinite(originalEnded) &&
+          bounds.complete &&
           (!range ||
             (selection.start <= originalStarted && selection.end >= originalEnded)),
-        coversObserved =
-          !range || (selection.start <= originalStarted && selection.end >= horizon),
         scope = complete
           ? "Vollständig"
-          : ongoing && coversObserved
+          : bounds.ongoing
             ? "Laufend"
-            : "Ausschnitt",
-        selectedDuration = duration((ended - started) / 1000);
+            : bounds.complete
+              ? "Ausschnitt"
+              : "Zeitgrenzen unbelegt",
+        durationSeconds =
+          (bounds.complete || bounds.ongoing) &&
+          Number.isFinite(started) &&
+          Number.isFinite(ended) &&
+          ended >= started
+            ? bounds.ongoing && !range
+              ? bounds.elapsedSeconds
+              : (ended - started) / 1000
+            : null,
+        selectedDuration =
+          durationSeconds == null ? "Dauer nicht belegt" : duration(durationSeconds);
       return [
         {
           gang,
+          bounds,
           number: index + 1,
           originalStarted,
           originalEnded,
@@ -10109,8 +10193,20 @@ class SaunaPanel extends HTMLElement {
           ended,
           label: `Saunagang ${index + 1} · ${scope}`,
           confirmationText: gangConfirmed(gang) ? "Bestätigt" : "Vorläufig",
+          startText: Number.isFinite(started) ? this.clock(started) : "Nicht belegt",
+          endText:
+            range && Number.isFinite(ended)
+              ? this.clock(ended)
+              : Number.isFinite(originalEnded)
+                ? this.clock(originalEnded)
+                : bounds.ongoing
+                  ? "Laufend"
+                  : "Nicht belegt",
+          durationSeconds,
           durationText:
-            range && ongoing ? `${selectedDuration} ausgewählt` : selectedDuration,
+            durationSeconds != null && ((range && !complete) || bounds.ongoing)
+              ? `${selectedDuration} ${range ? "ausgewählt" : "laufend"}`
+              : selectedDuration,
         },
       ];
     });
@@ -10353,13 +10449,20 @@ class SaunaPanel extends HTMLElement {
     if (!session) return null;
     const rows = this.historyGangRows(selection),
       range = selection?.kind === "range",
-      singleGang = range && phase?.phase === "saunagang" && rows.length === 1,
+      selectedGang =
+        range &&
+        phase?.phase === "saunagang" &&
+        typeof phase.source_id === "string" &&
+        phase.source_id
+          ? rows.find((row) => row.gang.gang_id === phase.source_id)
+          : null,
+      singleGang = !!selectedGang,
       start = selection ? selection.start : stamp(session.timeline.session_started_at),
       end = selection ? selection.end : stamp(session.ended_at || this.state.now),
       label = !selection
         ? "Sitzung"
         : singleGang
-          ? rows[0].label
+          ? selectedGang.label
           : range
             ? phases[phase?.phase] || "Ausgewählter Zeitraum"
             : phases[phase?.phase] || "Punkt",
@@ -10381,6 +10484,7 @@ class SaunaPanel extends HTMLElement {
       selection,
       rows,
       singleGang,
+      selectedGang,
       start,
       end,
       label,
@@ -10415,7 +10519,7 @@ class SaunaPanel extends HTMLElement {
       durationText = !selection
         ? duration(content.durationSeconds)
         : content.singleGang
-          ? content.rows[0].durationText
+          ? content.selectedGang.durationText
           : "";
     return `${content.label} · ${times}${durationText ? ` · ${durationText}` : ""}`;
   }
@@ -10426,8 +10530,15 @@ class SaunaPanel extends HTMLElement {
     content = this.historyInformationContent(selection, phase),
   ) {
     if (!content) return;
-    const { rows, singleGang, gangCount, energy, measuredPower, measurements } =
-        content,
+    const {
+        rows,
+        singleGang,
+        selectedGang: selectedGangRow,
+        gangCount,
+        energy,
+        measuredPower,
+        measurements,
+      } = content,
       range = selection?.kind === "range",
       summary = this.$("[data-history-session-summary]");
     if (summary) summary.hidden = !(overview || range);
@@ -10502,7 +10613,7 @@ class SaunaPanel extends HTMLElement {
           ? ""
           : `<p>Ausgewertete Messposition: ${this.historyPrimaryPosition(content.session) === "upper" ? "oben" : "unten"}. Zeitraum ${this.clock(content.start)} – ${this.clock(content.end)}.</p><div class="history-information-values">${metricRow("difference", "Mittlere Temperaturdifferenz oben − unten", statistics.difference?.mean, "°C", statistics.difference?.reason)}${metricRow("target-mean", "Mittlere absolute Sollabweichung", statistics.target?.meanAbsolute, "°C", statistics.target?.reason)}${metricRow("target-over", "Größte Sollüberschreitung", statistics.target?.reason ? null : Math.max(0, statistics.target.maximum), "°C", statistics.target?.reason)}${metricRow("target-under", "Größte Sollunterschreitung", statistics.target?.reason ? null : Math.max(0, -statistics.target.minimum), "°C", statistics.target?.reason)}</div>`;
       const selectedGang = singleGang
-        ? `<div data-history-selected-gang data-gang-id="${esc(rows[0].gang.gang_id)}" data-start="${esc(rows[0].gang.started_at)}"><p>${esc(rows[0].label)} · <strong>${esc(rows[0].confirmationText)}</strong></p><p>Beginn · <time datetime="${esc(rows[0].gang.started_at)}" title="${esc(this.tooltipWhen(rows[0].originalStarted))}">${this.clock(rows[0].originalStarted)}</time></p></div>`
+        ? `<div data-history-selected-gang data-gang-id="${esc(selectedGangRow.gang.gang_id)}" data-start="${esc(selectedGangRow.bounds.startedAt || "")}"><p>${esc(selectedGangRow.label)} · <strong>${esc(selectedGangRow.confirmationText)}</strong></p><p>Beginn · ${selectedGangRow.bounds.startedAt ? `<time datetime="${esc(selectedGangRow.bounds.startedAt)}" title="${esc(this.tooltipWhen(selectedGangRow.originalStarted))}">${this.clock(selectedGangRow.originalStarted)}</time>` : "Nicht belegt"}</p><p>Ende · ${Number.isFinite(selectedGangRow.originalEnded) ? this.clock(selectedGangRow.originalEnded) : selectedGangRow.bounds.ongoing ? "Noch offen" : "Nicht belegt"}</p>${selectedGangRow.bounds.reason ? `<p class="muted">${esc(selectedGangRow.bounds.reason)}. Kennzahlen beziehen sich auf den ausgewählten Zeitraum.</p>` : ""}</div>`
         : "";
       this.updateMarkup(
         "[data-history-session-summary]",
@@ -10515,8 +10626,8 @@ class SaunaPanel extends HTMLElement {
         ? ""
         : rows
             .map(
-              ({ gang, label, started, ended, durationText, confirmationText }) =>
-                `<div class="history-context-gang" data-key="history-context-gang:${esc(gang.gang_id)}" data-gang-id="${esc(gang.gang_id)}"><strong>${esc(label)}</strong><span>${this.clock(started)} – ${this.clock(ended)}</span><span>${esc(durationText)}</span><span>${esc(confirmationText)}</span></div>`,
+              ({ gang, label, startText, endText, durationText, confirmationText }) =>
+                `<div class="history-context-gang" data-key="history-context-gang:${esc(gang.gang_id)}" data-gang-id="${esc(gang.gang_id)}"><strong>${esc(label)}</strong><span>${esc(startText)} – ${esc(endText)}</span><span>${esc(durationText)}</span><span>${esc(confirmationText)}</span></div>`,
             )
             .join(""),
     );
@@ -10605,11 +10716,11 @@ class SaunaPanel extends HTMLElement {
               : "",
           point = selection?.kind === "point",
           gangRows = information.rows.map((row) =>
-            point ? { ...row, started: selection.start, ended: selection.start } : row,
+            point ? { ...row, startText: this.clock(selection.start) } : row,
           );
         this.updateMarkup(
           "#gangs",
-          `<div class="card"><h2>Saunagänge${selection ? ` · ${esc(selectionLabel)}` : ""}</h2>${energySummary}${gangRows.length ? `<div class="scroll"><table><thead><tr><th>Gang</th><th>Status</th>${point ? "<th>Zeitpunkt</th>" : `<th>${selection ? "Von" : "Beginn"}</th><th>Dauer</th><th>${selection ? "Bis" : "Ende"}</th>`}</tr></thead><tbody>${gangRows.map(({ gang: g, number, started, ended, confirmationText }) => `<tr data-gang-id="${esc(g.gang_id)}" data-start="${esc(g.started_at)}"><td>${number}</td><td>${confirmationText}</td><td>${this.clock(started)}</td>${point ? "" : `<td>${duration((ended - started) / 1000)}</td><td>${selection || g.ended_at ? this.clock(ended) : "–"}</td>`}</tr>`).join("")}</tbody></table></div>` : '<p class="muted">Keine Saunagänge erkannt.</p>'}</div>`,
+          `<div class="card"><h2>Saunagänge${selection ? ` · ${esc(selectionLabel)}` : ""}</h2>${energySummary}${gangRows.length ? `<div class="scroll"><table><thead><tr><th>Gang</th><th>Status</th>${point ? "<th>Zeitpunkt</th>" : `<th>${selection ? "Von" : "Beginn"}</th><th>Dauer</th><th>${selection ? "Bis" : "Ende"}</th>`}</tr></thead><tbody>${gangRows.map(({ gang: g, bounds, number, startText, endText, durationText, confirmationText }) => `<tr data-gang-id="${esc(g.gang_id)}" data-start="${esc(bounds.startedAt || "")}"><td>${number}</td><td>${confirmationText}</td><td>${esc(startText)}</td>${point ? "" : `<td>${esc(durationText)}</td><td>${esc(endText)}</td>`}</tr>`).join("")}</tbody></table></div>` : '<p class="muted">Keine Saunagänge erkannt.</p>'}</div>`,
         );
       }
     }
@@ -11055,6 +11166,7 @@ class SaunaPanel extends HTMLElement {
       energy: energyIntervalSignature(session.energy),
       heating: session.heating,
       door_cycles: session.door_cycles,
+      gang_intervals: session.gang_intervals,
       active: session.timeline.active,
       completed: session.timeline.completed,
       processed: session.timeline.processed,
