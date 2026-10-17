@@ -59,10 +59,11 @@ def measurement(pos, quantity, value, second, source=None, measured=None):
 
 
 def sample(detector, second, temperature, humidity, positions=(Position.UPPER, Position.LOWER),
-           *, humidity_cadence=None):
+           *, report_humidity=True):
+    """Feed actual originals; absent RH is explicit, never inferred from cadence."""
     for pos in positions:
         detector.accept(measurement(pos, Quantity.TEMPERATURE, temperature, second))
-        if humidity_cadence is None or second % humidity_cadence == 0:
+        if report_humidity:
             detector.accept(measurement(pos, Quantity.HUMIDITY, humidity, second))
     return detector.advance(T0 + timedelta(seconds=second), enabled=True)
 
@@ -296,7 +297,6 @@ class DetectorTests(unittest.TestCase):
                     traces = []
                     detector = Detector(detection_parameters(), T0, positions,
                                         observer=traces.append)
-                    cadence = self._thermal_humidity_cadence(detector) if thermal else None
                     events = []
                     for second in range(130):
                         detector.report_heating(thermal, T0 + timedelta(seconds=second))
@@ -305,7 +305,7 @@ class DetectorTests(unittest.TestCase):
                         fall = max(0, min(second - 30, 70 - second, 20))
                         events += sample(
                             detector, second, 80 - .04 * fall,
-                            30 if thermal else 30 - .08 * fall, positions, humidity_cadence=cadence,
+                            30 if thermal else 30 - .08 * fall, positions, report_humidity=not thermal,
                         )
                     diagnostic = self._door_failure_message(
                         events, traces, thermal=thermal, positions=positions,
@@ -334,7 +334,7 @@ class DetectorTests(unittest.TestCase):
                         detector.report_heating(thermal, T0 + timedelta(seconds=second))
                         fall = min(20, second - 130)
                         events += sample(detector, second, 80 - .15 * fall,
-                                         30 if thermal else 30 - .1 * fall, positions, humidity_cadence=cadence)
+                                         30 if thermal else 30 - .1 * fall, positions, report_humidity=not thermal)
                     diagnostic = self._door_failure_message(
                         events, traces, thermal=thermal, positions=positions,
                         input_turns_s=(30, 50, 70, 130, 150),
@@ -498,15 +498,6 @@ class DetectorTests(unittest.TestCase):
     def _ventilation_detector(self, *, positions=(Position.UPPER, Position.LOWER)):
         return Detector(detection_parameters(), T0, positions)
 
-    def _thermal_humidity_cadence(self, detector):
-        gap = max(detector.p[f"curve_original_gap_humidity_{position.value}_seconds"]
-                  for position in detector.positions)
-        cadence = (ceil(gap / detector.grid_seconds) + 1) * detector.grid_seconds
-        self.assertGreater(cadence, gap)
-        self.assertLess(cadence, detector.p["sensor_timeout_seconds"])
-        return cadence
-
-
     @staticmethod
     def _humidity_for_water(temperature, water):
         return water * WATER_VAPOR_GAS_CONSTANT * (temperature + 273.15) * 100 / (
@@ -585,7 +576,7 @@ class DetectorTests(unittest.TestCase):
         self.fail(f"The ventilation fixture did not bind an unconfirmed {stage} candidate")
 
     def _segment(self, detector, duration, before, after=None, *, positions=None,
-                 missing=(), heating=False, source=None, stop_when=None, humidity_cadence=None):
+                 missing=(), heating=False, source=None, stop_when=None, report_humidity=True):
         """Continuous linear measurement inputs; detector windows stay configured."""
         after = before if after is None else after
         positions = detector.positions if positions is None else positions
@@ -599,8 +590,7 @@ class DetectorTests(unittest.TestCase):
                 for quantity, initial, final in zip(
                     (Quantity.TEMPERATURE, Quantity.HUMIDITY), before, after, strict=True
                 ):
-                    if (quantity == Quantity.HUMIDITY and humidity_cadence is not None
-                            and second % humidity_cadence != 0):
+                    if quantity == Quantity.HUMIDITY and not report_humidity:
                         continue
                     value = (None if (position, quantity) in missing or initial is None or final is None
                              else initial + (final - initial) * fraction)
@@ -2139,10 +2129,19 @@ class DetectorTests(unittest.TestCase):
                 detector = Detector(detection_parameters(), T0, (Position.UPPER,))
                 step = detector.grid_seconds
                 thermal = route == "thermal"
-                cadence = self._thermal_humidity_cadence(detector) if thermal else None
                 initial_h = 30 if thermal else 80
                 events = self._segment(detector, self._settling_time(detector), (90, initial_h),
-                                       heating=thermal, humidity_cadence=cadence)
+                                       heating=thermal, report_humidity=not thermal)
+                # The fallback requires missing RH, not a slower valid stream.
+                now = T0 + timedelta(seconds=detector.index * step)
+                self.assertEqual(
+                    detector._original_humidity_available(detector.positions, now), not thermal,
+                )
+                if thermal:
+                    self.assertEqual(
+                        detector._value_state(Position.UPPER, Quantity.HUMIDITY, now),
+                        (None, "missing"),
+                    )
                 key = ("door_open_heating", Position.UPPER, Quantity.TEMPERATURE)
                 proposal_key = ("door_open_heating", detector.positions, (Quantity.TEMPERATURE,))
 
@@ -2156,13 +2155,14 @@ class DetectorTests(unittest.TestCase):
                 events += self._segment(
                     detector, duration, (90, initial_h),
                     (90 - .04 * duration, initial_h if thermal else initial_h - .06 * duration),
-                    heating=thermal, humidity_cadence=cadence, stop_when=pending,
+                    heating=thermal, report_humidity=not thermal, stop_when=pending,
                 )
                 self.assertTrue(pending())
                 self.assertNotIn(Kind.DOOR_OPEN, [item.kind for item in events])
                 bound_at = detector.index * step
                 temperature = detector.latest[Position.UPPER, Quantity.TEMPERATURE].value
-                humidity = detector.latest[Position.UPPER, Quantity.HUMIDITY].value
+                humidity = (None if thermal else
+                            detector.latest[Position.UPPER, Quantity.HUMIDITY].value)
                 if thermal:
                     witness = detector._curve_candidates[key]
                     self.assertIsNone(witness.fresh_newest_at)
@@ -2176,7 +2176,7 @@ class DetectorTests(unittest.TestCase):
                 events += sample(
                     detector, received, temperature - .04 * 2 * step,
                     humidity if thermal else humidity - .06 * 2 * step,
-                    detector.positions, humidity_cadence=cadence,
+                    detector.positions, report_humidity=not thermal,
                 )
                 first_openings = [item for item in events if item.kind == Kind.DOOR_OPEN]
                 if thermal:
@@ -2199,7 +2199,7 @@ class DetectorTests(unittest.TestCase):
                     (temperature - .04 * 2 * step, humidity if thermal else humidity - .06 * 2 * step),
                     (temperature - .04 * (2 + 2 * detector.p["curve_original_samples"]) * step,
                      humidity if thermal else humidity - .06 * (2 + 2 * detector.p["curve_original_samples"]) * step),
-                    heating=thermal, humidity_cadence=cadence,
+                    heating=thermal, report_humidity=not thermal,
                 )
                 events += tail
                 openings = [item for item in events if item.kind == Kind.DOOR_OPEN]
@@ -2231,10 +2231,19 @@ class DetectorTests(unittest.TestCase):
                 detector = Detector(detection_parameters(), T0, (Position.UPPER,))
                 step = detector.grid_seconds
                 thermal = route == "thermal"
-                cadence = self._thermal_humidity_cadence(detector) if thermal else None
                 initial_h = 30 if thermal else 80
                 events = self._segment(detector, self._settling_time(detector), (90, initial_h),
-                                       heating=thermal, humidity_cadence=cadence)
+                                       heating=thermal, report_humidity=not thermal)
+                # The fallback requires missing RH, not a slower valid stream.
+                now = T0 + timedelta(seconds=detector.index * step)
+                self.assertEqual(
+                    detector._original_humidity_available(detector.positions, now), not thermal,
+                )
+                if thermal:
+                    self.assertEqual(
+                        detector._value_state(Position.UPPER, Quantity.HUMIDITY, now),
+                        (None, "missing"),
+                    )
                 proposal_key = ("door_open_heating", detector.positions, (Quantity.TEMPERATURE,))
 
                 def pending():
@@ -2247,7 +2256,7 @@ class DetectorTests(unittest.TestCase):
                 events += self._segment(
                     detector, duration, (90, initial_h),
                     (90 - .04 * duration, initial_h if thermal else initial_h - .06 * duration),
-                    heating=thermal, humidity_cadence=cadence, stop_when=pending,
+                    heating=thermal, report_humidity=not thermal, stop_when=pending,
                 )
                 self.assertTrue(pending())
                 self.assertNotIn(Kind.DOOR_OPEN, [item.kind for item in events])
@@ -2298,7 +2307,6 @@ class DetectorTests(unittest.TestCase):
         for heating, lower_falls, duration in ((False, True, 20), (None, True, 20), (True, False, 20), (True, True, 2)):
             with self.subTest(heating=heating, lower_falls=lower_falls, duration=duration):
                 d = Detector(detection_parameters(), T0)
-                cadence = self._thermal_humidity_cadence(d)
                 events = []
                 for i in range(70):
                     d.report_heating(heating if i >= 20 else True, T0+timedelta(seconds=i))
@@ -2306,8 +2314,6 @@ class DetectorTests(unittest.TestCase):
                     for position in (Position.UPPER, Position.LOWER):
                         temp = 50+delta if position == Position.UPPER or lower_falls else 50
                         d.accept(measurement(position,Quantity.TEMPERATURE,temp,i))
-                        if i % cadence == 0:
-                            d.accept(measurement(position,Quantity.HUMIDITY,30,i))
                     events += d.advance(T0+timedelta(seconds=i),enabled=True)
                 openings = [item for item in events if item.kind == Kind.DOOR_OPEN]
                 if heating is True and duration == 20:
@@ -2321,12 +2327,11 @@ class DetectorTests(unittest.TestCase):
     def test_heater_change_restarts_additional_door_proof(self):
         for positions in ((Position.UPPER,), (Position.UPPER, Position.LOWER)):
             d=Detector(detection_parameters(),T0,positions)
-            cadence = self._thermal_humidity_cadence(d)
             events=[]
             for i in range(80):
                 # Wiederholtes Aus/Ein verhindert den durchgehenden Nachweis.
                 d.report_heating(False if i%8==0 else True,T0+timedelta(seconds=i))
-                events+=sample(d,i,50-.03*i,30,positions, humidity_cadence=cadence)
+                events+=sample(d,i,50-.03*i,30,positions, report_humidity=False)
             self.assertNotIn(Kind.DOOR_OPEN,[e.kind for e in events])
 
     def test_catchup_uses_booked_heating_intervals_at_each_sample_time(self):
@@ -2354,7 +2359,6 @@ class DetectorTests(unittest.TestCase):
 
     def test_catchup_keeps_earlier_heat_when_last_feedback_is_off(self):
         detector = Detector(detection_parameters(), T0, (Position.UPPER,))
-        cadence = self._thermal_humidity_cadence(detector)
         baseline = self._settling_time(detector)
         off_second = baseline + 80
         off_at = T0 + timedelta(seconds=off_second)
@@ -2369,8 +2373,6 @@ class DetectorTests(unittest.TestCase):
             detector.accept(measurement(
                 Position.UPPER, Quantity.TEMPERATURE, 50 - .03 * fall, second
             ))
-            if second % cadence == 0:
-                detector.accept(measurement(Position.UPPER, Quantity.HUMIDITY, 30, second))
         events = detector.advance(
             T0 + timedelta(seconds=off_second + 20), enabled=True,
             heating_intervals=controller.session.heating.intervals,
@@ -2406,9 +2408,8 @@ class DetectorTests(unittest.TestCase):
     def test_temperature_loss_invalidates_an_unconfirmed_thermal_identity_before_recovery(self):
         detector = Detector(detection_parameters(), T0, (Position.UPPER,))
         step = detector.grid_seconds
-        cadence = self._thermal_humidity_cadence(detector)
         events = self._segment(detector, self._settling_time(detector), (80, 30), heating=True,
-                               humidity_cadence=cadence)
+                               report_humidity=False)
         key = ("door_open_heating", Position.UPPER, Quantity.TEMPERATURE)
         proposal_key = ("door_open_heating", detector.positions, (Quantity.TEMPERATURE,))
         duration = detector.p["curve_window_seconds"]
@@ -2417,7 +2418,7 @@ class DetectorTests(unittest.TestCase):
             return not detector.open and proposal_key in detector._curve_proposals
 
         events += self._segment(detector, duration, (80, 30), (80 - .1 * duration, 30),
-                                heating=True, humidity_cadence=cadence, stop_when=pending)
+                                heating=True, report_humidity=False, stop_when=pending)
         self.assertTrue(pending())
         original = detector._curve_candidates[key]
         self.assertIsNone(original.fresh_newest_at)
@@ -2435,12 +2436,12 @@ class DetectorTests(unittest.TestCase):
         recovery = (2 * max(detector.p["curve_original_samples"],
                             detector.curve_policy.min_side_samples) + 1) * step
         events += self._segment(detector, recovery, (temperature, 30), heating=True,
-                                humidity_cadence=cadence)
+                                report_humidity=False)
         self.assertNotIn(key, detector._curve_candidates)
         self.assertNotIn(Kind.DOOR_OPEN, [item.kind for item in events])
         events += self._segment(
             detector, duration, (temperature, 30), (temperature - .1 * duration, 30),
-            heating=True, humidity_cadence=cadence,
+            heating=True, report_humidity=False,
             stop_when=lambda: key in detector._curve_candidates,
         )
         self.assertIn(key, detector._curve_candidates)
@@ -2459,7 +2460,7 @@ class DetectorTests(unittest.TestCase):
         current = detector.latest[Position.UPPER, Quantity.TEMPERATURE].value
         second = (detector.index + 1) * step
         events += sample(detector, second, current - .1 * step, 30, detector.positions,
-                         humidity_cadence=cadence)
+                         report_humidity=False)
         # The completed new fall may confirm on its next supporting original.
         # Its own identity and epoch must supply that confirmation, never the
         # pre-loss candidate or the flat recovery interval.
@@ -2495,10 +2496,9 @@ class DetectorTests(unittest.TestCase):
         for name, configured, reporting, falling, opens in cases:
             with self.subTest(name=name):
                 detector = Detector(detection_parameters(), T0, configured)
-                cadence = self._thermal_humidity_cadence(detector)
                 events = self._segment(detector, self._settling_time(detector),
                                        (50, 30), positions=reporting, heating=True,
-                                       humidity_cadence=cadence)
+                                       report_humidity=False)
                 self.assertNotIn(Kind.DOOR_OPEN, [event.kind for event in events])
                 for index in range(80):
                     second = detector.index + 1
@@ -2506,25 +2506,32 @@ class DetectorTests(unittest.TestCase):
                     for position in reporting:
                         temperature = 50 - .03 * (index + 1) if position in falling else 50
                         detector.accept(measurement(position, Quantity.TEMPERATURE, temperature, second))
-                        if second % cadence == 0:
-                            detector.accept(measurement(position, Quantity.HUMIDITY, 30, second))
                     events += detector.advance(T0 + timedelta(seconds=second), enabled=True)
-                self.assertEqual(detector.active_positions, reporting)
-                self.assertEqual(Kind.DOOR_OPEN in [event.kind for event in events], opens)
+                now = T0 + timedelta(seconds=detector.index * detector.grid_seconds)
+                self.assertEqual(tuple(
+                    position for position in configured
+                    if detector._position_available(position, (Quantity.TEMPERATURE,), now)
+                ), reporting)
+                self.assertEqual(detector.active_positions, ())
+                openings = [event for event in events if event.kind == Kind.DOOR_OPEN]
+                self.assertEqual(bool(openings), opens)
+                if opens:
+                    leading = next(position for position in (Position.UPPER, Position.LOWER)
+                                   if position in falling)
+                    self.assertEqual(openings[0].channels, (leading.value,))
 
     def test_hot_operation_uses_the_continuous_heating_route(self):
         minimum = parameters().values["sauna_min_temperature_c"]
         for base in (parameters().values["standard_temperature_c"], minimum + 5, minimum - 1):
             with self.subTest(base=base):
                 detector = Detector(detection_parameters(), T0)
-                cadence = self._thermal_humidity_cadence(detector)
                 events = self._segment(detector, self._settling_time(detector),
-                                       (base, 30), heating=True, humidity_cadence=cadence)
+                                       (base, 30), heating=True, report_humidity=False)
                 self.assertNotIn(Kind.DOOR_OPEN, [item.kind for item in events])
                 # The retained BIC route needs a measured warm baseline before
                 # the falling hinge; a line falling since origin has no turn.
                 events += self._segment(detector, 80, (base, 30),
-                                        (base - .03 * 80, 30), heating=True, humidity_cadence=cadence)
+                                        (base - .03 * 80, 30), heating=True, report_humidity=False)
                 self.assertEqual(detector.heating_since, T0)
                 self.assertIn(Kind.DOOR_OPEN, [item.kind for item in events])
 

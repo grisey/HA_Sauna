@@ -1070,11 +1070,10 @@ class DeviceFeedbackTests(unittest.TestCase):
                 })
 
             # Reuse the core catch-up fixture's warm baseline, own falling
-            # hinge and sparse RH originals. A decline from the very first
+            # hinge with no RH inputs. A decline from the very first
             # sample has no observed onset and is not an opening oracle.
             fixture = DetectorTests(methodName="runTest")
             baseline = fixture._settling_time(runtime.detector)
-            cadence = fixture._thermal_humidity_cadence(runtime.detector)
             off_second = baseline + 80
             pending = []
             await runtime._lock.acquire()
@@ -1082,8 +1081,6 @@ class DeviceFeedbackTests(unittest.TestCase):
                 clock[0] = T0 + timedelta(seconds=second)
                 fall = max(0, second - baseline + 1)
                 values = [("upper_temperature", 50 - .03 * fall)]
-                if second % cadence == 0:
-                    values.append(("upper_humidity", 30))
                 for role, value in values:
                     pending.append(asyncio.create_task(runtime.device_input(edge(role, value))))
                     await asyncio.sleep(0)

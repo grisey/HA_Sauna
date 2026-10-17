@@ -364,10 +364,9 @@ class CurveCandidateTests(unittest.TestCase):
         observed = []
         detector = Detector(selected, T0, (Position.UPPER,), observer=observed.append)
         fixture = detector_fixtures.DetectorTests()
-        cadence = fixture._thermal_humidity_cadence(detector)
         baseline = fixture._settling_time(detector)
         # Same baseline and fall as the existing continuous/catch-up heating
-        # fixture. RH keeps its actual role and the established sparse cadence.
+        # fixture. RH supplies no originals; sparse valid RH is not a fallback.
         initial = (50, 30)
         duration = 80
         final = (initial[0] - .03 * duration, initial[1])
@@ -410,10 +409,10 @@ class CurveCandidateTests(unittest.TestCase):
             side_effect=temperature_only,
         ):
             events = fixture._segment(
-                detector, baseline, initial, heating=True, humidity_cadence=cadence,
+                detector, baseline, initial, heating=True, report_humidity=False,
             )
             events += fixture._segment(
-                detector, duration, initial, final, heating=True, humidity_cadence=cadence,
+                detector, duration, initial, final, heating=True, report_humidity=False,
             )
         openings = [event for event in events if event.kind == Kind.DOOR_OPEN]
         self.assertEqual(len(openings), 1, detector.diagnostic)
@@ -452,9 +451,9 @@ class CurveCandidateTests(unittest.TestCase):
             side_effect=temperature_only,
         ):
             late_events = fixture._segment(
-                late, baseline, initial, heating=False, humidity_cadence=cadence,
+                late, baseline, initial, heating=False, report_humidity=False,
             )
             late_events += fixture._segment(
-                late, duration, initial, final, heating=True, humidity_cadence=cadence,
+                late, duration, initial, final, heating=True, report_humidity=False,
             )
         self.assertFalse(any(event.kind == Kind.DOOR_OPEN for event in late_events))

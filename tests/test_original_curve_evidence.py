@@ -547,6 +547,24 @@ class OriginalCurveEvidenceTests(unittest.TestCase):
         self.assertEqual(retained.history_count, insufficient.history_count)
         self.assertEqual(retained.history_start, detached[0][0])
         self.assertAlmostEqual(retained.history_scale, insufficient.history_scale)
+        # A larger interval between previous and current blocks remains valid native
+        # geometry. Build the window from the same shifted originals as history.
+        shifted = samples[:-count] + tuple(
+            (stamp + gap, value) for stamp, value in samples[-count:]
+        )
+        shifted_window = original_window(
+            shifted, at=shifted[-1][0], **channel_arguments(values, "upper", "humidity"),
+        )
+        self.assertIsNotNone(shifted_window)
+        shifted_result = original_kink_tolerance(
+            shifted, shifted_window, **kink_arguments(values),
+        )
+        self.assertIsNotNone(shifted_result)
+        self.assertIs(shifted_result.window, shifted_window)
+        self.assertEqual(shifted_window.previous + shifted_window.current, shifted[-2 * count:])
+        self.assertEqual(shifted_result.history_count, insufficient.history_count)
+        self.assertEqual(shifted_result.history_scale, insufficient.history_scale)
+        self.assertEqual(shifted_result.status, insufficient.status)
         straight, _ = kink_history_originals(values, lambda index: -index)
         straight_window = original_window(
             straight,
@@ -564,7 +582,7 @@ class OriginalCurveEvidenceTests(unittest.TestCase):
 
     def test_kink_invalid_inputs_remain_unknown_without_raw_mutation(self):
         values = Parameters({"curve_original_kink_history_windows": 2}).values
-        samples, step = kink_history_originals(values, lambda index: -index)
+        samples, _ = kink_history_originals(values, lambda index: -index)
         window = original_window(
             samples, at=samples[-1][0], **channel_arguments(values, "upper", "humidity")
         )
@@ -613,16 +631,6 @@ class OriginalCurveEvidenceTests(unittest.TestCase):
             replace(window, v=float("nan")),
             replace(window, e=0),
             replace(window, current=(window.previous[-1],) + window.current[1:]),
-            replace(
-                window,
-                current=tuple(
-                    (
-                        stamp + timedelta(seconds=arguments["max_gap_seconds"]) + step,
-                        value,
-                    )
-                    for stamp, value in window.current
-                ),
-            ),
             replace(
                 window,
                 current=window.current[:-1] + ((window.current[-1][0], float("inf")),),
