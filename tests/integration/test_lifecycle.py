@@ -17,6 +17,7 @@ def displayed_parameter_values(form, parameters):
     return {
         str(marker): parameters[str(marker)]
         for marker in form["data_schema"].schema
+        if str(marker) != "settings_action"
     }
 
 

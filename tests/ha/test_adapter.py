@@ -475,7 +475,7 @@ class AdapterTests(unittest.IsolatedAsyncioTestCase):
                     self.assertTrue(fields)
                     self.assertTrue(all(
                         self.module.BY_KEY[key].configuration_surface == "integration"
-                        for key in fields
+                        for key in fields - {"settings_action"}
                     ))
 
     async def test_related_installation_fields_share_forms_and_return_to_area(self):
@@ -499,7 +499,9 @@ class AdapterTests(unittest.IsolatedAsyncioTestCase):
                     form = await step()
                     fields = {str(key) for key in flat_fields(form["data_schema"])}
                     self.assertTrue(expected <= fields)
-                    values = {key: self.values[key] for key in fields}
+                    values = {
+                        key: self.values[key] for key in fields - {"settings_action"}
+                    }
                     result = await step(values)
                     self.assertEqual((result["type"], result["step_id"]), ("menu", area))
             update.assert_not_called()
@@ -578,7 +580,7 @@ class AdapterTests(unittest.IsolatedAsyncioTestCase):
                     submitted = {
                         str(marker): self.entry.options["parameters"][str(marker)]
                         for marker in flat_fields(form["data_schema"])
-                        if str(marker) != key
+                        if str(marker) not in {key, "settings_action"}
                     }
                     self.assertNotIn(key, form["data_schema"](submitted))
                     submitted[key] = value
@@ -604,7 +606,7 @@ class AdapterTests(unittest.IsolatedAsyncioTestCase):
             submitted = form["data_schema"]({
                 str(marker): self.entry.options["parameters"][str(marker)]
                 for marker in flat_fields(form["data_schema"])
-                if str(marker) != key
+                if str(marker) not in {key, "settings_action"}
             })
             self.entry.options = {
                 **self.entry.options,

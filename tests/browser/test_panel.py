@@ -2229,7 +2229,7 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
         async with self.page.expect_response(lambda response:
                 "/api/config/config_entries/options/flow/" in response.url
                 and response.request.method == "POST") as response:
-            await dialog.get_by_role("button", name="Speichern und zurück", exact=True).click()
+            await dialog.get_by_role("button", name="Weiter", exact=True).click()
         result = await (await response.value).json()
         self.assertEqual((result["type"], result["step_id"], result["flow_id"]), ("menu", "operation", flow_id))
         await self.hass.async_block_till_done()
@@ -2454,6 +2454,7 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
         values = {
             str(marker): self.entry.options["parameters"][str(marker)]
             for marker in flow["data_schema"].schema
+            if str(marker) != "settings_action"
         }
         parameter_key = "door_window_seconds"
         changed = values[parameter_key] + DEFAULT_PARAMETERS["grid_seconds"]
