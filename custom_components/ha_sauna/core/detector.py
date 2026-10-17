@@ -2039,7 +2039,7 @@ class Detector:
 
     def _original_confirm_infusion(self, episode, now, decision_at, floor, onset_allowed, emit):
         """Die einmalige Bestätigung am vorhandenen Callback buchen."""
-        component = episode["original_component"]
+        component = episode["original_start_component"] or episode["original_component"]
         witnesses = component.get("onset_witnesses", {})
         self._remember_curve_proposal(
             "infusion", episode["positions"], (Quantity.HUMIDITY,), floor=floor,
@@ -2069,6 +2069,9 @@ class Detector:
         episode["phase"] = "active"
         episode["onset_at"] = effective
         episode["confirmed_at"] = decision_at
+        # Nach der Ausgabe besitzt die Detection den Beginn. Bis dahin bleibt
+        # der erste Ast auch bei einer Fortsetzung korrigierbarer Originalbeleg.
+        episode["original_start_component"] = None
         self._clear_curve_route("infusion", keep_status=True)
         emit(Kind.INFUSION, effective, episode["positions"])
 
@@ -2433,6 +2436,9 @@ class Detector:
                         episode["water"] = water
                         episode["last_rise_at"] = dict(component["onsets"])
                         episode["original_component"] = component
+                        if (episode["confirmed_at"] is None
+                                and episode["original_start_component"] is None):
+                            episode["original_start_component"] = component
                         episode["original_background"] = None
                     if component is not None and component["qualified"]:
                         if component["fall_ready"]:
@@ -3761,6 +3767,7 @@ class Detector:
             "confirmation_basis": None,
             "original": onsets is not None,
             "original_component": None,
+            "original_start_component": None,
             "original_background": None,
         }
 
@@ -4023,6 +4030,7 @@ class Detector:
         for component in (
             self._original_infusion_candidate,
             episode.get("original_component") if episode is not None else None,
+            episode.get("original_start_component") if episode is not None else None,
         ):
             if component is not None and not any(component is item for item in components):
                 components.append(component)
@@ -4131,7 +4139,10 @@ class Detector:
                 if component_invalid:
                     if self._original_infusion_candidate is component:
                         self._original_infusion_candidate = None
-                    episode_invalid |= episode is not None and episode.get("original_component") is component
+                    episode_invalid |= episode is not None and any(
+                        episode.get(key) is component
+                        for key in ("original_component", "original_start_component")
+                    )
                 continue
             if quantity == Quantity.HUMIDITY and corrected_at in state["pending"]:
                 state["pending"][corrected_at] = (corrected_at, value)
@@ -4178,7 +4189,10 @@ class Detector:
             if component_invalid:
                 if self._original_infusion_candidate is component:
                     self._original_infusion_candidate = None
-                episode_invalid |= episode is not None and episode.get("original_component") is component
+                episode_invalid |= episode is not None and any(
+                    episode.get(key) is component
+                    for key in ("original_component", "original_start_component")
+                )
         if (episode is not None and position in episode["positions"]
                 and episode.get("original_end_windows")):
             windows, changed = self._correct_original_windows(

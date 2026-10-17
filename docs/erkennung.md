@@ -457,6 +457,10 @@ Der erste gültige Beginnzeuge eines Anstiegs bleibt je Messposition gebunden.
 Spätere Fits, deren Stützung bereits Spitze und Abfall umfasst, ersetzen ihn
 nicht durch einen früheren Knick. Eine Korrektur seiner Originalwerte prüft
 weiterhin denselben gebundenen Zeugen.
+Bei einer Fortsetzung vor der ersten Bestätigung bleibt der Beginnbeleg des
+ersten qualifizierten Anstiegs erhalten. Der neuere Ast liefert den weiteren
+Verlauf, ersetzt aber nicht den Anfang der gemeinsamen Episode. Erst die
+einmalige Ausgabe übernimmt diesen Beginn in das Aufgussereignis.
 
 Weitere qualifizierte Komponenten vor dem bestätigten Abschluss gehören zu
 derselben Episode und erzeugen keine weitere Zählung. Der Abschluss benötigt
