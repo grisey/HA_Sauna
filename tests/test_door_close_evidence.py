@@ -24,6 +24,7 @@ class DoorCloseEvidenceTests(unittest.TestCase):
         original = detector._original_door_evidence
 
         def observe(prefixes, channels, now, decision_at, trace, emit):
+            # Observe the central selection, never an unpublished local probe.
             result = original(prefixes, channels, now, decision_at, trace, emit)
             if result[2]:
                 episode = detector.door_episode
@@ -31,6 +32,10 @@ class DoorCloseEvidenceTests(unittest.TestCase):
                 falls = episode.get("original_temperature_falls", {})
                 forms = trace["original_forms"]
                 observations.append({
+                    "positions": tuple(position.value for position in result[3]),
+                    "episode_positions": tuple(
+                        position.value for position in episode["positions"]
+                    ),
                     "evidence": episode.get("closing_evidence"),
                     "candidate": candidate,
                     "candidate_at": (
@@ -56,6 +61,9 @@ class DoorCloseEvidenceTests(unittest.TestCase):
         self.assertEqual(len(closures), len(observations))
         for closure, observed in zip(closures, observations, strict=True):
             evidence = closure.door_close_evidence
+            self.assertEqual(closure.channels, observed["positions"])
+            self.assertEqual(closure.channels, observed["episode_positions"])
+            self.assertEqual(len(closure.channels), 1)
             self.assertIsInstance(evidence, DoorCloseEvidence)
             self.assertIs(evidence, observed["evidence"])
             self.assertEqual(evidence.confirmed_at, observed["confirmed_at"])
@@ -88,7 +96,7 @@ class DoorCloseEvidenceTests(unittest.TestCase):
             candidate["confirmation_received_at"],
         )
 
-    def test_staggered_level_close_uses_both_original_recovery_times(self):
+    def test_staggered_level_close_uses_the_leading_original_recovery_time(self):
         fixture = self.fixture
         detector, events, _ = fixture._bind("opening")
         observations = self._observe_closures(detector)
@@ -98,14 +106,24 @@ class DoorCloseEvidenceTests(unittest.TestCase):
             for role, change in zip(originals.CLIMATE, fixture.fall_step, strict=True)
         )
         events += fixture._ramp(detector, 3 * fixture.count, lower_fall)
-        self.assertTrue(detector.open)
-        self.assertFalse(observations)
-        upper_recovery = detector.door_episode["original_temperature_falls"][
-            Position.UPPER
-        ]["recovery_received_at"]
+        closures = self._assert_transport(detector, events, observations)
+        self.assertEqual(len(closures), 1)
+        observed = observations[0]
+        self.assertEqual(closures[0].channels, (Position.UPPER.value,))
+        self.assertIsNone(observed["candidate"])
+        self.assertTrue(observed["level"])
+        recoveries = observed["recoveries"]
+        self.assertEqual(set(recoveries), {Position.UPPER})
+        self.assertIsNotNone(recoveries[Position.UPPER])
+        self.assertEqual(
+            closures[0].door_close_evidence.candidate_at,
+            recoveries[Position.UPPER],
+        )
+        previous = closures[0].door_close_evidence
 
         # Same staggered-plateau input and endpoint perturbation as the native
-        # followup fixture; no shared instantaneous braking decision is supplied.
+        # followup fixture. A later lower plateau cannot replace the booked
+        # upper proof or add another close to the same door cycle.
         plateau = fixture._latest(detector)
         events += fixture._feed(
             detector, (plateau for _ in range(fixture.count - 1)),
@@ -116,28 +134,16 @@ class DoorCloseEvidenceTests(unittest.TestCase):
             for role, value in zip(originals.CLIMATE, plateau, strict=True)
         )
         events += fixture._feed(detector, (perturbed,))
-        self.assertFalse(observations)
+        self.assertEqual(len(observations), 1)
         events += fixture._feed(
             detector, (plateau for _ in range(fixture.tail_ticks)),
         )
 
         closures = self._assert_transport(detector, events, observations)
         self.assertEqual(len(closures), 1)
-        observed = observations[0]
-        self.assertIsNone(observed["candidate"])
-        self.assertTrue(observed["level"])
-        recoveries = observed["recoveries"]
-        self.assertEqual(set(recoveries), set(detector.positions))
-        self.assertTrue(all(stamp is not None for stamp in recoveries.values()))
-        self.assertEqual(recoveries[Position.UPPER], upper_recovery)
-        self.assertLess(upper_recovery, recoveries[Position.LOWER])
-        self.assertEqual(
-            closures[0].door_close_evidence.candidate_at,
-            recoveries[Position.LOWER],
-        )
+        self.assertIs(closures[0].door_close_evidence, previous)
 
         # The existing fixture's next door cycle must acquire its own proof.
-        previous = closures[0].door_close_evidence
         events += fixture._ramp(detector, 4 * fixture.count, fixture.fall_step)
         events += fixture._ramp(
             detector, fixture.tail_ticks, (0,) * len(originals.CLIMATE),

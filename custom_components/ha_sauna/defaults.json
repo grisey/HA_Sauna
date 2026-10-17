@@ -6440,7 +6440,7 @@
         "presence_sources": [
           "proxy"
         ],
-        "description": "An allen verfügbaren Messpositionen müssen relative und absolute Feuchte über die Vergleichszeit zunehmen und die Bestätigungszeit erfüllen."
+        "description": "Der führende Temperatur-/Feuchtesensor muss einen Anstieg der relativen und absoluten Feuchte über die Vergleichszeit und die Bestätigungsdauer belegen."
       },
       {
         "id": "presence_weak",

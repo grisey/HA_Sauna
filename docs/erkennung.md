@@ -6,7 +6,7 @@ aus Temperatur und Feuchte.
 
 | Erkennung | Aus Temperatur und Feuchte | Mit Präsenzsensor |
 | --- | --- | --- |
-| Türöffnung und Türschluss | Gemeinsame Erkennung aus den Messpaaren | Dieselbe Erkennung aus den Messpaaren |
+| Türöffnung und Türschluss | Erkennung aus dem führenden Messpaar | Dieselbe Erkennung aus dem führenden Messpaar |
 | Anwesenheit | Personensignale; zunächst vorläufiger Gang | Belegungszustand der zugeordneten Entität |
 | Aufguss | Bestätigt den Gang; weitere Aufgüsse werden erfasst | Erfassung im bereits bestätigten Gang |
 | Durchlüften | Bestandteil der vorherigen Austrittsöffnung; Nachweis für das Gangende | Bestandteil derselben Austrittsöffnung; zusammen mit deren Abwesenheitsnachweis Beleg für das Gangende |
@@ -16,6 +16,57 @@ Messwertaufbereitung, Türerkennung, Personenerkennung und Aufgüsse. Personensc
 Aufgussbestätigungsfrist erscheinen nur beim indirekten Verfahren.
 Ihre gespeicherten Werte bleiben beim Verfahrenswechsel erhalten.
 Die Übergangsregeln beschreibt die [Gangerkennung](gangmodell.md).
+
+## Führender Temperatur-/Feuchtesensor
+
+Eine Messposition bezeichnet einen physischen Sensor mit den beiden
+Messgrößen Temperatur und relativer Feuchte. Daraus berechneter absoluter
+Wassergehalt ist ebenfalls kein zusätzlicher Sensor. Temperatur und Feuchte
+werden innerhalb derselben Position zusammen ausgewertet; Werte verschiedener
+Positionen bilden kein künstliches Messpaar.
+
+Standardmäßig führt der obere Sensor. Ein eigener klarer Beleg benötigt keine
+Bestätigung durch den unteren Sensor. Abweichende Werte, Ausfälle oder
+Korrekturen an der unbenutzten zweiten Position verändern diesen Beleg nicht.
+Bei fehlender benötigter Datengrundlage oben kann ein gültiger unterer Sensor
+mit seinen eigenen Originalen übernehmen.
+
+Der zweite Sensor wird nur bei einem bereits vorhandenen, noch unklaren
+Muster des führenden Sensors zur Klärung herangezogen. Ein vollständig
+belegter eigener Verlauf kann dieses Muster bestätigen; eine zugehörige
+belegte Gegenform kann es widerlegen. Ein fehlender Messwert, ein schwächeres
+Signal oder ein nicht erfüllter positiver Formtest sind allein keine
+Widerlegung. Ohne zuordenbaren klaren Zweitbefund bleibt der Kandidat offen.
+Ein unterer Einzelverlauf ohne oberen Kandidaten eröffnet bei auswertbarem
+oberem Sensor keinen zusätzlichen Ereignisweg.
+
+Entscheidet ein vollständiger unterer Eigenbeleg den unklaren Vorgang, bleiben
+seine Quellen, Originale und eigenen Beginn- und Bestätigungszeiten zusammen
+gebunden. Eine spätere obere Meldung verändert die bereits gebuchte
+Entscheidung nicht. Beim nächsten neuen Vorgang gilt wieder oberer Vorrang.
+Jedes erkannte Ereignis wird einmal veröffentlicht. Die Messpositionen erzeugen
+keine doppelten Buchungen.
+
+Bei Ausfall des tragenden Sensors bleiben bestätigte Ereignisse und ihre
+Zeiten erhalten. Ein Ersatzsensor kann einen eigenen Folgeabschnitt derselben
+Tür- oder Aufgussfolge belegen. Er benötigt dafür eigene Fall-, Anstiegs- und
+Bestätigungsreferenzen; fremde Stützen werden nicht übernommen. Fehlen diese,
+bleibt die betreffende Folgeentscheidung offen. Die Rückkehr des oberen
+Sensors schreibt den bereits gebundenen Ersatzabschnitt nicht um.
+
+Diese Auswahl gilt für Türöffnung, Türschluss, beide Lüftungsstufen, Aufgüsse
+und klimatische Personenhinweise. Die direkte Präsenzführung und die
+Heizschutzregeln bleiben eigenständige Verfahren. Ein Temperatur-Schlussweg
+kann weiterhin ohne Feuchtebeleg arbeiten; ein bereits gebundener
+Aufgussabschluss benötigt weiterhin keine neuen Temperaturmeldungen.
+
+Beide Messreihen bleiben im Verlauf und Archiv erhalten. Die Diagnose
+unterscheidet die verfügbare Position, den tatsächlichen Entscheidungsträger
+und eine gegebenenfalls zur Klärung verwendete zweite Position. Sämtliche
+folgenden Formbedingungen werden jeweils für einen Sensor berechnet. Der
+Index `p` bezeichnet diese Position; aus den beiden Geräten wird kein
+positionsübergreifender Mindestbeleg gebildet. Die getrennten Originalzeiten
+der beiden Messgrößen bleiben erhalten.
 
 ## Kurvenbeginn und Bestätigung
 
@@ -113,7 +164,7 @@ Ein gesondert gebundener Folgezeuge bildet eine weitere feste Referenz;
 die Frische seiner Folgeblöcke wird gegen seine eigenen Originalzeiten geprüft.
 
 Für Öffnung und Schließung wird der
-lückenlose Anschluss je beteiligter Messposition und Messgröße an jedem
+lückenlose Anschluss je verwendeter Messgröße des Sensors an jedem
 auswertbaren Eingangspräfix geprüft. Der Anschlussanker rückt mit dem jüngsten
 Original weiter; die fachliche Referenz der Bindung bleibt dabei unverändert.
 Damit muss der ursprüngliche Kandidatenbeginn bei einem langen Ast nicht
@@ -130,13 +181,13 @@ und Ereigniskontext.
 
 Unter den beschriebenen Gültigkeits- und Positionsregeln führt ein frischer
 Steigungswechsel der relativen Feuchte mit passender aktueller Richtung den
-Tür- beziehungsweise Aufgusskandidaten. Für die beteiligten Positionen `p`
+Tür- beziehungsweise Aufgusskandidaten. Für den betrachteten Sensor `p`
 gelten mit `H` als relativer Feuchte:
 
 ```text
 q_Hp = (v_Hp − b_Hp)/(E_Hp + E⁻_Hp)
-A↑   = min_p min(v_Hp/E_Hp, q_Hp)
-A↓   = min_p min(−v_Hp/E_Hp, −q_Hp)
+A↑   = min(v_Hp/E_Hp, q_Hp)
+A↓   = min(−v_Hp/E_Hp, −q_Hp)
 ```
 
 Zusätzlich wird die Steigungsdifferenz `δ_p = v_Hp − b_Hp` je Position gegen
@@ -170,9 +221,9 @@ S_p     = E_Hp + E⁻_Hp                           bei kürzerer Historie
 ```
 
 `S_p`, `κ_p` und `δ_eff,p` haben die Einheit Prozentpunkte pro Sekunde.
-Ein Anstiegsbeginn benötigt weiterhin `A↑ > s` und zusätzlich an jeder
-beteiligten Position `δ_eff,p > 0`; ein Fallbeginn benötigt `A↓ > s` und
-zusätzlich überall `δ_eff,p < 0`. Faktor `0` schaltet die zusätzliche
+Ein Anstiegsbeginn benötigt weiterhin `A↑ > s` und zusätzlich
+`δ_eff,p > 0`; ein Fallbeginn benötigt `A↓ > s` und
+zusätzlich `δ_eff,p < 0`. Faktor `0` schaltet die zusätzliche
 Knickprüfung ab. Originalmesswerte und Rohkontraste bleiben erhalten;
 die nachfolgenden Bestätigungsbedingungen gelten weiterhin.
 
@@ -186,8 +237,8 @@ an den damaligen Beleg gebunden.
 
 Ein neues Original mit einem Fallbeginn gemäß
 [RH-Beginn und Knicktoleranz](#rh-beginn-und-knicktoleranz) bindet einen
-gemeinsamen Öffnungskandidaten. Diese erste Bindung verlangt weiterhin den
-Fallbeginn an allen beteiligten RH-Positionen im selben Präfix. Ein Knick der
+Öffnungskandidaten dieses Sensors. Diese erste Bindung verlangt dessen
+Feuchtefallbeginn im aktuellen Präfix. Ein Knick der
 Temperatur ist dafür nicht erforderlich. Die damaligen Originalfenster
 bleiben die Referenz. Je Temperatur- und Feuchterolle muss das aktuelle
 `K`-Fenster bei der Bestätigung vollständig aus Originalen strikt nach dem
@@ -199,7 +250,7 @@ Der unmittelbare Niveauvergleich mit dem aktuellen Fenstermittel lautet:
 
 ```text
 L_Xp = (X̄⁰⁻_p − X̄_p)/(2ε_Xp)
-L    = min_p min(L_Tp, L_Hp)
+L    = min(L_Tp, L_Hp)
 ```
 
 Im allgemeinen Originalfall verwendet der Bestätigungsnachweis je Rolle
@@ -230,7 +281,7 @@ keine Ereigniswahrscheinlichkeit. Bei zu wenigen historischen Stützen gelten
 mathematische Hintergrundhelfer die allgemeine Auflösungseinheit `s`; der
 RH-spezifische Faktor `curve_original_kink_factor` wird nicht auf T erweitert.
 
-Die gemeinsame Absenkung benötigt an allen beteiligten Positionen:
+Die Absenkung des betrachteten Sensors benötigt:
 
 ```text
 a_Tp < −γO Eᵃ_Tp
@@ -258,8 +309,8 @@ RH-/T-Absenkungsbeleg, die eigenen RH-Beginne und die zusätzliche
 Aufgussprüfung bleiben erforderlich. Die
 einzelne Endkante verwirft den gebundenen Kandidaten nicht.
 
-Der zugeordnete Beginn stammt ausschließlich aus den Feuchteknicken der
-gebundenen Messpositionen. Ein gültiger Beginnzeuge darf vor dem ersten
+Der zugeordnete Beginn stammt ausschließlich aus dem Feuchteknick des
+gebundenen Sensors. Ein gültiger Beginnzeuge darf vor dem ersten
 Bindungsfenster liegen oder erst danach hinzukommen. Sein eigener
 unterstützter Originalfit, Quelle, Epoche und Türkontext bleiben maßgeblich;
 sein jüngstes verwendetes Original liegt spätestens im aktuellen Präfix.
@@ -321,7 +372,7 @@ den aktuellen `K`-Originalen mit dem lokalen Hintergrund dieser
 Aufgussreferenz.
 
 Eine Unterschreitung der Voraufgussbaseline ist keine zwingende Bedingung.
-Alternativ kann jede T-Rolle einen eigenen neuen lokalen Abwärtsknick binden.
+Alternativ kann die Temperaturreihe des Sensors einen eigenen neuen lokalen Abwärtsknick binden.
 Die T-Knicktoleranz verwendet wie die RH-Toleranz den größeren Wert aus
 Kataloggröße und historischer Steigungsänderung, jedoch mit Faktor `s`:
 
@@ -364,8 +415,8 @@ bleibt das Vorgängermittel der ursprünglichen Bindungsreferenz maßgeblich;
 die RH-Referenz und die bisherigen Frischebedingungen ändern sich nicht.
 
 Die Prüfung verlangt somit entweder die unabhängigen Niveauverluste gegen
-alle gebundenen Aufgussreferenzen oder den neuen lokalen T-Fall an allen
-Positionen. Ohne gebundenen nativen Aufgussbesitzer entfällt diese zusätzliche
+alle eigenen gebundenen Aufgussreferenzen oder den neuen lokalen T-Fall
+desselben Sensors. Ohne gebundenen nativen Aufgussbesitzer entfällt diese zusätzliche
 Prüfung. Der fortgeschriebene Anschluss des Türbesitzers bleibt maßgeblich;
 eine alte Aufgussbaseline muss dafür nicht dauerhaft im Originalring liegen.
 Die allgemeinen RH-Zeugen und die gemeinsame Absenkung bleiben in beiden
@@ -407,10 +458,9 @@ des linken Intervallpunkts als Beginn. Der T-Beleg allein löscht keine legitime
 frühe oder asynchrone RH-Zuordnung; die Temperaturzeit wird nicht als RH-Beginn
 ausgegeben.
 
-Eine vollständige Messposition genügt; bei zwei beteiligten Positionen gelten
-die gemeinsamen Kontraste für beide. Das überträgt keinen empirischen
-Nachweis von vier Kanälen auf eine andere Sensoranordnung. Die Regeln gelten
-auch bei hoher Temperatur.
+Ein vollständiger eigener Positionsbeleg genügt gemäß der beschriebenen
+Sensorwahl. Die zweite Position muss seine Kontraste nicht ebenfalls
+erfüllen. Die Regeln gelten auch bei hoher Temperatur.
 
 Ein zusätzlicher Öffnungsweg verwendet allein die Temperaturform bei
 durchgehend bestätigtem Heizen. Er behält den bisherigen BIC-Modellvergleich
@@ -424,17 +474,18 @@ gebunden; sein BIC-Nachweis ersetzt dann keinen frischen RH-Beginn.
 
 ### Temperaturbremse und Schlussbestätigung
 
-Eine Schließung setzt eine erkannte Öffnung voraus. Die schwächste
-beziehungsweise stärkste aktuelle Erwärmung und die native Bremse lauten:
+Eine Schließung setzt eine erkannte Öffnung voraus. Für den ausgewerteten
+Sensor sind `W_min` und `W_max` derselbe Erwärmungskontrast; die native Bremse
+und diese Kontraste lauten:
 
 ```text
-B     = min_p (v_Tp − b_Tp)/(E_Tp + E⁻_Tp)
-W_min = min_p v_Tp/E_Tp
-W_max = max_p v_Tp/E_Tp
+B     = (v_Tp − b_Tp)/(E_Tp + E⁻_Tp)
+W_min = v_Tp/E_Tp
+W_max = v_Tp/E_Tp
 ```
 
-Ein gemeinsamer Schließkandidat bindet die damaligen Temperaturfenster, wenn
-entweder jede Rolle einen lokalen Bremsknick mit `δ_eff,Tp > 0` und
+Ein Schließkandidat bindet die damaligen Temperaturfenster dieses Sensors, wenn
+entweder seine Temperaturreihe einen lokalen Bremsknick mit `δ_eff,Tp > 0` und
 `b_Tp < −s E⁻_Tp` liefert oder `W_min > s` gilt. Für die T-Knicktoleranz gilt
 der oben beschriebene allgemeine Faktor `s` einschließlich des beobachteten
 Steigungsänderungshintergrunds.
@@ -444,27 +495,26 @@ Die feste Vorgängersteigung des gebundenen Fensters heißt `b⁰_Tp`, ihre Gren
 des aktuellen Feuchtefensters in derselben geöffneten Gruppe. Es gelten:
 
 ```text
-B_f = min_p (v_Tp − b⁰_Tp)/(E_Tp + E⁰⁻_Tp)
-U   = min_p (H̄_p − M_p)/(2ε_Hp)
+B_f = (v_Tp − b⁰_Tp)/(E_Tp + E⁰⁻_Tp)
+U   = (H̄_p − M_p)/(2ε_Hp)
 D_fp = min((v_Tp − b⁰_Tp)/(E_Tp + E⁰⁻_Tp),
            (b_Tp − b⁰_Tp)/(E⁻_Tp + E⁰⁻_Tp))
-D_f  = min_p D_fp
+D_f  = D_fp
 C   = max {min(B_f, U), min(B_f, W_max), W_min, D_f}
 ```
 
 Für eine Rolle gilt die Formel für `D_fp` nur bei aufgelöst fallender
 gebundener Vorgängersteigung `b⁰_Tp < −s E⁰⁻_Tp`. Der reine Bremszweig
 `D_f` wird zusätzlich nur mit den unten beschriebenen gehaltenen lokalen
-Steigungsänderungsformen aller verwendeten T-Rollen zugelassen; andernfalls
+Steigungsänderungsform der verwendeten Temperaturreihe zugelassen; andernfalls
 entfällt er. Bei nicht aufgelöst fallendem Vorlauf wird für die betreffende
 Rolle `D_fp = −s` eingesetzt. Der Feuchtezweig `min(B_f, U)`
-benötigt sämtliche ursprünglichen Positionen und ihre Quellenabschnitte
-sowie dieselben gehaltenen lokalen Steigungsänderungsformen aller verwendeten
-T-Rollen. Bei gestörter Feuchte oder fehlender T-Form entfällt er. Ein Anstieg
+benötigt die ursprünglichen Quellenabschnitte beider Messgrößen
+sowie die gehaltene lokale Steigungsänderungsform der Temperatur. Bei gestörter Feuchte oder fehlender T-Form entfällt er. Ein Anstieg
 der relativen Feuchte über ihr lokales Minimum kann auch bei weiter offener,
 abkühlender Kabine auftreten und trägt deshalb allein keinen Schluss.
 
-Die Bestätigung verlangt an jeder verwendeten Temperaturposition zwei
+Die Bestätigung verlangt für die verwendete Temperaturreihe zwei
 vollständig neue disjunkte `K`-Blöcke nach der gemeinsamen Bindung sowie
 `C > s`. Die ersten drei Formzweige verbinden die Bremse mit Feuchteerholung
 oder Erwärmung. `D_f > s` belegt dagegen in beiden neuen Blöcken die
@@ -541,7 +591,7 @@ Rolle.
 
 Eine Lücke oder ein Quellenbruch entwertet die davon abhängigen Nachweise.
 Eine echte T-Korrektur bei gleichem Originalzeitpunkt entwertet auch dann den
-gemeinsamen Schließkandidaten, wenn der korrigierte letzte Wert außerhalb der
+gebundenen Schließkandidaten, wenn der korrigierte letzte Wert außerhalb der
 früheren Referenzfenster liegt. Berührt die Korrektur ein Original des
 gehaltenen Fall-, Brems- oder Erholungsfensters, entfällt die davon abhängige
 Fall-/Bremsstütze dieser Rolle. Betrifft sie ausschließlich einen späteren
@@ -572,13 +622,12 @@ Feuchteanstieg nach der Öffnung;
 bestätigtes Durchlüften ist nicht erforderlich. Eine weitere Öffnung beginnt
 einen neuen Türbezug.
 
-Für Anstieg und Abfall der relativen Feuchte gelten über alle beteiligten
-Positionen:
+Für Anstieg und Abfall der relativen Feuchte des betrachteten Sensors gilt:
 
 ```text
-R = min_p v_Hp/E_Hp
-F = min_p −v_Hp/E_Hp
-Q = min_p q_Hp
+R = v_Hp/E_Hp
+F = −v_Hp/E_Hp
+Q = q_Hp
 ```
 
 Ein neues Original mit einem Anstiegsbeginn gemäß
@@ -597,8 +646,8 @@ Original und seine eigenen zulässigen Originalabstände geprüft. Ein älterer
 Beginn vor einem dazwischenliegenden Plateau wird einem späteren Ast dadurch
 nicht nachträglich zugeordnet.
 
-Die beobachtete Anstiegsstärke wird gespeichert, sobald seit der Bindung an
-jeder beteiligten Position mindestens ein späteres Temperatur- und
+Die beobachtete Anstiegsstärke wird gespeichert, sobald seit der Bindung am
+betrachteten Sensor mindestens ein späteres Temperatur- und
 Feuchteoriginal vorliegt. Der stärkste so beobachtete Kontrast muss `R > γN`
 für eine neue Episode beziehungsweise `R > γC` für eine Fortsetzung erfüllen.
 Dieser starke Beleg benötigt noch keinen vollständig neuen `K`-Block und
@@ -616,7 +665,7 @@ und der zulässige Stützabstand eingehalten ist. Aus den Wertskalen `ε_Tp` und
 Dichte `ρ⁻` und eine obere Dichte `ρ⁺` berechnet. Der Wasserbeleg bleibt auf
 die RH-Originale des gebundenen Anstiegsastes begrenzt. Je Position endet
 seine Stützmenge beim jüngsten RH-Original des ersten gültigen Endbelegs
-`v_Hp ≤ s E_Hp`; andere Positionen dürfen dabei noch steigen. Spätere
+`v_Hp ≤ s E_Hp`; ein Anstieg an einer unbenutzten Position verändert ihn nicht. Spätere
 Temperaturpartner zu diesen RH-Originalen bleiben zulässig. Eine Korrektur
 tragender Originale prüft diesen Endbeleg erneut. Wird er widerlegt, folgt
 die Stützmenge an der betroffenen Position wieder demselben Anstiegsast bis
@@ -628,8 +677,8 @@ erweitern die Wasserqualifikation nicht. Je Position gilt innerhalb dieser Stüt
 Q_p = max(verfügbare ρ⁻ seit dem Basisoriginal) − ρ⁺ des Basisoriginals
 ```
 
-Erst der gespeicherte starke Beleg und `Q_p > 0` an allen beteiligten
-Positionen qualifizieren die Komponente. Fehlende Paarungen bleiben unbekannt;
+Erst der gespeicherte starke Beleg und `Q_p > 0` am betrachteten Sensor
+qualifizieren die Komponente. Fehlende Paarungen bleiben unbekannt;
 die Paarung der momentan höchsten Feuchtespitze muss dabei noch nicht
 vorliegen. Ein vollständig gepaarter, nichtpositiver Wasserbeleg nach Spitze
 und Abfall kann eine noch unqualifizierte Komponente verwerfen. Die
@@ -640,7 +689,7 @@ beweist für sich allein keine Wasserzugabe.
 
 Eine qualifizierte neue Episode kann bereits im Anstieg bestätigt werden:
 Der aktuelle Kontrast muss `R > γN` und zugleich `Q > s` erfüllen. Seit der
-Komponentenbindung müssen an allen beteiligten Positionen ein vollständig
+Komponentenbindung müssen am betrachteten Sensor ein vollständig
 neuer aktueller Feuchteblock mit `K` Originalen und mindestens ein späteres
 Temperaturoriginal vorliegen; der verfügbare Wasserbeleg muss weiterhin
 positiv sein. `Q` verlangt eine Zunahme der Feuchtesteigung gegenüber dem
@@ -650,7 +699,7 @@ bei Originalkorrekturen erneut geprüft.
 
 Fehlt dieser frühe Nachweis, bleibt die Bestätigung über den beobachteten
 Abfall `F > s` möglich. Der gespeicherte starke Anstiegsbeleg und die positive
-Wasserqualifikation müssen weiterhin vorliegen. An jeder beteiligten Position
+Wasserqualifikation müssen weiterhin vorliegen. Am betrachteten Sensor
 müssen sämtliche `K` Feuchteoriginale des aktuellen Fensters nach ihrer
 geführten Spitze liegen. Die Bestätigungsfrische stammt in diesem Zweig aus
 dem vollständigen Fallblock nach der Spitze; der gespeicherte starke Anstieg
@@ -673,11 +722,11 @@ Wasserqualifikation und frischer Anstiegs- oder Fallblock bleiben erforderlich.
 Ohne gesonderten früheren Beginnzeugen wird die linke Originalstütze dieses
 Intervalls als zugeordneter Beginn verwendet; die Intervallgrenzen bleiben in der
 Diagnose erhalten. Ein exakter Zeitpunkt zwischen beiden Messungen wird nicht
-behauptet. Liegen solche Intervalle an allen Positionen vollständig nach dem
-vorherigen Ende, belegen sie einen neuen Ast auch dann, wenn ältere ruhige
+behauptet. Liegt dieses Intervall des tragenden Sensors vollständig nach dem
+vorherigen Ende, belegt es einen neuen Ast auch dann, wenn ältere ruhige
 Punkte seines Auswertungsfensters noch vor diesem Ende liegen. Ein überlappendes
 Beginnintervall bleibt ungeklärt; ein früherer gültiger Beginn bleibt Fortsetzung.
-Der erste gültige Beginnzeuge eines Anstiegs bleibt je Messposition gebunden.
+Der erste gültige Beginnzeuge eines Anstiegs bleibt am tragenden Sensor gebunden.
 Spätere Fits, deren Stützung bereits Spitze und Abfall umfasst, ersetzen ihn
 nicht durch einen früheren Knick. Eine Korrektur seiner Originalwerte prüft
 weiterhin denselben gebundenen Zeugen.
@@ -691,8 +740,8 @@ derselben Episode und erzeugen keine weitere Zählung. Der Abschluss benötigt
 nach dem belegten Abfall einen neuen aktuellen Hintergrund. Dafür gelten:
 
 ```text
-Z   = max_p |v_Hp/E_Hp|
-Z_r = max_p {r_Hp, r⁻_Hp}
+Z   = |v_Hp/E_Hp|
+Z_r = max {r_Hp, r⁻_Hp}
 G   = (Z ≤ β) und (Z_r ≤ η) und (R ≤ s)
 ```
 
@@ -700,7 +749,7 @@ Im ununterbrochenen Nachlauf muss die letzte qualifizierte Komponente
 abgefallen sein; ein offener Anstiegskandidat sperrt den Abschluss.
 Der erste Befund `G` bindet nur einen
 Hintergrundkandidaten. `G` muss an jedem folgenden auswertbaren Eingangspräfix
-bestehen bleiben, bis an allen beteiligten Positionen ein vollständig neuer
+bestehen bleiben, bis am tragenden Sensor ein vollständig neuer
 aktueller Feuchteblock mit `K` Originalen vorliegt. Dieser Abschluss benötigt
 nur die gebundenen Feuchterollen; neue Temperaturoriginale sind dafür nicht
 nötig. Ein widersprechender auswertbarer Feuchteverlauf verwirft den
@@ -736,14 +785,14 @@ das Ende dieses Aufgusses ausdrücklich zurück. Das bloße Zurücksetzen des
 Erkennungszustands behauptet kein Ende. Diese Endbelege ändern weder
 Gangübergänge noch die Aufgusszählung.
 
-Ein später erkannter Anstieg setzt denselben Aufguss fort, sobald an einer
-Position ein gültiger Beginnbeleg spätestens beim Abschluss liegt. Andernfalls
+Ein später erkannter Anstieg setzt denselben Aufguss fort, sobald am
+tragenden Sensor ein gültiger Beginnbeleg spätestens beim Abschluss liegt. Andernfalls
 wird er einer neuen Episode zugeordnet, wenn sämtliche bei der Bindung
-verwendeten aktuellen `K` RH-Originale aller beteiligten Positionen nach dem
+verwendeten aktuellen `K` RH-Originale des tragenden Sensors nach dem
 Abschluss liegen. Das vorherige Referenzfenster darf den alten Hintergrund
 überlappen; es belegt den Steigungswechsel und gehört nicht zum neuen
 Anstiegsblock. Zusätzliche Kurvenbeginnbelege sind dafür nicht erforderlich.
-Auch gültige Beginnbelege aller Positionen nach dem Abschluss erlauben diese
+Auch ein gültiger eigener Beginnbeleg nach dem Abschluss erlaubt diese
 Zuordnung. Überlappt der gebundene aktuelle RH-Block den Abschluss ohne solche
 Belege, bleibt die Zuordnung offen. Jeder weitere Aufguss
 benötigt erneut starken Anstieg und Wasserqualifikation sowie einen der
@@ -792,9 +841,9 @@ Bereits veröffentlichte Lüftungsbelege bleiben derselben Türöffnung zugeordn
 | Lüften (`ventilation_confirmed`) | Die relative Feuchte flacht nach einem belegten Fall deutlich ab, während die Temperatur weiter fällt. Diese Stufe liefert bereits den Lüftungsnachweis für das Gangende; außerhalb eines Gangs wird sie statistisch erfasst. |
 | Vollständig gelüftet (`ventilation_complete`) | Nach belegter erster Stufe flacht auch der absolute Wassergehalt deutlich ab, während die Temperatur weiter fällt. Diese Stufe ergänzt einmalig den statistischen Beleg derselben noch offenen Tür ohne zusätzliche Gangwirkung. |
 
-Die erste Stufe verwendet die gültigen RH- und Temperatur-Originalfenster der
-anfangs gebundenen Messpositionen. Eine vollständige Wasserpaarung ist dafür
-nicht erforderlich. Die zweite Stufe verwendet an jeder dieser Positionen
+Die erste Stufe verwendet die gültigen RH- und Temperatur-Originalfenster des
+gebundenen Sensors. Eine vollständige Wasserpaarung ist dafür
+nicht erforderlich. Die zweite Stufe verwendet an dieser Position
 die letzten genau `2K` aufeinanderfolgenden Feuchteoriginale mit ihren kausalen
 Temperaturpartnern. Die Paarung und ihre Dichtehüllen `ρ⁻`, `ρ⁺` entsprechen
 der Wasserqualifikation beim Aufguss; fehlende oder ungültige Paare werden
@@ -820,8 +869,8 @@ v_Xp − b_Xp           > s (E_Xp + E⁻_Xp)
 v_Tp − b_Tp           ≤ s (E_Tp + E⁻_Tp)
 ```
 
-Beim Binden des jeweiligen Stufenkandidaten müssen alle fünf Vergleiche an
-allen beteiligten Positionen erfüllt sein: vorheriger Feuchtefall, kein
+Beim Binden des jeweiligen Stufenkandidaten müssen alle fünf Vergleiche am
+betrachteten Sensor erfüllt sein: vorheriger Feuchtefall, kein
 aufgelöster Feuchteanstieg, aufgelöste Abbremsung, weiter fallende Temperatur
 und keine aufgelöste Temperaturbremse. Die Feuchte darf weiterhin fallen.
 Eine waagerechte Kurve ist für keine der beiden Lüftungsstufen erforderlich.
@@ -829,7 +878,7 @@ Bis zur Bestätigung wird die Abbremsung gegen die beim Stufenbeginn
 festgehaltene frühere Feuchtesteigung `b_Xp` und deren Grenze `E⁻_Xp`
 verglichen. Die aktuelle Steigung stammt weiterhin aus den neuen Originalen;
 die beiden Temperaturbedingungen müssen erhalten bleiben. Die Bestätigung benötigt
-außerdem seit der Bindung an sämtlichen Positionen spätere Temperatur- und
+außerdem seit der Bindung am tragenden Sensor spätere Temperatur- und
 Feuchteoriginale; in der zweiten Stufe müssen die Feuchteoriginale vollständig
 gepaart sein. Ein Zwischenstand außerhalb der erhaltenen Form verwirft den
 jeweiligen noch unbestätigten Stufenkandidaten. Ein bereits vollständig
@@ -861,7 +910,7 @@ die Bestätigung. Eine Halbbreite null bindet das Diagnoseniveau an diesen Wert;
 widersprüchliche Bindungen oder nicht auswertbare Rechnungen lassen den
 Diagnosewert offen.
 
-Für eine oder zwei Positionen gilt dieselbe Form ohne zusätzliche
+Für den ausgewerteten Sensor gilt dieselbe Form ohne zusätzliche
 Mindestöffnungsdauer oder feste Temperatur- und Wasserverlustschwelle. Die
 fünf historischen Lüftungsparameter bleiben für ältere Archive und
 Referenzadapter im [Parameterkatalog](../custom_components/ha_sauna/defaults.json); sie bestimmen
@@ -883,12 +932,12 @@ zusätzliche Regelwirkung auf den Gang.
 
 ## Erkennungen bei Messlücken prüfen
 
-Personenhaltezähler beginnen nach einem Wechsel oder Ausfall der beteiligten
-vollständigen Messpositionen neu. Unbestätigte Kurvennachweise bleiben an ihre
+Personenhaltezähler beginnen nach einem Wechsel oder Ausfall des tatsächlich
+benutzten Sensors neu. Änderungen einer unbenutzten Position setzen sie nicht zurück. Unbestätigte Kurvennachweise bleiben an ihre
 jeweiligen Quellenabschnitte gebunden.
 
 Die neuen Originalblöcke von Öffnung, Schließung und Aufguss müssen zur
-gebundenen Positionsmenge, Quelle und Zeitbasis passen. Der fortgeschriebene
+gebundenen Position, Quelle und Zeitbasis passen. Der fortgeschriebene
 Anschlussanker ersetzt keine Prüfung des gesamten neu hinzugekommenen
 Originalabschnitts. Eine überschrittene rollenbezogene Abstandgrenze verwirft
 den davon abhängigen Kandidaten; spätere wieder zusammenhängende Fenster
@@ -915,8 +964,9 @@ Aufguss zugeordnet.
 Bei einem bereits gezählten Aufguss pausieren Messlücken, Quellenwechsel und
 vorübergehend fehlende Auswertbarkeit den Abschluss. Die Zuordnung bleibt
 bestehen; ein unbekannter Verlauf belegt weder Abklingen noch ein neues Niveau.
-Nach Wiedererwerb muss der Abschluss auf den wieder zusammenhängenden
-Messreihen aller ursprünglich beteiligten Positionen erneut belegt werden.
+Nach Wiedererwerb muss der Abschluss auf dem eigenen zusammenhängenden
+Verlauf des tragenden Sensors oder eines gültigen Ersatz-Folgeabschnitts
+erneut belegt werden.
 Die Zuordnung endet bei einer bestätigten Türöffnung oder Betriebsunterbrechung.
 Ein Aus- und Einschalten bleibt auch zwischen Rasterpunkten wirksam.
 

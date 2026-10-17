@@ -2897,16 +2897,18 @@ class OriginalCurveFollowupTests(unittest.TestCase):
                     [item.kind for item in events].count(Kind.DOOR_OPEN), 1
                 )
                 if tail == "staggered_plateau":
-                    # Upper T is already flat in both OLS sections before
-                    # lower T brakes. No prefix has a common local brake;
-                    # their actual earlier falls belong to the same episode.
+                    # Upper T reaches its own complete plateau while lower T
+                    # keeps falling. A clear upper close needs no lower brake.
                     lower_fall = tuple(
                         change if role == "lower_temperature" else 0
                         for role, change in zip(CLIMATE, self.fall_step, strict=True)
                     )
                     events += self._ramp(detector, 3 * self.count, lower_fall)
-                    self.assertTrue(detector.open)
-                    self.assertNotIn(Kind.DOOR_CLOSE, [item.kind for item in events])
+                    self.assertFalse(detector.open)
+                    upper_closes = [item for item in events if item.kind is Kind.DOOR_CLOSE]
+                    self.assertEqual(len(upper_closes), 1)
+                    self.assertEqual(upper_closes[0].channels, (Position.UPPER.value,))
+                    booked_close = upper_closes[0]
                 delta = tuple(
                     change if cooling and role.endswith("temperature") else 0
                     for role, change in zip(CLIMATE, self.fall_step, strict=True)
@@ -2935,7 +2937,10 @@ class OriginalCurveFollowupTests(unittest.TestCase):
                         abs(thermal.v),
                         self.values["curve_original_significance"] * thermal.e,
                     )
-                    self.assertNotIn(Kind.DOOR_CLOSE, [item.kind for item in events])
+                    self.assertEqual(
+                        [item for item in events if item.kind is Kind.DOOR_CLOSE],
+                        [booked_close],
+                    )
                     events += self._feed(
                         detector, (plateau_state for _ in range(self.tail_ticks))
                     )
@@ -2969,6 +2974,13 @@ class OriginalCurveFollowupTests(unittest.TestCase):
                     # a resolved slowdown while T continues without braking.
                     complete = detector.door_episode["original_ventilation_complete"]
                     self.assertTrue(complete["published"])
+                    published = [item for item in events if item.kind is Kind.VENTILATION_COMPLETE]
+                    self.assertEqual(len(published), 1)
+                    self.assertEqual(len(published[0].channels), 1)
+                    self.assertEqual(
+                        tuple(position for position, _ in complete["windows"]),
+                        published[0].channels,
+                    )
                     temperatures = dict(complete["temperature_windows"])
                     significance = self.values["curve_original_significance"]
                     for position, humidity in complete["windows"]:

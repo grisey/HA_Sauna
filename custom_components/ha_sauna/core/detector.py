@@ -128,6 +128,7 @@ class _OriginalPrefix:
     humidity_kinks: tuple = ()
     humidities: tuple = ()
     time_supports: tuple = ()
+    changed_position: Position | None = None
 
 
 def robust_slope(values, step=BY_KEY["grid_seconds"].default):
@@ -282,6 +283,7 @@ class Detector:
         self._infusion_segment_start = {}
         self._original_prefixes = deque(maxlen=self.p["curve_max_points"] * 2 * len(self.positions))
         self._original_prefix_overflow = False
+        self._original_prefix_overflow_positions = set()
         self._original_window_cache = {}
         self._original_points_cache = {}
         self._original_kink_cache = {}
@@ -289,6 +291,727 @@ class Detector:
         self._original_temperature_background_memo = {}
         self._original_humidity_connection_memo = {}
         self._original_infusion_candidate = None
+        self._position_evidence = {}
+        self._door_owner = None
+        self._infusion_owner = None
+        self._door_published_stages = set()
+        self._person_owner = {}
+
+    def _position_state(self, position):
+        """Eigene Originalbelege; Ereignisse besitzt weiterhin der Detector."""
+        return self._position_evidence.setdefault(position, {
+            "door": None, "infusion": None, "infusion_candidate": None,
+            "infusion_updates": [],
+            "person": {},
+        })
+
+    def _preferred_position(self, available):
+        return next((position for position in (Position.UPPER, Position.LOWER)
+                     if position in self.positions and position in available), None)
+
+    def _position_available(self, prefix, position, quantities, now):
+        windows = {Quantity.TEMPERATURE: dict(prefix.temperatures),
+                   Quantity.HUMIDITY: dict(prefix.humidities)}
+        return (all(self._value(position, quantity, now) is not None
+                    and position.value in windows[quantity] for quantity in quantities)
+                and self._original_prefix_valid(prefix, (position,), quantities))
+
+    def _refresh_position_door(self, position, prefix, now):
+        state = self._position_state(position)
+        episode = state["door"]
+        if not self.open:
+            return
+        if episode is None:
+            episode = state["door"] = self._new_door_episode(
+                (position,), now, self._curve_open_effective_at or self.opened_at or now,
+            )
+        quantities = (Quantity.TEMPERATURE, Quantity.HUMIDITY)
+        sources = tuple(self._curve_series[position, quantity]["source"] for quantity in quantities)
+        epochs = tuple(self._curve_series[position, quantity]["epoch"] for quantity in quantities)
+        if (all(self._value(position, quantity, now) is not None for quantity in quantities)
+                and (episode["sources"][position] != sources or episode["epochs"][position] != epochs)):
+            # Quellenabschnitt neu binden. T-Schlussstützen wurden bereits nur
+            # beim Verlust ihrer eigenen T-Epoche entwertet.
+            self._reset_original_ventilation(episode, "replacement_source_segment")
+            episode["sources"][position] = sources
+            episode["epochs"][position] = epochs
+            episode["invalid"].discard(position)
+            episode["followup_received_at"] = prefix.received_at
+            episode["original_ventilation_phase"] = prefix.received_at
+            episode.pop("original_humidity_minima", None)
+
+    def _position_trace(self, trace, *, infusion=False):
+        return {
+            "metrics": {}, "conditions": {}, "checks": {},
+            "decisions": ({"infusion": {**trace["decisions"]["infusion"],
+                            "gates": dict(trace["decisions"]["infusion"]["gates"])}}
+                          if infusion else {}),
+        }
+
+    @staticmethod
+    def _record_consulted_evidence(trace, route, records):
+        selection = trace.get("position_selection", {}).get(route, {})
+        if selection.get("role") == "clarification":
+            # Der ausgewählte vollständige Beleg steht bereits im Haupttrace.
+            position = Position(selection["leading"])
+            trace.setdefault("position_evidence", {})[route] = {
+                position.value: records[position],
+            }
+
+    @staticmethod
+    def _copy_position_trace(trace, local):
+        for key, value in local.items():
+            if key in ("decisions", "conditions", "checks"):
+                trace[key].update(value)
+            elif key == "metrics":
+                for position, metrics in value.items():
+                    trace[key].setdefault(position, {}).update(metrics)
+            else:
+                trace[key] = value
+
+    @staticmethod
+    def _bound_position_span(candidate):
+        if candidate is None:
+            return None
+        windows = candidate.get("binding_windows", candidate.get("windows", ()))
+        spans = []
+        for _, window in windows:
+            for item in ((window.temperature, window.humidity)
+                         if isinstance(window, OriginalPositionWindows) else (window,)):
+                spans.append((item.start_at, item.newest_at))
+        return (min(start for start, _ in spans), max(end for _, end in spans)) if spans else None
+
+    @staticmethod
+    def _close_position_binding(episode):
+        if episode is None:
+            return None
+        if episode.get("original_close") is not None:
+            return episode["original_close"]
+        for position, fall in episode.get("original_temperature_falls", {}).items():
+            if fall.get("braking_window") is not None and fall.get("recovery_received_at") is not None:
+                return {"received_at": fall["recovery_received_at"],
+                        "windows": ((position.value, fall["braking_window"]),)}
+        return None
+
+    def _position_result(self, position, *, available, confirmed=False,
+                         pending=False, refuted=False, candidate=None, reason=None):
+        return {
+            "position": position,
+            "status": ("unavailable" if not available else "confirmed" if confirmed else
+                       "refuted" if refuted else "pending" if pending else "idle"),
+            "span": self._bound_position_span(candidate),
+            "bound_at": candidate.get("received_at") if candidate is not None else None,
+            "context": self._curve_door_context,
+            "reason": reason,
+            "sources": tuple(self._curve_series[position, quantity]["source"]
+                             for quantity in (Quantity.TEMPERATURE, Quantity.HUMIDITY)),
+            "epochs": tuple(self._curve_series[position, quantity]["epoch"]
+                            for quantity in (Quantity.TEMPERATURE, Quantity.HUMIDITY)),
+            "time_bases": tuple(self._curve_series[position, quantity]["time_basis"]
+                                for quantity in (Quantity.TEMPERATURE, Quantity.HUMIDITY)),
+        }
+
+    def _select_position(self, route, results, owner, trace):
+        """Klare Eigenbelege entscheiden; Zweitbelege klären gebundene Muster."""
+        first = owner if owner in results else self._preferred_position(results)
+        if first is None:
+            return None
+        leading = results[first]
+        selected, role = first, "leading"
+        if leading["status"] == "unavailable":
+            replacement = self._preferred_position({
+                position for position, value in results.items()
+                if value["status"] != "unavailable"
+            })
+            if replacement is not None:
+                selected, role = replacement, "replacement"
+        elif leading["status"] == "pending":
+            # Derselbe Ownerkontext plus überlappende eigene Bindestützen.
+            # Ein bloß zeitnaher, ungebundener Verlauf reicht nicht aus.
+            eligible = []
+            for position, value in results.items():
+                if position == first or value["status"] not in ("confirmed", "refuted"):
+                    continue
+                left, right = leading["span"], value["span"]
+                if (left is None or right is None or leading["context"] != value["context"]
+                        or max(left[0], right[0]) > min(left[1], right[1])):
+                    continue
+                coherence = (self.p[f"{route}_window_seconds"] if route in ("strong", "weak")
+                             else self._curve_coherence_window(route))
+                if abs((leading["bound_at"] - value["bound_at"]).total_seconds()) > coherence:
+                    continue
+                eligible.append(position)
+            if len(eligible) == 1:
+                selected, role = eligible[0], "clarification"
+        trace.setdefault("position_selection", {})[route] = {
+            "leading": first.value, "selected": selected.value, "role": role,
+            "results": {position.value: {key: value for key, value in result.items()
+                                         if key != "position"}
+                        for position, result in results.items()},
+        }
+        return selected
+
+    def _adopt_door_position(self, position, now):
+        episode = self._position_state(position)["door"]
+        if episode is None:
+            return
+        previous = self._door_owner
+        if self.open and self.door_episode is not None and self.door_episode is not episode:
+            # Nur Ereignisidentität übertragen; alle Fenster bleiben lokal.
+            identity = self.door_episode.get("event_identity", {
+                "effective_at": self._curve_open_effective_at,
+                "positions": self.door_episode["positions"],
+            })
+            episode["event_identity"] = identity
+            episode["followup_received_at"] = now
+        self.door_episode = episode
+        self._door_owner = position
+        self.ventilation_positions = (position,)
+        self.ventilation_invalid = set(episode["invalid"])
+        self.ventilation_degraded = bool(self.ventilation_invalid)
+        if previous != position:
+            self.baseline = {}
+            self._remember_ventilation_baseline(position)
+
+    def _start_door_episode(self, channels, now, beginning):
+        position = self._preferred_position(channels)
+        if position is not None:
+            self._position_state(position)["door"] = self._new_door_episode((position,), now, beginning)
+            self._adopt_door_position(position, now)
+
+    def _reset_position_doors(self):
+        for state in self._position_evidence.values():
+            state["door"] = None
+        self._door_owner = None
+        self._door_published_stages.clear()
+
+    def _bind_opening_identity(self, owner, effective_at):
+        bound = self._bound_position_span(owner.get("original_open", owner.get("original_heating")))
+        for state in self._position_evidence.values():
+            episode = state["door"]
+            if episode is None:
+                continue
+            if episode is not owner:
+                own = self._bound_position_span(episode.get("original_open", episode.get("original_heating")))
+                if bound is None or own is None or max(bound[0], own[0]) > min(bound[1], own[1]):
+                    state["door"] = None
+                    continue
+            episode["event_identity"] = owner["event_identity"]
+            episode["started_at"] = effective_at
+
+    def _original_door_evidence(self, prefixes, channels, now, decision_at, trace, emit):
+        result = (False, False, False, ())
+        route = "door_close" if self.open else "door_open"
+        for index, prefix in enumerate(prefixes):
+            result = (False, False, False, ())
+            outcomes, records, local_results, previous_stages = {}, {}, {}, {}
+            for position in self.positions:
+                state = self._position_state(position)
+                self._refresh_position_door(position, prefix, now)
+                before = state["door"]
+                previous_stages[position] = {key: before.get(key) if before else None
+                                             for key in ("original_ventilation_rh", "original_ventilation")}
+                before_candidate = (self._close_position_binding(before) if self.open else
+                                    before.get("original_open") if before else None)
+                local = self._position_trace(trace)
+                local_results[position] = self._original_door_position_evidence(
+                    (prefix,), (position,), now, decision_at, local, state,
+                )
+                episode = state["door"]
+                candidate = (self._close_position_binding(episode) if self.open else
+                             episode.get("original_open") if episode else None)
+                forms = local.get("original_forms", {})
+                reason = forms.get("closing_candidate_reset_reason" if self.open else "opening_candidate_reset_reason")
+                refuted = bool(before_candidate is not None and (
+                    reason in ("temperature_counterform", "humidity_branch_recovery")
+                    or forms.get("resolved_opening_counterform", False)
+                    or local.get("temperature_fall_support", {}).get(position.value, {}).get("reset_reason")
+                    == "renewed_temperature_fall"
+                ))
+                quantities = (Quantity.TEMPERATURE,) if self.open else (Quantity.TEMPERATURE, Quantity.HUMIDITY)
+                available = self._position_available(prefix, position, quantities, now)
+                outcomes[position] = self._position_result(
+                    position, available=available,
+                    confirmed=local_results[position][2 if self.open else 0],
+                    pending=candidate is not None, refuted=refuted,
+                    candidate=candidate or before_candidate, reason=reason,
+                )
+                records[position] = local
+            selected = self._select_position(route, outcomes, self._door_owner, trace)
+            if selected is None:
+                continue
+            choice = outcomes[selected]
+            self._copy_position_trace(trace, records[selected])
+            self._record_consulted_evidence(trace, route, records)
+            if choice["status"] in ("pending", "confirmed"):
+                self._adopt_door_position(selected, prefix.received_at)
+                result = local_results[selected]
+            elif not self.open and choice["status"] in ("idle", "refuted"):
+                self.door_episode = None
+                self._door_owner = None
+                self.baseline = {}
+                self.ventilation_positions = ()
+                if choice["status"] == "refuted":
+                    # Die Widerlegung betrifft den konsultierten Primärkandidaten.
+                    for position in outcomes:
+                        self._position_state(position)["door"] = None
+            elif self.open and choice["status"] == "refuted":
+                leading = Position(trace["position_selection"][route]["leading"])
+                self._reject_close_candidate(leading, prefix)
+            if result[0] or result[2]:
+                self._original_prefixes.extend(prefixes[index + 1:])
+                break
+            if not self.open:
+                continue
+            for stage, key, kind in (
+                ("ventilation", "original_ventilation_rh_confirmed", Kind.VENTILATION),
+                ("ventilation_complete", "original_ventilation_complete", Kind.VENTILATION_COMPLETE),
+            ):
+                if kind in self._door_published_stages:
+                    continue
+                candidates = {}
+                for position in self.positions:
+                    episode = self._position_state(position)["door"]
+                    pending_key = "original_ventilation_rh" if kind == Kind.VENTILATION else "original_ventilation"
+                    candidate = episode.get(pending_key) if episode else None
+                    completed = episode.get(key) if episode else None
+                    former = previous_stages[position][pending_key]
+                    candidate_info = ({"received_at": completed["candidate_at"],
+                                       "windows": completed["windows"]} if completed else candidate or former)
+                    if candidate_info is not None and "humidity_windows" in candidate_info:
+                        candidate_info = {**candidate_info, "windows": candidate_info["humidity_windows"]}
+                    stage_name = "relative_humidity" if kind == Kind.VENTILATION else "absolute_humidity"
+                    local_stage = records[position].get("original_ventilation", {}).get(stage_name, {})
+                    candidates[position] = self._position_result(
+                        position,
+                        available=self._position_available(prefix, position,
+                                  (Quantity.TEMPERATURE, Quantity.HUMIDITY), now),
+                        confirmed=completed is not None,
+                        pending=candidate is not None,
+                        refuted=former is not None and local_stage.get("counterform", False),
+                        candidate=candidate_info,
+                    )
+                carrier = self._select_position(stage, candidates, self._door_owner, trace)
+                if carrier is not None and candidates[carrier]["status"] == "refuted":
+                    for state in self._position_evidence.values():
+                        if state["door"] is not None:
+                            state["door"].pop(pending_key, None)
+                if carrier is None or candidates[carrier]["status"] != "confirmed":
+                    continue
+                if kind == Kind.VENTILATION_COMPLETE and not self.ventilated:
+                    continue
+                self._adopt_door_position(carrier, prefix.received_at)
+                self.door_episode[key].update(published=True, published_at=now)
+                self._door_published_stages.add(kind)
+                self._copy_position_trace(trace, records[carrier])
+                self._record_consulted_evidence(trace, stage, records)
+                if kind == Kind.VENTILATION:
+                    self.ventilated = True
+                    self._curve_ventilation_at = now
+                    self._clear_curve_route("door_close", keep_status=True,
+                                            reason="ventilation_after_onset")
+                emit(kind, event_channels=(carrier,))
+        return result
+
+    def _reject_close_candidate(self, position, prefix):
+        episode = self._position_state(position)["door"]
+        window = dict(prefix.temperatures).get(position.value)
+        if episode is None or window is None:
+            return
+        episode.pop("original_close", None)
+        episode.pop("closing_onset_witnesses", None)
+        episode.pop("closing_evidence", None)
+        episode["rejected_close_after"] = window.newest_at
+        fall = episode.get("original_temperature_falls", {}).get(position)
+        if fall is not None:
+            for key in ("braking_form", "braking_window", "braking_background",
+                        "recovery_window", "recovery_received_at"):
+                fall.pop(key, None)
+        self._clear_curve_route("door_close", position=position,
+                                reason="bound_close_counterform")
+
+    def _start_infusion_episode(self, positions, beginning, now, *, rise_key, water, onsets=None):
+        self._infusion_episode = self._new_infusion_episode(
+            positions, beginning, now, rise_key=rise_key, water=water, onsets=onsets,
+        )
+        if len(positions) == 1:
+            self._infusion_owner = positions[0]
+            self._position_state(positions[0])["infusion"] = self._infusion_episode
+
+    @staticmethod
+    def _pause_position_infusion(state):
+        state["infusion_candidate"] = None
+        episode = state["infusion"]
+        if episode is not None and episode["confirmed_detection"] is None:
+            state["infusion"] = None
+        elif episode is not None and episode["phase"] == "active":
+            episode["interrupted"].update(episode["positions"])
+            episode["context"] = None
+            for key in ("decays", "levels", "level_status", "backgrounds", "level_evaluated"):
+                episode[key].clear()
+            episode["original_background"] = None
+
+    def _adopt_infusion_position(self, position, now):
+        state = self._position_state(position)
+        episode = state["infusion"]
+        if episode is None:
+            return False
+        old = self._infusion_episode
+        if (old is not None and old["phase"] == "ended" and old.get("confirmed_detection") is not None
+                and episode is not old
+                and episode.get("confirmed_detection") is old["confirmed_detection"]):
+            return False
+        if (old is not None and old is not episode and old.get("confirmed_detection") is not None
+                and old["phase"] != "ended"):
+            # Ersatz hat eigenen Peak/Fall. Nur die gebuchte Identität bleibt.
+            for key in ("confirmed_detection", "confirmed_at", "onset_at", "observed_at", "reported_end"):
+                episode[key] = old[key]
+            if episode["phase"] == "pending":
+                episode["phase"] = "active"
+            episode["followup_received_at"] = now
+            episode["event_identity"] = old.get("event_identity", {
+                "positions": old["positions"], "onset_at": old["onset_at"],
+            })
+        self._infusion_episode = episode
+        self._original_infusion_candidate = state["infusion_candidate"]
+        self._infusion_owner = position
+        return True
+
+    def _original_infusion_evidence(
+        self, prefixes, channels, now, decision_at, floor, trace, onset_allowed, emit, allowed,
+    ):
+        for prefix in prefixes:
+            results, records = {}, {}
+            for position in self.positions:
+                state = self._position_state(position)
+                previous = state["infusion_candidate"]
+                state["infusion_updates"].clear()
+                local = self._position_trace(trace, infusion=True)
+                self._original_infusion_position_evidence(
+                    (prefix,), (position,), now, decision_at,
+                    floor, local, onset_allowed, allowed, state,
+                )
+                candidate = state["infusion_candidate"]
+                episode = state["infusion"]
+                # Ein eigenes Ende benötigt nur RH; der Beginn weiterhin T/RH.
+                quantities = ((Quantity.HUMIDITY,) if episode is not None
+                              and episode["phase"] in ("active", "ended") else
+                              (Quantity.TEMPERATURE, Quantity.HUMIDITY))
+                available = self._position_available(prefix, position, quantities, now)
+                form = local.get("original_infusion", {})
+                results[position] = self._position_result(
+                    position, available=available,
+                    confirmed=episode is not None and episode.get("confirmation_ready", False)
+                              and episode["confirmed_detection"] is None,
+                    pending=candidate is not None and (episode is None or episode["phase"] == "pending"),
+                    refuted=previous is not None and form.get("terminal_negative", False),
+                    candidate=candidate or previous,
+                    reason="nonpositive_complete_water" if form.get("terminal_negative") else None,
+                )
+                records[position] = local
+            owner = (None if self._infusion_episode is not None
+                     and self._infusion_episode["phase"] == "ended" else self._infusion_owner)
+            selected = self._select_position("infusion", results, owner, trace)
+            if selected is None:
+                continue
+            state = self._position_state(selected)
+            self._copy_position_trace(trace, records[selected])
+            self._record_consulted_evidence(trace, "infusion", records)
+            active = (self._infusion_episode is not None
+                      and self._infusion_episode.get("confirmed_detection") is not None
+                      and self._infusion_episode["phase"] != "ended")
+            if results[selected]["status"] == "refuted" and not active:
+                for local in self._position_evidence.values():
+                    local["infusion"] = local["infusion_candidate"] = None
+                self._infusion_episode = self._original_infusion_candidate = None
+                self._infusion_owner = None
+                continue
+            if selected != owner and active:
+                # Nur Ausfall erlaubt einen neuen Folgeabschnitt einer Buchung.
+                if owner is not None and results[owner]["status"] != "unavailable":
+                    selected, state = owner, self._position_state(owner)
+                else:
+                    own = state["infusion"]
+                    original = own.get("original_component") if own else None
+                    reference = self._infusion_episode.get("original_component")
+                    left, right = self._bound_position_span(original), self._bound_position_span(reference)
+                    if (original is None or not original.get("qualified") or left is None or right is None
+                            or dict(original["context"])[selected][1]
+                            != self._curve_series[selected, Quantity.HUMIDITY]["epoch"]
+                            or max(left[0], right[0]) > min(left[1], right[1])):
+                        continue
+            if not self._adopt_infusion_position(selected, prefix.received_at):
+                if selected == owner and not active:
+                    self._infusion_episode = self._original_infusion_candidate = None
+                    self._infusion_owner = None
+                continue
+            episode = self._infusion_episode
+            if episode.get("confirmation_ready") and episode["confirmed_detection"] is None:
+                ended = episode["phase"] == "ended"
+                self._original_confirm_infusion(
+                    episode, now, decision_at, floor, onset_allowed, emit,
+                )
+                if ended:
+                    episode["phase"] = "ended"
+                    episode["evidence_end"] = replace(
+                        episode["evidence_end"], confirmed_at=decision_at,
+                    )
+            self._associate_infusion_followups(episode)
+            for updated, end in state["infusion_updates"]:
+                if updated is episode:
+                    self._update_infusion_end(episode, end)
+            if episode["phase"] == "ended" and episode.get("evidence_end") is not None:
+                self._update_infusion_end(episode, episode["evidence_end"])
+
+    def _associate_infusion_followups(self, owner):
+        """Eine Buchung zuordnen, ausschließlich zu bereits eigenen Peakbelegen."""
+        detection = owner.get("confirmed_detection")
+        span = self._bound_position_span(owner.get("original_component"))
+        if detection is None or span is None:
+            return
+        for state in self._position_evidence.values():
+            episode = state["infusion"]
+            component = episode.get("original_component") if episode else None
+            own = self._bound_position_span(component)
+            if (episode is owner or component is None or not component.get("qualified")
+                    or own is None or max(span[0], own[0]) > min(span[1], own[1])
+                    or episode.get("confirmed_detection") is not None):
+                continue
+            if any(dict(component["context"])[position][1]
+                   != self._curve_series[position, Quantity.HUMIDITY]["epoch"]
+                   for position in episode["positions"]):
+                continue
+            episode["confirmed_detection"] = detection
+            episode["confirmed_at"] = owner["confirmed_at"]
+            episode["event_identity"] = {"positions": owner["positions"],
+                                         "onset_at": owner["onset_at"]}
+            if owner["phase"] == "ended" and owner.get("reported_end") is not None:
+                episode["booked_end_at"] = owner["reported_end"].effective_at
+            if episode["phase"] == "pending":
+                episode["phase"] = "active"
+
+    def _correct_original_infusion(self, position, quantity, corrected_at, value):
+        state = self._position_state(position)
+        previous = state["infusion"]
+        state["infusion_updates"].clear()
+        self._correct_position_infusion(position, quantity, corrected_at, value, state)
+        if previous is self._infusion_episode:
+            for episode, end in state["infusion_updates"]:
+                self._update_infusion_end(episode, end)
+            self._infusion_episode = state["infusion"]
+            self._original_infusion_candidate = state["infusion_candidate"]
+        state["infusion_updates"].clear()
+
+    def _person_position_evidence(self, route, features, checking, now, trace):
+        results, evaluated = {}, {}
+        for position in self.positions:
+            state = self._position_state(position)["person"].setdefault(route, {
+                "active": False, "onset_at": None, "unknown": False, "count": 0,
+                "refuted_flank": False,
+            })
+            previous_active = state["active"]
+            previous_onset = state["onset_at"]
+            gates = {}
+            rise = (self._moisture_rise(route, {position: features[position]}, gates=gates)
+                    if position in features else None)
+            if rise is None:
+                state["unknown"] = True
+            elif not rise:
+                state.update(active=False, onset_at=None, unknown=False, refuted_flank=False)
+            elif not state["active"] and not state.get("refuted_flank", False):
+                state.update(active=True, onset_at=None if route == "weak" and state["unknown"] else now)
+            fresh = route != "weak" or (state["onset_at"] is not None
+                    and self.opened_at is not None and state["onset_at"] >= self.opened_at)
+            condition = bool(checking and rise and fresh and not state.get("refuted_flank", False) and (
+                route != "weak" or state["onset_at"] is not None
+            ))
+            state["count"] = state["count"] + 1 if condition else 0
+            gates["own_flank_after_counterform"] = _gate(
+                not state.get("refuted_flank", False),
+                reason="waiting_for_own_observed_false" if state.get("refuted_flank", False) else None,
+            )
+            sustained = state["count"] >= ceil(self.p[f"{route}_hold_seconds"] / self.p["person_step_seconds"]) + 1
+            # Nur ein tatsächlich ausgewerteter gegenteiliger Wasserverlauf
+            # widerlegt eine gebundene positive Feuchtefolge.
+            water = features.get(position, (None, None))[1]
+            refuted = previous_active and water is not None and water <= 0
+            anchor = state["onset_at"] or previous_onset
+            result = self._position_result(
+                position, available=rise is not None, confirmed=sustained,
+                pending=condition and not sustained, refuted=refuted,
+                candidate={"received_at": anchor} if anchor is not None else None,
+                reason="nonpositive_complete_water" if refuted else None,
+            )
+            if anchor is not None:
+                result["span"] = (anchor - timedelta(seconds=self.p[f"{route}_window_seconds"]), now)
+            results[position] = result
+            evaluated[position] = (rise, state, fresh, condition, sustained, gates)
+        selected = self._select_position(route, results, self._person_owner.get(route), trace)
+        if selected is None:
+            self.counts[route] = 0
+            return None, None, {"onset_at": None}, False, False, False, self._edge(route, False), {}
+        rise, state, fresh, condition, sustained, gates = evaluated[selected]
+        selection = trace["position_selection"][route]
+        if results[selected]["status"] == "refuted" and selection["role"] == "clarification":
+            leading = Position(selection["leading"])
+            rejected = self._position_state(leading)["person"][route]
+            selection["rejected_binding"] = {
+                "position": leading.value, "onset_at": rejected["onset_at"],
+                "count": rejected["count"], "reason": "bound_person_counterform",
+            }
+            # Dieselbe positive Folge darf nicht als neue Flanke wiederkehren.
+            # Erst ein eigener ausgewerteter negativer Verlauf gibt sie frei.
+            rejected.update(active=False, onset_at=None, count=0, refuted_flank=True)
+        if results[selected]["status"] in ("idle", "refuted", "unavailable"):
+            self._person_owner.pop(route, None)
+        else:
+            self._person_owner[route] = selected
+        self.counts[route] = state["count"]
+        if route == "weak":
+            self.moisture_states["weak"] = state
+        return selected, rise, state, fresh, condition, sustained, self._edge(route, sustained), gates
+
+    def _heating_rejection_floor(self, position):
+        state = self._position_state(position)
+        rejected = state.get("heating_rejection")
+        if rejected is None:
+            return None
+        context = (self._curve_door_context, self.heating_since,
+                   self._curve_series[position, Quantity.TEMPERATURE]["epoch"])
+        if rejected["context"] != context:
+            state.pop("heating_rejection")
+            return None
+        return rejected["through"]
+
+    def _reject_heating_position(self, position, prefix, trace):
+        state = self._position_state(position)
+        episode = state["door"]
+        window = dict(prefix.temperatures).get(position.value) if prefix else None
+        candidate = self._curve_candidates.get(("door_open_heating", position, Quantity.TEMPERATURE))
+        originals = ([window.newest_at] if window is not None else [])
+        if candidate is not None:
+            originals.append(candidate.original_points[-1][0])
+        if episode is None or not originals:
+            return
+        bound = episode.pop("original_heating", None)
+        state["heating_rejection"] = {
+            "context": (self._curve_door_context, self.heating_since,
+                        self._curve_series[position, Quantity.TEMPERATURE]["epoch"]),
+            "through": max(originals),
+        }
+        episode["retained_heating_only"] = False
+        self._clear_curve_route("door_open_heating", position=position,
+                                reason="bound_heating_counterform")
+        trace["position_selection"]["door_open_heating"]["rejected_binding"] = {
+            "position": position.value,
+            "candidate_id": candidate.candidate_id if candidate is not None else None,
+            "bound_at": bound["received_at"] if bound is not None else None,
+            "originals_through": max(originals), "reason": "bound_heating_counterform",
+        }
+        if self.door_episode is episode and episode.get("original_open") is None:
+            self.door_episode = None
+            self._door_owner = None
+            self.baseline = {}
+            self.ventilation_positions = ()
+
+    def _heating_position_evidence(self, prefixes, now, decision_at, enabled,
+                                   curve_floor, mixed_toggle, trace):
+        if self.open or not enabled or self.heating_since is None or mixed_toggle:
+            return False, False
+        results, records, flags = {}, {}, {}
+        prefix = prefixes[-1] if prefixes else None
+        for position in self.positions:
+            state = self._position_state(position)
+            episode = state["door"]
+            key = ("door_open_heating", position, Quantity.TEMPERATURE)
+            candidate = self._curve_candidates.get(key)
+            supported = candidate is not None and self._curve_status.get(key, {}).get("status") == "supported"
+            rejected_through = self._heating_rejection_floor(position)
+            own_new_support = (rejected_through is None or candidate is not None
+                               and candidate.original_points[0][0] >= rejected_through
+                               and candidate.onset_at > rejected_through)
+            humidity_available = self._original_humidity_available((position,), now)
+            if episode is None and supported and own_new_support and not humidity_available:
+                episode = state["door"] = self._new_door_episode((position,), now, candidate.onset_at)
+            native = episode.get("original_open") if episode else None
+            coherent = bool(episode is not None and self._value(position, Quantity.TEMPERATURE, now) is not None
+                            and self._curve_series[position, Quantity.TEMPERATURE]["source"] == episode["sources"][position][0]
+                            and self._curve_series[position, Quantity.TEMPERATURE]["epoch"] == episode["epochs"][position][0])
+            opening = bool(coherent and supported and own_new_support and (not humidity_available or native is not None)
+                           and candidate.onset_at >= self.heating_since
+                           and candidate.original_points[0][0] >= self.heating_since)
+            confirmation = False
+            bound = episode.get("original_heating") if episode else None
+            window = dict(prefix.temperatures).get(position.value) if prefix else None
+            if opening and bound is None and window is not None:
+                bound = episode["original_heating"] = {
+                    "received_at": prefix.received_at, "windows": ((position.value, window),),
+                }
+            counterform = None
+            if bound is not None and window is not None:
+                reference = dict(bound["windows"])[position.value]
+                form = original_followup(window, reference)
+                significance = self.p["curve_original_significance"]
+                counterform = bool(form is not None
+                                   and form.fresh_current == self.p["curve_original_samples"]
+                                   and form.current_direction > significance
+                                   and form.current_change > significance)
+            if episode is not None:
+                episode["retained_heating_only"] = bool(coherent and supported and not humidity_available)
+            if opening and not counterform:
+                floor = max(curve_floor, self.heating_since, rejected_through or self.heating_since)
+                self._remember_curve_proposal(
+                    "door_open_heating", (position,), (Quantity.TEMPERATURE,), floor=floor,
+                    context=(self._curve_door_context, episode["started_at"], floor, self.heating_since),
+                    observed_at=decision_at,
+                )
+                confirmation = self._curve_confirmation(
+                    "door_open_heating", (position,), (Quantity.TEMPERATURE,), floor=floor,
+                )
+                if humidity_available:
+                    confirmation = False  # Native RH-Bestätigung hat oben Vorrang.
+            results[position] = self._position_result(
+                position, available=self._value(position, Quantity.TEMPERATURE, now) is not None,
+                confirmed=confirmation, pending=opening and not counterform,
+                refuted=bound is not None and counterform is True, candidate=bound,
+                reason="resolved_temperature_recovery" if counterform else None,
+            )
+            local = self._position_trace(trace)
+            _decision(local, "door_open_heating", confirmation, {
+                "operation_enabled": _gate(bool(enabled)),
+                "heating_context": _gate(self.heating_since is not None),
+                "episode_temperature_sources": _gate(coherent),
+                "heating_shape_and_original_support": _gate(opening),
+                "humidity_candidate_required": _gate(humidity_available),
+                "bound_humidity_candidate": _gate(native is not None if humidity_available else None),
+                "fresh_bound_original_confirmation": _gate(False if humidity_available else None),
+                "fixed_original_confirmation": _gate(confirmation if opening else None),
+                "temperature_recovery_counterform": _gate(counterform),
+                "own_support_after_counterform": _gate(own_new_support),
+                **{f"{position.value}:{name}_since_heating": _gate(
+                    value >= self.heating_since if value is not None else None,
+                    value=value, operator=">=", threshold=self.heating_since, unit="s",
+                    reference="heating_started_at",
+                ) for name, value in (
+                    ("onset", candidate.onset_at if candidate else None),
+                    ("first_original", candidate.original_points[0][0] if candidate else None),
+                )},
+            }, reason="retained_heating_only")
+            records[position] = local
+            flags[position] = (opening, confirmation)
+        selected = self._select_position("door_open_heating", results, self._door_owner, trace)
+        if selected is None:
+            return False, False
+        self._copy_position_trace(trace, records[selected])
+        self._record_consulted_evidence(trace, "door_open_heating", records)
+        if results[selected]["status"] == "refuted":
+            leading = Position(trace["position_selection"]["door_open_heating"]["leading"])
+            self._reject_heating_position(leading, prefix, trace)
+        if results[selected]["status"] in ("pending", "confirmed"):
+            self._adopt_door_position(selected, now)
+            return flags[selected]
+        return False, False
+
 
     @property
     def infusion_episode(self) -> InfusionEpisodeSnapshot | None:
@@ -328,24 +1051,33 @@ class Detector:
         series["last_original_received_at"] = None
         series["epoch"] += 1
         self._original_time_support_cache.pop((position, quantity), None)
-        if self.door_episode is not None and position in self.door_episode["positions"]:
-            self._reset_original_ventilation(self.door_episode, "original_epoch_changed")
+        position_state = self._position_state(position)
+        local_door = position_state["door"]
+        if local_door is not None and position in local_door["positions"]:
+            self._reset_original_ventilation(local_door, "original_epoch_changed")
             if not self.open:
-                self.door_episode.pop("original_open", None)
-                self.door_episode.pop("original_ventilation_phase", None)
+                local_door.pop("original_open", None)
+                local_door.pop("original_ventilation_phase", None)
             if quantity == Quantity.TEMPERATURE:
-                self.door_episode.get("original_temperature_falls", {}).pop(position, None)
-                self.door_episode.get(
+                local_door.get("original_temperature_falls", {}).pop(position, None)
+                local_door.get(
                     "original_temperature_confirmation_after", {},
                 ).pop(position, None)
-                self.door_episode.pop("original_close", None)
+                local_door.pop("original_close", None)
         self._curve_recovery_evidence.pop((position, quantity), None)
-        episode = self._infusion_episode
+        if not self.open:
+            position_state["door"] = None
+        elif local_door is not None:
+            local_door["invalid"].add(position)
+        position_state["person"].clear()
+        episode = position_state["infusion"]
         if (
-            episode is not None and episode["phase"] == "pending"
+            episode is not None and episode["confirmed_detection"] is None
             and position in episode["positions"]
         ):
-            self._finish_infusion_context("pending_source_context")
+            position_state["infusion"] = position_state["infusion_candidate"] = None
+            if self._infusion_episode is episode:
+                self._infusion_episode = self._original_infusion_candidate = None
             episode = None
         if (
             episode is not None and episode["phase"] == "active"
@@ -359,6 +1091,9 @@ class Detector:
             episode["backgrounds"].clear()
             episode["level_evaluated"].clear()
             episode["original_background"] = None
+        position_state["infusion_candidate"] = None
+        if self._infusion_owner == position:
+            self._original_infusion_candidate = None
         for mapping in (
             self._curve_candidates, self._curve_evaluated, self._curve_status
         ):
@@ -407,7 +1142,7 @@ class Detector:
             self._correct_curve_proposals(position, quantity, point_at, measurement.value)
             self._correct_infusion_tail(position, quantity, point_at, measurement.value)
             self._clear_curve_series(position, quantity)
-            self._record_original_prefix(measurement.received_at, original=False)
+            self._record_original_prefix(measurement.received_at, original=False, changed_position=position)
             return
         series = self._curve_series[position, quantity]
         timeout = self.p["sensor_timeout_seconds"]
@@ -439,13 +1174,14 @@ class Detector:
         )
         series["version"] += 1
         if corrected:
-            if self.door_episode is not None and position in self.door_episode["positions"]:
-                self.door_episode.pop("original_open", None)
-                self.door_episode.pop("original_close", None)
+            local_door = self._position_state(position)["door"]
+            if local_door is not None and position in local_door["positions"]:
+                local_door.pop("original_open", None)
                 if not self.open:
-                    self.door_episode.pop("original_ventilation_phase", None)
+                    local_door.pop("original_ventilation_phase", None)
                 if quantity == Quantity.TEMPERATURE:
-                    falls = self.door_episode.get("original_temperature_falls", {})
+                    local_door.pop("original_close", None)
+                    falls = local_door.get("original_temperature_falls", {})
                     fall = falls.get(position)
                     references = tuple(
                         window for key in ("window", "braking_window", "recovery_window")
@@ -475,21 +1211,21 @@ class Detector:
                     # Eine unberührte historische Form bleibt derselbe Beleg.
                     # Ihr aktueller Anschluss braucht nach der Korrektur aber
                     # wieder zwei eigene neue Originalblöcke dieser T-Rolle.
-                    self.door_episode.setdefault("original_temperature_confirmation_after", {})[
+                    local_door.setdefault("original_temperature_confirmation_after", {})[
                         position
                     ] = point_at
-                self._reset_original_ventilation(self.door_episode, "original_corrected")
+                self._reset_original_ventilation(local_door, "original_corrected")
                 if quantity == Quantity.HUMIDITY:
                     # Das laufende Mittelminimum hat ohne seine korrigierte
                     # Stütze keinen weiterhin belastbaren RH-Erholungsbeleg.
-                    self.door_episode.pop("original_humidity_minima", None)
+                    local_door.pop("original_humidity_minima", None)
             self._correct_smooth_close_evidence(position, quantity, point_at)
             self._correct_curve_proposals(position, quantity, point_at, measurement.value)
             self._correct_infusion_tail(position, quantity, point_at, measurement.value)
         else:
             series["last_original_version"] = series["version"]
             series["last_original_received_at"] = measurement.received_at
-        self._record_original_prefix(measurement.received_at, original=not corrected)
+        self._record_original_prefix(measurement.received_at, original=not corrected, changed_position=position)
 
     def _original_context(self):
         return tuple((position, tuple(
@@ -524,7 +1260,7 @@ class Detector:
         return next((support for name, role, support in prefix.time_supports
                      if name == position.value and role == quantity), None)
 
-    def _record_original_prefix(self, received_at, *, original):
+    def _record_original_prefix(self, received_at, *, original, changed_position=None):
         """Jedes angenommene Präfix erhalten; ein Raster ist kein neues Original."""
         points, windows, temperatures, humidity_kinks, humidities = [], [], [], [], []
         time_supports = []
@@ -582,9 +1318,13 @@ class Detector:
                 windows.append((position.value, OriginalPositionWindows(*features)))
         if len(self._original_prefixes) == self._original_prefixes.maxlen:
             self._original_prefix_overflow = True
+            discarded = self._original_prefixes[0].changed_position
+            self._original_prefix_overflow_positions.update(
+                (discarded,) if discarded is not None else self.positions,
+            )
         self._original_prefixes.append(_OriginalPrefix(
             received_at, original, self._original_context(), tuple(points), tuple(windows),
-            tuple(temperatures), tuple(humidity_kinks), tuple(humidities), tuple(time_supports),
+            tuple(temperatures), tuple(humidity_kinks), tuple(humidities), tuple(time_supports), changed_position,
         ))
 
     @staticmethod
@@ -769,6 +1509,10 @@ class Detector:
 
     def _original_temperature_braking_form(self, episode, prefix, position, fall):
         """Den gebundenen Bremsknick durch spätere eigene Originale nachprüfen."""
+        if (episode.get("rejected_close_after") is not None
+                and dict(prefix.temperatures)[position.value].current[0][0]
+                <= episode["rejected_close_after"]):
+            return
         held = fall.get("braking_form")
         floor = max(episode["started_at"], fall["window"].newest_at)
         samples = next(temperature for role, temperature, _ in prefix.points if role == position)
@@ -911,7 +1655,7 @@ class Detector:
             result.append((name, cached[1]))
         return tuple(result)
 
-    def _original_opening_infusion_guard(self, candidate, prefix, positions):
+    def _original_opening_infusion_guard(self, candidate, prefix, positions, state):
         """Aufgussrückkehr nur mit eigenständigem T-Verlust als Öffnung zulassen.
 
         Die nativen RH-Anstiegsbesitzer liefern ihre unveränderten T-Baselines.
@@ -921,8 +1665,8 @@ class Detector:
         fallende Blöcke müssen ihn gegenüber der lokalen Bewegung abgrenzen.
         """
         context = self._original_bound_context(prefix.context, positions)
-        episode = self._infusion_episode
-        components = [self._original_infusion_candidate]
+        episode = state["infusion"]
+        components = [state["infusion_candidate"]]
         if episode is not None and episode["phase"] in ("pending", "active"):
             components.extend((episode.get("original_start_component"),
                                episode.get("original_component")))
@@ -1031,7 +1775,7 @@ class Detector:
         # Die alte Zeugenstütze darf den Ring verlassen; der Aufrufer prüft
         # den fortgeschriebenen Kandidatenanschluss mit _original_contiguous.
         if time_support is None:
-            return False
+            return None
         samples = tuple(samples)
         gap = self.p[f"curve_original_gap_humidity_{name}_seconds"]
         arguments = (samples, witness.onset_at, window, count, significance, gap, time_support)
@@ -1355,6 +2099,8 @@ class Detector:
                 ))[name] if fall is not None and fall.get("braking_window") is None
                     and window.b < -significance * window.e_minus else None)
                 if (fall is not None and not fall.get("close_counterform", False)
+                        and (episode.get("rejected_close_after") is None
+                             or window.current[0][0] > episode["rejected_close_after"])
                         and braking is not None and braking.effective_change > 0):
                     fall["recovery_received_at"] = prefix.received_at
                     fall["braking_window"] = window
@@ -1563,10 +2309,9 @@ class Detector:
         return status, features, support
 
     def _original_ventilation_evidence(
-        self, prefix, channels, now, decision_at, trace, emit, *, closing, close_value=None,
+        self, prefix, channels, now, decision_at, trace, episode, *, closing, close_value=None,
     ):
         """RH-Lüften und danach vollständiges AH-Lüften in derselben Tür."""
-        episode = self.door_episode
         candidate = episode.get("original_open") if episode is not None else None
         if episode is None or not self.open and not (
             candidate is not None and candidate.get("lowering_witness") is not None
@@ -1605,7 +2350,7 @@ class Detector:
         if complete is not None and complete.get("published", True):
             return
         sources_coherent = all(
-            position in channels and position not in self.ventilation_invalid
+            position in channels and position not in episode["invalid"]
             and tuple(self._curve_series[position, quantity]["source"]
                       for quantity in (Quantity.TEMPERATURE, Quantity.HUMIDITY))
             == episode["sources"][position]
@@ -1658,6 +2403,7 @@ class Detector:
         def stage_evidence(name, key, humidity_windows, *, paired):
             gates = {"opening_sources_coherent": _gate(sources_coherent)}
             initial = maintained = True
+            counterform = False
             newest, anchors = [], {}
             for position in positions:
                 humidity = humidity_windows[position]
@@ -1669,6 +2415,15 @@ class Detector:
                     humidity, temperature, significance=significance,
                     reference_humidity=reference,
                 )
+                if pending is not None:
+                    temperature_reference = dict(pending["temperature_windows"]).get(position)
+                    counterform |= bool(
+                        reference is not None and humidity.current[0][0] > reference.newest_at
+                        and humidity.v > significance * humidity.e
+                        or temperature_reference is not None
+                        and temperature.current[0][0] > temperature_reference.newest_at
+                        and temperature.v > significance * temperature.e
+                    )
                 initial &= form is not None and form.abating
                 maintained &= form is not None and form.abating
                 if form is not None:
@@ -1737,7 +2492,7 @@ class Detector:
             retained = completed_stage is not None and not completed_stage.get("published", True)
             proven = self.open and not closing and (evidence_confirmed or retained)
             stage = {
-                "evaluated": True,
+                "evaluated": True, "counterform": counterform,
                 "initial_form": initial, "maintained_form": maintained,
                 "candidate_at": candidate["received_at"] if candidate is not None else None,
                 "candidate_originals": candidate["newest"] if candidate is not None else (),
@@ -1772,7 +2527,7 @@ class Detector:
             record[name] = stage
             return stage, gates
 
-        if not self.open or not self.ventilated:
+        if not episode.get("original_ventilation_rh_confirmed", {}).get("published", False):
             rh_windows = {position: windows[position.value].humidity for position in positions}
             if any(window.current[0][0] < episode["original_ventilation_floor"]
                    for window in rh_windows.values()):
@@ -1794,18 +2549,8 @@ class Detector:
                     episode["original_ventilation_rh_confirmed"] = {
                         **relative, "windows": episode["original_ventilation_rh"]["humidity_windows"],
                         "temperature_windows": episode["original_ventilation_rh"]["temperature_windows"],
-                        "published": self.open,
+                        "published": False,
                     }
-                if relative["proven"]:
-                    episode["original_ventilation_rh_confirmed"].update(
-                        published=True, published_at=now,
-                    )
-                    episode.pop("original_ventilation_rh", None)
-                    self.ventilated = True
-                    self._curve_ventilation_at = now
-                    self._clear_curve_route("door_close", keep_status=True,
-                                            reason="ventilation_after_onset")
-                    emit(Kind.VENTILATION, event_channels=positions)
         if status == "invalid":
             self._reset_original_ventilation(
                 episode, support.get("reason", "invalid_water_support"),
@@ -1837,22 +2582,18 @@ class Detector:
             episode["original_ventilation_complete"] = {
                 **absolute, "windows": episode["original_ventilation"]["humidity_windows"],
                 "temperature_windows": episode["original_ventilation"]["temperature_windows"],
-                "published": self.open,
+                "published": False,
             }
-        if absolute["proven"]:
-            episode["original_ventilation_complete"].update(published=True, published_at=now)
-            episode.pop("original_ventilation", None)
-            emit(Kind.VENTILATION_COMPLETE, event_channels=positions)
 
-    def _original_door_evidence(self, prefixes, channels, now, decision_at, trace, emit):
+    def _original_door_position_evidence(self, prefixes, channels, now, decision_at, trace, state):
         """Türformen und Lüftung kausal im einzigen Türbestand fortschreiben."""
         opening = closing = close_candidate = False
         level_close = False
         closing_positions = ()
         opening_value = closing_value = None
         significance = self.p["curve_original_significance"]
-        for index, prefix in enumerate(prefixes):
-            episode = self.door_episode
+        for prefix in prefixes:
+            episode = state["door"]
             positions = episode["positions"] if episode is not None else channels
             if episode is not None:
                 self._original_temperature_fall_evidence(episode, prefix, trace)
@@ -1867,13 +2608,13 @@ class Detector:
                     prefix, closing_positions, (Quantity.TEMPERATURE,),
                 ):
                     self._original_ventilation_evidence(
-                        prefix, channels, now, decision_at, trace, emit, closing=False,
+                        prefix, channels, now, decision_at, trace, episode, closing=False,
                     )
                     continue
             elif not complete_prefix:
                 continue
             if episode is not None and not self.open and episode.get("original_context") not in (None, context):
-                self.door_episode = episode = None
+                state["door"] = episode = None
                 positions = channels
                 context = self._original_bound_context(prefix.context, positions)
             if episode is not None and episode.get("original_evaluation_context") != context:
@@ -1941,8 +2682,7 @@ class Detector:
                     binding_humidity_fall=_gate(binding),
                 )
                 if episode is None and binding:
-                    self._start_door_episode(positions, now, now)
-                    episode = self.door_episode
+                    state["door"] = episode = self._new_door_episode(positions, now, now)
                     episode["original_context"] = context
                     episode["original_evaluation_context"] = context
                     self._original_temperature_fall_evidence(episode, prefix, trace)
@@ -2015,7 +2755,7 @@ class Detector:
                     episode.pop("original_ventilation_phase", None)
                     continue
                 infusion_independent, infusion_guard = (
-                    self._original_opening_infusion_guard(candidate, prefix, positions)
+                    self._original_opening_infusion_guard(candidate, prefix, positions, state)
                     if candidate is not None else (False, None)
                 )
                 if candidate is not None and prefix.original:
@@ -2119,11 +2859,11 @@ class Detector:
                 # darf nicht unter dem alten Vorlaufniveau verborgen bleiben,
                 # wenn später die zweite Rolle einen neuen Fall bindet.
                 humidity_branch_counterform = bool(candidate) and any(
-                    not self._original_opening_humidity_connected(
+                    self._original_opening_humidity_connected(
                         points[key[1].value][1], onset,
                         windows[key[1].value].humidity, key[1].value,
                         self._original_prefix_time_support(prefix, key[1], key[2]),
-                    )
+                    ) is False
                     for key, onset in candidate["onset_witnesses"]
                     if key[2] == Quantity.HUMIDITY
                 )
@@ -2232,6 +2972,14 @@ class Detector:
                 temperature_counterform = bool(
                     temperature_recovery or temperature_fall_ended and not preserved_lowering
                 )
+                forms["resolved_opening_counterform"] = bool(
+                    candidate is not None and followups and any(
+                        form.fresh_current == self.p["curve_original_samples"]
+                        and form.current_direction > significance
+                        and form.current_change > significance
+                        for form in followups.values()
+                    )
+                )
                 forms["temperature_fall_counterform"] = _gate(temperature_counterform)
                 forms["temperature_recovery_counterform"] = _gate(temperature_recovery)
                 forms["temperature_fall_ended"] = _gate(temperature_fall_ended)
@@ -2264,9 +3012,7 @@ class Detector:
                         episode.pop("original_ventilation_phase", None)
                         continue
                     if episode is not None:
-                        self.door_episode = None
-                        self.baseline = {}
-                        self.ventilation_positions = ()
+                        state["door"] = None
                     continue
                 if episode is None:
                     continue
@@ -2376,7 +3122,7 @@ class Detector:
                 )
                 if witness is not None:
                     self._original_ventilation_evidence(
-                        prefix, channels, now, decision_at, trace, emit, closing=False,
+                        prefix, channels, now, decision_at, trace, episode, closing=False,
                     )
                 if opening:
                     episode["original_humidity_minima"] = {
@@ -2389,7 +3135,6 @@ class Detector:
                     candidate["confirmation_received_at"] = prefix.received_at
                     # Die äußere Aktion bestätigt dieselbe Öffnung. Spätere
                     # bereits empfangene Präfixe danach nicht verschlucken.
-                    self._original_prefixes.extend(prefixes[index + 1:])
                     break
                 continue
             if episode is None:
@@ -2410,7 +3155,7 @@ class Detector:
                 episode.pop("original_close", None)
                 closing_value = None
                 self._original_ventilation_evidence(
-                    prefix, channels, now, decision_at, trace, emit, closing=False,
+                    prefix, channels, now, decision_at, trace, episode, closing=False,
                 )
                 continue
             if minima is None and same_opening_sources and contrasts is not None:
@@ -2431,7 +3176,11 @@ class Detector:
                 and background.window.b < -significance * background.window.e_minus
                 for position in closing_positions
             )
-            close_candidate = local_braking or thermal.warming_min > significance
+            own_new_support = (episode.get("rejected_close_after") is None or all(
+                dict(prefix.temperatures)[position.value].current[0][0]
+                > episode["rejected_close_after"] for position in closing_positions
+            ))
+            close_candidate = own_new_support and (local_braking or thermal.warming_min > significance)
             newest = tuple((position.value, dict(prefix.temperatures)[position.value].newest_at)
                            for position in closing_positions)
             candidate = episode.get("original_close")
@@ -2538,7 +3287,7 @@ class Detector:
             fall_followups = self._original_temperature_fall_followups(
                 episode, prefix, closing_positions,
             )
-            level_close = discrete_braking and self._original_temperature_braking(fall_followups)
+            level_close = own_new_support and discrete_braking and self._original_temperature_braking(fall_followups)
             close_candidate = candidate is not None or level_close
             correction_fresh = self._original_close_confirmation_fresh(
                 episode, prefix, closing_positions,
@@ -2633,13 +3382,12 @@ class Detector:
                     )
                     candidate["confirmation_received_at"] = prefix.received_at
             self._original_ventilation_evidence(
-                prefix, channels, now, decision_at, trace, emit, closing=closing,
+                prefix, channels, now, decision_at, trace, episode, closing=closing,
                 close_value=closing_value,
             )
             if closing:
-                self._original_prefixes.extend(prefixes[index + 1:])
                 break
-        episode = self.door_episode
+        episode = state["door"]
         if (episode is not None and self.open
                 and (episode.get("original_ventilation") or episode.get("original_ventilation_rh"))):
             if any(
@@ -2753,20 +3501,21 @@ class Detector:
         """Native RH-Trennung und zulässige frühere Astzeugen gemeinsam zuordnen."""
         if episode is None:
             return "new"
-        if episode["phase"] != "ended":
+        end_at = episode.get("booked_end_at", episode["level_end_at"])
+        if episode["phase"] != "ended" and end_at is None:
             return "continuation"
         onsets = tuple(onsets)
-        if any(onset <= episode["level_end_at"] for onset in onsets):
+        if any(onset <= end_at for onset in onsets):
             return "continuation"
         if intervals and len(intervals) == len(windows):
             first_edges = tuple(intervals.values())
-            if any(edge.current[0] <= episode["level_end_at"] for edge in first_edges):
+            if any(edge.current[0] <= end_at for edge in first_edges):
                 return "continuation"
-            if all(edge.previous[0] > episode["level_end_at"] for edge in first_edges):
+            if all(edge.previous[0] > end_at for edge in first_edges):
                 return "new"
             return "unknown"
         if (len(onsets) == len(windows)
-                or all(pair.humidity.current[0][0] > episode["level_end_at"] for _, pair in windows)):
+                or all(pair.humidity.current[0][0] > end_at for _, pair in windows)):
             return "new"
         return "unknown"
 
@@ -2873,15 +3622,15 @@ class Detector:
         self._clear_curve_route("infusion", keep_status=True)
         emit(Kind.INFUSION, effective, episode["positions"])
 
-    def _original_infusion_evidence(
-        self, prefixes, channels, now, decision_at, floor, trace, onset_allowed, emit, allowed,
+    def _original_infusion_position_evidence(
+        self, prefixes, channels, now, decision_at, floor, trace, onset_allowed, allowed, state,
     ):
         """Originalformen im einzigen Aufgussbestand fortschreiben."""
         significance = self.p["curve_original_significance"]
         early_threshold = self.p["curve_original_new_infusion_contrast"]
         for prefix in prefixes:
-            episode = self._infusion_episode
-            component = self._original_infusion_candidate
+            episode = state["infusion"]
+            component = state["infusion_candidate"]
             positions = (
                 episode["positions"] if episode is not None and episode["phase"] != "ended"
                 else component["positions"] if component is not None else channels
@@ -2891,11 +3640,11 @@ class Detector:
             if prefix.received_at < floor:
                 continue
             if not self._original_prefix_valid(prefix, positions):
-                self._original_infusion_background(prefix, now, decision_at, trace)
+                self._original_infusion_background(prefix, now, decision_at, trace, state=state)
                 continue
             contrasts = original_contrasts(dict(prefix.windows), expected_positions=expected)
             if contrasts is None:
-                self._original_infusion_background(prefix, now, decision_at, trace)
+                self._original_infusion_background(prefix, now, decision_at, trace, state=state)
                 continue
             humidity_kinks = self._original_humidity_kinks(prefix, positions)
             kink_gate = self._original_humidity_kink_gate(humidity_kinks, rising=True)
@@ -2929,14 +3678,14 @@ class Detector:
                 ),
             }
             if not positions or not all(position in channels for position in positions):
-                self._pause_infusion_episode()
+                self._pause_position_infusion(state)
                 continue
             if allowed is not None and not allowed(Kind.INFUSION):
-                self._pause_infusion_episode()
+                self._pause_position_infusion(state)
                 break
-            component = self._original_infusion_candidate
+            component = state["infusion_candidate"]
             if component is not None and component["context"] != context:
-                self._original_infusion_candidate = component = None
+                state["infusion_candidate"] = component = None
             if component is not None and not self._original_contiguous(
                 prefix, component["continuity"],
             ):
@@ -2976,7 +3725,7 @@ class Detector:
                     component["rise_ended"] = True
             if (component is not None and (component["fall_confirmed"] or component["rise_ended"])
                     and tolerated_onset):
-                self._original_infusion_candidate = component = None
+                state["infusion_candidate"] = component = None
             if component is None and binding:
                 previous_component = (episode.get("original_component")
                                       if episode is not None else None)
@@ -3033,10 +3782,10 @@ class Detector:
                     "onset_intervals": intervals,
                     "initial_historical_onsets": valid_onsets,
                 }
-                self._original_infusion_candidate = component
+                state["infusion_candidate"] = component
             if component is not None and not component["fall_confirmed"]:
                 if not component["strong"] and contrasts.rise <= significance:
-                    self._original_infusion_candidate = component = None
+                    state["infusion_candidate"] = component = None
                 else:
                     for name, pair in contrasts.positions:
                         position = Position(name)
@@ -3067,7 +3816,7 @@ class Detector:
                     # Ein früherer Zeuge darf Fortsetzung belegen. Vollständig
                     # spätere native RH-Fenster brauchen keinen optionalen
                     # historischen Beginn, um eine neue Episode zu bestätigen.
-                    if episode is not None and episode["phase"] == "ended":
+                    if episode is not None and (episode["phase"] == "ended" or episode.get("booked_end_at") is not None):
                         valid_onsets = tuple(candidate.onset_at
                                              for candidate in component["onset_witnesses"].values())
                         component["assignment"] = self._original_infusion_assignment(
@@ -3224,20 +3973,20 @@ class Detector:
                         "bound_fall_retained": _gate(component["fall_ready"]),
                     })
                     if terminal_negative and not component["qualified"]:
-                        self._original_infusion_candidate = component = None
+                        state["infusion_candidate"] = component = None
                     elif (component["strong"] and positive and not component["qualified"]
                           and component["assignment"] != "unknown"):
                         if episode is None or (
                             not component["continuing"]
                             and episode.get("original_component") is not component
                         ):
-                            self._start_infusion_episode(
+                            state["infusion"] = self._new_infusion_episode(
                                 positions, min(component["onsets"].values()), now,
                                 rise_key=None, water=water, onsets=component["onsets"],
                             )
-                            episode = self._infusion_episode
+                            episode = state["infusion"]
                         else:
-                            self._update_infusion_end(episode, None)
+                            state["infusion_updates"].append((episode, None))
                             episode["phase"] = "active" if episode["confirmed_at"] is not None else "pending"
                             episode["level_end_at"] = None
                             episode["end_basis"] = None
@@ -3281,9 +4030,8 @@ class Detector:
                             )
                             if early_rise:
                                 component["early_confirmation_windows"] = contrasts.positions
-                            self._original_confirm_infusion(
-                                episode, now, decision_at, floor, onset_allowed, emit,
-                            )
+                            episode["confirmation_ready"] = True
+                            episode["phase"] = "active"
                             trace["original_infusion"].update(
                                 confirmation_basis=episode["confirmation_basis"],
                             )
@@ -3295,11 +4043,11 @@ class Detector:
                             )
                             trace["conditions"]["infusion"] = True
                             trace["decisions"]["infusion"]["result"] = True
-            self._original_infusion_background(prefix, now, decision_at, trace, contrasts)
+            self._original_infusion_background(prefix, now, decision_at, trace, contrasts, state=state)
 
-    def _original_infusion_background(self, prefix, now, decision_at, trace, contrasts=None):
+    def _original_infusion_background(self, prefix, now, decision_at, trace, contrasts=None, *, state):
         """RH-Abschluss fortführen; unbekannte T-Formen widerlegen ihn nicht."""
-        episode = self._infusion_episode
+        episode = state["infusion"]
         if episode is None or episode["phase"] not in ("pending", "active"):
             return
         positions = episode["positions"]
@@ -3318,7 +4066,14 @@ class Detector:
             forms = contrasts
             windows = tuple((name, pair.humidity) for name, pair in contrasts.positions)
         last = episode.get("original_component")
-        component = self._original_infusion_candidate
+        if last is None or any(
+            dict(last["context"])[position][1]
+            != dict(prefix.context)[position][1] for position in positions
+        ):
+            _decision(trace, "infusion_background", None, {}, evaluated=False,
+                      reason="own_peak_support_unavailable")
+            return
+        component = state["infusion_candidate"]
         pending = episode["phase"] == "pending"
         fallen = bool(last is not None and (
             last["fall_confirmed"] or pending and last["rise_ended"]
@@ -3377,19 +4132,20 @@ class Detector:
             )
             if fresh_block:
                 if pending:
-                    self._finish_infusion_context("pending_original_background")
+                    state["infusion"] = state["infusion_candidate"] = None
                     return
                 episode["phase"] = "ended"
                 episode["level_end_at"] = now
                 episode["end_basis"] = "original_background"
-                self._update_infusion_end(episode, InfusionEnd(
+                episode["evidence_end"] = InfusionEnd(
                     now, decision_at, now, episode["end_basis"], "evidence_grid",
-                ))
+                )
+                state["infusion_updates"].append((episode, episode["evidence_end"]))
                 episode["original_background"] = None
                 episode["original_end_windows"] = windows
-                self._infusion_segment_start = {
+                self._infusion_segment_start.update({
                     Position(name): window.current[0][0] for name, window in windows
-                }
+                })
 
     def _clear_curve_route(self, route, *, keep_status=False, reason=None, position=None):
         if reason is not None:
@@ -4545,6 +5301,10 @@ class Detector:
 
     def _pause_infusion_episode(self):
         """Ein unbekannter Verlauf bestätigt keinen noch unbelegten Puls."""
+        for state in self._position_evidence.values():
+            self._pause_position_infusion(state)
+        if self._infusion_owner is not None:
+            self._infusion_episode = self._position_state(self._infusion_owner)["infusion"]
         episode = self._infusion_episode
         self._original_infusion_candidate = None
         if episode is not None and episode["phase"] == "pending":
@@ -4564,13 +5324,27 @@ class Detector:
     def _update_infusion_end(self, episode, end):
         """Jeden echten Übergang erhalten, auch vor dem Löschen des Owners."""
         detection = episode.get("confirmed_detection")
+        if end is not None and detection is not None and end.confirmed_at < detection.detected_at:
+            end = replace(end, confirmed_at=detection.detected_at)
         if detection is None or episode.get("reported_end") == end:
             return
+        if episode is self._infusion_episode:
+            for state in self._position_evidence.values():
+                local = state["infusion"]
+                if local is not None and local.get("confirmed_detection") is detection:
+                    if end is None:
+                        local.pop("booked_end_at", None)
+                    else:
+                        local["booked_end_at"] = end.effective_at
         episode["reported_end"] = end
         self._infusion_updates.append(InfusionEpisodeUpdate(detection, end))
 
     def _finish_infusion_context(self, reason):
         """Eine tatsächliche neue Tür-/Betriebsfolge besitzt eigene Aufgüsse."""
+        for state in self._position_evidence.values():
+            state["infusion"] = state["infusion_candidate"] = None
+            state["infusion_updates"].clear()
+        self._infusion_owner = None
         self._infusion_episode = None
         self._original_infusion_candidate = None
         self._infusion_segment_start.clear()
@@ -4578,10 +5352,10 @@ class Detector:
         self._clear_curve_route("infusion", reason=reason)
         self._clear_curve_route("infusion_decay", reason=reason)
 
-    def _start_infusion_episode(
+    def _new_infusion_episode(
         self, positions, beginning, now, *, rise_key, water, onsets=None,
     ):
-        self._infusion_episode = {
+        return {
             "phase": "pending",
             "positions": tuple(positions),
             "onset_at": beginning,
@@ -4717,8 +5491,9 @@ class Detector:
 
     def _correct_infusion_tail(self, position, quantity, corrected_at, value):
         """Gebundene Wasser-, Abfall- und Endzeugen am Original nachprüfen."""
-        episode = self._infusion_episode
-        if self._original_infusion_candidate is not None or (
+        position_state = self._position_state(position)
+        episode = position_state["infusion"]
+        if position_state["infusion_candidate"] is not None or (
             episode is not None and episode.get("original")
         ):
             self._correct_original_infusion(position, quantity, corrected_at, value)
@@ -4866,12 +5641,12 @@ class Detector:
             )))
         return tuple(result), changed
 
-    def _correct_original_infusion(self, position, quantity, corrected_at, value):
+    def _correct_position_infusion(self, position, quantity, corrected_at, value, position_state):
         """Gespeicherte OLS-Zeugen korrigieren, niemals neue Evidenz erzeugen."""
-        episode = self._infusion_episode
+        episode = position_state["infusion"]
         components = []
         for component in (
-            self._original_infusion_candidate,
+            position_state["infusion_candidate"],
             episode.get("original_component") if episode is not None else None,
             episode.get("original_start_component") if episode is not None else None,
         ):
@@ -4993,8 +5768,8 @@ class Detector:
                     component_invalid = True
             if state is None:
                 if component_invalid:
-                    if self._original_infusion_candidate is component:
-                        self._original_infusion_candidate = None
+                    if position_state["infusion_candidate"] is component:
+                        position_state["infusion_candidate"] = None
                     episode_invalid |= episode is not None and any(
                         episode.get(key) is component
                         for key in ("original_component", "original_start_component")
@@ -5043,8 +5818,8 @@ class Detector:
                     **episode["water"][position], "change": change,
                 }
             if component_invalid:
-                if self._original_infusion_candidate is component:
-                    self._original_infusion_candidate = None
+                if position_state["infusion_candidate"] is component:
+                    position_state["infusion_candidate"] = None
                 episode_invalid |= episode is not None and any(
                     episode.get(key) is component
                     for key in ("original_component", "original_start_component")
@@ -5076,13 +5851,13 @@ class Detector:
                 )
         if not episode_invalid:
             return
-        self._original_infusion_candidate = None
+        position_state["infusion_candidate"] = None
         if episode is None:
             return
-        if episode["phase"] == "pending":
-            self._finish_infusion_context("original_evidence_corrected")
+        if episode["confirmed_detection"] is None:
+            position_state["infusion"] = None
             return
-        self._update_infusion_end(episode, None)
+        position_state["infusion_updates"].append((episode, None))
         episode["phase"] = "active"
         episode["level_end_at"] = None
         episode["end_basis"] = None
@@ -5594,8 +6369,7 @@ class Detector:
                     self.ventilation_degraded = True
                 else:
                     self.baseline.pop(m.position, None)
-                self.counts.clear()
-                self.levels.clear()
+                self._position_state(m.position)["person"].clear()
             self.latest[key] = m
             self._record_curve_sample(m, now)
 
@@ -5754,9 +6528,9 @@ class Detector:
             "sources": (reference["Ts"], reference["Hs"]),
         }
 
-    def _start_door_episode(self, channels, now, beginning):
+    def _new_door_episode(self, channels, now, beginning):
         """Am ersten Kurvenkandidaten Rollen, Quellen und Beginn festhalten."""
-        self.door_episode = {
+        return {
             "started_at": beginning,
             "first_observed_at": now,
             "positions": tuple(channels),
@@ -5785,12 +6559,6 @@ class Detector:
             },
             "invalid": set(),
         }
-        self.ventilation_positions = tuple(channels)
-        self.baseline = {}
-        self.ventilation_invalid = set()
-        self.ventilation_degraded = False
-        for position in channels:
-            self._remember_ventilation_baseline(position)
 
     def _episode_frame(self, position, channels):
         """Nur die zu Beginn eingefrorene T/RH-Quellenpaarung darf weiter beweisen."""
@@ -5939,16 +6707,22 @@ class Detector:
         prefix_overflow = self._original_prefix_overflow
         self._original_prefix_overflow = False
         if prefix_overflow:
-            self._original_infusion_candidate = None
-            if self._infusion_episode is not None:
-                self._infusion_episode["original_background"] = None
-            if self.door_episode is not None:
-                self.door_episode.pop("original_open", None)
-                self.door_episode.pop("original_close", None)
-                self.door_episode.pop("original_temperature_falls", None)
-                if not self.open:
-                    self.door_episode.pop("original_ventilation_phase", None)
-                self._reset_original_ventilation(self.door_episode, "original_prefix_overflow")
+            for position in self._original_prefix_overflow_positions or self.positions:
+                state = self._position_state(position)
+                state["infusion_candidate"] = None
+                if state["infusion"] is not None:
+                    state["infusion"]["original_background"] = None
+                episode = state["door"]
+                if episode is not None:
+                    episode.pop("original_open", None)
+                    episode.pop("original_close", None)
+                    episode.pop("original_temperature_falls", None)
+                    if not self.open:
+                        episode.pop("original_ventilation_phase", None)
+                    self._reset_original_ventilation(episode, "original_prefix_overflow")
+            if self._infusion_owner is not None:
+                self._original_infusion_candidate = self._position_state(self._infusion_owner)["infusion_candidate"]
+        self._original_prefix_overflow_positions.clear()
         self._curve_fit_cache = {}
         self._curve_proposal_checks = {}
         if operation_restarted:
@@ -6020,19 +6794,8 @@ class Detector:
             else:
                 faults.append(position.value + "_unavailable")
         channels = tuple(available)
-        if channels != self.active_positions:
-            # Kein Haltebeweis über eine Änderung der benutzten Quellen hinweg.
-            if self.active_positions:
-                self._update_moisture_state(None, now)
-            self.counts.clear()
-            self.levels.clear()
-            episode = self._infusion_episode
-            if not (
-                episode is not None and episode["phase"] in ("pending", "active")
-                and all(position in channels for position in episode["positions"])
-            ):
-                self._curve_infusion_since = None
-                self._clear_curve_route("infusion", reason="positions_changed")
+        for position in set(self.active_positions) - set(channels):
+            self._position_state(position)["person"].clear()
         self.active_positions, self.faults = channels, tuple(faults)
         self._expire_held_curve_proposals(now)
         trace = {
@@ -6132,10 +6895,7 @@ class Detector:
         self._clear_curve_route("door_open" if self.open else "door_close")
         if self.open:
             self._clear_curve_route("door_open_heating")
-        curve_positions = (
-            self.door_episode["positions"] if self.door_episode
-            else channels
-        )
+        curve_positions = self.positions
         curve_floor = (
             self._curve_open_effective_at or self.opened_at or self.origin
             if self.open else self._curve_closed_since
@@ -6149,12 +6909,18 @@ class Detector:
                     (self._curve_door_context, curve_floor),
                 )
             if not self.open and enabled and self.heating_since is not None:
-                heating_floor = max(curve_floor, self.heating_since)
+                heating_floor = max(
+                    curve_floor, self.heating_since,
+                    self._heating_rejection_floor(position) or self.heating_since,
+                )
                 self._curve_candidate(
                     "door_open_heating", position, Quantity.TEMPERATURE,
                     now, decision_at, heating_floor,
                     (self._curve_door_context, self.heating_since),
-                    points_not_before=self.heating_since,
+                    points_not_before=max(
+                        self.heating_since,
+                        self._heating_rejection_floor(position) or self.heating_since,
+                    ),
                 )
 
         # Rastermerkmale bleiben Diagnose; OLS-Originalformen entscheiden.
@@ -6169,90 +6935,10 @@ class Detector:
         )
         # Der vorhandene bedingte Heiz-Sonderweg behält seine eigene
         # kalibrierte Form und Zulassung im selben Türbestand.
-        thermal_opening = thermal_toggle = False
-        heating_candidates = {}
-        if not self.open and enabled and self.heating_since is not None:
-            for position in curve_positions:
-                key = ("door_open_heating", position, Quantity.TEMPERATURE)
-                candidate = self._curve_candidates.get(key)
-                if candidate is not None and self._curve_status.get(key, {}).get("status") == "supported":
-                    heating_candidates[position] = candidate
-            if (self.door_episode is None and heating_candidates
-                    and not self._original_humidity_available(channels, now)):
-                self._start_door_episode(
-                    channels, now, min(candidate.onset_at for candidate in heating_candidates.values()),
-                )
-        episode = self.door_episode
-        if episode is not None and not self.open:
-            humidity_available = self._original_humidity_available(episode["positions"], now)
-            native_candidate = episode.get("original_open")
-            coherent_temperature = all(
-                self._value(position, Quantity.TEMPERATURE, now) is not None
-                and self._curve_series[position, Quantity.TEMPERATURE]["source"]
-                == episode["sources"][position][0]
-                and self._curve_series[position, Quantity.TEMPERATURE]["epoch"]
-                == episode["epochs"][position][0]
-                for position in episode["positions"]
-            )
-            thermal_opening = bool(
-                enabled and self.heating_since is not None and coherent_temperature
-                and (not humidity_available or native_candidate is not None)
-                and all(position in heating_candidates
-                        and heating_candidates[position].onset_at >= self.heating_since
-                        and heating_candidates[position].original_points[0][0] >= self.heating_since
-                        for position in episode["positions"])
-            )
-            episode["retained_heating_only"] = bool(
-                enabled and self.heating_since is not None and coherent_temperature
-                and heating_candidates and not humidity_available
-            )
-            if thermal_opening:
-                heating_floor = max(curve_floor, self.heating_since)
-                self._remember_curve_proposal(
-                    "door_open_heating", episode["positions"], (Quantity.TEMPERATURE,),
-                    floor=heating_floor,
-                    context=(self._curve_door_context, episode["started_at"],
-                             heating_floor, self.heating_since), observed_at=decision_at,
-                )
-                thermal_toggle = self._curve_confirmation(
-                    "door_open_heating", episode["positions"], (Quantity.TEMPERATURE,),
-                    floor=heating_floor,
-                )
-                if humidity_available:
-                    thermal_toggle &= mixed_toggle
-            _decision(trace, "door_open_heating", thermal_toggle, {
-                "operation_enabled": _gate(bool(enabled)),
-                "heating_context": _gate(self.heating_since is not None),
-                "episode_temperature_sources": _gate(coherent_temperature),
-                "heating_shape_and_original_support": _gate(thermal_opening),
-                "humidity_candidate_required": _gate(humidity_available),
-                "bound_humidity_candidate": _gate(
-                    native_candidate is not None if humidity_available else None,
-                ),
-                "fresh_bound_original_confirmation": _gate(
-                    mixed_toggle if humidity_available else None,
-                ),
-                "fixed_original_confirmation": _gate(
-                    thermal_toggle if thermal_opening else None,
-                ),
-            }, reason="retained_heating_only")
-            if self.heating_since is not None:
-                gates = trace["decisions"]["door_open_heating"]["gates"]
-                for position in episode["positions"]:
-                    candidate = heating_candidates.get(position)
-                    for name, value in (
-                        ("onset", candidate.onset_at if candidate else None),
-                        ("first_original", candidate.original_points[0][0] if candidate else None),
-                    ):
-                        gates[f"{position.value}:{name}_since_heating"] = _gate(
-                            value >= self.heating_since if value is not None else None,
-                            value=value, operator=">=", threshold=self.heating_since, unit="s",
-                            reference="heating_started_at",
-                        )
-            if humidity_available and native_candidate is None:
-                self.door_episode = None
-                self.baseline = {}
-                self.ventilation_positions = ()
+        thermal_opening, thermal_toggle = self._heating_position_evidence(
+            prefixes, now, decision_at, enabled, curve_floor, mixed_toggle, trace,
+        )
+
         episode = self.door_episode
         mixed_opening = bool(episode and episode.get("original_open")) if not self.open else None
         closing_quantities = (Quantity.TEMPERATURE,)
@@ -6337,6 +7023,7 @@ class Detector:
             self.ventilation_positions = ()
             self.ventilation_invalid = set()
             self.door_episode = None
+            self._reset_position_doors()
         elif self.open and closing:
             # Den aktuellen Schließkandidaten weiter diagnostizieren; die
             # Lüftungsentscheidung ist bereits präfixkausal erfolgt.
@@ -6373,6 +7060,12 @@ class Detector:
                 "effective_at": open_effective,
             }
             self.open = True
+            self._door_published_stages.clear()
+            episode["event_identity"] = {"effective_at": open_effective,
+                                         "positions": episode["positions"],
+                                         "sources": dict(episode["sources"]),
+                                         "epochs": dict(episode["epochs"])}
+            self._bind_opening_identity(episode, open_effective)
             episode["opening_humidity"] = bool(mixed_toggle)
             episode["started_at"] = open_effective
             self.weak_anchor_at = None
@@ -6426,6 +7119,11 @@ class Detector:
                 self.ventilation_positions = ()
                 self.ventilation_invalid = set()
         if not channels:
+            if self._infusion_episode is not None and self._infusion_episode["phase"] == "active":
+                self._original_infusion_evidence(
+                    prefixes, channels, now, decision_at,
+                    self._curve_infusion_since or self.origin, trace, onset_allowed, emit, allowed,
+                )
             self._update_moisture_state(None, now)
             self._curve_infusion_since = None
             self._clear_curve_route("infusion", reason="unavailable")
@@ -6570,15 +7268,9 @@ class Detector:
                     )
                     for c in channels
                 } if checking or route == "weak" else {}
-                moisture_gates = {}
-                moisture_rise = (self._moisture_rise(
-                    route, moisture_features, gates=moisture_gates,
-                )
-                                 if moisture_features else None)
-                moisture_state = (
-                    self._update_moisture_state(moisture_rise, now)
-                    if route == "weak"
-                    else None
+                (person_position, moisture_rise, moisture_state, fresh_weak,
+                 condition, sustained, edge, moisture_gates) = self._person_position_evidence(
+                    route, moisture_features, checking, now, trace,
                 )
                 if checking:
                     for c in channels:
@@ -6591,25 +7283,7 @@ class Detector:
                             f"{route}_humidity_slope": humidity_slope,
                             f"{route}_absolute_humidity_delta": absolute_change,
                         })
-                fresh_weak = route != "weak" or (
-                    moisture_state["onset_at"] is not None
-                    and self.opened_at is not None
-                    and moisture_state["onset_at"] >= self.opened_at
-                )
-                condition = bool(
-                    checking
-                    and moisture_rise
-                    and (route != "weak" or moisture_state["onset_at"] is not None)
-                    and fresh_weak
-                )
-                sustained = self._sustain(
-                    route,
-                    condition,
-                    p[f"{route}_hold_seconds"],
-                    p["person_step_seconds"],
-                )
                 trace["conditions"][route] = condition if checking else None
-                edge = self._edge(route, sustained)
                 moisture_gates.update(
                     operation_enabled=_gate(bool(enabled)),
                     gang_permitted=_gate(bool(gang_permitted)),
@@ -6653,6 +7327,6 @@ class Detector:
                 _decision(trace, route, edge, moisture_gates, evaluated=bool(checking),
                           reason=None if checking else "person_admission_blocked")
                 if edge:
-                    emit(kind)
+                    emit(kind, event_channels=(person_position,))
         observe()
         return output
