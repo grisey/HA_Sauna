@@ -9,6 +9,7 @@ import unittest
 
 import test_detector as detector_fixtures
 import test_original_curve_evidence as original_fixtures
+from curve_slope_diagnostics import SlopeTransitionDiagnostics
 from test_detector import T0, trace
 from test_original_curve_evidence import CLIMATE, ORIGIN
 
@@ -40,6 +41,8 @@ class DoorCandidateRegressionTests(unittest.TestCase):
                 observed = []
                 detector.observer = observed.append
                 braking_at = fixture._at(detector.index)
+                slope_diagnostic = SlopeTransitionDiagnostics(self, detector)
+                slope_diagnostic.start_control(braking_at)
                 delta = tuple(
                     value / fixture.count if role.endswith("temperature") else 0
                     for role, value in zip(CLIMATE, fixture.fall_step, strict=True)
@@ -61,6 +64,9 @@ class DoorCandidateRegressionTests(unittest.TestCase):
                     )
                     events += fixture._feed(detector, (changed,))
                 events += fixture._ramp(detector, fixture.tail_ticks, delta)
+                case = f"linear_negative_braking:isolated_edge={isolated_edge}"
+                slope_diagnostic.print_closures(case, events=events)
+                slope_diagnostic.print_control(case)
                 closes = [event for event in events if event.kind == Kind.DOOR_CLOSE]
                 self.assertEqual(len(closes), 1)
                 self.assertGreater(closes[0].trace_at, braking_at)
@@ -80,6 +86,8 @@ class DoorCandidateRegressionTests(unittest.TestCase):
     def test_smooth_open_cooling_is_not_a_discrete_closing_transition(self):
         fixture = self.fixture
         detector, events = self._open_door()
+        slope_diagnostic = SlopeTransitionDiagnostics(self, detector)
+        slope_diagnostic.start_control(fixture._at(detector.index))
         initial = fixture._latest(detector)
         duration = fixture.tail_ticks
         # Analytic continuation with unchanged initial slope and smoothly
@@ -95,6 +103,8 @@ class DoorCandidateRegressionTests(unittest.TestCase):
             for tick in range(1, duration + 1)
         )
         events += fixture._feed(detector, states)
+        slope_diagnostic.print_closures("smooth_open_cooling", events=events)
+        slope_diagnostic.print_control("smooth_open_cooling")
         self.assertNotIn(Kind.DOOR_CLOSE, [event.kind for event in events])
         self.assertTrue(detector.open)
 

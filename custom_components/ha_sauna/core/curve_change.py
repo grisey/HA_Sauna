@@ -2637,6 +2637,159 @@ def _common_noise(times, raw_values):
     return noise, center, values, residuals
 
 
+def curve_slope_transition_diagnostic(
+    samples: Sequence[tuple[datetime, float]],
+    *,
+    onset_at: datetime,
+    policy: CurvePolicy,
+) -> dict:
+    """Diagnose C1 continuity versus a slope jump on identical fixed support.
+
+    This helper has no event consumer. Both families share the value at the
+    supplied original knot and independently allow linear, quadratic or cubic
+    sides. The C1 model shares the first derivative as well; its paired jump
+    model adds exactly one right-side linear coefficient. Both use the existing
+    original selection, cubic-residual MAD, robust fit and BIC parameter cost.
+    The knot is fixed: no onset search, shifted split or search penalty occurs.
+
+    Every side-degree pair is reported. Family scores are their respective
+    minima over the same degree grid. A score tie, failed fit or unresolved
+    numerical scale remains unresolved, never evidence against a candidate.
+    A preferred jump reports its sign; no positive-slope requirement is added.
+    """
+    result = {"result": "unresolved", "onset_at": onset_at, "pairs": []}
+    try:
+        result["input_count"] = len(samples)
+        if not _policy_valid(policy) or not isinstance(onset_at, datetime):
+            return {**result, "reason": "invalid_policy_or_onset"}
+        if len(samples) < 2 * policy.min_side_samples:
+            return {**result, "reason": "insufficient_originals"}
+        if any(
+            not isinstance(stamp, datetime)
+            or isinstance(value, bool)
+            or not isfinite(value)
+            for stamp, value in samples
+        ) or any(a[0] >= b[0] for a, b in zip(samples, samples[1:])):
+            return {**result, "reason": "invalid_originals"}
+        selected = _bounded_samples(samples, policy.max_points, onset_at)
+        if selected is None:
+            return {**result, "reason": "onset_not_an_original"}
+        stamps = [stamp for stamp, _ in selected]
+        before_count = bisect_right(stamps, onset_at)
+        after_count = len(stamps) - before_count
+        result.update(
+            selected_count=len(selected),
+            before_count=before_count,
+            after_count=after_count,
+            start_at=stamps[0],
+            newest_at=stamps[-1],
+            selected_originals=tuple(selected),
+        )
+        if min(before_count, after_count) < policy.min_side_samples:
+            return {**result, "reason": "insufficient_side_originals"}
+        span = (stamps[-1] - stamps[0]).total_seconds()
+        if not isfinite(span) or span <= 0:
+            return {**result, "reason": "invalid_time_span"}
+        times = [(stamp - stamps[0]).total_seconds() / span for stamp in stamps]
+        common = _common_noise(times, [value for _, value in selected])
+        if common is None:
+            return {**result, "reason": "unresolved_noise_scale"}
+        noise, center, values, _ = common
+        knot = (onset_at - stamps[0]).total_seconds() / span
+        relative = [time - knot for time in times]
+        result.update(noise_scale=noise, value_center=center, time_scale_seconds=span)
+        family = {"continuous": [], "jump": []}
+        failed_pair = False
+        for left_degree in (1, 2, 3):
+            for right_degree in (1, 2, 3):
+                # Higher powers vanish with their first derivative at zero.
+                continuous = [
+                    [1.0, time]
+                    + [min(time, 0.0) ** power for power in range(2, left_degree + 1)]
+                    + [max(time, 0.0) ** power for power in range(2, right_degree + 1)]
+                    for time in relative
+                ]
+                jump = [
+                    row + [max(time, 0.0)]
+                    for row, time in zip(continuous, relative, strict=True)
+                ]
+                pair = {"left_degree": left_degree, "right_degree": right_degree}
+                for name, rows in (("continuous", continuous), ("jump", jump)):
+                    fitted = _fit(rows, values, noise, policy)
+                    if fitted is None:
+                        pair[name] = None
+                        failed_pair = True
+                        continue
+                    coefficients, loss = fitted
+                    score = loss + len(rows[0]) * log(len(values))
+                    slope_before = coefficients[1] / span
+                    slope_change = coefficients[-1] / span if name == "jump" else 0.0
+                    slope_after = slope_before + slope_change
+                    if not all(isfinite(value) for value in (
+                        score, slope_before, slope_after, slope_change,
+                    )):
+                        pair[name] = None
+                        failed_pair = True
+                        continue
+                    model = {
+                        "left_degree": left_degree,
+                        "right_degree": right_degree,
+                        "parameter_count": len(rows[0]),
+                        "loss": loss,
+                        "score": score,
+                        "coefficients": tuple(coefficients),
+                        "slope_before": slope_before,
+                        "slope_after": slope_after,
+                        "slope_change": slope_change,
+                    }
+                    pair[name] = model
+                    family[name].append(model)
+                if pair["continuous"] is not None and pair["jump"] is not None:
+                    gain = pair["continuous"]["score"] - pair["jump"]["score"]
+                    resolution = len(values) * ulp(max(
+                        abs(pair["continuous"]["score"]), abs(pair["jump"]["score"]),
+                    ))
+                    pair.update(
+                        score_gain=gain,
+                        score_resolution=resolution,
+                        result=("unresolved" if abs(gain) <= resolution else
+                                "jump" if gain > 0 else "continuous"),
+                    )
+                else:
+                    pair.update(result="unresolved", reason="unresolved_fit")
+                result["pairs"].append(pair)
+        if failed_pair:
+            return {**result, "reason": "incomplete_degree_comparison"}
+        continuous, jump = (
+            min(family[name], key=lambda model: (
+                model["score"], model["left_degree"], model["right_degree"],
+            )) for name in ("continuous", "jump")
+        )
+        gain = continuous["score"] - jump["score"]
+        resolution = len(values) * ulp(max(abs(continuous["score"]), abs(jump["score"])))
+        result.update(
+            continuous=continuous,
+            jump=jump,
+            score_gain=gain,
+            score_resolution=resolution,
+        )
+        if not isfinite(gain) or abs(gain) <= resolution:
+            return {**result, "reason": "unresolved_score_difference"}
+        if gain < 0:
+            return {**result, "result": "continuous", "reason": "lower_continuous_score"}
+        slope_resolution = len(values) * ulp(
+            max(abs(value) for _, value in selected)
+        ) / span
+        result["slope_resolution"] = slope_resolution
+        if abs(jump["slope_change"]) <= slope_resolution:
+            return {**result, "reason": "unresolved_slope_jump"}
+        return {**result, "result": "jump", "reason": "lower_jump_score"}
+    except (
+        AttributeError, IndexError, OverflowError, TypeError, ValueError, ZeroDivisionError,
+    ):
+        return {**result, "reason": "invalid_or_degenerate_input"}
+
+
 def _level_models(times, raw_values, policy):
     """Compare a level and smooth trends with one tail-local noise scale."""
     common = _common_noise(times, raw_values)

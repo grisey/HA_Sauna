@@ -14,6 +14,7 @@ from time import perf_counter
 import unittest
 from unittest.mock import patch
 
+from curve_slope_diagnostics import SlopeTransitionDiagnostics
 from test_detector import detection_parameters, measurement
 from test_settings import fixture
 
@@ -417,6 +418,7 @@ class R04DoorRecoveryTests(unittest.TestCase):
         parameters = detection_parameters()
         observed = []
         detector = Detector(parameters, begin, observer=observed.append)
+        slope_diagnostic = SlopeTransitionDiagnostics(self, detector)
         # R04 actuator evidence: continuously ON 12:52:18.386868–13:24:17.414544.
         # Starting at the slice boundary gives no original before that boundary.
         detector.report_heating(True, begin)
@@ -489,6 +491,11 @@ class R04DoorRecoveryTests(unittest.TestCase):
             ],
         }
         self._print_native_closures(observed, "first_two_doors")
+        slope_diagnostic.print_closures(
+            "first_two_doors",
+            tuple((start, end) for kind, start, end in intervals if kind == Kind.DOOR_CLOSE),
+            events=events,
+        )
         print(
             f"R04 two-door slice: samples={cursor} ticks={len(observed)} "
             f"wall_seconds={perf_counter() - started:.6f} events={diagnostics['events']!r}",
@@ -1114,6 +1121,7 @@ class R04DoorRecoveryTests(unittest.TestCase):
                 begin = opening_reference - warmup
                 observed = []
                 detector = Detector(parameters, begin, observer=observed.append)
+                slope_diagnostic = SlopeTransitionDiagnostics(self, detector)
                 # Completed R04 replay 38609533414 actuator history: OFF until
                 # 14:50:13.541953, then ON until 15:12:15.892999; OFF until
                 # 15:25:21.010284, then ON until 15:39:33.522890. Preserve each
@@ -1833,6 +1841,7 @@ class R04DoorRecoveryTests(unittest.TestCase):
                 }
                 diagnostic = repr(diagnostics)
                 self._print_native_closures(observed, name)
+                slope_diagnostic.print_closures(name, ((earliest, latest),), events=events)
                 if name == "short_under_heating" and not any(
                     event.kind == Kind.DOOR_OPEN for event in events
                 ):

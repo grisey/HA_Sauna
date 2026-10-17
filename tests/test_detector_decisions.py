@@ -434,57 +434,51 @@ class DetectorDecisionTests(unittest.TestCase):
                 episode["backgrounds"][Position.UPPER]["reference"], rebound
             )
 
-    def test_optional_background_correction_preserves_a_level_end(self):
+    def test_optional_curve_form_cannot_revoke_native_end_on_unused_original_correction(self):
         detector = Detector(self.parameters, T0, (Position.UPPER,))
-        points, shapes, _, _ = self.flow._scenario(merged=False)
+        points, shapes, next_rise, _ = self.flow._scenario(merged=False)
         events = []
-        ended = (
-            self.flow.begin
-            + 2 * self.flow.width
-            + self.p["infusion_window_seconds"]
-            + self.flow.step
-        )
+        ended = self.flow._declared_flat_end(self.flow.begin + 2 * self.flow.width)
+        after_end = ended + self.flow.step
+        self.assertLess(after_end, next_rise)
+        # The current route ends on its own original RH blocks. Optional OLS
+        # form diagnostics must neither supply that end nor invalidate it.
         with (
             self.flow._patch_math(shapes),
-            patch(
-                f"{MATH}.curve_level",
-                side_effect=self.flow._math_level,
-            ),
-            patch(f"{MATH}.curve_form", return_value=None),
+            patch(f"{MATH}.curve_form", return_value=None) as optional_form,
         ):
-            self.flow._feed(detector, ended, points, events)
-        episode = detector._infusion_episode
-        self.assertEqual(episode["phase"], "ended")
-        self.assertEqual(episode["end_basis"], "decay_and_level")
-        level_end = episode["level_end_at"]
-        confirmed_at = episode["confirmed_at"]
-        level = episode["levels"][Position.UPPER]["features"]
-        background = episode["backgrounds"][Position.UPPER]
-        self.assertIsNone(background["reference"])
-        last = detector._curve_series[Position.UPPER, Quantity.HUMIDITY]["points"][-1]
-        self.assertIn(last, background["original_points"])
-        correction = last[1] + (
-            detector_fixtures.trace(151)[1] - detector_fixtures.trace(150)[1]
-        )
-        # The independent level witness remains supported. The optional,
-        # unbound background was never the cause of this episode's end.
-        with (
-            patch(f"{MATH}.curve_level", return_value=level),
-            patch(
-                f"{MATH}.curve_form",
-            ) as owner,
-        ):
+            self.flow._feed(detector, after_end, points, events)
+            episode = detector._position_state(Position.UPPER)["infusion"]
+            self.assertIs(episode, detector._infusion_episode)
+            self.assertEqual(episode["phase"], "ended")
+            self.assertEqual(episode["end_basis"], "original_background")
+            self.assertEqual(episode["level_end_at"], self.flow._at(ended))
+            before = detector.infusion_episode
+            end = episode["evidence_end"]
+            windows = episode["original_end_windows"]
+            self.assertEqual(tuple(name for name, _ in windows), (Position.UPPER.value,))
+            self.assertEqual(len(self.flow._infusions(events)), 1)
+            last = detector._curve_series[Position.UPPER, Quantity.HUMIDITY]["points"][-1]
+            self.assertEqual(last[0], self.flow._at(after_end))
+            self.assertTrue(all(
+                last[0] > window.newest_at for _, window in windows
+            ), "The changed later original must not belong to the actual end proof")
+            correction = last[1] + (
+                detector_fixtures.trace(151)[1] - detector_fixtures.trace(150)[1]
+            )
+            self.assertNotEqual(correction, last[1])
             self._originals(
-                detector,
-                [(last[0], correction)],
+                detector, [(last[0], correction)],
                 received_at=last[0] + timedelta(seconds=detector.grid_seconds),
             )
-        owner.assert_not_called()
-        self.assertEqual(episode["phase"], "ended")
-        self.assertEqual(episode["end_basis"], "decay_and_level")
-        self.assertEqual(episode["level_end_at"], level_end)
-        self.assertEqual(episode["confirmed_at"], confirmed_at)
-        self.assertNotIn(Position.UPPER, episode["backgrounds"])
+        optional_form.assert_not_called()
+        self.assertEqual(detector.infusion_episode, before)
+        self.assertIs(episode["evidence_end"], end)
+        self.assertEqual(episode["original_end_windows"], windows)
+        self.assertEqual(
+            detector._curve_series[Position.UPPER, Quantity.HUMIDITY]["points"][-1],
+            (last[0], correction),
+        )
         self.assertEqual(len(self.flow._infusions(events)), 1)
 
     def test_background_completion_requires_current_original_support(self):
