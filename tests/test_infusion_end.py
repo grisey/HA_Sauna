@@ -14,7 +14,9 @@ from test_foundation import T0, bindings, event
 
 from custom_components.ha_sauna.archive import plain
 from custom_components.ha_sauna.core.detector import (
-    Detection, Detector, InfusionEpisodeUpdate,
+    Detection,
+    Detector,
+    InfusionEpisodeUpdate,
 )
 from custom_components.ha_sauna.core.timeline import (
     Infusion,

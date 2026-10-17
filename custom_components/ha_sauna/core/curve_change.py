@@ -491,9 +491,13 @@ class OriginalFlattening:
     @property
     def abating(self) -> bool:
         """Resolved slowing of humidity while temperature keeps falling."""
-        return (self.previous_fall.result and self.braking.result
-                and self.current_nonrising.result and self.temperature_falling.result
-                and self.temperature_not_braking.result)
+        return (
+            self.previous_fall.result
+            and self.braking.result
+            and self.current_nonrising.result
+            and self.temperature_falling.result
+            and self.temperature_not_braking.result
+        )
 
     @property
     def maintained(self) -> bool:
@@ -778,8 +782,10 @@ def original_followup(
 
 
 def original_decline_evidence(
-    samples: Sequence[tuple[datetime, float]], reference: OriginalWindowFeatures,
-    *, background: OriginalKinkTolerance | None = None,
+    samples: Sequence[tuple[datetime, float]],
+    reference: OriginalWindowFeatures,
+    *,
+    background: OriginalKinkTolerance | None = None,
 ) -> OriginalDeclineEvidence | None:
     """Assess the growing original suffix, without waiting for full K blocks.
 
@@ -797,13 +803,18 @@ def original_decline_evidence(
     try:
         if not _original_window_valid(reference):
             return None
-        points = tuple((stamp, value) for stamp, value in samples
-                       if stamp > reference.newest_at)
+        points = tuple(
+            (stamp, value) for stamp, value in samples if stamp > reference.newest_at
+        )
         if len(points) < 2:
             return None
-        if any(not isinstance(stamp, datetime) or not _profile_number(value)
-               or index and stamp <= points[index - 1][0]
-               for index, (stamp, value) in enumerate(points)):
+        if any(
+            not isinstance(stamp, datetime)
+            or not _profile_number(value)
+            or index
+            and stamp <= points[index - 1][0]
+            for index, (stamp, value) in enumerate(points)
+        ):
             return None
         line = _original_line(points, reference.scale)
         if line is None:
@@ -815,20 +826,33 @@ def original_decline_evidence(
             if background.window != reference:
                 return None
             if background.status == "history":
-                if any(not _profile_number(value) or value < 0 for value in (
-                    background.level_change_median, background.level_change_mad,
-                )):
+                if any(
+                    not _profile_number(value) or value < 0
+                    for value in (
+                        background.level_change_median,
+                        background.level_change_mad,
+                    )
+                ):
                     return None
                 level_center = background.level_change_median
-                level_scale = max(level_scale, _MAD_NORMALIZATION * background.level_change_mad)
+                level_scale = max(
+                    level_scale, _MAD_NORMALIZATION * background.level_change_mad
+                )
             elif background.status != "insufficient":
                 return None
         level_loss = (reference.mean_minus - mean - level_center) / level_scale
         if not all(_profile_number(value) for value in (direction, level_loss)):
             return None
         return OriginalDeclineEvidence(
-            points, reference, slope, error, mean, direction, level_loss,
-            level_center, level_scale,
+            points,
+            reference,
+            slope,
+            error,
+            mean,
+            direction,
+            level_loss,
+            level_center,
+            level_scale,
         )
     except (AttributeError, IndexError, OverflowError, TypeError, ValueError):
         return None
@@ -967,8 +991,11 @@ def original_kink_tolerance(
         history_count = len(historical_changes)
         history_scale = median(historical_changes) if history_count else None
         level_median = median(historical_levels) if history_count else None
-        level_mad = (median(abs(value - level_median) for value in historical_levels)
-                     if history_count else None)
+        level_mad = (
+            median(abs(value - level_median) for value in historical_levels)
+            if history_count
+            else None
+        )
         catalog_scale = window.e + window.e_minus
         if not _original_positive(catalog_scale) or (
             history_scale is not None and not _profile_number(history_scale)
@@ -1432,8 +1459,12 @@ def original_water_window(
 
 def original_flattening(
     humidity_window: OriginalWindowFeatures | OriginalWaterWindowFeatures,
-    temperature_window: OriginalWindowFeatures, *, significance: float,
-    reference_humidity: OriginalWindowFeatures | OriginalWaterWindowFeatures | None = None,
+    temperature_window: OriginalWindowFeatures,
+    *,
+    significance: float,
+    reference_humidity: OriginalWindowFeatures
+    | OriginalWaterWindowFeatures
+    | None = None,
 ) -> OriginalFlattening | None:
     """Compare a slowing humidity fall with its temperature form.
 
@@ -1478,10 +1509,14 @@ def original_flattening(
         if reference_humidity is not None:
             # A retained earlier transition supplies its preceding fall.
             # The current slope always comes from the current original support.
-            if (type(reference) is not type(humidity)
-                    or reference.newest_at > humidity.newest_at
-                    or not all(_profile_number(value) for value in (reference.b, reference.e_minus))
-                    or reference.e_minus < 0):
+            if (
+                type(reference) is not type(humidity)
+                or reference.newest_at > humidity.newest_at
+                or not all(
+                    _profile_number(value) for value in (reference.b, reference.e_minus)
+                )
+                or reference.e_minus < 0
+            ):
                 return None
         humidity_change = humidity.v - reference.b
         humidity_change_error = humidity.e + reference.e_minus
@@ -1512,7 +1547,9 @@ def original_flattening(
             temperature_window=temperature_window,
             significance=significance,
             previous_fall=OriginalFlatteningContrast(
-                -reference.b, ">", humidity_previous_bound,
+                -reference.b,
+                ">",
+                humidity_previous_bound,
                 -reference.b > humidity_previous_bound,
             ),
             current_flat=OriginalFlatteningContrast(
@@ -3821,7 +3858,8 @@ def curve_change(
         if onset_not_before is not None and not isinstance(onset_not_before, datetime):
             return None
         if onset_bounds is not None and (
-            not isinstance(onset_bounds, tuple) or len(onset_bounds) != 2
+            not isinstance(onset_bounds, tuple)
+            or len(onset_bounds) != 2
             or not all(isinstance(bound, datetime) for bound in onset_bounds)
             or onset_bounds[0] > onset_bounds[1]
         ):
@@ -3871,7 +3909,8 @@ def curve_change(
                 policy.min_side_samples - 1, len(times) - policy.min_side_samples
             )
             if onset_not_before is None or stamps[index] >= onset_not_before
-            if onset_bounds is None or onset_bounds[0] <= stamps[index] <= onset_bounds[1]
+            if onset_bounds is None
+            or onset_bounds[0] <= stamps[index] <= onset_bounds[1]
         ]
         if not eligible:
             return None
