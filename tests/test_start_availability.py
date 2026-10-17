@@ -72,11 +72,23 @@ class StartAvailabilityTests(unittest.TestCase):
         c.process(event("entry-open", Kind.DOOR_OPEN, 0))
         c.process(event("close", Kind.DOOR_CLOSE, 1))
         c.process(event("person", Kind.PERSON_STRONG, 2))
+        # Die Anzeige verwendet den belegten Türschluss auch dann, wenn die
+        # gespeicherte Steuerungsspanne später beginnt.
+        active = replace(c.session.timeline.active, started_at=at(2))
+        c._session = replace(c.session, timeline=replace(c.session.timeline, active=active))
         availability = start_availability(c, at(62))
 
         self.assertEqual(availability["gang_elapsed_seconds"], 61)
+        self.assertEqual(phase_timer(c, at(62))["seconds"], 61)
         self.assertIsNone(availability["until_ready_seconds"])
         self.assertNotIn("start_window_seconds", availability)
+        self.assertIs(c.session.timeline.active, active)
+        self.assertEqual(active.started_at, at(2))
+
+        # Ohne Türquelle erfinden beide Anzeigen keine physische Dauer.
+        c._session = replace(c.session, timeline=replace(c.session.timeline, processed=()))
+        self.assertIsNone(start_availability(c, at(62))["gang_elapsed_seconds"])
+        self.assertIsNone(phase_timer(c, at(62))["seconds"])
 
     def test_cooling_keeps_its_remaining_time_in_the_phase_timer(self):
         c = after_run()

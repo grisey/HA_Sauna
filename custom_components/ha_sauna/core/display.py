@@ -3,6 +3,8 @@
 from datetime import timedelta
 from math import isfinite
 
+from .timeline import active_gang_duration_seconds
+
 
 def phase_timer(controller, now):
     session = controller.session
@@ -54,7 +56,12 @@ def phase_timer(controller, now):
             }
         return remaining("after_run", "Ofenkühlung noch", phase.ends_at)
     if session.timeline.active:
-        return elapsed("gang", "Saunagang seit", session.timeline.active.started_at)
+        return {
+            "kind": "gang",
+            "label": "Saunagang seit",
+            "seconds": active_gang_duration_seconds(session.timeline, now),
+            "mode": "elapsed",
+        }
     if controller.control_mode == "manual":
         return elapsed(
             "manual",
@@ -104,7 +111,7 @@ def start_availability(controller, now, estimated_ready_seconds=None):
     if active is not None and session.after_run is None:
         result.update(
             blocker={"kind": "gang"},
-            gang_elapsed_seconds=max(0, (now - active.started_at).total_seconds()),
+            gang_elapsed_seconds=active_gang_duration_seconds(session.timeline, now),
             message="Ein Saunagang läuft bereits.",
         )
         return result
