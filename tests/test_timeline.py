@@ -15,7 +15,7 @@ from custom_components.ha_sauna.archive import Archive, plain
 from custom_components.ha_sauna.core.presence import binary_presence
 from custom_components.ha_sauna.core.timeline import (
     Confirmation, Door, Event, Kind, Timeline, UnresolvedTransition, apply,
-    project_door_cycles,
+    project_door_cycles, project_gang_intervals,
 )
 
 
@@ -487,6 +487,55 @@ class TimelineTests(unittest.TestCase):
 
 
 class DoorCycleProjectionTests(unittest.IsolatedAsyncioTestCase):
+    async def test_statistical_gang_bounds_use_owned_door_times_without_retiming_control(self):
+        from custom_components.ha_sauna.core.phases import project_session
+
+        c = controller()
+        for source in (
+            event("entry", Kind.DOOR_OPEN, 1),
+            Event("entry-close", "s", Kind.DOOR_CLOSE, at(2), at(3), at(3), at(3)),
+            event("infusion", Kind.INFUSION, 4),
+            Event("exit", "s", Kind.DOOR_OPEN, at(5), at(6), at(6), at(6)),
+            Event("vent", "s", Kind.VENTILATION, at(7), at(8), at(8), at(8)),
+        ):
+            c.process(source)
+        before, decisions = plain(c.session), tuple(c.decisions)
+        gang = c.session.timeline.completed[0]
+        expected = [{
+            "gang_id": gang.gang_id,
+            "started_at": at(2).isoformat(), "ended_at": at(5).isoformat(),
+            "start_source_event_id": "entry-close", "end_source_event_id": "exit",
+            "complete": True,
+        }]
+        self.assertEqual(project_gang_intervals(c.session.timeline), expected)
+        self.assertEqual(project_gang_intervals(before["timeline"]), expected)
+        visible = project_session(c.session, at(9))
+        control = project_session(c.session, at(9), physical_gangs=False)
+        self.assertEqual([(item.started_at, item.ended_at) for item in visible.intervals
+                          if item.phase == "saunagang"], [(at(2), at(5))])
+        self.assertEqual([(item.started_at, item.ended_at) for item in control.intervals
+                          if item.phase == "saunagang"], [(at(2), at(8))])
+        self.assertEqual(gang.ended_at, at(8))
+        self.assertEqual(c.session.after_run.requested_at, at(8))
+        self.assertEqual(plain(c.session), before)
+        self.assertEqual(tuple(c.decisions), decisions)
+
+    async def test_operation_off_and_missing_source_do_not_invent_statistical_exit(self):
+        c = controller()
+        for source in (event("entry", Kind.DOOR_OPEN, 1),
+                       event("close", Kind.DOOR_CLOSE, 2),
+                       event("water", Kind.INFUSION, 3)):
+            c.process(source)
+        c.set_operation(False, at(4))
+        result = project_gang_intervals(c.session.timeline)
+        self.assertEqual(result[0]["started_at"], at(2).isoformat())
+        self.assertIsNone(result[0]["ended_at"])
+        self.assertIsNone(result[0]["end_source_event_id"])
+        self.assertFalse(result[0]["complete"])
+        legacy = plain(c.session.timeline)
+        legacy["processed"] = []
+        self.assertIsNone(project_gang_intervals(legacy)[0]["started_at"])
+
     @staticmethod
     def cycle(
         opening, closing, started, ended, *, links=(), role=None, gang_id=None,

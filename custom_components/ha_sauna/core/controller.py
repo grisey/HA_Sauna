@@ -1277,7 +1277,7 @@ class Controller:
         if session is None:
             return None
         at = utc(at) if at is not None else self._last_at or session.started_at
-        projection = self.phase_projection(at)
+        projection = self.phase_projection(at, physical_gangs=False)
         result = calculate_oven_cooling(
             contactor_history=session.contactor_history,
             readiness_pauses=projection.readiness_pauses,
@@ -1900,9 +1900,9 @@ class Controller:
             history = history[:-1]
         self._session = replace(session, base_phases=history + (mark,))
 
-    def phase_projection(self, now):
+    def phase_projection(self, now, *, physical_gangs=True):
         from .phases import project_session
-        return project_session(self._session, now) if self._session else None
+        return project_session(self._session, now, physical_gangs=physical_gangs) if self._session else None
 
     def _complete_session(self, at, *, light_after_run):
         """Archive the current session and complete its active state."""

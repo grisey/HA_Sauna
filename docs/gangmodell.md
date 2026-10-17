@@ -45,6 +45,15 @@ zum Lüften geöffnet und offengelassen. Die spätere Rückkehr durch diese
 offene Tür kann mit dem anschließenden Türschluss einen neuen Eintritt belegen.
 Das Ende des alten Gangs verbraucht diesen späteren Türschluss nicht.
 
+Für Verlauf und Statistik reicht der zugeordnete Aufenthalt vom Türschluss
+des Eintritts bis zur Türöffnung des Austritts. Diese Zeiten werden aus den
+Quellereignissen der vorhandenen Türzuordnung abgeleitet. Die bestätigte
+Gangerkennung und das gebuchte Gangende behalten ihre eigenen Zeitpunkte;
+Heizung und Ofenkühlung verwenden weiterhin den damals bekannten Zustand.
+Fehlende Türquellen oder Betrieb-AUS belegen keinen physischen Austrittszeitpunkt.
+Bei unvollständigen Altarchiven bleibt der bisher aufgezeichnete Abschnitt
+als unvollständige Zeitzuordnung erhalten.
+
 ## Gang durch qualifizierte Belegungszustände bestätigen
 
 Ein qualifizierter Belegungszustand beschreibt fortbestehende Anwesenheit oder
