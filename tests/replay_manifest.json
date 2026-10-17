@@ -1,0 +1,92 @@
+{
+  "schema_version": 1,
+  "required": true,
+  "missing_data_policy": "fail",
+  "privacy": "Relative Zeit, Rollen statt Geräte-/Entitätskennungen; keine Rohkonfiguration, Kalenderdaten, Kontexte oder Nutzungsidentitäten.",
+  "time_groups": [
+    {
+      "id": "R01",
+      "origin_recording": "R01",
+      "basis": "Eigene Zeitgruppe; gleicher Quellhash wie R02 belegt keinen Zeitanschluss.",
+      "source_sha256": [
+        "a9e9093108b066cd4274373fe748dabedb9889d5c8ad0ded780a9e95d96cd8b2"
+      ],
+      "recordings": [
+        {"id": "R01", "origin_offset_s": 0.0}
+      ]
+    },
+    {
+      "id": "R02-R03",
+      "origin_recording": "R02",
+      "basis": "Vom Nutzer zugeordnete Folge; relative Ursprünge aus ursprünglichen Recorder- und Archivankern. Die unbeobachtete Lücke bleibt erhalten.",
+      "source_sha256": [
+        "a9e9093108b066cd4274373fe748dabedb9889d5c8ad0ded780a9e95d96cd8b2",
+        "0e065cfbc8cd75da17bf8b47f6f1b99768445b86028461a5a5fc273ac08a97ba",
+        "206964e4b79e30f7b060f85ef07be804f537a42e511cbd354e2eb88e2cc19469"
+      ],
+      "recordings": [
+        {"id": "R02", "origin_offset_s": 0.0},
+        {
+          "id": "R03",
+          "origin_offset_s": 19606.282715,
+          "previous_recording": "R02",
+          "gap_from_previous_end_s": 641.480566
+        }
+      ]
+    },
+    {
+      "id": "R04",
+      "origin_recording": "R04",
+      "basis": "Eigene Zeitgruppe; kein belegter relativer Zeitanschluss an R01–R03.",
+      "source_sha256": [
+        "ae9de179767aa6ade1bccbc6e18a0b9be631796e82edede7e1ba7e333c0044d4",
+        "66c5b53ab9c15d2a56c212c3742f023ee31d2cc346481bf7d2d16f64d959ae43"
+      ],
+      "recordings": [
+        {"id": "R04", "origin_offset_s": 0.0}
+      ]
+    }
+  ],
+  "sessions": [
+    {
+      "id": "R01",
+      "file": "fixtures/replay/R01.json",
+      "sha256": "5dde938d01435945a751d358a930fe9dcc8d8fcdb0f080d7ab738e447628cbce",
+      "samples_file": "fixtures/replay/R01.samples.jsonl.gz",
+      "samples_sha256": "055b78ed47edc3c019b5161a3a26a5d141dd25b31ce9b9718b39cc935db2c49c",
+      "samples_count": 44251,
+      "observed_outputs_file": "fixtures/replay/R01.observed-outputs.jsonl.gz",
+      "observed_outputs_sha256": "b3a23673cbba28094d781f9dc201456e96b9d744e0c988cd2f9409e6b4d9b548"
+    },
+    {
+      "id": "R02",
+      "file": "fixtures/replay/R02.json",
+      "sha256": "e9790300845825070509c1aaa0e607bb940f9a15dcced6a93c079e995983a4fb",
+      "samples_file": "fixtures/replay/R02.samples.jsonl.gz",
+      "samples_sha256": "d6b71f486865a5c16b753843a9e24dc4403bbed8042146ae5dcd90c52151f8e3",
+      "samples_count": 58214,
+      "observed_outputs_file": "fixtures/replay/R02.observed-outputs.jsonl.gz",
+      "observed_outputs_sha256": "49c2c2bfc4c5a6110da9c3b429cd21df3764ad1da51e2592ae46866c2798dee2"
+    },
+    {
+      "id": "R03",
+      "file": "fixtures/replay/R03.json",
+      "sha256": "c1962d34e4a5fdf62fcf072698113b79ea4867924e9fa714d0c3245c94026ade",
+      "samples_file": "fixtures/replay/R03.samples.jsonl.gz",
+      "samples_sha256": "93c9a6aba02dd02e8952e8c184800fb98f30d7998dfd730dcc901be2a5c2f5bb",
+      "samples_count": 5964,
+      "observed_outputs_file": "fixtures/replay/R03.observed-outputs.jsonl.gz",
+      "observed_outputs_sha256": "62f1d71606a3aa134c123f5b8b1363e7fbd43bd03f2c54bfb75b0e64f2b4d9d3"
+    },
+    {
+      "id": "R04",
+      "file": "fixtures/replay/R04.json",
+      "sha256": "57223a177a3ab6d76702cb4f4e829a164e16e00ae5848ca7f7a1809f5de204ec",
+      "samples_file": "fixtures/replay/R04.samples.jsonl.gz",
+      "samples_sha256": "ac60b7f73a8eca659f1dfbc1031b1a2f809b95a91f421683e1d146fa28891406",
+      "samples_count": 56304,
+      "observed_outputs_file": "fixtures/replay/R04.observed-outputs.jsonl.gz",
+      "observed_outputs_sha256": "d72615a5d3c29ed7720eb0b2d6eb359f1f9708afbc83734bfc099e7561d12c56"
+    }
+  ]
+}

@@ -1,0 +1,43 @@
+{
+  "schema_version": 1,
+  "session_ids": ["R01", "R02", "R03", "R04"],
+  "sampling": {
+    "anchor_step_s": 5.0,
+    "windows_s": [30.0, 60.0, 180.0],
+    "minimum_span_fraction": 0.65,
+    "maximum_gap_fraction": 0.5,
+    "maximum_latest_age_s": 15.0,
+    "maximum_continuity_gap_s": 15.0,
+    "maximum_pair_age_s": 15.0,
+    "maximum_pair_skew_s": 10.0
+  },
+  "numerics": {
+    "min_side_samples": 3,
+    "max_points": 24,
+    "max_candidates": 3,
+    "robust_iterations": 1,
+    "huber_delta": 1.345
+  },
+  "competition": {
+    "minimum_score_gain": 0.0,
+    "influential_point_refits": 1
+  },
+  "limits": {
+    "maximum_anchors_per_session": 10000,
+    "maximum_owner_fit_calls_per_anchor": 2048
+  },
+  "hypotheses": {
+    "minimum_new_confirmation_points": 1,
+    "maximum_pending_age_s": 120.0,
+    "maximum_frozen_span_s": 600.0,
+    "tail_window_s": 15.0,
+    "tail_level_confirmations": 2,
+    "minimum_new_level_points": 1,
+    "peak_merge_tolerance_s": 30.0
+  },
+  "reporting": {
+    "decimal_places": 9,
+    "include_all_model_scores": true,
+    "progress_interval_anchors": 120
+  }
+}

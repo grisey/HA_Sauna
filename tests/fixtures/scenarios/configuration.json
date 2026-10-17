@@ -1,0 +1,8 @@
+{
+  "schema_version": 3,
+  "source": "custom_components/ha_sauna/defaults.json",
+  "source_sha256": "6509700ce761d264cb5db93070796fbd2ce96cd49ca4307a61b5443f743f4742",
+  "effective_sha256": "e744677a024cca5b08bfede03db348c826896ac07d55c89e8a035ac71541c620",
+  "projection": "all resolved parameter defaults and programme start/end/distribution values",
+  "basis": "Canonical configuration values consumed at materialization; no copied defaults. Presentation metadata and UI preferences do not alter fixture inputs. Changed effective values require explicit review before rebinding; unchanged input curves remain byte-bound."
+}

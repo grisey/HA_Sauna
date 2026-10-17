@@ -1,0 +1,243 @@
+{
+  "base_commit": "3b31ccb9a1c9e6362d7c58acc9cef417a253117b",
+  "base_tree": "f1a6538dc025db5473fae67768864ceffc94307c",
+  "date": "2026-10-15",
+  "kind": "source_inspection",
+  "project_sources": [
+    {
+      "path": "custom_components/ha_sauna/api.py",
+      "sha256": "2b38aa5c1005bba61b8aa371305f1e16c872df89aac38893426b7da3bac3bf00",
+      "symbols": [
+        {
+          "line": 45,
+          "name": "can_control"
+        },
+        {
+          "line": 292,
+          "name": "ControlView"
+        },
+        {
+          "line": 372,
+          "name": "ParametersView"
+        },
+        {
+          "line": 498,
+          "name": "ProgramView"
+        },
+        {
+          "line": 650,
+          "name": "ControlModeView"
+        }
+      ]
+    },
+    {
+      "path": "custom_components/ha_sauna/runtime.py",
+      "sha256": "8e21ce0e709caf060870fb8bf76371c34c48ea9967f0bc4441493859e42c488d",
+      "symbols": [
+        {
+          "line": 59,
+          "name": "Configuration"
+        },
+        {
+          "line": 276,
+          "name": "SaunaRuntime"
+        }
+      ]
+    },
+    {
+      "path": "custom_components/ha_sauna/config_flow.py",
+      "sha256": "20ccaf3f87a246bb828fe0fcce975cd1c6456c6494a948d30c965e5de298b93e",
+      "symbols": [
+        {
+          "line": 112,
+          "name": "device_schema"
+        },
+        {
+          "line": 178,
+          "name": "binding_schema"
+        },
+        {
+          "line": 400,
+          "name": "SaunaOptionsFlow"
+        }
+      ]
+    },
+    {
+      "path": "custom_components/ha_sauna/core/models.py",
+      "sha256": "398c8df77f48ee3b902f4b284962f291d2a743d04ee172b064283fd1f01ddc9b",
+      "symbols": [
+        {
+          "line": 230,
+          "name": "Session"
+        }
+      ]
+    },
+    {
+      "path": "custom_components/ha_sauna/settings.py",
+      "sha256": "04e360a4984dac3419d00d9054c39f375eee0493c46d156c3f654b49ddad2154",
+      "symbols": [
+        {
+          "line": 62,
+          "name": "async_set_parameters"
+        },
+        {
+          "line": 343,
+          "name": "async_set_program"
+        },
+        {
+          "line": 617,
+          "name": "async_set_temperature_steps"
+        },
+        {
+          "line": 656,
+          "name": "async_set_control_mode"
+        },
+        {
+          "line": 675,
+          "name": "async_set_entity_parameter"
+        }
+      ]
+    },
+    {
+      "path": "custom_components/ha_sauna/device.py",
+      "sha256": "b8be0a8a0650cd43daf2cb83aa22a4d3bb2570ff13eabbe9d2c00ad56a8ac784",
+      "symbols": [
+        {
+          "line": 51,
+          "name": "HADevice"
+        }
+      ]
+    },
+    {
+      "path": "custom_components/ha_sauna/presentation.py",
+      "sha256": "06092ed02ea639941533db6cabec823fbd9888a5df392032ae76478e68339b90",
+      "symbols": [
+        {
+          "line": 226,
+          "name": "public_session"
+        },
+        {
+          "line": 240,
+          "name": "public_state"
+        }
+      ]
+    },
+    {
+      "path": "custom_components/ha_sauna/__init__.py",
+      "sha256": "36845afbf652801ba335b69d026cb9a11c00c02a55152d27592de922ce45d75a",
+      "symbols": [
+        {
+          "line": 14,
+          "name": "async_setup_entry"
+        },
+        {
+          "line": 114,
+          "name": "async_options_updated"
+        }
+      ]
+    },
+    {
+      "path": "custom_components/ha_sauna/number.py",
+      "sha256": "ee808ed71567bfa4a5044ee4630dd4b15d2093c74594618adcd0cff36fdc9c6f",
+      "symbols": [
+        {
+          "line": 21,
+          "name": "SaunaNumber"
+        }
+      ]
+    },
+    {
+      "path": "custom_components/ha_sauna/switch.py",
+      "sha256": "6b7b3d41db11b1eb9ba0b6ecac8f0f4914aa1ffa8b12286c37949e34ac426312",
+      "symbols": [
+        {
+          "line": 16,
+          "name": "SaunaOperation"
+        }
+      ]
+    },
+    {
+      "path": "custom_components/ha_sauna/climate.py",
+      "sha256": "5a7e56b856d1892aabae39e849e39ee384dd90ba3704abc0ca38c4838e64ea19",
+      "symbols": [
+        {
+          "line": 26,
+          "name": "SaunaThermostat"
+        }
+      ]
+    },
+    {
+      "path": "custom_components/ha_sauna/button.py",
+      "sha256": "be2f4bb5fbe567b928c7175b8b9788e1c0958034b630ee09dd9b513f55321d76",
+      "symbols": [
+        {
+          "line": 16,
+          "name": "SaunaReset"
+        }
+      ]
+    }
+  ],
+  "public_sources": [
+    {
+      "bytes": 2219,
+      "local_copy": "quellen/mobile_app_util_2026.9.0.py",
+      "sha256": "4145ecd51b86cc5e160b4dee866419ba1fe42dc1b25f03b6e9384a5e3b339b0e",
+      "url": "https://raw.githubusercontent.com/home-assistant/core/2026.9.0/homeassistant/components/mobile_app/util.py"
+    },
+    {
+      "bytes": 2960,
+      "local_copy": "quellen/mobile_app_device_action_2026.9.0.py",
+      "sha256": "4614814fc9f5407fe3e42ce8b2501bfa256d527da2fb86ce8c7b79c50a1ea788",
+      "url": "https://raw.githubusercontent.com/home-assistant/core/2026.9.0/homeassistant/components/mobile_app/device_action.py"
+    },
+    {
+      "bytes": 11836,
+      "local_copy": "quellen/mobile_app_notify_2026.9.0.py",
+      "sha256": "28a9a1d4878385619fba183ae93d68d675a49533fcef0c4f230ba1271597c227",
+      "url": "https://raw.githubusercontent.com/home-assistant/core/2026.9.0/homeassistant/components/mobile_app/notify.py"
+    },
+    {
+      "bytes": 6689,
+      "local_copy": "quellen/mobile_app_helpers_2026.9.0.py",
+      "sha256": "9e9afebfde2c389ff0bdb22a82a4d917564efa51e301e833ad55c93242bf0d7d",
+      "url": "https://raw.githubusercontent.com/home-assistant/core/2026.9.0/homeassistant/components/mobile_app/helpers.py"
+    },
+    {
+      "bytes": 25396,
+      "local_copy": "quellen/mobile_app_webhook_2026.9.0.py",
+      "sha256": "1ea67289f51e603ff183cac1a9458dc6a748b1fb53bfe0755df53c2d9aba426f",
+      "url": "https://raw.githubusercontent.com/home-assistant/core/2026.9.0/homeassistant/components/mobile_app/webhook.py"
+    },
+    {
+      "bytes": 2219,
+      "local_copy": "quellen/mobile_app_util_2026.10.0.py",
+      "sha256": "4145ecd51b86cc5e160b4dee866419ba1fe42dc1b25f03b6e9384a5e3b339b0e",
+      "url": "https://raw.githubusercontent.com/home-assistant/core/2026.10.0/homeassistant/components/mobile_app/util.py"
+    },
+    {
+      "bytes": 2991,
+      "local_copy": "quellen/mobile_app_device_action_2026.10.0.py",
+      "sha256": "33b27f36913b1593102d99b6797ef3f7b7c78e8ecb7073846d294bf9c76bee47",
+      "url": "https://raw.githubusercontent.com/home-assistant/core/2026.10.0/homeassistant/components/mobile_app/device_action.py"
+    },
+    {
+      "bytes": 11836,
+      "local_copy": "quellen/mobile_app_notify_2026.10.0.py",
+      "sha256": "28a9a1d4878385619fba183ae93d68d675a49533fcef0c4f230ba1271597c227",
+      "url": "https://raw.githubusercontent.com/home-assistant/core/2026.10.0/homeassistant/components/mobile_app/notify.py"
+    },
+    {
+      "bytes": 6689,
+      "local_copy": "quellen/mobile_app_helpers_2026.10.0.py",
+      "sha256": "9e9afebfde2c389ff0bdb22a82a4d917564efa51e301e833ad55c93242bf0d7d",
+      "url": "https://raw.githubusercontent.com/home-assistant/core/2026.10.0/homeassistant/components/mobile_app/helpers.py"
+    },
+    {
+      "bytes": 25864,
+      "local_copy": "quellen/mobile_app_webhook_2026.10.0.py",
+      "sha256": "b06c15cd056c449272c4a9380fc9224f2f403682da86078b8764ab29decb320e",
+      "url": "https://raw.githubusercontent.com/home-assistant/core/2026.10.0/homeassistant/components/mobile_app/webhook.py"
+    }
+  ],
+  "runtime_function_observed": false
+}

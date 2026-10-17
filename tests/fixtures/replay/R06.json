@@ -1,0 +1,66 @@
+{
+  "schema_version": 1,
+  "id": "R06",
+  "kind": "measurement_recording",
+  "title": "Zusammenhängende vierkanalige Messaufzeichnung mit zwei Abschnitten",
+  "duration_s": 11129.282754,
+  "configuration": {
+    "parameter_source": "current_catalog"
+  },
+  "initial_state": {},
+  "samples_file": "R06.samples.jsonl.gz",
+  "samples_sha256": "6cd299a6d8f65a73f60182ebe3218c208976caafda716bae65e925087e2e166e",
+  "samples_count": 33845,
+  "actions": [],
+  "expectations": [],
+  "recording_sections": [
+    {
+      "id": "R06-S01",
+      "start_s": 0.0,
+      "archived_end_s": 6641.44031,
+      "first_sample_s": 0.96983,
+      "last_sample_s": 6640.562304,
+      "samples_count": 20193
+    },
+    {
+      "id": "R06-S02",
+      "start_s": 6778.454768,
+      "archived_end_s": 11129.282754,
+      "first_sample_s": 6779.234974,
+      "last_sample_s": 11128.732807,
+      "samples_count": 13652,
+      "gap_from_previous_end_s": 137.014458
+    }
+  ],
+  "source": {
+    "kind": "measured",
+    "timestamp_basis": "received; relative to one common group origin at microsecond resolution",
+    "transformations": [
+      "Subtract one common recording origin from all original received timestamps",
+      "Replace physical source identifiers with functional roles",
+      "Order by original received time and numeric original record id for equal timestamps",
+      "Retain all original numeric values and their multiplicity; no interpolation or smoothing",
+      "Keep original section gaps and measurements received after the stored section endpoint",
+      "Exclude initial snapshots, historical actions, actuator outputs and historical detector results"
+    ],
+    "channel_counts": {
+      "lower_humidity": 9058,
+      "lower_temperature": 7819,
+      "upper_humidity": 8943,
+      "upper_temperature": 8025
+    },
+    "largest_climate_message_gap_s": {
+      "upper_temperature": 139.77233,
+      "upper_humidity": 138.694465,
+      "lower_temperature": 138.696765,
+      "lower_humidity": 139.725122
+    },
+    "limitations": [
+      "No independently assigned human event labels or historical input actions are included; no detection success rate is asserted.",
+      "This is an observed climate-input replay; unchanged measurements do not predict physical consequences of changed controller outputs.",
+      "The source was examined during prior inventory work and is not an untouched blind holdout.",
+      "Empty initial_state declares no preceding measurement; the first received sample of each role remains its first original measurement.",
+      "Section boundaries and unobserved gaps do not establish historical operation changes or runtime restarts."
+    ]
+  }
+}

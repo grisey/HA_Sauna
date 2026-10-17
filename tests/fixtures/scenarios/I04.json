@@ -1,0 +1,592 @@
+{
+  "schema_version": 1,
+  "id": "I04",
+  "title": "Early stay, resume during after-run and final shutdown before ventilation",
+  "kind": "derived_whole_session",
+  "configuration": {
+    "parameter_source": "configuration.json",
+    "control_mode": "automatic",
+    "presence_source": "ha_presence",
+    "program": {
+      "mode": "constant",
+      "start_c": 90,
+      "end_c": 90,
+      "gangs": 1
+    },
+    "button_input_kind": "event",
+    "button_session_gesture": "long",
+    "button_program": "constant",
+    "daylight": true
+  },
+  "measurement_clock": "received_at",
+  "actions_location": "All controls are outside the cabin. No action lies within an uninterrupted stay.",
+  "interpretation": "Potential whole session assembled independently of detector and controller outputs.",
+  "limitations": [
+    "Temperature/moisture response is derived from measured shapes; this is not a claim that the combined session occurred.",
+    "Human door movements label physical actions, not exact proxy-detection times.",
+    "Declared thermal history selects the curve before execution. Product output never selects its own environment."
+  ],
+  "duration_s": 9578.942,
+  "measurement_file": "I04.measurements.json",
+  "measurement_sha256": "eec59277c7308b07a6c8d8f262ac322899f0850f4770b97fc1bfd42ff844ebd3",
+  "curve_blocks": [
+    {
+      "at_s": 0.0,
+      "until_s": 3003.596,
+      "curve_id": "cold_heat",
+      "thermal_history": "heater_on",
+      "heater_off_after_s": null,
+      "heater_on_after_s": null,
+      "transform": {
+        "join": "upper temperature offset, measured inter-height gradient relaxation for door/cooling, vapour-density ratio at both heights",
+        "upper_gain_c": 38.53,
+        "lower_gain_c": 30.4315947191953,
+        "moisture_from_source": true,
+        "source_offset_s": 60
+      }
+    },
+    {
+      "at_s": 3003.596,
+      "until_s": 3363.596,
+      "curve_id": "entry",
+      "thermal_history": "heater_on",
+      "heater_off_after_s": null,
+      "heater_on_after_s": null,
+      "transform": {
+        "join": "upper temperature offset, measured inter-height gradient relaxation for door/cooling, vapour-density ratio at both heights",
+        "upper_gain_c": null,
+        "lower_gain_c": null,
+        "moisture_from_source": true,
+        "source_offset_s": 0
+      }
+    },
+    {
+      "at_s": 3363.596,
+      "until_s": 3543.596,
+      "curve_id": "hot_heat",
+      "thermal_history": "heater_on",
+      "heater_off_after_s": null,
+      "heater_on_after_s": null,
+      "transform": {
+        "join": "upper temperature offset, measured inter-height gradient relaxation for door/cooling, vapour-density ratio at both heights",
+        "upper_gain_c": null,
+        "lower_gain_c": null,
+        "moisture_from_source": false,
+        "source_offset_s": 1800
+      }
+    },
+    {
+      "at_s": 3543.596,
+      "until_s": 4083.596,
+      "curve_id": "second_exit",
+      "thermal_history": "heater_on_until_exit_evidence_then_off",
+      "heater_off_after_s": 93.463,
+      "heater_on_after_s": null,
+      "transform": {
+        "join": "upper temperature offset, measured inter-height gradient relaxation for door/cooling, vapour-density ratio at both heights",
+        "upper_gain_c": null,
+        "lower_gain_c": null,
+        "moisture_from_source": true,
+        "source_offset_s": 0
+      }
+    },
+    {
+      "at_s": 4083.596,
+      "until_s": 4383.596,
+      "curve_id": "coast",
+      "thermal_history": "heater_off_continuing",
+      "heater_off_after_s": null,
+      "heater_on_after_s": null,
+      "transform": {
+        "join": "upper temperature offset, measured inter-height gradient relaxation for door/cooling, vapour-density ratio at both heights",
+        "upper_gain_c": null,
+        "lower_gain_c": null,
+        "moisture_from_source": true,
+        "source_offset_s": 160
+      }
+    },
+    {
+      "at_s": 4383.596,
+      "until_s": 5643.596,
+      "curve_id": "cold_heat",
+      "thermal_history": "heater_on",
+      "heater_off_after_s": null,
+      "heater_on_after_s": null,
+      "transform": {
+        "join": "upper temperature offset, measured inter-height gradient relaxation for door/cooling, vapour-density ratio at both heights",
+        "upper_gain_c": 15.520000000000005,
+        "lower_gain_c": 13.100000000000003,
+        "moisture_from_source": true,
+        "source_offset_s": 2520
+      }
+    },
+    {
+      "at_s": 5643.596,
+      "until_s": 7318.942,
+      "curve_id": "hot_heat",
+      "thermal_history": "heater_on",
+      "heater_off_after_s": null,
+      "heater_on_after_s": null,
+      "transform": {
+        "join": "upper temperature offset, measured inter-height gradient relaxation for door/cooling, vapour-density ratio at both heights",
+        "upper_gain_c": 15.120000000000005,
+        "lower_gain_c": 13.486537396121895,
+        "moisture_from_source": true,
+        "source_offset_s": 0
+      }
+    },
+    {
+      "at_s": 7318.942,
+      "until_s": 7678.942,
+      "curve_id": "entry",
+      "thermal_history": "heater_on",
+      "heater_off_after_s": null,
+      "heater_on_after_s": null,
+      "transform": {
+        "join": "upper temperature offset, measured inter-height gradient relaxation for door/cooling, vapour-density ratio at both heights",
+        "upper_gain_c": null,
+        "lower_gain_c": null,
+        "moisture_from_source": true,
+        "source_offset_s": 0
+      }
+    },
+    {
+      "at_s": 7678.942,
+      "until_s": 7798.942,
+      "curve_id": "entry",
+      "thermal_history": "heater_on",
+      "heater_off_after_s": null,
+      "heater_on_after_s": null,
+      "transform": {
+        "join": "upper temperature offset, measured inter-height gradient relaxation for door/cooling, vapour-density ratio at both heights",
+        "upper_gain_c": -1.5,
+        "lower_gain_c": -1.2,
+        "moisture_from_source": true,
+        "source_offset_s": 0
+      }
+    },
+    {
+      "at_s": 7798.942,
+      "until_s": 7978.942,
+      "curve_id": "hot_heat",
+      "thermal_history": "heater_on",
+      "heater_off_after_s": null,
+      "heater_on_after_s": null,
+      "transform": {
+        "join": "upper temperature offset, measured inter-height gradient relaxation for door/cooling, vapour-density ratio at both heights",
+        "upper_gain_c": 1.5,
+        "lower_gain_c": 1.2,
+        "moisture_from_source": false,
+        "source_offset_s": 0
+      }
+    },
+    {
+      "at_s": 7978.942,
+      "until_s": 8578.942,
+      "curve_id": "occupied_infusion",
+      "thermal_history": "heater_on",
+      "heater_off_after_s": null,
+      "heater_on_after_s": null,
+      "transform": {
+        "join": "upper temperature offset, measured inter-height gradient relaxation for door/cooling, vapour-density ratio at both heights",
+        "upper_gain_c": null,
+        "lower_gain_c": null,
+        "moisture_from_source": true,
+        "source_offset_s": 0
+      }
+    },
+    {
+      "at_s": 8578.942,
+      "until_s": 9118.942,
+      "curve_id": "second_exit",
+      "thermal_history": "heater_off_after_explicit_stop",
+      "heater_off_after_s": null,
+      "heater_on_after_s": null,
+      "transform": {
+        "join": "upper temperature offset, measured inter-height gradient relaxation for door/cooling, vapour-density ratio at both heights",
+        "upper_gain_c": null,
+        "lower_gain_c": null,
+        "moisture_from_source": true,
+        "source_offset_s": 0
+      }
+    },
+    {
+      "at_s": 9118.942,
+      "until_s": 9178.942,
+      "curve_id": "coast",
+      "thermal_history": "heater_off_continuing",
+      "heater_off_after_s": null,
+      "heater_on_after_s": null,
+      "transform": {
+        "join": "upper temperature offset, measured inter-height gradient relaxation for door/cooling, vapour-density ratio at both heights",
+        "upper_gain_c": null,
+        "lower_gain_c": null,
+        "moisture_from_source": true,
+        "source_offset_s": 160
+      }
+    },
+    {
+      "at_s": 9178.942,
+      "until_s": 9578.942,
+      "curve_id": "coast",
+      "thermal_history": "heater_off_continuing",
+      "heater_off_after_s": null,
+      "heater_on_after_s": null,
+      "transform": {
+        "join": "upper temperature offset, measured inter-height gradient relaxation for door/cooling, vapour-density ratio at both heights",
+        "upper_gain_c": null,
+        "lower_gain_c": null,
+        "moisture_from_source": true,
+        "source_offset_s": 160
+      }
+    }
+  ],
+  "actions": [
+    {
+      "t": 0,
+      "name": "presence",
+      "args": {
+        "value": false
+      }
+    },
+    {
+      "t": 0.0,
+      "name": "start",
+      "args": {}
+    },
+    {
+      "t": 3018.596,
+      "name": "presence",
+      "args": {
+        "value": true
+      }
+    },
+    {
+      "t": 3588.596,
+      "name": "presence",
+      "args": {
+        "value": false
+      }
+    },
+    {
+      "t": 4083.596,
+      "name": "stop",
+      "args": {}
+    },
+    {
+      "t": 4383.596,
+      "name": "start",
+      "args": {}
+    },
+    {
+      "t": 7333.942,
+      "name": "presence",
+      "args": {
+        "value": true
+      }
+    },
+    {
+      "t": 8583.942,
+      "name": "stop",
+      "args": {}
+    },
+    {
+      "t": 8623.942,
+      "name": "presence",
+      "args": {
+        "value": false
+      }
+    },
+    {
+      "t": 9118.942,
+      "name": "set_light",
+      "args": {
+        "value": 30
+      }
+    },
+    {
+      "t": 9178.942,
+      "name": "set_light",
+      "args": {
+        "value": null
+      }
+    }
+  ],
+  "human_events": [
+    {
+      "t": 3003.596,
+      "name": "enter",
+      "detail": "Person enters for stay 1; outside controls stop here."
+    },
+    {
+      "t": 3243.596,
+      "name": "close_door"
+    },
+    {
+      "t": 3543.596,
+      "name": "leave_and_ventilate",
+      "detail": "Everyone leaves; door remains open for through-ventilation."
+    },
+    {
+      "t": 3993.596,
+      "name": "close_door_after_ventilation"
+    },
+    {
+      "t": 7318.942,
+      "name": "enter"
+    },
+    {
+      "t": 7678.942,
+      "name": "brief_door_other_person_remains"
+    },
+    {
+      "t": 8578.942,
+      "name": "leave_before_outside_stop"
+    }
+  ],
+  "stays": [
+    {
+      "number": 1,
+      "entered_s": 3003.5959765297566,
+      "left_s": 3543.5959765297566,
+      "ventilation_until_s": 3993.5959765297566,
+      "infusion": false,
+      "presence_absent_s": 3588.5959765297566,
+      "exit_curve_at_s": 3543.5959765297566
+    },
+    {
+      "number": 2,
+      "entered_s": 7318.942236917569,
+      "left_s": 8578.94223691757,
+      "ventilation_until_s": 9028.94223691757,
+      "infusion": true,
+      "presence_absent_s": 8623.94223691757
+    }
+  ],
+  "expectations": [
+    {
+      "id": "started",
+      "values": {
+        "recording": true,
+        "operation_enabled": true,
+        "control_mode": "automatic"
+      },
+      "reason": "One explicit start begins one recording; thermostat cycling must not split it.",
+      "at_s": 1
+    },
+    {
+      "id": "stay_1_started",
+      "values": {
+        "active_gang": true,
+        "cooling_active": false,
+        "phase": "saunagang"
+      },
+      "reason": "A full entry with continuing direct presence at sufficient temperature begins a gang.",
+      "between_s": [
+        3363.596,
+        3453.596
+      ],
+      "eventually": true,
+      "presence_sources": [
+        "ha_presence"
+      ]
+    },
+    {
+      "id": "stay_1_dry_direct",
+      "values": {
+        "active_gang": true
+      },
+      "reason": "Direct presence does not require an infusion.",
+      "at_s": 3513.596,
+      "presence_sources": [
+        "ha_presence"
+      ]
+    },
+    {
+      "id": "stay_1_ended",
+      "values": {
+        "active_gang": false
+      },
+      "reason": "The same exit opening, through-ventilation and continuing absence end the gang.",
+      "between_s": [
+        4053.596,
+        4093.596
+      ],
+      "eventually": true,
+      "presence_sources": [
+        "ha_presence"
+      ]
+    },
+    {
+      "id": "exit_below_minimum",
+      "values": {
+        "active_gang": false,
+        "gang_count": 1
+      },
+      "reason": "An existing gang must end while ventilation lowers temperature beneath the minimum for new starts.",
+      "at_s": 4083.396,
+      "presence_sources": [
+        "ha_presence"
+      ],
+      "sampling": "before_the_next_control_action"
+    },
+    {
+      "id": "afterrun_recording",
+      "values": {
+        "operation_enabled": false,
+        "recording": true,
+        "light_after_run": true
+      },
+      "reason": "A normal stop keeps its recording available during the unmodified restart interval.",
+      "at_s": 4383.396,
+      "sampling": "before_the_next_control_action"
+    },
+    {
+      "id": "resume_same_recording",
+      "values": {
+        "operation_enabled": true,
+        "recording": true,
+        "completed_sessions": 0
+      },
+      "reason": "Restart during after-run resumes the same session rather than retaining another one.",
+      "at_s": 4384.596
+    },
+    {
+      "id": "stop_ends_existing_gang",
+      "values": {
+        "active_gang": false,
+        "operation_enabled": false
+      },
+      "reason": "Explicit off after leaving ends the open gang without waiting for delayed proxy evidence.",
+      "at_s": 8584.942
+    },
+    {
+      "id": "final_end_not_extended",
+      "values": {
+        "recording": false,
+        "operation_enabled": false,
+        "light_after_run": false,
+        "retained_sessions": 1,
+        "completed_sessions": 1,
+        "gang_count": 2,
+        "recording_history_intact": true
+      },
+      "reason": "Manual light action in after-run does not extend its original session deadline. Resumption preserves accumulated energy and the original heating and contactor history through the stored completion.",
+      "at_s": 9578.942
+    },
+    {
+      "id": "no_unintended_fault",
+      "values": {
+        "fault_count": 0
+      },
+      "reason": "Valid continuous measurements and ordinary human operation must not create device, sensor or operating faults.",
+      "between_s": [
+        1,
+        9578.942
+      ]
+    }
+  ],
+  "declared_heater_history": [
+    {
+      "from_s": 0.0,
+      "until_s": 3003.5959765297566,
+      "on": true,
+      "ready_idle": false
+    },
+    {
+      "from_s": 3003.5959765297566,
+      "until_s": 3363.5959765297566,
+      "on": true,
+      "ready_idle": false
+    },
+    {
+      "from_s": 3363.5959765297566,
+      "until_s": 3543.5959765297566,
+      "on": true,
+      "ready_idle": false
+    },
+    {
+      "from_s": 3543.5959765297566,
+      "until_s": 3637.058976529757,
+      "on": true,
+      "ready_idle": false
+    },
+    {
+      "from_s": 3637.058976529757,
+      "until_s": 4083.5959765297566,
+      "on": false,
+      "ready_idle": false
+    },
+    {
+      "from_s": 4083.5959765297566,
+      "until_s": 4383.595976529757,
+      "on": false,
+      "ready_idle": false
+    },
+    {
+      "from_s": 4383.595976529757,
+      "until_s": 5643.595976529757,
+      "on": true,
+      "ready_idle": false
+    },
+    {
+      "from_s": 5643.595976529757,
+      "until_s": 7318.942236917569,
+      "on": true,
+      "ready_idle": false
+    },
+    {
+      "from_s": 7318.942236917569,
+      "until_s": 7678.942236917569,
+      "on": true,
+      "ready_idle": false
+    },
+    {
+      "from_s": 7678.942236917569,
+      "until_s": 7798.942236917569,
+      "on": true,
+      "ready_idle": false
+    },
+    {
+      "from_s": 7798.942236917569,
+      "until_s": 7978.942236917569,
+      "on": true,
+      "ready_idle": false
+    },
+    {
+      "from_s": 7978.942236917569,
+      "until_s": 8578.94223691757,
+      "on": true,
+      "ready_idle": false
+    },
+    {
+      "from_s": 8578.94223691757,
+      "until_s": 9118.94223691757,
+      "on": false,
+      "ready_idle": true
+    },
+    {
+      "from_s": 9118.94223691757,
+      "until_s": 9178.94223691757,
+      "on": false,
+      "ready_idle": true
+    },
+    {
+      "from_s": 9178.94223691757,
+      "until_s": 9578.94223691757,
+      "on": false,
+      "ready_idle": true
+    }
+  ],
+  "cooling_continuations": [
+    {
+      "planned_start_s": 3637.059,
+      "planned_release_s": 4537.059,
+      "weighted_heating_s": 1219.557,
+      "weighted_ready_idle_s": 0.0,
+      "planned_duration_s": 900,
+      "history_from_s": 0.0,
+      "basis": "Closed-form integral of the documented exponential weighting over the predeclared actuator intervals. Used to construct thermal continuation, not copied from product output."
+    }
+  ]
+}

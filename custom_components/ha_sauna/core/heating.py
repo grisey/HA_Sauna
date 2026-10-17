@@ -3,7 +3,7 @@
 from dataclasses import replace
 from datetime import timedelta
 
-from .models import HeatingInterval, HeatingTime
+from .models import HeatingInterval, HeatingStateMark, HeatingTime
 from .timeline import utc
 
 
@@ -32,6 +32,13 @@ def report(
     if heating is not None and type(heating) is not bool:
         raise ValueError("Rückmeldung muss bool oder unbekannt sein")
     state = advance(state, at, reset_seconds)
+    history = state.state_history
+    if not history or history[-1].heating is not heating:
+        if history and history[-1].at == at:
+            history = history[:-1]
+        if not history or history[-1].heating is not heating:
+            history += (HeatingStateMark(at, heating),)
+        state = replace(state, state_history=history)
     if state.reported_heating is heating:
         return state
     intervals = state.intervals

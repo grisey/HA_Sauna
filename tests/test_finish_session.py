@@ -1,4 +1,4 @@
-"""Finalizing an interrupted session stays independent of Home Assistant."""
+"""Light completion cannot change the recording deadline or its identity."""
 
 import unittest
 from datetime import timedelta
@@ -32,18 +32,19 @@ class FinishSessionTests(unittest.TestCase):
         controller.set_operation(False, at(1))
         return gap(controller)
 
-    def test_finishes_now_archives_and_next_start_has_a_new_id(self):
+    def test_light_finishes_now_and_resume_keeps_recording_identity(self):
         controller = self.controller()
         token = self.paused(controller)
 
         controller.finish_session_gap(token.token, at(2))
 
-        self.assertIsNone(controller.session)
-        self.assertEqual(controller.completed_sessions[-1].session_id, "s")
-        self.assertEqual(controller.completed_sessions[-1].ended_at, at(2))
+        self.assertEqual(controller.session.session_id, "s")
+        self.assertIn(token, controller.session.deadlines)
+        self.assertEqual(controller.completed_sessions, ())
         self.assertEqual(controller.light_after_run.ends_at, at(2))
         controller.set_operation(True, at(3), session_id="new")
-        self.assertEqual(controller.session.session_id, "new")
+        self.assertEqual(controller.session.session_id, "s")
+        self.assertIsNone(controller.light_after_run)
 
     def test_off_decision_keeps_origin_across_immediate_new_session(self):
         controller = self.controller()
@@ -58,7 +59,7 @@ class FinishSessionTests(unittest.TestCase):
         self.assertIn(closing, controller.decisions)
         self.assertEqual(closing.session_id, "old")
 
-    def test_accounts_real_time_until_the_manual_finish(self):
+    def test_light_completion_accounts_time_without_finalizing_the_recording(self):
         controller = self.controller()
         controller.set_temperature(60, T0)
         controller.set_operation(True, T0, session_id="s")
@@ -68,11 +69,12 @@ class FinishSessionTests(unittest.TestCase):
 
         controller.finish_session_gap(token.token, at(10))
 
-        completed = controller.completed_sessions[-1]
-        self.assertEqual(completed.ended_at, at(10))
-        self.assertEqual(completed.heating.accounted_at, at(10))
-        self.assertGreaterEqual(completed.heating.elapsed_seconds, 10)
-        self.assertEqual(completed.energy.accounted_at, at(10))
+        self.assertEqual(controller.completed_sessions, ())
+        self.assertIsNone(controller.session.ended_at)
+        self.assertEqual(controller.session.heating.accounted_at, at(10))
+        self.assertGreaterEqual(controller.session.heating.elapsed_seconds, 10)
+        self.assertEqual(controller.session.energy.accounted_at, at(10))
+        self.assertIn(token, controller.session.deadlines)
 
     def test_due_gap_uses_the_regular_completion_once(self):
         for offset in (0, 1):
@@ -88,6 +90,44 @@ class FinishSessionTests(unittest.TestCase):
                 self.assertEqual(controller.completed_sessions[-1].ended_at, due_at)
                 self.assertEqual(controller.light_after_run.ends_at, due_at)
 
+    def test_resume_boundary_is_identical_across_control_modes(self):
+        for first_mode in ("manual", "automatic"):
+            for resumed_mode in ("manual", "automatic"):
+                for microseconds in (-1, 0, 1):
+                    with self.subTest(first=first_mode, resumed=resumed_mode,
+                                      offset_us=microseconds):
+                        controller = Controller(parameters(), control_mode=first_mode)
+                        controller.set_temperature(60, T0)
+                        if first_mode == "manual":
+                            controller.set_heater_override(True, T0)
+                            identity = controller.session.session_id
+                            controller.set_heater_override(False, at(1))
+                        else:
+                            controller.set_operation(True, T0, session_id="original")
+                            identity = controller.session.session_id
+                            controller.set_operation(False, at(1))
+                        deadline = gap(controller)
+                        resume_at = deadline.due_at + timedelta(microseconds=microseconds)
+                        controller.advance(resume_at, evaluate=False)
+                        controller.set_control_mode(resumed_mode, resume_at)
+                        if resumed_mode == "manual":
+                            controller.set_heater_override(True, resume_at)
+                        else:
+                            controller.set_operation(True, resume_at, session_id="new")
+                        if microseconds < 0:
+                            self.assertEqual(controller.session.session_id, identity)
+                            self.assertEqual(controller.session.timeline.session_started_at, T0)
+                            self.assertEqual(controller.completed_sessions, ())
+                        else:
+                            self.assertNotEqual(controller.session.session_id, identity)
+                            self.assertEqual(controller.session.timeline.session_started_at, resume_at)
+                            self.assertEqual(len(controller.completed_sessions), 1)
+                            self.assertEqual(controller.completed_sessions[0].ended_at,
+                                             deadline.due_at)
+                        self.assertTrue(controller.session.operation_enabled)
+                        self.assertFalse(any(d.purpose == "session_gap"
+                                             for d in controller.session.deadlines))
+
     def test_confirmed_and_unconfirmed_gangs_are_not_counted_twice(self):
         controller = self.controller()
         controller.set_temperature(60, T0)
@@ -101,9 +141,11 @@ class FinishSessionTests(unittest.TestCase):
 
         controller.finish_session_gap(token.token, at(5))
 
+        self.assertEqual(controller.session.timeline.gang_count, 1)
+        controller.finish_session_gap(token.token, at(6))
+        controller.advance(token.due_at)
         self.assertEqual(controller.completed_sessions[-1].timeline.gang_count, 1)
-        with self.assertRaises(ValueError):
-            controller.finish_session_gap(token.token, at(6))
+        self.assertEqual(controller.completed_sessions[-1].ended_at, token.due_at)
 
         unconfirmed = self.controller()
         unconfirmed.set_temperature(60, T0)
@@ -112,7 +154,9 @@ class FinishSessionTests(unittest.TestCase):
         unconfirmed.process(event("close", Kind.DOOR_CLOSE, 1, "unconfirmed"))
         unconfirmed.process(event("person", Kind.PERSON_STRONG, 2, "unconfirmed"))
         unconfirmed.set_operation(False, at(3))
-        unconfirmed.finish_session_gap(gap(unconfirmed).token, at(4))
+        deadline = gap(unconfirmed)
+        unconfirmed.finish_session_gap(deadline.token, at(4))
+        unconfirmed.advance(deadline.due_at)
         self.assertEqual(unconfirmed.completed_sessions[-1].timeline.gang_count, 0)
 
     def test_old_token_cannot_finish_a_resumed_or_reinterrupted_session(self):
@@ -126,7 +170,8 @@ class FinishSessionTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             controller.finish_session_gap(old.token, at(5))
         controller.finish_session_gap(current.token, at(5))
-        self.assertIsNone(controller.session)
+        self.assertIn(current, controller.session.deadlines)
+        self.assertFalse(controller.session.operation_enabled)
 
     def test_protected_pauses_finish_without_starting_heat(self):
         controller = self.controller()
@@ -137,7 +182,8 @@ class FinishSessionTests(unittest.TestCase):
 
         self.assertIn("confirmed_controller_failure", controller.protection)
         self.assertFalse(controller.last_decision.heat)
-        self.assertIsNone(controller.session)
+        self.assertFalse(controller.session.operation_enabled)
+        self.assertIn(token, controller.session.deadlines)
         self.assertEqual(controller.light_after_run.ends_at, at(2))
 
 
@@ -162,4 +208,6 @@ class RuntimeFinishSessionTests(unittest.IsolatedAsyncioTestCase):
         await runtime.finish_session_gap(token)
 
         self.assertEqual(cycles, 1)
-        self.assertIsNone(runtime.session)
+        self.assertEqual(runtime.session.session_id, "s")
+        self.assertFalse(runtime.session.operation_enabled)
+        self.assertEqual(gap(runtime.controller).token, token)

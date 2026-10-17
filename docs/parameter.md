@@ -6,8 +6,9 @@
 | --- | --- |
 | Home-Assistant-Integrationskonfiguration | **Geräte und Erkennungsverfahren**: Sensoren, Schaltausgänge, Bedieneingang und Erkennungsverfahren. |
 | Home-Assistant-Integrationskonfiguration | **Betrieb und Ofen**, **Sensoren und Erkennung**, **Licht**: dauerhafte Einstellungen, nach Funktion in Untergruppen gegliedert. |
+| Home-Assistant-Integrationskonfiguration | **Daten und Laufzeit**: Messkontext vor und nach archivierten Sitzungen. |
 | Sauna-Panel → **Einstellungen** | **Programme und Start**: Programmbibliothek sowie Taster- und Startvorgaben. |
-| Sauna-Panel → **Einstellungen** | **Darstellung**: Instrumente und konstante Temperaturen der Schnellwahl. |
+| Sauna-Panel → **Einstellungen** | **Darstellung**: Instrumente, Farben, Diagramme, Aktualisierung, Bedienung, Seitengrößen und Gestaltung sowie konstante Temperaturen der Schnellwahl. |
 | Sauna-Panel → **Einstellungen** | **Daten und Wartung**: Archiv, Protokollierung und Zurücksetzen. |
 | Sauna-Panel → **Einstellungen** | **Persönlich**: Sauna als Startseite des aktuellen Home-Assistant-Profils. |
 | Sauna-Panel → Steuerung | Aktuelle Temperaturwahl und vorübergehende Ofen- oder Lichtwahl. |
@@ -15,6 +16,65 @@
 Die Einstellungen für Betrieb, Erkennung und Licht gelten unmittelbar und bleiben
 nach einem Neustart erhalten. Sie und die Gerätezuordnungen sind mit
 Administratorrechten nach vollständigem Sitzungsende änderbar.
+
+Integrationskonfiguration und Panel verwenden dieselbe
+Anwendbarkeit: Eingabefelder erscheinen nur für zugeordnete Messpositionen und
+Quellen, Personenschwellen nur beim indirekten Verfahren und die Haltezeit nur
+bei Tastern, die Drücken und Loslassen melden. Ein vorübergehender Sensorausfall ändert
+die Anwendbarkeit nicht. Gespeicherte Werte bleiben für einen späteren
+Konfigurationswechsel erhalten.
+
+Jeder veränderbare dauerhafte Parameter hat eine zuständige Einstellungsstelle.
+Die bisherigen zusätzlichen Zahlenentitäten für dauerhafte Einstellungen werden
+beim Laden der Integration entfernt. Gespeicherte Einstellungen bleiben dabei
+erhalten. Die Bedienung der aktuellen Temperaturwahl und ihrer Programmstufen
+folgt weiterhin dem laufenden Bedienablauf.
+
+Werkseinstellungen, Eingabegrenzen, Einheiten, Schrittweiten und Zuordnung der
+Einstellungen stehen im gemeinsamen Katalog
+[`defaults.json`](../custom_components/ha_sauna/defaults.json). Die Integration
+und das Panel beziehen ihre Werte aus diesem Katalog und der gespeicherten
+Konfiguration der jeweiligen Sauna. Neu hinzugekommene Einstellungen verwenden
+ihren Katalogstandard, bis ein eigener Wert gespeichert wird. Ungültige Werte
+und unvereinbare Kombinationen werden vor dem Speichern abgewiesen.
+
+Die Katalogangabe `configuration_surface` legt für jede numerische Standardvorgabe
+ihre Zuständigkeit fest:
+
+| Zuständigkeit | Standardvorgaben |
+| --- | --- |
+| `catalog` – Pflege im Katalog | Auswertungsraster und Laufzeittakt; Seiten-, Cache- und Übertragungsgrößen des Archivs; numerische Toleranzen und interne Aufheizschätzungsfaktoren; technische Anzeige-, Geometrie- und Gestaltungsvorgaben. |
+| `integration` – Integrationskonfiguration | Anlagen-, Betriebs-, Erkennungs- und Lichtvorgaben sowie der Archiv-Messkontext. |
+| `panel` – Einstellungsmenü | Programm- und Startvorgaben, Temperaturschnellwahl, Verlauf-Aktualisierung, Seitengrößen der Detailansicht, Anzeigepräzision, Zoomverhalten sowie ausgewählte Abstände, Höhen und Rundungen. |
+
+Kataloggebundene Standards werden beim Laden aus dem Katalog bezogen. Die
+gespeicherte Instanzkonfiguration enthält die veränderbaren Vorgaben. Eine
+Sitzungsaufzeichnung hält den vollständigen damals wirksamen Parameterstand
+fest, damit ihre spätere Auswertung dieselben fachlichen Vorgaben verwendet.
+Farben, Diagrammskalen und Instrumentenformen werden unter **Darstellung**
+gepflegt; die Programmbibliothek unter **Programme und Start**.
+
+Unter **Betrieb und Ofen → Heizzeit und Verbrauch** ist der **Strompreis**
+optional in €/kWh erfassbar. Der Werkwert ist leer; durch Löschen der Eingabe
+wird der gespeicherte Strompreis wieder entfernt.
+
+### Darstellung und Aktualisierung
+
+Unter **Darstellung** sind Verlauf-Aktualisierung, Datensatzgrenzen,
+Bedienverhalten und die veränderbaren Gestaltungsvorgaben nach Aufgabe gruppiert. Die Einstellungen
+gelten für die jeweilige Sauna. **Speichern**, **Verwerfen** und die Rücksetzung
+der Darstellung verwenden denselben vollständigen Einstellungsstand.
+
+Die Statusanzeige und der laufende Archivverlauf haben getrennte
+Aktualisierungsabstände. Nachgeladene Daten ergänzen die geöffnete Ansicht;
+Zoom, Fensterausschnitt, Markierung, Fokus und aufgeklappte Abschnitte bleiben
+erhalten. Die Ladeanzeige gehört zum ersten Abruf einer Ansicht.
+
+### Daten und Laufzeit
+
+Der Messkontext legt fest,
+welcher Zeitraum vor und nach einer Sitzung im Archiv berücksichtigt wird.
+Eine archivierte Sitzung verwendet den bei ihr gespeicherten Kontextwert.
 
 ## Entitätsrollen
 
@@ -70,7 +130,10 @@ HA-Aktualisierungszeit bleiben getrennt.
 | Solltemperaturen | Gemeinsame Grenzen für direkte Wahl, Programme und Tastervorgabe. Eingaben und Zwischenstufen werden auf ganze Grad gerundet; ab einem halben Grad aufwärts. |
 | Helligkeitsskala | Muss dem konfigurierten Maximalwert des Lichtgeräts entsprechen, damit eigene Befehle und Geräterückmeldungen zusammenpassen. |
 | Vergleichszeiten der Personenerkennung | Müssen ganzzahlige Vielfache des Auswertungsabstands sein. |
+| Auswertungsraster | Median, Vergleichsfenster, Lüftungsreferenz und Auswertungsabstand müssen ganzzahlige Vielfache des Rasters sein. Haltezeiten werden am ersten Rasterpunkt nach ihrem Ablauf erfüllt. |
 | Höchstalter der Messwerte | Muss die regulären Meldeabstände der jeweiligen Quelle abdecken. |
+| Sonnenstand für das Licht | Der Nachtgrenzwert muss unter dem Tagesgrenzwert liegen; dazwischen wird die Helligkeit überblendet. |
+| Aufheizschätzung | Mindestzahl und Zeitraum der Messpunkte, Rausch- und Abfallgrenzen sowie Glättungs- und Bestätigungszeiträume bestimmen, wann und wie eine verbleibende Aufheizzeit ausgewiesen wird. |
 
 [Ausfälle und Schutzabschaltung](betrieb.md#bei-sensorausfall-oder-schutzabschaltung)
 
@@ -86,11 +149,26 @@ Der Datenumfang des Sitzungsarchivs bleibt unverändert.
 
 ## Werkseinstellungen
 
-**Daten und Wartung → Werkseinstellungen wiederherstellen** setzt Betriebsparameter,
-Programmbibliothek, Betriebsart, aktuelle Temperaturwahl, Tastervorgabe,
-Temperaturschnellwahl und Protokollstufe zurück.
+Ein Feldstandard ist eine eigene gespeicherte Vorgabe für ein dauerhaftes Feld.
+Ohne eigenen Standard gilt dessen Werkseinstellung aus dem Katalog.
+Die **Standardtemperatur** behält ihre besondere Funktion bei der Temperaturwahl;
+sie ist keine allgemeine Rücksetzung.
 
-Erhalten bleiben Gerätezuordnungen, Erkennungsverfahren, Taster-/Schalterart samt
-Ereignistyp sowie Farben, Instrumente, Diagramme und Archiv. Farben, Instrumente
-und Diagramme haben eine eigene Rücksetzung unter **Darstellung**.
-Alle Rücksetzungen der Betriebsparameter sind erst nach Sitzungsende möglich.
+| Aktion | Wirkung nach Vorschau und Bestätigung |
+| --- | --- |
+| **Standard überschreiben** | Speichert den gültigen Entwurf genau eines Feldes als dessen Standard. Der aktive Wert und weitere Entwürfe bleiben erhalten. |
+| **Standard wiederherstellen** | Übernimmt gespeicherte Standards, ersatzweise Werkseinstellungen, in die aktiven Werte und betroffenen Entwürfe. |
+| **Werkseinstellung** | Übernimmt Katalogwerte in die aktiven Werte und betroffenen Entwürfe; entfernt eigene Standards im gewählten Umfang. |
+| Speichern / **Änderungen verwerfen** | Speichern übernimmt gültige Entwürfe als aktive Werte. Verwerfen lädt aktive Werte als Entwurf. Gespeicherte Standards werden dabei nicht geändert. |
+
+Feldmenüs **⋯** gelten für genau ein Feld. **Standards für diesen Bereich** und
+**Daten und Wartung → Standards für alle Bereiche** umfassen auch derzeit
+ausgeblendete gespeicherte Felder. Die Vorschau zeigt diesen vollständigen Umfang.
+Programmbibliothek und Gerätezuordnung sind ausgenommen. Kataloggebundene interne
+Vorgaben haben weder Feldstandard noch zusätzliche Eingabe.
+
+Änderungen der Betriebsparameter setzen vollständiges Sitzungsende voraus.
+Unvereinbare Kombinationen und veraltete Bestätigungen werden vor der Anwendung
+abgewiesen; es wird kein Teil der Vorschau angewendet. Andere Entwürfe bleiben
+erhalten. Der optionale Strompreis gehört zum Feld-, Bereichs- und Gesamtumfang;
+leer und der gültige Zahlenwert 0 bleiben dabei verschieden.

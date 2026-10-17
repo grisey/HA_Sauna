@@ -1,0 +1,85 @@
+name: HA Sauna UI
+on:
+  push:
+    branches: ['codex/ui-*']
+  workflow_dispatch:
+    inputs:
+      format_only:
+        description: 'Only verify formatting; retain existing test evidence'
+        type: boolean
+        default: false
+      checks:
+        description: 'Comma-separated checks; empty runs the complete UI suite'
+        type: string
+        default: ''
+      browser_tests:
+        description: 'Optional space-separated unittest names for bounded browser reruns'
+        type: string
+        default: ''
+permissions:
+  contents: read
+concurrency:
+  group: ui-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  configuration:
+    # Bootstrap on the GitHub-hosted Linux provider; all run settings come from the catalogue.
+    runs-on: ubuntu-latest
+    outputs:
+      settings: ${{ steps.catalog.outputs.settings }}
+      browser: ${{ steps.catalog.outputs.browser }}
+      cases: ${{ steps.catalog.outputs.cases }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - id: catalog
+        run: python tests/ci_settings.py outputs
+  test:
+    needs: configuration
+    if: ${{ !inputs.format_only }}
+    runs-on: ${{ fromJSON(needs.configuration.outputs.settings).operating_system }}
+    env:
+      HA_TEST_REQUIRED: '1'
+      ENGINE: ${{ fromJSON(needs.configuration.outputs.browser).engine }}
+      UI_CHECKS: ${{ inputs.checks }}
+      HA_SAUNA_BROWSER_TESTS: ${{ inputs.browser_tests }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 2
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: ${{ fromJSON(needs.configuration.outputs.settings).python_ha }}
+      - name: Pinned Home Assistant and browser dependencies
+        run: python -u tests/browser/run_ui.py prepare
+      - name: Panel methods, panel API, HA browser and history interactions
+        run: python -u tests/browser/run_ui.py test
+      - name: Preserve process results, source hashes and browser images
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: ui-tests-${{ github.sha }}
+          path: ${{ runner.temp }}/ha-sauna-ui
+          if-no-files-found: error
+          retention-days: ${{ fromJSON(needs.configuration.outputs.settings).artifact_retention_days }}
+  format:
+    needs: configuration
+    runs-on: ${{ fromJSON(needs.configuration.outputs.settings).operating_system }}
+    env:
+      UI_BASE_REF: ${{ fromJSON(needs.configuration.outputs.settings).ui_base_ref }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: ${{ fromJSON(needs.configuration.outputs.settings).python_ha }}
+      - name: Format changed JavaScript and newly added Python; export patch
+        run: python -u tests/browser/run_ui.py format
+      - name: Preserve format patch separately from tested HEAD
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: ui-format-${{ github.sha }}
+          path: ${{ runner.temp }}/ha-sauna-ui-format
+          if-no-files-found: error
+          retention-days: ${{ fromJSON(needs.configuration.outputs.settings).artifact_retention_days }}

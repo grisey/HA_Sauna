@@ -1,6 +1,11 @@
 "use strict";
 
 const assert = require("node:assert/strict");
+const { panelFixture: fixturePanel } = require("./catalog_fixture.cjs");
+const {
+  parameterValues: fixtureValues,
+  parameterDefinition: fixtureDefinition,
+} = require("./catalog_fixture.cjs");
 const fs = require("node:fs");
 const test = require("node:test");
 const vm = require("node:vm");
@@ -38,6 +43,7 @@ class Node extends EventTarget {
     this.rect = { left: 0, top: 0, width: 1200, height: 480, ...rect };
     this.children = [];
     this.style = {};
+    this.classList = require("./catalog_fixture.cjs").elementClassList(this);
     this.hidden = false;
     this.attributes = new Map();
     this.reads = 0;
@@ -48,17 +54,32 @@ class Node extends EventTarget {
     this.children.push(...nodes);
     for (const node of nodes) node.parentNode = this;
   }
+  prepend(...nodes) {
+    this.children.unshift(...nodes);
+    for (const node of nodes) node.parentNode = this;
+  }
+  remove() {
+    if (this.parentNode)
+      this.parentNode.children = this.parentNode.children.filter(
+        (node) => node !== this,
+      );
+    this.parentNode = null;
+  }
   replaceChildren(...nodes) {
     this.children = [];
+    this._textContent = "";
     this.append(...nodes);
   }
   get textContent() {
-    return this._textContent;
+    return this.children.length
+      ? this.children.map((node) => node.textContent).join("")
+      : this._textContent;
   }
   set textContent(value) {
     this.ownerDocument.trace?.push("write");
     this.writes.push(["text", value]);
     this._textContent = String(value);
+    this.children = [];
   }
   getBoundingClientRect() {
     this.ownerDocument.trace?.push("read");
@@ -68,6 +89,12 @@ class Node extends EventTarget {
   setAttribute(name, value) {
     this.writes.push(["attribute", name, value]);
     this.attributes.set(name, value);
+  }
+  getAttribute(name) {
+    return this.attributes.get(name) ?? null;
+  }
+  removeAttribute(name) {
+    this.attributes.delete(name);
   }
   getRootNode() {
     let node = this;
@@ -120,6 +147,7 @@ const makeEnvironment = () => {
   const cursor = new Node(document);
   const overview = new Node(document, { left: 20, top: 400, width: 600, height: 23 });
   overview.parentNode = scroller;
+  overview.matches = (selector) => selector === "[data-history-time-axis]";
   return {
     window,
     document,
@@ -135,6 +163,7 @@ const makeEnvironment = () => {
   };
 };
 
+let Panel;
 const source = fs.readFileSync("custom_components/ha_sauna/panel.js", "utf8");
 const load = () => {
   const context = {
@@ -147,7 +176,12 @@ const load = () => {
     Set,
     Intl,
     HTMLElement: class {},
-    customElements: { get: () => null, define() {} },
+    customElements: {
+      get: () => null,
+      define: (_, value) => {
+        Panel = value;
+      },
+    },
   };
   vm.runInNewContext(
     `${source}\nglobalThis.HistoryInteraction = HistoryInteraction;`,
@@ -156,35 +190,50 @@ const load = () => {
   return context.HistoryInteraction;
 };
 
-const panel = (calls) => ({
-  window: [0, 1000],
-  positions: new Set(["upper", "lower"]),
-  historyDetail: true,
-  shown: { session: { measurement_ttl_seconds: 2 } },
-  state: {
-    measurement_ttl_seconds: 1,
-    configuration: { parameters: { sensor_timeout_seconds: 1 } },
-  },
-  scheduleHistoryRender: (reason) => calls.push(reason),
-  nearestMeasurement: (position, quantity) =>
-    position === "upper" && quantity === "temperature"
-      ? {
-          time: 500,
-          value: 0,
-          source: {
-            raw_value: 0,
-            received_at: "2032-01-01T08:00:00.987654Z",
-            measured_at: "2032-01-01T08:00:00.123456Z",
-          },
-        }
-      : null,
-});
+const panel = (calls, environment) =>
+  Object.assign(fixturePanel(Panel), {
+    $: (selector) =>
+      selector === "[data-history-time-axis]" ? environment?.overview : null,
+    window: [0, 1000],
+    positions: new Set(["upper", "lower"]),
+    historyDetail: true,
+    shown: {
+      session: {
+        measurement_ttl_seconds: fixtureValues().sensor_timeout_seconds,
+        timeline: {
+          session_id: "geometry",
+          session_started_at: new Date(0).toISOString(),
+          completed: [],
+          processed: [],
+          active: null,
+        },
+      },
+    },
+    state: {
+      now: new Date(10000).toISOString(),
+      measurement_ttl_seconds: fixtureValues().sensor_timeout_seconds,
+      configuration: { parameters: fixtureValues() },
+    },
+    scheduleHistoryRender: (reason) => calls.push(reason),
+    nearestMeasurement: (position, quantity) =>
+      position === "upper" && quantity === "temperature"
+        ? {
+            time: 500,
+            value: 0,
+            source: {
+              raw_value: 0,
+              received_at: "2032-01-01T08:00:00.987654Z",
+              measured_at: "2032-01-01T08:00:00.123456Z",
+            },
+          }
+        : null,
+  });
 
 test("coordinates use the cached rectangles and logical chart sizes", () => {
   const environment = makeEnvironment();
   const HistoryInteraction = load(environment);
   const interaction = HistoryInteraction(
-    panel([]),
+    panel([], environment),
     environment.surface,
     environment.wrap,
     environment.tooltip,
@@ -202,7 +251,7 @@ test("coordinates use the cached rectangles and logical chart sizes", () => {
   assert.equal(chartPoint.y, 240);
   const overviewPoint = interaction.coordinates(environment.overview, 320, 411.5);
   assert.equal(overviewPoint.x, 600);
-  assert.equal(overviewPoint.y, 23);
+  assert.equal(overviewPoint.y, fixturePanel(Panel).historyTimeAxisHeight() / 2);
   const reads = environment.surface.reads;
   interaction.coordinates(environment.surface, 350, 190);
   assert.equal(
@@ -216,7 +265,7 @@ test("hover uses the shared transform and does not read layout after root writes
   const environment = makeEnvironment();
   const HistoryInteraction = load(environment);
   const interaction = HistoryInteraction(
-    panel([]),
+    panel([], environment),
     environment.surface,
     environment.wrap,
     environment.tooltip,
@@ -239,7 +288,11 @@ test("hover uses the shared transform and does not read layout after root writes
   );
   const descendants = (node) => [node, ...node.children.flatMap(descendants)];
   const writes = descendants(environment.tooltip).flatMap((node) => node.writes);
-  assert.ok(writes.some(([kind, text]) => kind === "text" && text === "0 °C"));
+  const temperature = descendants(environment.tooltip).find(
+    (node) => node.getAttribute?.("data-quantity") === "temperature",
+  ).parentNode.children[1];
+  assert.equal(temperature.children[0].textContent, "0,0");
+  assert.equal(temperature.children[1].textContent, "°C");
   assert.ok(
     writes.every(
       ([kind, text]) =>
@@ -282,7 +335,7 @@ test("scroll across a shadow boundary, viewport resize, and DPR changes invalida
   const calls = [];
   const HistoryInteraction = load(environment);
   const interaction = HistoryInteraction(
-    panel(calls),
+    panel(calls, environment),
     environment.surface,
     environment.wrap,
     environment.tooltip,
@@ -312,7 +365,7 @@ test("dispose removes every listener, observer, and media subscription", () => {
   const calls = [];
   const HistoryInteraction = load(environment);
   const interaction = HistoryInteraction(
-    panel(calls),
+    panel(calls, environment),
     environment.surface,
     environment.wrap,
     environment.tooltip,
@@ -340,7 +393,7 @@ test("slotted content subscribes to scrolling ancestors within its assigned shad
   slottedScroller.parentNode = environment.shadow;
   environment.surface.assignedSlot = slot;
   const interaction = load()(
-    panel(calls),
+    panel(calls, environment),
     environment.surface,
     environment.wrap,
     environment.tooltip,

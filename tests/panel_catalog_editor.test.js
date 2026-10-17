@@ -1,6 +1,11 @@
 "use strict";
+const { panelFixture: fixturePanel } = require("./catalog_fixture.cjs");
 
 const assert = require("node:assert/strict");
+const {
+  parameterValues: fixtureValues,
+  parameterDefinition: fixtureDefinition,
+} = require("./catalog_fixture.cjs");
 const fs = require("node:fs");
 const test = require("node:test");
 const vm = require("node:vm");
@@ -32,7 +37,7 @@ const ids = (panel) =>
   JSON.parse(JSON.stringify(panel.currentProgramDraft().map((program) => program.id)));
 const makePanel = () => {
   const library = { dataset: {}, innerHTML: "" };
-  const panel = Object.assign(Object.create(Panel.prototype), {
+  const panel = Object.assign(fixturePanel(Panel), {
     entry: "sauna-1",
     generation: 0,
     state: {
@@ -44,8 +49,8 @@ const makePanel = () => {
         button_program: "b",
       },
       parameters: [
-        { key: "target_temperature_c", minimum: 60, maximum: 110 },
-        { key: "temperature_gangs", minimum: 1, maximum: 8 },
+        fixtureDefinition("target_temperature_c"),
+        fixtureDefinition("temperature_gangs"),
       ],
     },
     $: (selector) => (selector === "#program-library" ? library : null),
@@ -187,9 +192,10 @@ test("catalog commits and sends whole degrees for endpoints and explicit stages"
     [80, 86, 91],
   );
   panel.openProgramEditor("c");
-  panel.programEditor.values.temperature_steps = ["59.9", "90"];
+  const belowMinimum = String(fixtureDefinition("target_temperature_c").minimum - 0.1);
+  panel.programEditor.values.temperature_steps = [belowMinimum, "90"];
   assert.throws(() => panel.finishProgramEditor(), /zwischen/);
-  assert.equal(panel.programEditor.values.temperature_steps[0], "59.9");
+  assert.equal(panel.programEditor.values.temperature_steps[0], belowMinimum);
 });
 
 test("keyboard order and pointer insertion preserve IDs and can be discarded", () => {

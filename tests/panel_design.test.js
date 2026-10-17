@@ -1,11 +1,14 @@
 "use strict";
+const { panelFixture: fixturePanel } = require("./catalog_fixture.cjs");
 const assert = require("node:assert/strict");
+const {
+  parameterValues: fixtureValues,
+  parameterDefinition: fixtureDefinition,
+} = require("./catalog_fixture.cjs");
 const fs = require("node:fs");
 const test = require("node:test");
 const vm = require("node:vm");
-const defaults = JSON.parse(
-  fs.readFileSync("custom_components/ha_sauna/defaults.json", "utf8"),
-);
+const defaults = structuredClone(require("./catalog_fixture.cjs").catalog);
 let Panel;
 vm.runInNewContext(fs.readFileSync("custom_components/ha_sauna/panel.js", "utf8"), {
   HTMLElement: class {},
@@ -17,12 +20,12 @@ vm.runInNewContext(fs.readFileSync("custom_components/ha_sauna/panel.js", "utf8"
   },
 });
 const panel = () =>
-  Object.assign(Object.create(Panel.prototype), {
+  Object.assign(fixturePanel(Panel), {
     state: {
       frontend_defaults: defaults.frontend,
       appearance_catalog: defaults.appearance,
       configuration: { parameters: {} },
-      parameters: [{ key: "target_temperature_c", minimum: 60, maximum: 100 }],
+      parameters: [fixtureDefinition("target_temperature_c")],
     },
   });
 
@@ -55,18 +58,20 @@ test("brightness reports distinguish feedback, a plan and unknown independently 
 
 test("temperature controls retain whole degrees even with legacy fractional steps", () => {
   const p = panel();
-  p.state.frontend_defaults = {
-    ...defaults.frontend,
-    temperature_step_c: 0.25,
-    temperature_dial_step_c: 2,
+  p.state.appearance = {
+    preferences: { temperature_step_c: 0.25, temperature_dial_step_c: 2 },
   };
   assert.equal(p.temperatureStep(), 1);
   assert.equal(p.clampTemperature(80.3), 80);
   assert.equal(p.clampTemperature(80.5), 81);
+  assert.equal(p.clampArcTemperature(83), 83);
+  p.state.appearance_catalog = structuredClone(defaults.appearance);
+  p.state.appearance_catalog.preferences.temperature_dial_step_c.default = 2;
   assert.equal(p.clampArcTemperature(83), 84);
-  p.state.frontend_defaults.temperature_dial_step_c = 0.1;
+  p.state.appearance_catalog.preferences.temperature_dial_step_c.default = 0.1;
   assert.equal(p.clampArcTemperature(80.5), 81);
-  p.state.frontend_defaults = {};
+  p.state.appearance = {};
+  p.state.appearance_catalog = { colors: [], scales: {}, preferences: {} };
   assert.equal(p.temperatureStep(), null);
   assert.equal(p.targetArcBounds(), null);
   assert.equal(p.clampTemperature(80), null);
@@ -93,7 +98,6 @@ test("settings round target temperatures without changing fractional control par
     preset_start_c: 70.5,
     preset_step_c: 0.5,
     readiness_hysteresis_c: 1.5,
-    heating_hysteresis_c: 2.5,
   });
   assert.deepEqual(JSON.parse(JSON.stringify(calls[0])), [
     "/entry/parameters",
@@ -104,7 +108,6 @@ test("settings round target temperatures without changing fractional control par
       preset_start_c: 71,
       preset_step_c: 0.5,
       readiness_hysteresis_c: 1.5,
-      heating_hysteresis_c: 2.5,
     },
   ]);
 });
@@ -133,30 +136,45 @@ test("featured quantity colors precede advanced colors and legacy height values 
   );
 });
 
-test("history legend groups matching curve, phase and event symbols without height controls", () => {
+test("phase and event bands retain their labels and colors without height controls", () => {
   const p = panel();
   p.historyTitle = () => "Sitzung";
   p.historyDetail = true;
+  const at = (second) => new Date(Date.UTC(2032, 0, 1) + second * 1000).toISOString();
+  const session = {
+    ended_at: at(40),
+    timeline: { session_started_at: at(0), completed: [], active: null, processed: [] },
+  };
   p.shown = {
+    session,
     phase_projection: {
       intervals: [
-        { phase: "aufheizen" },
-        { phase: "saunagang" },
-        { phase: "nachlauf" },
-        { phase: "saunagang" },
+        { phase: "aufheizen", started_at: at(0), ended_at: at(10) },
+        { phase: "saunagang", started_at: at(10), ended_at: at(20) },
+        { phase: "nachlauf", started_at: at(20), ended_at: at(30) },
+        { phase: "saunagang", started_at: at(30), ended_at: at(40) },
       ],
     },
   };
-  const markup = p.historyMarkup({}) + p.historyLegendMarkup();
+  const model = {
+    ...p.historyGeometry(),
+    start: Date.parse(at(0)),
+    end: Date.parse(at(40)),
+    x: (time) => (time - Date.parse(at(0))) / 40,
+  };
+  const markup = p.historyMarkup();
   assert.doesNotMatch(markup, /history-detail|position-upper|position-lower|Messhöhen/);
-  for (const label of ["Phasen", "Ereignisse"])
-    assert.ok(markup.includes(`aria-label="${label}"`));
-  for (const kind of ["infusion"]) assert.ok(markup.includes(`<line class="${kind}"`));
-  for (const kind of ["heat", "after", "gang", "door"])
-    assert.ok(markup.includes(`<rect class="${kind}"`));
-  assert.doesNotMatch(markup, /Messkurven|<rect class="ready"/);
-  assert.equal((markup.match(/data-legend-phase="saunagang"/g) || []).length, 1);
-  assert.doesNotMatch(markup, /class="vent"|lüften|Lüftung/);
+  assert.match(markup, /aria-label="Phasen der Sitzung"/);
+  assert.match(markup, /aria-label="Türvorgänge und Aufgüsse"/);
+  const phases = p.historyPhaseBand(model, session);
+  for (const phase of ["aufheizen", "nachlauf", "saunagang"])
+    assert.ok(phases.includes(`data-history-phase="${phase}"`));
+  assert.equal((phases.match(/data-history-phase="saunagang"/g) || []).length, 2);
+  assert.equal((p.historyBandNames(model).match(/Saunagang/g) || []).length, 1);
+  const events = p.historyStripEvents(model);
+  for (const label of ["Türvorgänge", "Aufgüsse", "Ofen"])
+    assert.ok(events.includes(label));
+  assert.doesNotMatch(markup + phases + events, /class="vent"|lüften|Lüftung/);
   const styles = p.historyCurveStyles();
   assert.deepEqual(Array.from(styles["upper:temperature"].lineDash), []);
   assert.deepEqual(Array.from(styles["upper:humidity"].lineDash), []);

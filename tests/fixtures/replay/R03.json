@@ -1,0 +1,424 @@
+{
+  "schema_version": 1,
+  "id": "R03",
+  "kind": "real_session",
+  "title": "Manuelle Sitzung mit kurzer Pause, Automatikwechsel und gemeinsamem Nachlauf",
+  "duration_s": 1938.519434,
+  "configuration": {
+    "presence_source": "ha_presence",
+    "control_mode": "manual",
+    "parameters": {
+      "target_temperature_c": 90,
+      "final_temperature_c": 100,
+      "temperature_gangs": 3,
+      "button_hold_seconds": 2.0,
+      "session_gap_minutes": 15.0,
+      "manual_override_minutes": 10.0,
+      "standard_temperature_c": 90,
+      "sauna_min_temperature_c": 60.0,
+      "readiness_offset_c": 1.0,
+      "readiness_hysteresis_c": 1.0,
+      "minimum_heating_minutes": 10.0,
+      "thermostat_cooldown_minutes": 5.0,
+      "feedback_timeout_seconds": 10.0,
+      "fault_confirmation_seconds": 60.0,
+      "warmup_estimation_minutes": 5.0,
+      "after_run_minutes": 5.0,
+      "oven_cooling_max_minutes": 15.0,
+      "oven_cooling_heat_idle_ratio": 2.0,
+      "oven_cooling_half_life_minutes": 15.0,
+      "power_heating_threshold_w": 50.0,
+      "nominal_power_kw": 4.5,
+      "heat_reset_minutes": 10.0,
+      "sensor_timeout_seconds": 180.0,
+      "grid_seconds": 1,
+      "median_seconds": 5,
+      "door_window_seconds": 8,
+      "door_humidity_seconds": 10,
+      "door_open_slope": -1.8,
+      "door_open_drop_c": 1.0,
+      "door_open_humidity_upper": 0.45,
+      "door_open_humidity_lower": 0.3,
+      "door_open_hold_seconds": 2,
+      "door_heating_slope": -0.8,
+      "door_heating_hold_seconds": 5,
+      "door_close_slope": 0.15,
+      "door_close_hold_seconds": 3,
+      "person_step_seconds": 5,
+      "strong_window_seconds": 60,
+      "weak_window_seconds": 120,
+      "strong_humidity_upper": 0.5,
+      "strong_humidity_lower": 0.5,
+      "strong_hold_seconds": 10,
+      "weak_humidity_upper": 0.14,
+      "weak_humidity_lower": 0.14,
+      "weak_hold_seconds": 30,
+      "infusion_window_seconds": 10,
+      "infusion_humidity": 2.0,
+      "infusion_hold_seconds": 3,
+      "confirmation_minutes": 12.0,
+      "vent_baseline_seconds": 60,
+      "vent_drop_upper": 3.0,
+      "vent_drop_lower": 3.0,
+      "vent_absolute_humidity_loss_percent": 30.0,
+      "vent_hold_seconds": 60,
+      "light_brightness_scale": 255,
+      "light_reference_temperature_c": 30.0,
+      "cooling_brightness_percent": 5.0,
+      "operation_brightness_percent": 45.0,
+      "night_brightness_percent": 30.0,
+      "after_run_brightness_percent": 10.0,
+      "session_light_brightness_percent": 50.0,
+      "light_transition_seconds": 30.0,
+      "light_output_hysteresis_percent": 0.1,
+      "preset_start_c": 70,
+      "preset_step_c": 5.0,
+      "preset_count": 6
+    },
+    "control_input_mode": "button",
+    "button_input_kind": "event",
+    "button_event_types": [
+      "btn_down",
+      "btn_up",
+      "single_push",
+      "double_push",
+      "triple_push",
+      "long_push"
+    ],
+    "button_session_gesture": "long",
+    "button_program": "constant",
+    "program": {
+      "mode": "constant",
+      "start_c": 90
+    },
+    "initial_light_percent": 0
+  },
+  "initial_state": {
+    "presence": {
+      "value": false,
+      "reported_age_s": 423.787241
+    },
+    "light_feedback": {
+      "value": {
+        "on": false,
+        "brightness": null
+      },
+      "reported_age_s": 641.965864
+    },
+    "upper_humidity": {
+      "value": 6.86,
+      "reported_age_s": 1.472868
+    },
+    "upper_temperature": {
+      "value": 69.86,
+      "reported_age_s": 1.481173
+    },
+    "lower_humidity": {
+      "value": 8.58,
+      "reported_age_s": 0.403256
+    },
+    "lower_temperature": {
+      "value": 65.72,
+      "reported_age_s": 1.455193
+    },
+    "heater_feedback": {
+      "value": false,
+      "reported_age_s": 1884.637024
+    }
+  },
+  "feedback_mode": "simulated_acknowledgement",
+  "samples_file": "R03.samples.jsonl.gz",
+  "samples_sha256": "93c9a6aba02dd02e8952e8c184800fb98f30d7998dfd730dcc901be2a5c2f5bb",
+  "samples_count": 5964,
+  "observed_outputs_file": "R03.observed-outputs.jsonl.gz",
+  "observed_outputs_sha256": "62f1d71606a3aa134c123f5b8b1363e7fbd43bd03f2c54bfb75b0e64f2b4d9d3",
+  "observed_outputs_count": 62,
+  "actions": [
+    {
+      "t": 0.0,
+      "name": "set_heater",
+      "args": {
+        "value": true
+      }
+    },
+    {
+      "t": 538.234627,
+      "name": "set_light",
+      "args": {
+        "value": true
+      }
+    },
+    {
+      "t": 957.787263,
+      "name": "button",
+      "args": {
+        "event": "btn_down"
+      }
+    },
+    {
+      "t": 957.985325,
+      "name": "button",
+      "args": {
+        "event": "btn_up"
+      }
+    },
+    {
+      "t": 958.288082,
+      "name": "button",
+      "args": {
+        "event": "single_push"
+      }
+    },
+    {
+      "t": 976.043577,
+      "name": "button",
+      "args": {
+        "event": "btn_down"
+      }
+    },
+    {
+      "t": 976.213151,
+      "name": "button",
+      "args": {
+        "event": "btn_up"
+      }
+    },
+    {
+      "t": 976.543752,
+      "name": "button",
+      "args": {
+        "event": "single_push"
+      }
+    },
+    {
+      "t": 980.277921,
+      "name": "button",
+      "args": {
+        "event": "btn_down"
+      }
+    },
+    {
+      "t": 981.261977,
+      "name": "button",
+      "args": {
+        "event": "long_push"
+      }
+    },
+    {
+      "t": 987.089697,
+      "name": "button",
+      "args": {
+        "event": "btn_up"
+      }
+    },
+    {
+      "t": 998.389524,
+      "name": "button",
+      "args": {
+        "event": "btn_down"
+      }
+    },
+    {
+      "t": 999.389304,
+      "name": "button",
+      "args": {
+        "event": "long_push"
+      }
+    },
+    {
+      "t": 1001.912295,
+      "name": "button",
+      "args": {
+        "event": "btn_up"
+      }
+    }
+  ],
+  "expectations": [
+    {
+      "id": "M01-start",
+      "values": {
+        "recording": true,
+        "target_temperature_c": 90,
+        "operation_enabled": true
+      },
+      "reason": "Der Nutzer hat eine manuelle Testsitzung gestartet. Die zentrale Standardtemperatur beträgt 90 °C.",
+      "at_s": 1.519434
+    },
+    {
+      "id": "M02-detection-does-not-control",
+      "values": {
+        "cooling_active": false,
+        "gang_heat_demand": false,
+        "temporary_door_heat": false
+      },
+      "reason": "Im manuellen Betrieb dürfen erfasste Tür-, Präsenz- und Feuchteverläufe keine automatische Ofenkühlung oder zusätzliche Heizanforderung auslösen.",
+      "between_s": [
+        1.519434,
+        956.519434
+      ]
+    },
+    {
+      "id": "M03-native-short-stop",
+      "values": {
+        "operation_enabled": false,
+        "heater_request": false,
+        "active_gang": false,
+        "recording": true,
+        "completed_sessions": 0,
+        "retained_sessions": 0
+      },
+      "reason": "Der außen betätigte kurze Tastendruck schaltet den manuellen Betrieb aus. Die gemeinsame Sitzungsfrist beginnt; die Aufzeichnung bleibt für eine rechtzeitige Wiederaufnahme offen.",
+      "at_s": 959.519434
+    },
+    {
+      "id": "M04-no-automatic-light-run",
+      "values": {
+        "light_after_run": false,
+        "cooling_active": false,
+        "recording": true,
+        "completed_sessions": 0,
+        "retained_sessions": 0
+      },
+      "reason": "Manueller Betrieb löst weder automatischen Lichtnachlauf noch Ofenkühlung aus. Die fortgesetzte Aufzeichnung während der Sitzungsfrist ist davon unabhängig.",
+      "at_s": 968.519434
+    },
+    {
+      "id": "M05-native-short-resume",
+      "values": {
+        "control_mode": "manual",
+        "operation_enabled": true,
+        "recording": true,
+        "completed_sessions": 0,
+        "retained_sessions": 0,
+        "session_started_s": {
+          "since_s": 1.519434,
+          "min": 0,
+          "max": 0
+        }
+      },
+      "reason": "Der zweite echte Einfachdruck folgt rund 18 Sekunden nach AUS und damit vor Ablauf der konfigurierten Sitzungsfrist. Er setzt dieselbe manuelle Aufzeichnung mit ihrem ursprünglichen Beginn fort.",
+      "at_s": 977.519434
+    },
+    {
+      "id": "M06-native-long-auto",
+      "values": {
+        "control_mode": "automatic",
+        "operation_enabled": true,
+        "recording": true,
+        "completed_sessions": 0,
+        "retained_sessions": 0,
+        "session_started_s": {
+          "since_s": 1.519434,
+          "min": 0,
+          "max": 0
+        }
+      },
+      "reason": "Der nutzerbeschriebene anschließende Langdruck wechselt zur Automatik. Betriebsartwechsel und noch gehaltene Taste dürfen die bereits laufende Sitzung nicht teilen.",
+      "at_s": 982.519434
+    },
+    {
+      "id": "M07-native-long-stop",
+      "values": {
+        "operation_enabled": false,
+        "heater_request": false,
+        "active_gang": false,
+        "recording": true,
+        "light_after_run": true,
+        "completed_sessions": 0,
+        "retained_sessions": 0
+      },
+      "reason": "Der nächste native Langdruck schaltet die Automatik schon vor dem Loslassen aus. Sitzungsfrist und automatischer Lichtnachlauf laufen ab diesem AUS erneut; die gemeinsame Aufzeichnung bleibt bis Fristende offen.",
+      "at_s": 1000.519434
+    },
+    {
+      "id": "M08-common-after-run",
+      "values": {
+        "operation_enabled": false,
+        "heater_request": false,
+        "recording": true,
+        "completed_sessions": 0,
+        "retained_sessions": 0,
+        "session_started_s": {
+          "since_s": 1.519434,
+          "min": 0,
+          "max": 0
+        }
+      },
+      "reason": "Die echten Klimaeingänge reichen durch die gesamte Pause. Ohne erneuten Start bleibt bis unmittelbar vor Ablauf der konfigurierten 15 Minuten dieselbe Aufzeichnung offen; Loslassen setzt die Frist nicht neu.",
+      "between_s": [
+        1002.519434,
+        1899.219434
+      ]
+    },
+    {
+      "id": "M09-one-complete-session",
+      "values": {
+        "operation_enabled": false,
+        "heater_request": false,
+        "active_gang": false,
+        "recording": false,
+        "light_after_run": false,
+        "completed_sessions": 1,
+        "retained_sessions": 1,
+        "gang_count": 1,
+        "session_started_s": {
+          "since_s": 1.519434,
+          "min": 0,
+          "max": 0
+        },
+        "archived_preheat_roles": 4,
+        "recording_history_intact": true
+      },
+      "reason": "Die nutzerbestätigte manuelle Testsitzung enthält einen zusammenhängenden Aufenthalt mit dauerhafter Präsenz, beidseitiger geschlossener Erholung oberhalb 60 °C und anschließendem beidseitigem Feuchtesprung. Der kurze AUS/EIN-Abstand und der direkte Wechsel zur Automatik gehören nach der aktuellen Vorgabe zu derselben speicherwürdigen Sitzung. Nach der gemeinsamen Frist ist genau diese eine Sitzung gespeichert; alle vier ursprünglichen Messkanäle bis zum Automatikwechsel müssen vollständig und unter derselben Archiv-ID erhalten sein. Alte Detektorzeitpunkte sind kein Orakel.",
+      "at_s": 1938.519434
+    }
+  ],
+  "coverage": [
+    "Manuelles Einschalten mit zentraler Standardtemperatur",
+    "Reale Mess- und Präsenzmeldungen während manueller Aufzeichnung",
+    "Manuelles AUS/EIN per nativem Einfachdruck vor Fristablauf",
+    "Keine automatische Kühlung oder Lichtsteuerung im manuellen Teil",
+    "Native Langdrücke für Wechsel zur Automatik und anschließendes AUS",
+    "Eine gespeicherte Sitzung mit allen Messungen des manuellen Teils und vollständigem gemeinsamen Nachlauf"
+  ],
+  "source": {
+    "kind": "measured",
+    "timestamp_basis": "received; separate reported_age_s only when the source supplied it",
+    "transformations": [
+      "Subtract the recording origin from timestamps",
+      "Replace physical source identifiers with functional roles",
+      "Retain measured values and message order; no interpolation, smoothing or generated climate samples",
+      "Exclude previously detected events, old phases, old gang decisions and heater commands"
+    ],
+    "source_sha256": [
+      "0e065cfbc8cd75da17bf8b47f6f1b99768445b86028461a5a5fc273ac08a97ba",
+      "206964e4b79e30f7b060f85ef07be804f537a42e511cbd354e2eb88e2cc19469"
+    ],
+    "boundaries": "Original recording begin through the final explicit operation stop and the complete common session after-run; short OFF/ON gaps and control-mode changes do not split a session.",
+    "channel_counts": {
+      "lower_humidity": 1561,
+      "lower_temperature": 1430,
+      "presence": 2,
+      "upper_humidity": 1579,
+      "upper_temperature": 1392
+    },
+    "largest_climate_message_gap_s": {
+      "upper_temperature": 6.304931,
+      "upper_humidity": 4.211984,
+      "lower_temperature": 7.358596,
+      "lower_humidity": 5.254204
+    },
+    "limitations": [
+      "A confirming actuator stub acknowledges new commands. The historical feedback is isolated in observed_outputs_file for diagnosis; it cannot acknowledge a changed command.",
+      "The unchanged real climate input is not a physical counterfactual simulation after the corrected controller changes a heater command. Physical consequence curves are covered by the separately constructed session scenarios.",
+      "A measured brightness acknowledgement does not measure the physical fade of the lamp.",
+      "Human entry/exit times are only asserted at the resolution established by the user's account; old detector timestamps are not ground truth.",
+      "The user confirms a manual test session, without independently timing entry, infusion or ventilation. Those old algorithm detections are deliberately not used as expected events.",
+      "Recorder light reports in this source do not contain brightness values. Neither the faint first long-press fade nor the visible end of the second fade can be measured from these ON/OFF acknowledgements."
+    ],
+    "recorded_through_s": 1938.519434,
+    "final_operation_stop_s": 999.389304,
+    "common_session_deadline_s": 1899.389304
+  },
+  "preserve_measurements_before_s": 981.261977
+}

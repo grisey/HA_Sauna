@@ -17,21 +17,34 @@ from contextlib import closing
 from dataclasses import fields, is_dataclass
 from datetime import UTC, datetime, timedelta
 from enum import Enum
+from hashlib import sha256
 from math import isfinite
 from pathlib import Path
 
-from .core.defaults import section
 from .core.history import HISTORY_CONTEXT_SECONDS, measurement_window
+from .core.models import Energy, TimedPhase
+from .core.parameters import BY_KEY, Parameters
 from .core.phases import project_archive, project_session
+from .history_humidity import project_absolute_humidity
 
 _LOGGER = logging.getLogger(__name__)
+_CONFIGURATION_READ_CACHE_ENTRIES = 64
 
 
 def plain(value):
     if is_dataclass(value):
-        return {
-            field.name: plain(getattr(value, field.name)) for field in fields(value)
+        # Energieintervalle reisen separat als Delta; Skalare kopieren keine Vollreihe.
+        result = {
+            field.name: plain(getattr(value, field.name))
+            for field in fields(value)
+            if not (isinstance(value, Energy) and field.name == "intervals")
         }
+        if isinstance(value, TimedPhase):
+            result.update(
+                required_seconds=value.required_seconds,
+                remaining_seconds=value.remaining_seconds,
+            )
+        return result
     if isinstance(value, datetime):
         return value.isoformat()
     if isinstance(value, Enum):
@@ -52,6 +65,91 @@ def encoded_plain(value):
     return json.dumps(
         value, ensure_ascii=False, allow_nan=False, separators=(",", ":")
     )
+
+
+def _energy_value(value, key, default=None):
+    return (
+        value.get(key, default)
+        if isinstance(value, Mapping)
+        else getattr(value, key, default)
+    )
+
+
+def _energy_time(value):
+    at = datetime.fromisoformat(value) if isinstance(value, str) else value
+    if not isinstance(at, datetime) or at.utcoffset() is None:
+        raise ValueError("Energiecursor benötigt einen Zeitpunkt mit Zeitzone")
+    return at.astimezone(UTC)
+
+
+def energy_interval_delta(energy, after=None):
+    """Transport original contributions, clipping only their time boundaries.
+
+    A missing interval field is legacy evidence, not a zero contribution. An
+    invalid/outside cursor requests a complete bootstrap (``from=None``).
+    The owner tuple is searched by end time without walking its saved prefix.
+    """
+    intervals = _energy_value(energy, "intervals")
+    if not isinstance(intervals, (tuple, list)):
+        return None
+    try:
+        end = _energy_time(_energy_value(energy, "accounted_at"))
+        start = (
+            _energy_time(_energy_value(intervals[0], "started_at"))
+            if intervals else end
+        )
+    except (TypeError, ValueError, OverflowError):
+        return None
+    if start > end or (
+        not intervals and any(
+            _energy_value(energy, key, 0) != 0
+            for key in ("measured_seconds", "estimated_seconds", "unknown_seconds")
+        )
+    ):
+        return None
+    try:
+        cursor = _energy_time(after)
+    except (TypeError, ValueError, OverflowError):
+        cursor = None
+    if cursor is not None and not start <= cursor <= end:
+        cursor = None
+    lower = cursor if cursor is not None else start
+    first, last = 0, len(intervals)
+    try:
+        while first < last:
+            middle = (first + last) // 2
+            if _energy_time(_energy_value(intervals[middle], "ended_at")) <= lower:
+                first = middle + 1
+            else:
+                last = middle
+        originals = []
+        covered = lower
+        for index in range(first, len(intervals)):
+            interval = intervals[index]
+            original_start = _energy_time(_energy_value(interval, "started_at"))
+            original_end = _energy_time(_energy_value(interval, "ended_at"))
+            if original_start >= end:
+                break
+            clipped_start = max(original_start, lower)
+            clipped_end = min(original_end, end)
+            if clipped_start != covered or clipped_end <= clipped_start:
+                return None
+            original = plain(interval)
+            original["started_at"] = clipped_start.isoformat()
+            original["ended_at"] = clipped_end.isoformat()
+            originals.append(original)
+            covered = clipped_end
+            if covered == end:
+                break
+    except (TypeError, ValueError, OverflowError):
+        return None
+    if covered != end:
+        return None
+    return {
+        "from": cursor.isoformat() if cursor is not None else None,
+        "to": end.isoformat(),
+        "intervals": originals,
+    }
 
 
 def session_has_gangs(session):
@@ -98,7 +196,12 @@ class _ExportWork:
 
 
 class Archive:
-    def __init__(self, path, entry_id, *, sessions_only=False):
+    def __init__(self, path, entry_id, *, sessions_only=False, parameters=None,
+                 trace_profile="normal"):
+        if trace_profile not in ("normal", "analysis"):
+            raise ValueError("Archivprofil muss normal oder analysis sein")
+        # Recording policy only: historical records and reads stay unrestricted.
+        self.trace_profile = trace_profile
         self.path = Path(path)
         self.entry_id = entry_id
         self.queue = asyncio.Queue()
@@ -110,11 +213,13 @@ class Archive:
         self.closed = False
         self._close_task = None
         self.sessions_only = sessions_only
+        self.parameters = parameters if parameters is not None else Parameters({})
         self._discarded_sessions = set()
+        self._energy_enqueued = {}
         self._projection_cache = OrderedDict()
         self._projection_lock = threading.Lock()
         self._projection_generation = 0
-        self._projection_cache_entries = section("runtime")["archive_projection_cache_entries"]
+        self._projection_cache_entries = self.parameters.values["archive_projection_cache_entries"]
         self.revision = 0
         self._context_pruned_before = None
 
@@ -128,6 +233,13 @@ class Archive:
         now = now or datetime.now(UTC)
         self.path.parent.mkdir(parents=True, exist_ok=True)
         with closing(sqlite3.connect(self.path)) as db, db:
+            metadata = db.execute(
+                "SELECT 1 FROM sqlite_master WHERE type='table' AND name='metadata'"
+            ).fetchone()
+            if metadata:
+                schema = db.execute("SELECT value FROM metadata WHERE key='schema'").fetchone()
+                if schema is None or schema[0] not in {"1", "2"}:
+                    raise ValueError("Nicht unterstützte Archivversion")
             db.executescript("""
                 PRAGMA journal_mode=WAL;
                 CREATE TABLE IF NOT EXISTS metadata (key TEXT PRIMARY KEY, value TEXT NOT NULL);
@@ -139,8 +251,17 @@ class Archive:
                 DROP INDEX IF EXISTS records_measurement_clock;
                 CREATE INDEX IF NOT EXISTS records_measurement_context ON records(entry_id, julianday(received_at))
                     WHERE kind='measurement';
+                CREATE INDEX IF NOT EXISTS records_source_snapshot_context
+                    ON records(entry_id, session_id, julianday(json_extract(payload,'$.received_at')), id)
+                    WHERE kind='source_snapshot';
                 CREATE INDEX IF NOT EXISTS records_consumer_events ON records(entry_id)
                     WHERE kind='consumer_event';
+                CREATE INDEX IF NOT EXISTS records_energy_delta
+                    ON records(entry_id, session_id, json_extract(payload,'$.energy.interval_delta.to'), id)
+                    WHERE kind='session';
+                CREATE INDEX IF NOT EXISTS records_energy_bootstrap
+                    ON records(entry_id, session_id, id)
+                    WHERE kind='session' AND json_type(payload,'$.energy.interval_delta.from')='null';
                 CREATE TABLE IF NOT EXISTS sessions (
                     session_id TEXT PRIMARY KEY, entry_id TEXT NOT NULL,
                     started_at TEXT NOT NULL, updated_at TEXT NOT NULL,
@@ -149,13 +270,27 @@ class Archive:
                     entry_id TEXT NOT NULL, event_id TEXT NOT NULL,
                     PRIMARY KEY(entry_id,event_id));
             """)
-            if (
-                db.execute("SELECT value FROM metadata WHERE key='schema'").fetchone()[
-                    0
-                ]
-                != "1"
-            ):
-                raise ValueError("Nicht unterstützte Archivversion")
+            # Additive migration: historical inline payloads and IDs stay intact.
+            # The version table, both nullable references and schema marker commit
+            # together, including when upgrading an existing schema-1 database.
+            db.execute("PRAGMA foreign_keys=ON")
+            db.execute("BEGIN IMMEDIATE")
+            db.execute("""CREATE TABLE IF NOT EXISTS configuration_versions (
+                id INTEGER PRIMARY KEY, entry_id TEXT NOT NULL,
+                digest TEXT NOT NULL, payload TEXT NOT NULL)""")
+            db.execute("CREATE INDEX IF NOT EXISTS configuration_digest "
+                       "ON configuration_versions(entry_id,digest)")
+            db.execute("""CREATE TRIGGER IF NOT EXISTS configuration_immutable
+                BEFORE UPDATE ON configuration_versions
+                BEGIN SELECT RAISE(ABORT, 'Configuration versions are immutable'); END""")
+            for table in ("records", "sessions"):
+                columns = {column[1] for column in db.execute(f"PRAGMA table_info({table})")}
+                if "configuration_id" not in columns:
+                    db.execute(f"ALTER TABLE {table} ADD COLUMN configuration_id INTEGER "
+                               "REFERENCES configuration_versions(id)")
+                db.execute(f"CREATE INDEX IF NOT EXISTS {table}_configuration "
+                           f"ON {table}(configuration_id) WHERE configuration_id IS NOT NULL")
+            db.execute("UPDATE metadata SET value='2' WHERE key='schema'")
             row = db.execute("SELECT value FROM metadata WHERE key='revision'").fetchone()
             self.revision = int(row[0]) if row else 0
             before_cleanup = db.total_changes
@@ -183,8 +318,73 @@ class Archive:
                     (self.entry_id, self.entry_id),
                 )
                 self._prune_context(db, now)
+                self._prune_configurations(db)
                 if db.total_changes > before_cleanup:
                     self.revision = self._bump_revision(db)
+
+    def _configuration_column(self, db):
+        """Permit read-only access to an unmodified schema-1 archive as well."""
+        # Inspect this read snapshot, not mutable instance state: another owner
+        # may have upgraded the database since an earlier read-only access.
+        columns = {column[1] for column in db.execute("PRAGMA table_info(records)")}
+        return ",configuration_id" if "configuration_id" in columns else ""
+
+    def _configuration_version(self, db, configuration):
+        # Canonical bytes preserve JSON types and values; key order is not a
+        # configuration change. A digest narrows the lookup, never proves equality.
+        payload = json.dumps(configuration, ensure_ascii=False, allow_nan=False,
+                             sort_keys=True, separators=(",", ":"))
+        digest = sha256(payload.encode("utf-8")).hexdigest()
+        for identity, original in db.execute(
+            "SELECT id,payload FROM configuration_versions WHERE entry_id=? AND digest=?",
+            (self.entry_id, digest),
+        ):
+            if original == payload:
+                return identity
+        return db.execute(
+            "INSERT INTO configuration_versions(entry_id,digest,payload) VALUES(?,?,?)",
+            (self.entry_id, digest, payload),
+        ).lastrowid
+
+    def _decode_payload(self, db, payload, configuration_id=None, *, cache=None):
+        data = json.loads(payload)
+        if configuration_id is None:
+            return data
+        if "configuration" in data:
+            raise ValueError("Widersprüchliche Archivkonfiguration")
+        # A bounded per-read cache avoids one SQL lookup per repeated snapshot,
+        # including alternating versions. Each result owns its decoded object.
+        original = cache.get(configuration_id) if cache is not None else None
+        if original is None:
+            row = db.execute(
+                "SELECT payload FROM configuration_versions WHERE id=? AND entry_id=?",
+                (configuration_id, self.entry_id),
+            ).fetchone()
+            if row is None:
+                raise ValueError("Fehlende Archivkonfigurationsversion")
+            original = row[0]
+            if cache is not None:
+                cache[configuration_id] = original
+                if len(cache) > _CONFIGURATION_READ_CACHE_ENTRIES:
+                    cache.popitem(last=False)
+        elif cache is not None:
+            cache.move_to_end(configuration_id)
+        data["configuration"] = json.loads(original)
+        return data
+
+    def _decode_record(self, db, row, *, cache=None):
+        record = dict(row)
+        identity = record.pop("configuration_id", None)
+        record["payload"] = self._decode_payload(db, record["payload"], identity, cache=cache)
+        return record
+
+    def _prune_configurations(self, db):
+        # User-authorized deletion removes settings only after their last
+        # retained historical or current reference disappears.
+        db.execute("""DELETE FROM configuration_versions WHERE entry_id=?
+            AND NOT EXISTS (SELECT 1 FROM records WHERE configuration_id=configuration_versions.id)
+            AND NOT EXISTS (SELECT 1 FROM sessions WHERE configuration_id=configuration_versions.id)""",
+                   (self.entry_id,))
 
     def append(self, kind, at, payload, session_id=None):
         if self.closed:
@@ -207,9 +407,24 @@ class Archive:
         )
 
     def save_session(self, session, at, configuration):
+        if self.closed:
+            raise RuntimeError("Archiv ist geschlossen")
+        if session.session_id in self._discarded_sessions:
+            return
         payload = plain(session)
         payload["configuration"] = plain(configuration)
+        previous = self._energy_enqueued.get(session.session_id)
+        delta = energy_interval_delta(session.energy, after=previous)
+        if delta is not None:
+            accounted_at = _energy_time(delta["to"])
+            if previous is not None and accounted_at < previous:
+                raise ValueError("Archivierte Energiezeit darf nicht rückwärts laufen")
+            payload["energy"]["interval_delta"] = delta
         self._append_plain("session", at, payload, session.session_id)
+        # The frozen queue item, including retries, owns this contribution now.
+        # Encoding/enqueue failure must leave the preceding watermark intact.
+        if delta is not None:
+            self._energy_enqueued[session.session_id] = accounted_at
 
     async def _run(self):
         while True:
@@ -297,6 +512,8 @@ class Archive:
         if session_id in self._discarded_sessions:
             return
         with closing(sqlite3.connect(self.path)) as db, db:
+            db.execute("PRAGMA foreign_keys=ON")
+            db.execute("BEGIN IMMEDIATE")
             if kind == "consumer_receipt":
                 db.execute("INSERT OR IGNORE INTO consumer_receipts VALUES(?,?)",
                            (self.entry_id, json.loads(payload)["event_id"]))
@@ -306,29 +523,55 @@ class Archive:
                 if data.get("ended_at") and not session_has_gangs(data):
                     self._delete_session(db, session_id)
                     self._prune_context(db, datetime.fromisoformat(at))
+                    self._prune_configurations(db)
                     revision = self._bump_revision(db)
                     db.commit()
                     self.revision = revision
                     self._discarded_sessions.add(session_id)
                     self._invalidate_projection(session_id)
                     return
-            db.execute(
-                "INSERT INTO records(entry_id,session_id,kind,received_at,payload) VALUES(?,?,?,?,?)",
-                (self.entry_id, session_id, kind, at, payload),
-            )
+            configuration_id = None
             if kind == "session":
                 data = json.loads(payload)
+                if "configuration" in data:
+                    configuration_id = self._configuration_version(db, data.pop("configuration"))
+                    payload = encoded_plain(data)
+            db.execute(
+                "INSERT INTO records(entry_id,session_id,kind,received_at,payload,configuration_id) "
+                "VALUES(?,?,?,?,?,?)",
+                (self.entry_id, session_id, kind, at, payload, configuration_id),
+            )
+            if kind == "session":
+                energy = data.get("energy")
+                session_payload = payload
+                if isinstance(energy, dict):
+                    has_transport = any(key in energy for key in (
+                        "intervals", "interval_delta", "intervals_available",
+                    ))
+                    delta = energy.pop("interval_delta", None)
+                    energy.pop("intervals", None)
+                    if delta is not None:
+                        energy["intervals_available"] = True
+                    else:
+                        energy.pop("intervals_available", None)
+                    if has_transport:
+                        session_payload = encoded_plain(data)
+                # This scalar snapshot and the original delta above commit
+                # together; repeated snapshots never copy the interval prefix.
                 db.execute(
-                    """INSERT INTO sessions VALUES(?,?,?,?,?,?)
+                    """INSERT INTO sessions(session_id,entry_id,started_at,updated_at,ended_at,payload,configuration_id)
+                    VALUES(?,?,?,?,?,?,?)
                     ON CONFLICT(session_id) DO UPDATE SET updated_at=excluded.updated_at,
-                    ended_at=excluded.ended_at,payload=excluded.payload""",
+                    ended_at=excluded.ended_at,payload=excluded.payload,
+                    configuration_id=excluded.configuration_id""",
                     (
                         session_id,
                         self.entry_id,
                         data["timeline"]["session_started_at"],
                         at,
                         data["ended_at"],
-                        payload,
+                        session_payload,
+                        configuration_id,
                     ),
                 )
             if self.sessions_only and kind in {"measurement", "session"}:
@@ -354,10 +597,11 @@ class Archive:
                    (self.entry_id, session_id))
         db.execute("DELETE FROM sessions WHERE entry_id=? AND session_id=?",
                    (self.entry_id, session_id))
+        self._energy_enqueued.pop(session_id, None)
 
     def _prune_context(self, db, now, *, incremental=False):
         """Revisit newly expired buffer points; full scans only at lifecycle changes."""
-        cutoff = now - timedelta(seconds=HISTORY_CONTEXT_SECONDS)
+        cutoff = now - timedelta(seconds=self.parameters.values["history_context_seconds"])
         previous = self._context_pruned_before if incremental else None
         if previous is not None and cutoff <= previous:
             return
@@ -367,16 +611,25 @@ class Archive:
             AND kind='measurement' AND julianday(received_at)<julianday(?)"""
             + lower_bound + """
             AND NOT EXISTS (
-                SELECT 1 FROM sessions s WHERE s.entry_id=records.entry_id
-                AND julianday(records.received_at)>=julianday(s.started_at)-?/86400.0
-                AND julianday(records.received_at)<=julianday(COALESCE(s.ended_at, s.updated_at))+?/86400.0
+                SELECT 1 FROM sessions s LEFT JOIN configuration_versions c
+                    ON c.id=s.configuration_id AND c.entry_id=s.entry_id
+                WHERE s.entry_id=records.entry_id
+                AND julianday(records.received_at)>=julianday(s.started_at)-
+                    COALESCE(json_extract(c.payload,'$.parameters.history_context_seconds'),
+                    json_extract(s.payload,'$.configuration.parameters.history_context_seconds'),?)/86400.0
+                AND julianday(records.received_at)<=julianday(COALESCE(s.ended_at, s.updated_at))+
+                    COALESCE(json_extract(c.payload,'$.parameters.history_context_seconds'),
+                    json_extract(s.payload,'$.configuration.parameters.history_context_seconds'),?)/86400.0
                 AND (julianday(records.received_at)<=julianday(s.started_at)
                     OR julianday(records.received_at)>=julianday(COALESCE(s.ended_at, s.updated_at)))
                 AND json_extract(records.payload,'$.position') IN ('upper','lower')
                 AND json_extract(records.payload,'$.quantity') IN ('temperature','humidity')
-                AND json_extract(s.payload,'$.configuration.bindings.' ||
+                AND COALESCE(json_extract(c.payload,'$.bindings.' ||
                     json_extract(records.payload,'$.position') || '_' ||
-                    json_extract(records.payload,'$.quantity'))=json_extract(records.payload,'$.source')
+                    json_extract(records.payload,'$.quantity')),
+                    json_extract(s.payload,'$.configuration.bindings.' ||
+                    json_extract(records.payload,'$.position') || '_' ||
+                    json_extract(records.payload,'$.quantity')))=json_extract(records.payload,'$.source')
             )""",
             (self.entry_id, cutoff.isoformat(),
              *((previous.isoformat(),) if previous else ()),
@@ -393,6 +646,7 @@ class Archive:
     def _erase(self, session_id, reset, now=None):
         now = now or datetime.now(UTC)
         with closing(sqlite3.connect(self.path)) as db, db:
+            db.execute("PRAGMA foreign_keys=ON")
             if reset:
                 ids = [row[0] for row in db.execute(
                     "SELECT session_id FROM sessions WHERE entry_id=?", (self.entry_id,)
@@ -400,6 +654,7 @@ class Archive:
                 db.execute("DELETE FROM records WHERE entry_id=?", (self.entry_id,))
                 db.execute("DELETE FROM sessions WHERE entry_id=?", (self.entry_id,))
                 db.execute("DELETE FROM consumer_receipts WHERE entry_id=?", (self.entry_id,))
+                self._energy_enqueued.clear()
                 self._context_pruned_before = None
             else:
                 row = db.execute(
@@ -411,6 +666,7 @@ class Archive:
                 ids = [session_id]
                 self._delete_session(db, session_id)
                 self._prune_context(db, now)
+            self._prune_configurations(db)
             revision = self._bump_revision(db)
             db.commit()
             self.revision = revision
@@ -482,7 +738,12 @@ class Archive:
             self.queue.put_nowait(("stop", None))
             await self.worker
 
-    def read(self, session_id=None, *, after=0, limit=1000, kinds=None, now=None):
+    def read(
+        self, session_id=None, *, after=0, limit=None, kinds=None, now=None,
+        humidity_display=False, energy_after=None,
+    ):
+        if limit is None:
+            limit = self.parameters.values["archive_read_page_records"]
         # Capture before establishing the SQLite snapshot. An in-flight reader
         # may finish after invalidation, but must not restore its old cache data.
         with self._projection_lock:
@@ -496,8 +757,11 @@ class Archive:
                     (self.entry_id,),
                 )
                 return [dict(row) for row in rows]
+            configuration_column = self._configuration_column(db)
+            configuration_cache = OrderedDict()
             row = db.execute(
-                "SELECT payload,updated_at FROM sessions WHERE entry_id=? AND session_id=?",
+                "SELECT payload,updated_at" + configuration_column
+                + " FROM sessions WHERE entry_id=? AND session_id=?",
                 (self.entry_id, session_id),
             ).fetchone()
             if row is None:
@@ -506,12 +770,25 @@ class Archive:
                 " AND kind IN (" + ",".join("?" for _ in kinds) + ")"
                 if kinds is not None else ""
             )
-            session = json.loads(row["payload"])
+            session = self._decode_payload(
+                db, row["payload"], row["configuration_id"] if configuration_column else None,
+                cache=configuration_cache,
+            )
+            energy_delta = self._read_energy_delta(db, session_id, session, energy_after)
+            if energy_delta is not None:
+                session["energy"]["interval_delta"] = energy_delta
             current = now or datetime.now(UTC)
             started = datetime.fromisoformat(session["timeline"]["session_started_at"])
             ended = datetime.fromisoformat(session["ended_at"]) if session.get("ended_at") else None
-            window = measurement_window(started, ended, current)
-            bindings = session.get("configuration", {}).get("bindings", {})
+            context_definition = BY_KEY["history_context_seconds"]
+            configuration = session.get("configuration")
+            configuration = configuration if isinstance(configuration, Mapping) else {}
+            context = configuration.get("parameters", {}).get(
+                context_definition.key, context_definition.default
+            )
+            context = context_definition.validate(context)
+            window = measurement_window(started, ended, current, context_seconds=context)
+            bindings = configuration.get("bindings", {})
             sources = tuple(
                 (bindings[key], *key.split("_", 1)) for key in (
                     "upper_temperature", "upper_humidity", "lower_temperature", "lower_humidity"
@@ -555,6 +832,14 @@ class Archive:
                 + " UNION ".join(streams) + " ORDER BY id LIMIT ?) ORDER BY id",
                 (*stream_args, limit),
             ).fetchall()
+            page_records = [
+                self._decode_record(db, record, cache=configuration_cache)
+                for record in records
+            ]
+            if humidity_display:
+                page_records = self._humidity_display(
+                    db, session, page_records, sources
+                )
             if session.get("base_phases"):
                 projection = project_session(session, row["updated_at"])
             else:
@@ -565,11 +850,193 @@ class Archive:
                 "session": session,
                 "measurement_window": window,
                 "phase_projection": plain(projection),
-                "records": [
-                    {**dict(r), "payload": json.loads(r["payload"])} for r in records
-                ],
+                "records": page_records,
                 "next_after": records[-1]["id"] if len(records) == limit else None,
             }
+
+    def _read_energy_delta(self, db, session_id, session, after=None):
+        """Read only contributing deltas in the scalar row's SQLite snapshot."""
+        energy = session.get("energy", {})
+        if energy.get("intervals_available") is not True:
+            return None
+        try:
+            end = _energy_time(energy.get("accounted_at"))
+        except (TypeError, ValueError, OverflowError):
+            return None
+        try:
+            cursor = _energy_time(after)
+        except (TypeError, ValueError, OverflowError):
+            cursor = None
+        # Common status/paging request: the scalar horizon has not advanced.
+        # No prefix, original record, or bootstrap needs to be read in this case.
+        if cursor == end:
+            return {"from": end.isoformat(), "to": end.isoformat(), "intervals": []}
+        snapshot_id = db.execute(
+            "SELECT MAX(id) FROM records INDEXED BY records_energy_delta "
+            "WHERE entry_id=? AND session_id=? AND kind='session' "
+            "AND json_extract(payload,'$.energy.interval_delta.to')=?",
+            (self.entry_id, session_id, end.isoformat()),
+        ).fetchone()[0]
+        if snapshot_id is None:
+            return None
+        bootstrap = db.execute(
+            "SELECT id, COALESCE(json_extract(payload,'$.energy.interval_delta.intervals[0].started_at'), "
+            "json_extract(payload,'$.energy.interval_delta.to')) AS started_at "
+            "FROM records INDEXED BY records_energy_bootstrap "
+            "WHERE entry_id=? AND session_id=? AND kind='session' AND id<=? "
+            "AND json_type(payload,'$.energy.interval_delta.from')='null' "
+            "ORDER BY id DESC LIMIT 1",
+            (self.entry_id, session_id, snapshot_id),
+        ).fetchone()
+        if bootstrap is None:
+            return None
+        try:
+            start = _energy_time(bootstrap["started_at"])
+        except (TypeError, ValueError, OverflowError):
+            return None
+        if cursor is not None and not start <= cursor <= end:
+            cursor = None
+        cutoff = (
+            " AND json_extract(payload,'$.energy.interval_delta.to')>?"
+            if cursor is not None else ""
+        )
+        rows = db.execute(
+            "SELECT json_extract(payload,'$.energy.interval_delta') FROM records "
+            "INDEXED BY records_energy_delta WHERE entry_id=? AND session_id=? "
+            "AND kind='session' AND id>=? AND id<=?" + cutoff + " ORDER BY id",
+            (self.entry_id, session_id, bootstrap["id"], snapshot_id,
+             *((cursor.isoformat(),) if cursor is not None else ())),
+        )
+        originals = []
+        covered = cursor if cursor is not None else start
+        for (raw,) in rows:
+            if raw is None:
+                continue
+            delta = json.loads(raw)
+            for interval in delta["intervals"]:
+                first = _energy_time(interval["started_at"])
+                last = min(_energy_time(interval["ended_at"]), end)
+                if last <= covered:
+                    continue
+                first = max(first, covered)
+                if first != covered or last <= first:
+                    return None
+                original = {
+                    **interval, "started_at": first.isoformat(), "ended_at": last.isoformat(),
+                }
+                if (
+                    originals and originals[-1]["ended_at"] == original["started_at"]
+                    and originals[-1].get("source") == original.get("source")
+                    and originals[-1].get("power_kw") == original.get("power_kw")
+                ):
+                    originals[-1]["ended_at"] = original["ended_at"]
+                else:
+                    originals.append(original)
+                covered = last
+        if covered != end:
+            return None
+        return {
+            "from": cursor.isoformat() if cursor is not None else None,
+            "to": end.isoformat(),
+            "intervals": originals,
+        }
+
+    def _humidity_display(self, db, session, records, sources):
+        """Read only this page's fresh source context in its SQLite snapshot."""
+        configuration = session.get("configuration")
+        configuration = configuration if isinstance(configuration, Mapping) else {}
+        bindings = configuration.get("bindings", {})
+        timeout = configuration.get("parameters", {}).get(
+            "sensor_timeout_seconds", self.parameters.values["sensor_timeout_seconds"]
+        )
+        context = {}
+        valid_timeout = (
+            not isinstance(timeout, bool)
+            and isinstance(timeout, (int, float))
+            and isfinite(timeout)
+            and timeout >= 0
+        )
+        received = []
+        if valid_timeout and sources:
+            source_roles = set(sources)
+            for record in records:
+                if record["kind"] not in {"measurement", "source_snapshot"}:
+                    continue
+                payload = record["payload"]
+                if not isinstance(payload, Mapping):
+                    continue
+                source_role = (
+                    payload.get("source"), payload.get("position"),
+                    payload.get("quantity"),
+                )
+                if (
+                    not all(isinstance(value, str) for value in source_role)
+                    or source_role not in source_roles
+                ):
+                    continue
+                try:
+                    at = datetime.fromisoformat(payload["received_at"])
+                except (KeyError, TypeError, ValueError):
+                    continue
+                if at.utcoffset() is not None:
+                    received.append(at.astimezone(UTC))
+        windows = []
+        if received:
+            try:
+                ttl = timedelta(seconds=timeout)
+                for at in sorted(received):
+                    first = at - ttl
+                    if windows and first <= windows[-1][1]:
+                        windows[-1] = (windows[-1][0], at)
+                    else:
+                        windows.append((first, at))
+            except OverflowError:
+                windows = []
+        if windows:
+            page_ids = {record["id"] for record in records}
+            last_id = max(page_ids)
+            source_filter = (
+                " AND ("
+                + " OR ".join(
+                    "(json_extract(payload,'$.source')=? "
+                    "AND json_extract(payload,'$.position')=? "
+                    "AND json_extract(payload,'$.quantity')=?)" for _ in sources
+                ) + ")"
+            )
+            source_values = tuple(value for source in sources for value in source)
+            # Merge only overlapping freshness windows. An old copied source
+            # must not load the retained history between it and newer inputs.
+            for first, last in windows:
+                # Measurements use their actual received clock. Snapshots keep
+                # their original payload clock instead of refreshing a source.
+                queries = (
+                    (
+                        "SELECT * FROM records INDEXED BY records_measurement_context "
+                        "WHERE entry_id=? AND kind='measurement' AND id<=? "
+                        "AND julianday(received_at) BETWEEN julianday(?) AND julianday(?)"
+                        + source_filter,
+                        (self.entry_id, last_id, first.isoformat(), last.isoformat(),
+                         *source_values),
+                    ),
+                    (
+                        # The partial payload-clock index bounds snapshot context
+                        # without walking all prior diagnostic IDs on every page.
+                        "SELECT * FROM records INDEXED BY records_source_snapshot_context "
+                        "WHERE entry_id=? AND session_id=? AND kind='source_snapshot' "
+                        "AND id<=? AND julianday(json_extract(payload,'$.received_at')) "
+                        "BETWEEN julianday(?) AND julianday(?)" + source_filter,
+                        (self.entry_id, session["timeline"]["session_id"], last_id,
+                         first.isoformat(), last.isoformat(), *source_values),
+                    ),
+                )
+                for query, arguments in queries:
+                    for record in db.execute(query, arguments):
+                        if record["id"] not in page_ids and record["id"] not in context:
+                            context[record["id"]] = self._decode_record(db, record)
+        return project_absolute_humidity(
+            records, context=context.values(), bindings=bindings,
+            timeout_seconds=timeout,
+        )
 
     def _legacy_projection(self, db, session_id, session, row, *, generation):
         # Read cache identity and evidence in the caller's SQLite snapshot. In
@@ -582,6 +1049,7 @@ class Archive:
         ).fetchone()[0]
         revision = db.execute("SELECT value FROM metadata WHERE key='revision'").fetchone()
         identity = (row["payload"], row["updated_at"], last_evidence,
+                    row["configuration_id"] if "configuration_id" in row.keys() else None,
                     revision[0] if revision else None)
         with self._projection_lock:
             current = generation == self._projection_generation
@@ -593,14 +1061,20 @@ class Archive:
             # contact reports once per saved state, independently of pagination.
             # Other source roles are not consumed by project_archive; filter
             # them before materializing/decoding their original payloads.
+            configuration_column = self._configuration_column(db)
+            configuration_cache = OrderedDict()
             evidence = (
                 {
                     "kind": r["kind"],
                     "received_at": r["received_at"],
-                    "payload": json.loads(r["payload"]),
+                    "payload": self._decode_payload(
+                        db, r["payload"], r["configuration_id"] if "configuration_id" in r.keys() else None,
+                        cache=configuration_cache,
+                    ),
                 }
                 for r in db.execute(
-                    "SELECT kind,received_at,payload FROM records WHERE entry_id=? AND session_id=? "
+                    "SELECT kind,received_at,payload" + configuration_column
+                    + " FROM records WHERE entry_id=? AND session_id=? "
                     "AND (kind IN ('phase','session') OR (kind='source_state' "
                     "AND json_extract(payload,'$.role')='heater')) ORDER BY id",
                     (self.entry_id, session_id),
@@ -754,15 +1228,23 @@ class Archive:
         with closing(sqlite3.connect(self.path)) as db:
             # Configuration, state edges and measurements share one read snapshot.
             db.execute("BEGIN")
+            configuration_column = self._configuration_column(db)
+            configuration_cache = OrderedDict()
             sessions = db.execute(
-                "SELECT session_id,payload FROM sessions "
+                "SELECT session_id,payload" + configuration_column + " FROM sessions "
                 "WHERE entry_id=? AND ended_at IS NOT NULL ORDER BY ended_at,session_id",
                 (self.entry_id,),
             ).fetchall()
-            for session_id, payload in sessions:
+            for row in sessions:
+                session_id, payload = row[:2]
                 try:
-                    session = json.loads(payload)
-                    bindings = session.get("configuration", {}).get("bindings", {})
+                    session = self._decode_payload(
+                        db, payload, row[2] if configuration_column else None,
+                        cache=configuration_cache,
+                    )
+                    configuration = session.get("configuration")
+                    configuration = configuration if isinstance(configuration, Mapping) else {}
+                    bindings = configuration.get("bindings", {})
                     if (
                         bindings.get(f"{position}_temperature") != source
                         or bindings.get("heater") != heater_source
@@ -897,6 +1379,8 @@ class Archive:
                     zipfile.ZipFile(path, "w", zipfile.ZIP_DEFLATED) as archive,
                 ):
                     db.row_factory = sqlite3.Row
+                    configuration_column = self._configuration_column(db)
+                    configuration_cache = OrderedDict()
                     archive.writestr(
                         "manifest.json",
                         encoded(
@@ -911,17 +1395,24 @@ class Archive:
                     )
                     with archive.open("sessions.jsonl", "w") as out:
                         for row in db.execute(
-                            "SELECT payload FROM sessions WHERE entry_id=? ORDER BY started_at",
+                            "SELECT session_id,payload" + configuration_column
+                            + " FROM sessions WHERE entry_id=? ORDER BY started_at",
                             (self.entry_id,),
                         ):
-                            out.write((row[0] + "\n").encode())
+                            session = self._decode_payload(
+                                db, row["payload"], row["configuration_id"] if configuration_column else None,
+                                cache=configuration_cache,
+                            )
+                            delta = self._read_energy_delta(db, row["session_id"], session)
+                            if delta is not None:
+                                session["energy"]["intervals"] = delta["intervals"]
+                            out.write((encoded_plain(session) + "\n").encode())
                     with archive.open("records.jsonl", "w") as out:
                         for row in db.execute(
                             "SELECT * FROM records WHERE entry_id=? ORDER BY id",
                             (self.entry_id,),
                         ):
-                            data = dict(row)
-                            data["payload"] = json.loads(data["payload"])
+                            data = self._decode_record(db, row, cache=configuration_cache)
                             out.write((encoded(data) + "\n").encode())
                     with archive.open("measurements.csv", "w") as raw:
                         out = io.TextIOWrapper(raw, encoding="utf-8", newline="")

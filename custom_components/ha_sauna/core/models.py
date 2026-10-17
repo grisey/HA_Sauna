@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timedelta
 from enum import StrEnum
 from math import isfinite
 
@@ -84,6 +84,19 @@ class HeatingInterval:
 
 
 @dataclass(frozen=True)
+class HeatingStateMark:
+    """Vom Heizzeitbesitzer wirksam übernommene Rückmeldung."""
+
+    at: datetime
+    heating: bool | None
+
+    def __post_init__(self) -> None:
+        if self.heating is not None and not isinstance(self.heating, bool):
+            raise ValueError("Heizrückmeldung muss wahr, falsch oder unbekannt sein")
+        object.__setattr__(self, "at", utc(self.at))
+
+
+@dataclass(frozen=True)
 class HeatingTime:
     """Tatsächlich rückgemeldete Heizintervalle und lokale Zeitführung."""
 
@@ -93,6 +106,7 @@ class HeatingTime:
     off_since: datetime | None = None
     last_reset_at: datetime | None = None
     intervals: tuple[HeatingInterval, ...] = ()
+    state_history: tuple[HeatingStateMark, ...] = ()
 
     def __post_init__(self) -> None:
         if (
@@ -102,6 +116,18 @@ class HeatingTime:
             or self.elapsed_seconds < 0
         ):
             raise ValueError("Heizzeit muss endlich und nicht negativ sein")
+        if not isinstance(self.state_history, tuple):
+            raise ValueError("Heizverlauf benötigt Heizrückmeldungen als Tupel")
+
+
+@dataclass(frozen=True)
+class EnergyInterval:
+    """Zeitlich begrenzter Abrechnungsbeitrag mit unveränderter Herkunft."""
+
+    started_at: datetime
+    ended_at: datetime
+    source: str
+    power_kw: float | None
 
 
 @dataclass(frozen=True)
@@ -112,6 +138,7 @@ class Energy:
     estimated_seconds: float = 0.0
     unknown_seconds: float = 0.0
     accounted_at: datetime | None = None
+    intervals: tuple[EnergyInterval, ...] = ()
 
     @property
     def total_kwh(self):
@@ -151,6 +178,9 @@ class TimedPhase:
     pending_start: bool = False
     requested_at: datetime | None = None
     cooling_calculation: OvenCoolingResult | None = None
+    # Proxy evidence caps this same phase; original duration and factual OFF
+    # accounting stay intact, even when the minimum has already elapsed.
+    minimum_duration_requested: bool = False
 
     def __post_init__(self) -> None:
         # Ältere Aufrufer kannten nur Start und Ende. Die Dauer wird einmal
@@ -181,8 +211,17 @@ class TimedPhase:
             raise ValueError("Phasenzeit darf ihre Dauer nicht überschreiten")
 
     @property
+    def required_seconds(self) -> float:
+        if self.minimum_duration_requested and self.cooling_calculation is not None:
+            minimum = timedelta(
+                minutes=self.cooling_calculation.base_minutes
+            ).total_seconds()
+            return min(self.duration_seconds, minimum)
+        return self.duration_seconds
+
+    @property
     def remaining_seconds(self) -> float:
-        return max(0.0, self.duration_seconds - self.elapsed_seconds)
+        return max(0.0, self.required_seconds - self.elapsed_seconds)
 
 
 @dataclass(frozen=True)
@@ -212,6 +251,23 @@ class CoolingCycle:
 class ThermostatState:
     demand: bool = False
     cooldown_until: datetime | None = None
+
+
+@dataclass(frozen=True)
+class TemperatureTargetMark:
+    """Zum Zeitpunkt wirksamer Sollwert des bestehenden Sitzungsbesitzers."""
+
+    at: datetime
+    target_c: float | None
+
+    def __post_init__(self) -> None:
+        if self.target_c is not None and (
+            isinstance(self.target_c, bool)
+            or not isinstance(self.target_c, (int, float))
+            or not isfinite(self.target_c)
+        ):
+            raise ValueError("Solltemperatur muss endlich oder unbekannt sein")
+        object.__setattr__(self, "at", utc(self.at))
 
 
 @dataclass(frozen=True)
@@ -246,8 +302,11 @@ class Session:
     next_gang_temperature_blocked_by: str | None = None
     active_gang_temperature_c: float | None = None
     active_gang_temperature_id: str | None = None
+    target_history: tuple[TemperatureTargetMark, ...] = ()
 
     def __post_init__(self) -> None:
+        if not isinstance(self.target_history, tuple):
+            raise ValueError("Sollverlauf benötigt Sollwertmarken als Tupel")
         purposes = set()
         for deadline in self.deadlines:
             if deadline.session_id != self.session_id:

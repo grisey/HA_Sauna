@@ -1,185 +1,215 @@
-// Runs without Home Assistant or a browser: reset stays restricted to an idle
-// administrator and waits for HA's reloaded configuration before clearing edits.
+const { panelFixture, parameterValues } = require("./catalog_fixture.cjs");
 const assert = require("node:assert/strict");
+const test = require("node:test");
 const fs = require("node:fs");
 const vm = require("node:vm");
-
 let Panel;
-const sandbox = {
+vm.runInNewContext(fs.readFileSync("custom_components/ha_sauna/panel.js", "utf8"), {
   HTMLElement: class {},
   customElements: {
-    get: () => undefined,
+    get: () => null,
     define: (_name, value) => {
       Panel = value;
     },
   },
-  Date,
-  Map,
-  Set,
-  Math,
-  Number,
-  String,
-  Object,
-  Array,
-  Infinity,
   setTimeout: (callback) => callback(),
+});
+const copy = (value) => JSON.parse(JSON.stringify(value));
+const instrument = {
+  id: "appearance.instruments.default",
+  label: "Gemeinsame Darstellung",
+  group: "appearance",
+  factory: "round",
+  standard: "linear",
+  active: "round",
+  has_standard: true,
 };
-const source = fs.readFileSync("custom_components/ha_sauna/panel.js", "utf8");
-vm.runInNewContext(source, sandbox);
-
-const catalog = JSON.parse(
-  fs.readFileSync("custom_components/ha_sauna/defaults.json", "utf8"),
-);
-const defaults = Object.fromEntries(
-  catalog.parameters.map(({ key, default: value }) => [
-    key,
-    typeof value === "object"
-      ? catalog.parameters.find((source) => source.key === value.parameter).default
-      : value,
-  ]),
-);
-const configuration = { ...catalog.instance };
-const makePanel = ({ admin = true, locked = false } = {}) => {
-  const calls = [],
-    edited = { dataset: { edited: "true" } };
-  let stateReads = 0,
-    refreshed = false;
-  const panel = Object.assign(Object.create(Panel.prototype), {
-    entry: "entry-1",
-    progressionDraft: { "progression-end": "95" },
-    settingsEntry: "entry-1",
-    state: { configuration_locked: locked, permissions: { admin } },
-    message: () => {},
-    shadowRoot: {
-      querySelectorAll: (selector) =>
-        selector === "#parameters input[data-edited]" ? [edited] : [],
-      querySelector: () => null,
-    },
-    refresh: async () => {
-      refreshed = true;
-    },
-    api: async (...args) => {
-      calls.push(args);
-      if (args[0] === "/entry-1/parameters/reset")
-        return { parameters: defaults, configuration };
-      if (args[0] === "/entry-1/state") {
-        stateReads++;
-        return {
-          configuration:
-            stateReads === 1
-              ? {
-                  parameters: defaults,
-                  log_level: "DEBUG",
-                  program_mode: "progressive",
-                  button_program: "program_1",
-                }
-              : { parameters: defaults, ...configuration },
-        };
-      }
-      throw Error(`unexpected API request ${args[0]}`);
-    },
-  });
-  return {
-    panel,
-    calls,
-    edited,
-    get refreshed() {
-      return refreshed;
-    },
-  };
-};
-
-(async () => {
-  let test = makePanel();
-  await test.panel.action("reset-settings");
-  assert.deepEqual(
-    JSON.parse(JSON.stringify(test.calls.filter(([path]) => path.includes("reset")))),
-    [["/entry-1/parameters/reset", "POST"]],
-    "one reset POST is sent",
-  );
-  assert.equal(
-    test.calls.filter(([path]) => path === "/entry-1/state").length,
-    2,
-    "waits through stale log and program state until defaults are loaded",
-  );
-  assert.equal(
-    test.panel.progressionDraft,
-    null,
-    "draft values are cleared only after loaded state",
-  );
-  assert.equal(
-    test.panel.settingsEntry,
-    null,
-    "settings form is rebuilt from the loaded state",
-  );
-  assert.equal(
-    test.edited.dataset.edited,
-    undefined,
-    "edited input markers are cleared",
-  );
-  assert.equal(
-    test.refreshed,
-    true,
-    "loaded settings, program and logging state are refreshed",
-  );
-
-  test = makePanel({ admin: false });
-  await test.panel.action("reset-settings");
-  assert.equal(test.calls.length, 0, "non-admin reset must not reach the API");
-
-  test = makePanel({ locked: true });
-  await test.panel.action("reset-settings");
-  assert.equal(
-    test.calls.length,
-    0,
-    "reset during an active session must not reach the API",
-  );
-
-  test = makePanel();
-  let finishReset;
-  const originalApi = test.panel.api;
-  test.panel.api = (...args) =>
-    args[0] === "/entry-1/parameters/reset"
-      ? new Promise((resolve) => {
-          finishReset = resolve;
-        })
-      : originalApi(...args);
-  const oldReset = test.panel.resetSettings();
-  test.panel.entry = "entry-2";
-  test.panel.generation = 1;
-  test.panel.settingsEntry = "entry-2";
-  const newDraft = { "progression-end": "95" };
-  test.panel.progressionDraft = newDraft;
-  finishReset({ parameters: defaults, configuration });
-  await oldReset;
-  assert.equal(test.panel.settingsEntry, "entry-2");
-  assert.equal(test.panel.progressionDraft, newDraft);
-  assert.equal(test.refreshed, false, "old completion does not refresh the new sauna");
-
-  const errors = [];
-  const actionPanel = Object.assign(Object.create(Panel.prototype), {
-    entry: "entry-1",
+function fixture() {
+  const fields = [copy(instrument)],
+    calls = [];
+  const inputs = new Map(),
+    dialog = { showModal() {}, close() {} };
+  const p = Object.assign(panelFixture(Panel), {
+    entry: "one",
     generation: 0,
-    message: (error) => errors.push(error),
+    state: {
+      permissions: { admin: true },
+      configuration: {
+        parameters: parameterValues(),
+        appearance: { instruments: { default: "round" } },
+      },
+    },
+    appearanceDraft: {
+      instruments: { default: "linear" },
+      colors: { series_temperature: "#123456" },
+    },
+    appearanceRaw: { series_temperature: "#invalid" },
+    progressionDraft: { "progression-end": "95" },
+    $: (selector) => (selector === "#standards-dialog" ? dialog : inputs.get(selector)),
+    drawStandardDialog() {},
+    applyAppearance() {},
+    drawCurrent() {},
+    scheduleHistoryRender() {},
+    refresh: async () => {
+      calls.push(["refresh"]);
+    },
+    api: async (path, method = "GET", body) => {
+      calls.push([path, method, copy(body || {})]);
+      if (method === "GET" && path.endsWith("/standards")) return { fields };
+      if (method === "GET" && path.includes("/state")) return p.state;
+      const target =
+        body.action === "overwrite_standard"
+          ? fields[0].active
+          : body.action === "restore_factory"
+            ? fields[0].factory
+            : fields[0].standard;
+      const preview = {
+        action: body.action,
+        scope: { field: fields[0].id },
+        confirmation: "reviewed-token",
+        fields: [
+          {
+            ...fields[0],
+            target,
+            target_standard:
+              body.action === "overwrite_standard" ? body.value : fields[0].standard,
+            target_has_standard: true,
+          },
+        ],
+      };
+      if (body.confirmation)
+        p.state.configuration.appearance.instruments.default = target;
+      return { ...preview, ...(body.confirmation ? { applied: true } : {}) };
+    },
   });
-  let rejectOld;
-  actionPanel.runPanelAction(
-    () =>
-      new Promise((_resolve, reject) => {
-        rejectOld = reject;
-      }),
-  );
-  actionPanel.entry = "entry-2";
-  actionPanel.generation++;
-  rejectOld(Error("old light request"));
-  await Promise.resolve();
+  return { p, calls, fields, inputs };
+}
+
+test("a field standard previews then confirms the reviewed draft without changing active or foreign drafts", async () => {
+  const { p, calls } = fixture();
+  const appearance = p.appearanceDraft,
+    raw = p.appearanceRaw,
+    program = p.progressionDraft;
+  await p.openStandardMenu({ field: instrument.id });
+  assert.equal(calls.length, 1, "opening the menu only reads the inventory");
+  await p.previewStandardAction("overwrite_standard");
+  assert.equal(p.state.configuration.appearance.instruments.default, "round");
+  assert.equal(p.standardContext.preview.fields[0].target_standard, "linear");
+  assert.equal(calls.filter(([, , body]) => body?.confirmation).length, 0);
+  await p.confirmStandardAction();
+  assert.deepEqual(calls.find(([, , body]) => body?.confirmation)[2], {
+    action: "overwrite_standard",
+    field: instrument.id,
+    value: "linear",
+    confirmation: "reviewed-token",
+  });
+  assert.equal(p.state.configuration.appearance.instruments.default, "round");
+  assert.equal(p.appearanceDraft, appearance);
+  assert.equal(p.appearanceRaw, raw);
+  assert.equal(p.progressionDraft, program);
+});
+
+test("restore waits for loaded active values and replaces only the affected draft", async () => {
+  const { p, calls, inputs } = fixture();
+  const field = { value: "linear", dataset: {} };
+  inputs.set('[data-appearance-instrument="default"]', field);
+  await p.openStandardMenu({ field: instrument.id });
+  await p.previewStandardAction("restore_factory");
   assert.equal(
-    errors.length,
-    0,
-    "an old action failure stays with its original instance",
+    p.appearanceDraft.instruments.default,
+    "linear",
+    "preview has no draft side effect",
   );
-  console.log("panel settings reset regressions passed");
-})().catch((error) => {
-  console.error(error);
-  process.exitCode = 1;
+  await p.confirmStandardAction();
+  assert.equal(field.value, "round");
+  assert.equal(p.appearanceDraft.instruments.default, "round");
+  assert.equal(p.appearanceDraft.colors.series_temperature, "#123456");
+  assert.equal(p.appearanceRaw.series_temperature, "#invalid");
+  assert.equal(p.progressionDraft["progression-end"], "95");
+  assert.ok(
+    calls.find(([path]) => path?.includes("/state")),
+    "reload uses the existing status reader",
+  );
+});
+
+test("stale 409 keeps drafts and requires explicit confirmation of the new preview", async () => {
+  const { p, calls } = fixture();
+  await p.openStandardMenu({ field: instrument.id });
+  await p.previewStandardAction("restore_standard");
+  const before = copy(p.appearanceDraft),
+    preview = { ...p.standardContext.preview, confirmation: "new-token" };
+  const api = p.api;
+  let reject = true;
+  p.api = async (...args) => {
+    if (args[2]?.confirmation && reject) {
+      reject = false;
+      throw { status_code: 409, body: { error: "Quellen geändert", preview } };
+    }
+    return api(...args);
+  };
+  await p.confirmStandardAction();
+  assert.deepEqual(copy(p.appearanceDraft), before);
+  assert.equal(p.standardContext.preview.confirmation, "new-token");
+  assert.equal(
+    calls.filter(([, , body]) => body?.confirmation).length,
+    0,
+    "no automatic retry",
+  );
+  await p.confirmStandardAction();
+  assert.equal(
+    calls.find(([, , body]) => body?.confirmation)[2].confirmation,
+    "new-token",
+  );
+});
+
+test("locks do not partially replace drafts; late completions cannot touch a different sauna", async () => {
+  const { p } = fixture();
+  await p.openStandardMenu({ field: instrument.id });
+  await p.previewStandardAction("restore_standard");
+  p.api = async () => {
+    throw { status_code: 409, body: { error: "Sitzung läuft" } };
+  };
+  const before = copy(p.appearanceDraft);
+  await p.confirmStandardAction();
+  assert.deepEqual(copy(p.appearanceDraft), before);
+  assert.equal(p.standardContext.preview, null);
+  assert.equal(p.standardContext.message, "Sitzung läuft");
+  const next = fixture();
+  await next.p.openStandardMenu({ field: instrument.id });
+  await next.p.previewStandardAction("restore_standard");
+  let complete;
+  next.p.api = () =>
+    new Promise((resolve) => {
+      complete = resolve;
+    });
+  const pending = next.p.confirmStandardAction();
+  next.p.entry = "two";
+  next.p.generation++;
+  next.p.appearanceDraft = { colors: { series_temperature: "#654321" } };
+  complete({ action: "restore_standard", fields: [] });
+  await pending;
+  assert.equal(next.p.appearanceDraft.colors.series_temperature, "#654321");
+  assert.equal(next.calls.filter(([path]) => path === "refresh").length, 0);
+});
+
+test("global inventory includes hidden fields, program fields have no standard menu", async () => {
+  const { p, fields } = fixture();
+  fields.push({
+    id: "parameters.sensor_timeout_seconds",
+    group: "sensors",
+    applicable: false,
+    active: 60,
+    standard: 60,
+    factory: 60,
+    label: "Gültigkeit",
+  });
+  await p.openStandardMenu({ all: true });
+  assert.equal(p.standardContext.fields.length, 2);
+  assert.equal(p.standardContext.fields[1].applicable, false);
+  p.state.permissions.admin = false;
+  p.standardContext = null;
+  await p.openStandardMenu({ all: true });
+  assert.equal(p.standardContext, null);
+  p.state.frontend_defaults = p.panel.config.frontend_defaults;
+  assert.equal(p.settingsParameterGroup({ id: "programs" }), "");
 });

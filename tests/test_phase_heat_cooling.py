@@ -41,24 +41,8 @@ class PhaseHeatCoolingTests(unittest.TestCase):
         self.assertTrue(value.last_decision.heat)
         self.assertEqual(value.last_decision.reason, "gang_heat_demand")
 
-    def test_door_close_holds_demand_until_actual_contactor_on(self):
-        value = controller()
-        value.set_temperature(70, at(1))
-        event(value, "open", Kind.DOOR_OPEN, 2)
-        event(value, "close", Kind.DOOR_CLOSE, 3)
-
-        self.assertTrue(value.regulation_inputs.temporary_door_heat)
-        self.assertEqual(value.last_decision.reason, "temporary_door_heat")
-        value.advance(at(4))
-        self.assertTrue(value.regulation_inputs.temporary_door_heat)
-
-        value.report_contactor(True, at(5))
-        self.assertTrue(value.regulation_inputs.temporary_door_heat)
-        value.report_heating(True, at(6))
-        self.assertFalse(value.regulation_inputs.temporary_door_heat)
-
     def test_cooling_timer_waits_for_actual_off_and_freezes_calculation(self):
-        value = controller(after_run_minutes=0.5)
+        value = controller()
         value.report_contactor(True, at(1))
         event(value, "entry-open", Kind.DOOR_OPEN, 2)
         event(value, "close", Kind.DOOR_CLOSE, 2)

@@ -64,6 +64,10 @@ class DefaultsTests(unittest.TestCase):
                 spec for spec in data["parameters"]
                 if spec["key"] == "session_gap_minutes"
             ).update(default=None),
+            "optional_required_parameter": lambda data: next(
+                spec for spec in data["parameters"]
+                if spec["key"] == "session_gap_minutes"
+            ).update(optional=True),
             "null_color_default": lambda data: data["appearance"]["colors"][0].update(default=None),
         }
         with tempfile.TemporaryDirectory() as directory:
@@ -82,7 +86,7 @@ class DefaultsTests(unittest.TestCase):
         data["appearance"]["scales"]["humidity"]["default"].update(
             minimum=5, maximum=70
         )
-        data["runtime"]["archive_projection_cache_entries"] = 7
+        next(item for item in data["parameters"] if item["key"] == "archive_projection_cache_entries")["default"] = 7
         data["setup"] = {"program_mode": "constant", "control_input_mode": "switch"}
         self.assertIs(validate_catalog(data), data)
 
@@ -90,11 +94,18 @@ class DefaultsTests(unittest.TestCase):
         for surface in ("panel", "integration"):
             with self.subTest(surface=surface):
                 data = load_catalog()
-                data["frontend"]["settings_groups"][0]["surface"] = surface
+                group = data["frontend"]["settings_groups"][0]
+                group["surface"] = surface
+                for definition in data["parameters"]:
+                    if definition["settings_group"] == group["id"] and definition["configuration_surface"] != "catalog":
+                        definition["configuration_surface"] = surface
                 self.assertIs(validate_catalog(data), data)
         data = load_catalog()
         for group in data["frontend"]["settings_groups"]:
             group.pop("surface", None)
+        for definition in data["parameters"]:
+            if definition["configuration_surface"] != "catalog":
+                definition["configuration_surface"] = "panel"
         self.assertIs(validate_catalog(data), data)
         self.assertTrue(all(
             group.get("surface", "panel") == "panel"
@@ -105,7 +116,11 @@ class DefaultsTests(unittest.TestCase):
         for surface in (None, "", "both", True, [], {}):
             with self.subTest(surface=surface):
                 data = load_catalog()
-                data["frontend"]["settings_groups"][0]["surface"] = surface
+                group = data["frontend"]["settings_groups"][0]
+                group["surface"] = surface
+                for definition in data["parameters"]:
+                    if definition["settings_group"] == group["id"] and definition["configuration_surface"] != "catalog":
+                        definition["configuration_surface"] = surface
                 with self.assertRaises(ValueError):
                     validate_catalog(data)
         data = load_catalog()
@@ -120,7 +135,7 @@ class DefaultsTests(unittest.TestCase):
         }
         self.assertEqual(
             {key for key, owner in groups.items() if owner == "integration"},
-            {"operation", "sensors", "light"},
+            {"operation", "sensors", "light", "runtime"},
         )
         for definition in EDITABLE_DEFINITIONS:
             with self.subTest(key=definition.key):
@@ -163,6 +178,37 @@ class DefaultsTests(unittest.TestCase):
                 mutate(data)
                 with self.assertRaises(ValueError):
                     validate_catalog(data)
+        for relationship, message in (
+            ("minimum_parameter", "invalid minimum reference"),
+            ("multiple_of_parameters", "invalid divisor references"),
+        ):
+            for optional_source in (True, False):
+                for numeric_default in (False, True):
+                    with self.subTest(
+                        relationship=relationship,
+                        optional_source=optional_source,
+                        numeric_default=numeric_default,
+                    ):
+                        data = load_catalog()
+                        definitions = {
+                            spec["key"]: spec for spec in data["parameters"]
+                        }
+                        price = definitions["electricity_price_eur_per_kwh"]
+                        required = definitions["grid_seconds"]
+                        if numeric_default:
+                            # Equal numeric defaults would satisfy either
+                            # relation without the optionality guard.
+                            price["default"] = required["default"]
+                        source, target = (
+                            (price, required) if optional_source else (required, price)
+                        )
+                        source[relationship] = (
+                            target["key"]
+                            if relationship == "minimum_parameter"
+                            else [target["key"]]
+                        )
+                        with self.assertRaisesRegex(ValueError, message):
+                            validate_catalog(data)
 
     def test_catalog_views_are_detached_and_every_setting_has_group_metadata(self):
         catalog = section("parameters")

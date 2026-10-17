@@ -1,0 +1,184 @@
+{
+  "schema_version": 1,
+  "id": "G00-automatic",
+  "title": "Complete aborted session without a human stay",
+  "kind": "derived_whole_session",
+  "configuration": {
+    "parameter_source": "configuration.json",
+    "control_mode": "automatic",
+    "presence_source": "ha_presence",
+    "program": {
+      "mode": "constant",
+      "start_c": 90,
+      "end_c": 90,
+      "gangs": 1
+    },
+    "button_input_kind": "event",
+    "button_session_gesture": "long",
+    "button_program": "constant",
+    "daylight": true
+  },
+  "measurement_clock": "received_at",
+  "actions_location": "All controls are outside the cabin. No action lies within an uninterrupted stay.",
+  "interpretation": "Potential whole session assembled independently of detector and controller outputs.",
+  "limitations": [
+    "Temperature/moisture response is derived from measured shapes; this is not a claim that the combined session occurred.",
+    "Human door movements label physical actions, not exact proxy-detection times.",
+    "Declared thermal history selects the curve before execution. Product output never selects its own environment."
+  ],
+  "duration_s": 3527.049,
+  "measurement_file": "G00-automatic.measurements.json",
+  "measurement_sha256": "0c21d93a54eecf8d1d319549218b86e00e764ee8498cb134d08ac79c2eb78340",
+  "curve_blocks": [
+    {
+      "at_s": 0.0,
+      "until_s": 2567.049,
+      "curve_id": "cold_heat",
+      "thermal_history": "heater_on",
+      "heater_off_after_s": null,
+      "heater_on_after_s": null,
+      "transform": {
+        "join": "upper temperature offset, measured inter-height gradient relaxation for door/cooling, vapour-density ratio at both heights",
+        "upper_gain_c": 32.93,
+        "lower_gain_c": 26.008627409891027,
+        "moisture_from_source": true,
+        "source_offset_s": 60
+      }
+    },
+    {
+      "at_s": 2567.049,
+      "until_s": 3353.049,
+      "curve_id": "coast",
+      "thermal_history": "heater_off_after_heating",
+      "heater_off_after_s": null,
+      "heater_on_after_s": null,
+      "transform": {
+        "join": "upper temperature offset, measured inter-height gradient relaxation for door/cooling, vapour-density ratio at both heights",
+        "upper_gain_c": null,
+        "lower_gain_c": null,
+        "moisture_from_source": true,
+        "source_offset_s": 0
+      }
+    },
+    {
+      "at_s": 3353.049,
+      "until_s": 3527.049,
+      "curve_id": "coast",
+      "thermal_history": "heater_off_continuing",
+      "heater_off_after_s": null,
+      "heater_on_after_s": null,
+      "transform": {
+        "join": "upper temperature offset, measured inter-height gradient relaxation for door/cooling, vapour-density ratio at both heights",
+        "upper_gain_c": null,
+        "lower_gain_c": null,
+        "moisture_from_source": true,
+        "source_offset_s": 160
+      }
+    }
+  ],
+  "actions": [
+    {
+      "t": 0,
+      "name": "presence",
+      "args": {
+        "value": false
+      }
+    },
+    {
+      "t": 0.0,
+      "name": "start",
+      "args": {}
+    },
+    {
+      "t": 2567.049,
+      "name": "stop",
+      "args": {}
+    }
+  ],
+  "human_events": [],
+  "stays": [],
+  "expectations": [
+    {
+      "id": "started",
+      "values": {
+        "recording": true,
+        "operation_enabled": true,
+        "control_mode": "automatic"
+      },
+      "reason": "One explicit start begins one recording; thermostat cycling must not split it.",
+      "at_s": 1
+    },
+    {
+      "id": "unused",
+      "values": {
+        "active_gang": false,
+        "gang_count": 0
+      },
+      "reason": "Heating an empty sauna is not a human stay.",
+      "at_s": 2566.849,
+      "sampling": "before_the_next_control_action"
+    },
+    {
+      "id": "stopped",
+      "values": {
+        "operation_enabled": false,
+        "heater_request": false,
+        "phase": "aus"
+      },
+      "reason": "Explicit operation off ends heating.",
+      "at_s": 2569.049
+    },
+    {
+      "id": "finished",
+      "values": {
+        "recording": false,
+        "operation_enabled": false,
+        "heater_request": false,
+        "active_gang": false,
+        "phase": "aus"
+      },
+      "reason": "Whole session includes shutdown and expiry of the unmodified after-run interval.",
+      "at_s": 3527.049
+    },
+    {
+      "id": "not_retained",
+      "values": {
+        "retained_sessions": 0
+      },
+      "reason": "An unused session has no confirmed gang and is not retained.",
+      "at_s": 3527.049
+    },
+    {
+      "id": "no_unintended_fault",
+      "values": {
+        "fault_count": 0
+      },
+      "reason": "Valid continuous measurements and ordinary human operation must not create device, sensor or operating faults.",
+      "between_s": [
+        1,
+        3527.049
+      ]
+    }
+  ],
+  "declared_heater_history": [
+    {
+      "from_s": 0.0,
+      "until_s": 2567.049455155071,
+      "on": true,
+      "ready_idle": false
+    },
+    {
+      "from_s": 2567.049455155071,
+      "until_s": 3353.049455155071,
+      "on": false,
+      "ready_idle": false
+    },
+    {
+      "from_s": 3353.049455155071,
+      "until_s": 3527.049455155071,
+      "on": false,
+      "ready_idle": false
+    }
+  ],
+  "cooling_continuations": []
+}

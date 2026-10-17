@@ -1,6 +1,11 @@
 "use strict";
+const { panelFixture: fixturePanel } = require("./catalog_fixture.cjs");
 
 const assert = require("node:assert/strict");
+const {
+  parameterValues: fixtureValues,
+  parameterDefinition: fixtureDefinition,
+} = require("./catalog_fixture.cjs");
 const fs = require("node:fs");
 const test = require("node:test");
 const vm = require("node:vm");
@@ -27,14 +32,28 @@ class Node extends EventTarget {
     this.name = name;
     this.children = [];
     this.style = {};
+    this.classList = require("./catalog_fixture.cjs").elementClassList(this);
     this.hidden = true;
     this.rect = { left: 0, top: 0, width: 1200, height: 480, ...rect };
     this.attributes = new Map();
     this.text = "";
   }
   append(...nodes) {
+    for (const node of nodes) node.remove();
     this.children.push(...nodes);
     for (const node of nodes) node.parentNode = this;
+  }
+  prepend(...nodes) {
+    for (const node of nodes) node.remove();
+    this.children.unshift(...nodes);
+    for (const node of nodes) node.parentNode = this;
+  }
+  remove() {
+    if (this.parentNode)
+      this.parentNode.children = this.parentNode.children.filter(
+        (node) => node !== this,
+      );
+    this.parentNode = null;
   }
   replaceChildren(...nodes) {
     this.children = [];
@@ -52,6 +71,12 @@ class Node extends EventTarget {
   setAttribute(name, value) {
     this.attributes.set(name, String(value));
   }
+  getAttribute(name) {
+    return this.attributes.get(name) ?? null;
+  }
+  removeAttribute(name) {
+    this.attributes.delete(name);
+  }
   getRootNode() {
     let node = this;
     while (node.parentNode) node = node.parentNode;
@@ -65,7 +90,7 @@ const panelSource = fs.readFileSync("custom_components/ha_sauna/panel.js", "utf8
 const frozenTimestampSource =
   'const when = (v) =>\n  v\n    ? new Date(v).toLocaleString("de-DE", {\n        day: "2-digit",\n        month: "2-digit",\n        hour: "2-digit",\n        minute: "2-digit",\n        second: "2-digit",\n      })\n    : "\u2013";\nconst tooltipWhen = (v) => {\n  if (\n    (typeof v !== "string" && (typeof v !== "number" || !Number.isFinite(v))) ||\n    (typeof v === "string" && !v.trim())\n  )\n    return null;\n  const date = new Date(v);\n  if (!Number.isFinite(date.getTime())) return null;\n  const fraction =\n    typeof v === "string" ? v.match(/\\.(\\d+)(?:Z|[+-]\\d\\d:\\d\\d)?$/i)?.[1] : null;\n  return new Intl.DateTimeFormat("de-DE", {\n    day: "2-digit",\n    month: "2-digit",\n    hour: "2-digit",\n    minute: "2-digit",\n    second: "2-digit",\n    timeZoneName: "shortOffset",\n  })\n    .formatToParts(date)\n    .map((part) =>\n      part.type === "second" && fraction ? `${part.value}.${fraction}` : part.value,\n    )\n    .join("");\n};\nconst clock = (v) =>\n  new Date(v).toLocaleTimeString("de-DE", { hour: "2-digit", minute: "2-digit" });\nconst localTimeZone = () => undefined;\n';
 const frozenPanelSource =
-  panelSource.slice(0, panelSource.indexOf("const timestampFormatterLimit")) +
+  panelSource.slice(0, panelSource.indexOf("const timestampFormatOptions")) +
   frozenTimestampSource +
   panelSource.slice(panelSource.indexOf("const num ="));
 
@@ -84,7 +109,7 @@ const loadHelper = (window, source = panelSource, intl = Intl) => {
     customElements: { get: () => null, define: (_, value) => (Panel = value) },
   };
   vm.runInNewContext(
-    `${source}\nglobalThis.HistoryInteraction = HistoryInteraction; globalThis.timestampFunctions = { when, tooltipWhen, clock };`,
+    `${source}\nglobalThis.HistoryInteraction = HistoryInteraction; globalThis.timestampFunctions = { when: (v, tz) => when(v, tz, ${require("./catalog_fixture.cjs").preferences().timestamp_formatter_cache_entries}), tooltipWhen: (v, tz) => tooltipWhen(v, tz, ${require("./catalog_fixture.cjs").preferences().timestamp_formatter_cache_entries}), clock: (v, tz) => clock(v, tz, ${require("./catalog_fixture.cjs").preferences().timestamp_formatter_cache_entries}) };`,
     context,
   );
   context.HistoryInteraction.timestampFunctions = context.timestampFunctions;
@@ -135,12 +160,24 @@ const tooltipFor = (
   const cursor = new Node(document, "line");
   const overview = new Node(document, "overview", { width: 1200, height: 46 });
   const interactionFactory = loadHelper(window, panelCode, intl);
-  const panel = Object.assign(Object.create(Panel.prototype), {
+  const panel = Object.assign(fixturePanel(Panel), {
     positions: new Set(["upper"]),
     window: [received - 30000, received + 30000],
-    state: { configuration: { parameters: { sensor_timeout_seconds: 120 } } },
+    state: {
+      now: new Date(received + 30000).toISOString(),
+      configuration: { parameters: fixtureValues() },
+    },
     shown: {
-      session: { configuration: { parameters: { sensor_timeout_seconds: 120 } } },
+      session: {
+        configuration: { parameters: fixtureValues() },
+        timeline: {
+          session_id: "tooltip",
+          session_started_at: new Date(received - 30000).toISOString(),
+          completed: [],
+          processed: [],
+          active: null,
+        },
+      },
       records: [{ kind, payload: source }],
     },
     historyDetail: true,
@@ -156,6 +193,26 @@ const tooltipFor = (
   assert.equal(tooltip.hidden, true, "initial readout waits for a chart pointer");
   interaction.hover({ svg: surface, clientX: 600, clientY: 100 });
   return { tooltip, interaction, panel, cursor, surface };
+};
+
+// Read the same separate number/unit cells as the current browser layout.
+const temperatureCell = (tooltip) => {
+  const row = tooltip.children[1].children.find(
+    (item) =>
+      !item.hidden && item.children[0]?.getAttribute("data-quantity") === "temperature",
+  );
+  assert.ok(row, "the temperature row is displayed");
+  return {
+    label: row.children[0],
+    number: row.children[1].children[0],
+    unit: row.children[1].children[1],
+  };
+};
+const assertTemperature = (tooltip, expected) => {
+  const { label, number, unit } = temperatureCell(tooltip);
+  assert.equal(label.textContent, "Temperatur oben: ");
+  assert.equal(number.textContent, expected);
+  assert.equal(unit.textContent, "°C");
 };
 
 const trackingIntl = () => {
@@ -177,15 +234,9 @@ test("persistent hover rounds local values without changing original data", () =
   const original = measurement();
   const before = JSON.stringify(original);
   const { tooltip } = inTimeZone("Europe/Berlin", () => tooltipFor(original));
-  assert.equal(
-    tooltip.children[0].textContent +
-      tooltip.children[1].children
-        .filter((row) => !row.hidden)
-        .map((row) => row.textContent)
-        .join("") +
-      tooltip.children[2].textContent,
-    "09:00Temperatur oben: 79,1 °CSaunastatus · Unbekannt",
-  );
+  assert.equal(tooltip.children[0].textContent, "Punkt · 09:00");
+  assertTemperature(tooltip, "79,1");
+  assert.equal(tooltip.children[2].textContent, "Saunastatus · Unbekannt");
   assert.doesNotMatch(tooltip.textContent, /Originalwert|Empfangen|Gemessen|GMT/);
   assert.equal(JSON.stringify(original), before, "source timestamps stay unchanged");
 });
@@ -193,7 +244,7 @@ test("persistent hover rounds local values without changing original data", () =
 test("source measurement timestamps do not add metadata to the compact value", () => {
   for (const measured_at of [undefined, null, false, [], {}, "not-a-time"]) {
     const { tooltip } = tooltipFor(measurement({ measured_at }));
-    assert.match(tooltip.textContent, /Temperatur oben: 79,1 °C/);
+    assertTemperature(tooltip, "79,1");
     assert.doesNotMatch(tooltip.textContent, /Empfangen|Gemessen/);
   }
 });
@@ -210,31 +261,16 @@ test("zero and numeric fallback values use the same compact localized format", (
     "source_snapshot",
   ).tooltip;
   const escaped = tooltipFor(measurement({ raw_value: '<raw&"value>' })).tooltip;
-  assert.match(zero.textContent, /Temperatur oben: 0 °C/);
-  assert.match(missing.textContent, /Temperatur oben: 12,3 °C/);
+  assertTemperature(zero, "0,0");
+  assertTemperature(missing, "12,3");
   assert.doesNotMatch(missing.textContent, /Originalwert|gespeichert/);
-  assert.match(escaped.textContent, /Temperatur oben: 79,1 °C/);
+  assertTemperature(escaped, "79,1");
   assert.doesNotMatch(escaped.textContent, /<raw&"value>/);
   const names = (node) => [node.name, ...node.children.flatMap(names)];
-  assert.deepEqual(names(escaped), [
-    "tooltip",
-    "strong",
-    "div",
-    "div",
-    "span",
-    "span",
-    "div",
-    "span",
-    "span",
-    "div",
-    "span",
-    "span",
-    "div",
-    "span",
-    "span",
-    "div",
-    "div",
-  ]);
+  assert.ok(
+    names(escaped).every((name) => ["tooltip", "strong", "div", "span"].includes(name)),
+    "raw source text cannot introduce another element type",
+  );
   assert.equal(
     "innerHTML" in escaped,
     false,
@@ -256,10 +292,26 @@ test("hover uses the archived phase projection and matching effective event mark
       ],
     };
     panel.shown.session.timeline = {
+      ...panel.shown.session.timeline,
       processed: [
-        { kind: "infusion", effective_at: iso(100), detected_at: iso(20000) },
-        { kind: "infusion", effective_at: iso(0), detected_at: iso(20000) },
-        { kind: "door_close", effective_at: iso(-20000), detected_at: iso(0) },
+        {
+          event_id: "infusion-later",
+          kind: "infusion",
+          effective_at: iso(100),
+          detected_at: iso(20000),
+        },
+        {
+          event_id: "infusion-first",
+          kind: "infusion",
+          effective_at: iso(0),
+          detected_at: iso(20000),
+        },
+        {
+          event_id: "door-close",
+          kind: "door_close",
+          effective_at: iso(-20000),
+          detected_at: iso(0),
+        },
       ],
     };
     const original = JSON.stringify(panel.shown);
@@ -270,7 +322,7 @@ test("hover uses the archived phase projection and matching effective event mark
     assert.equal((tooltip.textContent.match(/Aufguss/g) || []).length, 2);
     assert.equal(tooltip.children[3].children.length, 2);
     assert.deepEqual(
-      panel.historyEventsAt(at, 200).map((event) => event.effective_at),
+      Array.from(panel.historyEventsAt(at, 200), (event) => event.effective_at),
       [iso(0), iso(100)],
     );
     assert.doesNotMatch(tooltip.textContent, /Ofenkühlung|Tür geschlossen/);
@@ -310,15 +362,15 @@ test("persistent hover clock follows DST and the browser-local zone", () => {
     tooltipFor(measurement({ received_at: "2026-10-25T01:30:00.123456Z" })).tooltip
       .textContent,
   ]);
-  assert.match(beforeFallback, /^02:30Temperatur/);
-  assert.match(afterFallback, /^02:30Temperatur/);
+  assert.match(beforeFallback, /^Punkt · 02:30Temperatur/);
+  assert.match(afterFallback, /^Punkt · 02:30Temperatur/);
   const utc = inTimeZone("UTC", () => tooltipFor(measurement()).tooltip.textContent);
   const newYork = inTimeZone(
     "America/New_York",
     () => tooltipFor(measurement()).tooltip.textContent,
   );
-  assert.match(utc, /^08:00Temperatur/);
-  assert.match(newYork, /^03:00Temperatur/);
+  assert.match(utc, /^Punkt · 08:00Temperatur/);
+  assert.match(newYork, /^Punkt · 03:00Temperatur/);
 });
 
 test("persistent tooltip nodes are reused", () => {

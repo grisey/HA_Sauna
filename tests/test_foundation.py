@@ -11,9 +11,10 @@ import unittest
 from custom_components.ha_sauna.bindings import BindingError, Bindings, ROLES, ROLE_BY_KEY, metadata_error, validate_metadata
 from custom_components.ha_sauna.core.controller import Controller
 from custom_components.ha_sauna.core.defaults import section
+from custom_components.ha_sauna.core.input_handoff import InputTiming, OccupancyInput
 from custom_components.ha_sauna.core.models import Deadline, HeatingTime, Measurement, Position, Quantity, Session
 from custom_components.ha_sauna.core.parameters import BY_KEY, DEFINITIONS, ParameterError, Parameters
-from custom_components.ha_sauna.core.timeline import Confirmation, Event, Kind
+from custom_components.ha_sauna.core.timeline import Confirmation, DoorCloseEvidence, Event, Kind
 from custom_components.ha_sauna.runtime import Configuration, SaunaRuntime
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -21,9 +22,8 @@ T0 = datetime(2026, 1, 1, tzinfo=UTC)
 
 
 def parameters():
-    # Rein synthetische Testeingabe; keine produktiven Ausgangswerte.
-    return Parameters({**{definition.key: definition.default if definition.default is not None else 2.5 for definition in DEFINITIONS if definition.key != "final_temperature_c"},
-                       "session_gap_minutes": 2.5})
+    """Use the regular catalog; a virtual clock advances without shortening policy."""
+    return Parameters({})
 
 
 def bindings():
@@ -50,7 +50,18 @@ def metadata(binding):
 
 def event(key, kind, seconds, session="s"):
     at = T0 + timedelta(seconds=seconds)
-    return Event(key, session, kind, at, at)
+    # Synthetic confirmed door fixture; interval-specific cases supply both times.
+    return Event(key, session, kind, at, at,
+                 door_close_evidence=DoorCloseEvidence(at, at)
+                 if kind == Kind.DOOR_CLOSE else None)
+
+
+def selected_occupancy(report, evaluated_at):
+    """Pass an already selected report across the source-free control boundary."""
+    return OccupancyInput(
+        report.occupancy, report.available, True, report.report_id,
+        InputTiming(report.effective_at, report.received_at, None, evaluated_at),
+    )
 
 
 class ParameterTests(unittest.TestCase):
@@ -83,7 +94,8 @@ class ParameterTests(unittest.TestCase):
         self.assertEqual(legacy.minimum_for("oven_cooling_max_minutes"), saved_duration)
 
         with self.assertRaises(ParameterError) as raised:
-            Parameters({"after_run_minutes": 16, "oven_cooling_max_minutes": 15})
+            Parameters({"after_run_minutes": saved_duration,
+                        "oven_cooling_max_minutes": saved_duration - 1})
         self.assertEqual(raised.exception.key, "oven_cooling_max_minutes")
 
     def test_unknown_parameter_fails(self):
@@ -116,16 +128,18 @@ class ParameterTests(unittest.TestCase):
 
     def test_zero_policy_is_explicit(self):
         for d in DEFINITIONS:
-            data = {**parameters().as_dict(), d.key: 0}
             with self.subTest(key=d.key):
-                if d.allow_zero:
-                    self.assertEqual(Parameters(data).values[d.key], 0)
+                if (d.minimum is not None and d.minimum <= 0) or (
+                    d.minimum is None and d.allow_zero
+                ):
+                    self.assertEqual(d.validate(0), 0)
                 else:
                     with self.assertRaises(ParameterError):
-                        Parameters(data)
+                        d.validate(0)
 
     def test_seconds_are_derived_from_the_only_value(self):
-        self.assertEqual(parameters().seconds("session_gap_minutes"), 150)
+        self.assertEqual(parameters().seconds("session_gap_minutes"),
+                         parameters().values["session_gap_minutes"] * 60)
         with self.assertRaises(ParameterError):
             parameters().seconds("readiness_hysteresis_c")
 
@@ -133,7 +147,8 @@ class ParameterTests(unittest.TestCase):
         original = parameters().as_dict()
         result = Parameters(original)
         original["session_gap_minutes"] = 999
-        self.assertEqual(result.values["session_gap_minutes"], 2.5)
+        self.assertEqual(result.values["session_gap_minutes"],
+                         parameters().values["session_gap_minutes"])
         with self.assertRaises(TypeError):
             result.values["session_gap_minutes"] = 3
 
@@ -358,7 +373,8 @@ class ControllerTests(unittest.TestCase):
         controller = Controller(source)
         controller.begin_session("other", T0)
         self.assertIs(controller.parameters, source)
-        self.assertEqual(controller.parameters.seconds("session_gap_minutes"), 150)
+        self.assertEqual(controller.parameters.seconds("session_gap_minutes"),
+                         source.values["session_gap_minutes"] * 60)
 
 
 class RuntimeTests(unittest.IsolatedAsyncioTestCase):
@@ -371,7 +387,8 @@ class RuntimeTests(unittest.IsolatedAsyncioTestCase):
         rebuilt = Configuration.from_options(options)
         self.assertEqual(rebuilt, self.runtime.configuration)
         options["parameters"]["session_gap_minutes"] = 999
-        self.assertEqual(rebuilt.parameters.values["session_gap_minutes"], 2.5)
+        self.assertEqual(rebuilt.parameters.values["session_gap_minutes"],
+                         parameters().values["session_gap_minutes"])
 
     async def test_configuration_cannot_silently_fill_missing_values(self):
         with self.assertRaises(ValueError):
@@ -469,17 +486,21 @@ class PackagingTests(unittest.TestCase):
         subgroups = {
             definition["settings_subgroup"] for definition in section("parameters")
             if definition["settings_group"] in areas
+            and definition["configuration_surface"] == "integration"
             and definition["minimum"] != definition["maximum"]
         }
         self.assertEqual(
             set(strings["options"]["step"]),
             {"init", "bindings", "binding_entities", "name", "rename_entity",
              "rename_entity_select", "rename_entity_edit", "cleanup_entities", "cleanup_empty",
+             "notification_user", "notification_targets", "field_standards",
+             "field_standard_scope", "field_standard_confirm",
              *areas, *(f"parameters_{key}" for key in subgroups)},
         )
         self.assertEqual(
             set(strings["options"]["step"]["init"]["menu_options"]),
-            {"bindings", "name", "rename_entity", "cleanup_entities", *areas},
+            {"bindings", "name", "rename_entity", "cleanup_entities",
+             "notification_user", "field_standards", *areas},
         )
         for scope, step in (("config", "entities"), ("options", "binding_entities")):
             form = strings[scope]["step"][step]

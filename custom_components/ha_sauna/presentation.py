@@ -1,7 +1,10 @@
 """Deutsche Anzeigetexte; technische Zustandskennungen bleiben in der API erhalten."""
 
 from hashlib import sha256
+from collections.abc import Mapping
+from math import isfinite
 
+from .bindings import Bindings
 from .core.parameters import BY_KEY, LIVE_TEMPERATURE_KEYS
 
 PHASES = {
@@ -20,7 +23,8 @@ EVENTS = {
     "person_strong": "Person erkannt",
     "person_weak": "Schwaches Personensignal",
     "infusion": "Aufguss",
-    "ventilation_confirmed": "Durchlüften bestätigt",
+    "ventilation_confirmed": "Lüften bestätigt",
+    "ventilation_complete": "Vollständiges Lüften bestätigt",
 }
 
 ROLES = {
@@ -162,8 +166,10 @@ def parameter_error(error):
         "too_large": "Der Wert liegt über der zulässigen Obergrenze.",
         "integer_required": "Bitte eine ganze Zahl eingeben.",
         "reduction_too_large": "Die Verkürzung muss kleiner als die erste Heizzeit sein.",
-        "window_not_divisible": "Das Zeitfenster muss durch den Zeitabstand der Personenprüfung teilbar sein.",
+        "window_not_divisible": "Das Zeitfenster muss durch sein Erkennungsraster und den jeweiligen Prüfabstand teilbar sein.",
+        "catalog_only": "Dieser Standardwert wird ausschließlich aus dem Parameterkatalog gelesen.",
         "program_catalog_invalid": "Die Mindesttemperatur passt nicht zu den gespeicherten Temperaturprogrammen.",
+        "not_applicable": "Diese Einstellung wird mit den zugeordneten Geräten und dem gewählten Erkennungsverfahren nicht verwendet.",
     }.get(error.code, "Bitte die eingegebenen Werte prüfen.")
     return label + ": " + detail
 
@@ -193,9 +199,49 @@ def public_configuration(options):
     } | {"parameters": {key: parameters[key] for key in keys if key in parameters}}
 
 
-def public_measurement(measurement):
+HISTORY_MEASUREMENT_ROLES = (
+    "upper_temperature", "lower_temperature", "upper_humidity", "lower_humidity",
+)
+
+
+def historical_measurement_context(session):
+    """Project only roles and validity recorded in this session's configuration."""
+    configuration = session.get("configuration")
+    if not isinstance(configuration, Mapping):
+        return None
+    bindings = configuration.get("bindings")
+    parameters = configuration.get("parameters")
+    if not isinstance(bindings, Mapping) or not isinstance(parameters, Mapping):
+        return None
+    try:
+        # Optional sensor pairs are absent in the original serialized bindings.
+        # Reuse their owner to distinguish a valid single pair from partial data.
+        bindings = Bindings(bindings).values
+    except ValueError:
+        return None
+    ttl = parameters.get("sensor_timeout_seconds")
+    if isinstance(ttl, bool) or not isinstance(ttl, (int, float)) or not isfinite(ttl) or ttl < 0:
+        return None
+    roles = [role for role in HISTORY_MEASUREMENT_ROLES if bindings.get(role)]
+    regulation = next((position for position in ("upper", "lower")
+                       if f"{position}_temperature" in roles), None)
+    return {"roles": roles, "regulation_position": regulation,
+            "sensor_timeout_seconds": ttl}
+
+
+def public_measurement(measurement, *, configuration=None):
     """Keep chart values and timestamps without exposing entity bindings."""
-    return {key: value for key, value in measurement.items() if key != "source"}
+    result = {key: value for key, value in measurement.items()
+              if key not in {"source", "source_matches_binding"}}
+    bindings = configuration.get("bindings") if isinstance(configuration, Mapping) else None
+    if isinstance(bindings, Mapping):
+        role = f"{measurement.get('position')}_{measurement.get('quantity')}"
+        source = measurement.get("source")
+        result["source_matches_binding"] = bool(
+            role in HISTORY_MEASUREMENT_ROLES and isinstance(source, str)
+            and source and source == bindings.get(role)
+        )
+    return result
 
 
 def _public_references(value):
@@ -226,9 +272,12 @@ def public_session(session):
     """Project a serialized session without configuration or entity-bearing IDs."""
     if session is None:
         return None
-    return _public_references({
+    result = {
         key: value for key, value in session.items() if key != "configuration"
-    })
+    }
+    if "configuration" in session:
+        result["measurement_context"] = historical_measurement_context(session)
+    return _public_references(result)
 
 
 def public_phase_projection(projection):
@@ -239,10 +288,12 @@ def public_phase_projection(projection):
 def public_state(result):
     """Public panel contract, shared by HA and the local role preview."""
     result = dict(result)
+    configuration = result["configuration"]
     result["configuration"] = public_configuration(result["configuration"])
     result["parameters"] = [item for item in result["parameters"]
                             if item["key"] in LIVE_TEMPERATURE_KEYS]
-    result["measurements"] = [public_measurement(item) for item in result["measurements"]]
+    result["measurements"] = [public_measurement(item, configuration=configuration)
+                              for item in result["measurements"]]
     for key in ("session", "last_session"):
         if key in result:
             result[key] = public_session(result[key])

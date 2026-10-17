@@ -72,7 +72,8 @@ def legacy_read(archive, session_id, *, after=0, limit=1000):
             project_archive(stored_session, evidence, row["updated_at"])
         ),
         "records": [
-            {**dict(record), "payload": json.loads(record["payload"])}
+            {**{key: record[key] for key in record.keys() if key != "configuration_id"},
+             "payload": json.loads(record["payload"])}
             for record in records
         ],
         "next_after": records[-1]["id"] if len(records) == limit else None,

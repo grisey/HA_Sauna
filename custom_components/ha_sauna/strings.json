@@ -15,8 +15,9 @@
       "entity_not_ready": "Die Entität ist noch nicht mit ihren Metadaten verfügbar.",
       "invalid_presence_source": "Bitte ein angebotenes Erkennungsverfahren auswählen.",
       "invalid_event_types": "Der Taster muss unterstützte Ereignisarten bereitstellen.",
+      "native_button_event": "Bereits erkannte Tastergesten behalten ihre Bedeutung. Hier ist nur ein zusätzlicher Name für kurze Betätigung möglich.",
       "internal_control_source": "Eine Steuerentität der Sauna-Integration kann nicht als Gerät, Bedieneingang oder Heizrückmeldung zugeordnet werden.",
-      "button_gesture_incompatible": "Der gewählte Binärtaster meldet keine doppelte oder dreifache Betätigung. Zuerst die Sitzungsgeste in den Sauna-Einstellungen auf Halten ändern.",
+      "button_gesture_incompatible": "Der gewählte Taster meldet nur Drücken und Loslassen. Zuerst die Sitzungsgeste in den Sauna-Einstellungen auf Halten ändern.",
       "invalid_configuration": "Die Gerätezuordnung passt nicht zu den gespeicherten Einstellungen.",
       "ambiguous_entity": "Mehrere passende Entitäten vorhanden. Die gewünschte Messung bitte auswählen."
     },
@@ -48,7 +49,7 @@
           "control_input": "Taster oder Betriebsschalter",
           "light": "Dimmbares Saunalicht",
           "control_input_mode": "Bedienart",
-          "button_event_type": "Ereignis bei kurzer Betätigung",
+          "button_event_type": "Bedienereignis",
           "presence_source": "Anwesenheit erkennen"
         },
         "data_description": {
@@ -57,7 +58,7 @@
           "control_input": "Entkoppelter Bedieneingang, getrennt vom Ofen-Schaltausgang.",
           "light": "Dimmbare Leuchte für Automatik und manuelle Bedienung.",
           "control_input_mode": "Taster: kurze Betätigung schaltet den Ofen, die Sitzungsgeste steuert die Sitzung. Betriebsschalter: Ein/Aus steuert die Sitzung.",
-          "button_event_type": "Ereignis der kurzen Betätigung. Leer: Shelly single_push oder single.",
+          "button_event_type": "Beim Taster ergänzt dieser Name eine weitere Kurzbetätigung; bekannte Gerätegesten behalten ihre Bedeutung. Beim Betriebsschalter wählt er das Ereignis, das den Betrieb umschaltet.",
           "presence_source": "Nur die Anwesenheit wechselt die Quelle. Tür und Aufguss werden immer aus Temperatur und Feuchte erkannt."
         },
         "sections": {
@@ -107,7 +108,7 @@
             },
             "data_description": {
               "heater_feedback": "Zusätzlicher binärer Heiznachweis. Der Heizschütz muss hier nicht erneut zugeordnet werden.",
-              "heater_power": "Gültige Messwerte ersetzen die Schätzung von Heizzeit und Energieverbrauch.",
+              "heater_power": "Gültige Leistungsmesswerte dienen als Heiznachweis und zur Berechnung des Energieverbrauchs.",
               "audio_output": "Noch ohne Audioausgabe."
             }
           },
@@ -161,8 +162,9 @@
       "entity_not_ready": "Die Entität ist noch nicht mit ihren Metadaten verfügbar.",
       "invalid_presence_source": "Bitte ein angebotenes Erkennungsverfahren auswählen.",
       "invalid_event_types": "Der Taster muss unterstützte Ereignisarten bereitstellen.",
+      "native_button_event": "Bereits erkannte Tastergesten behalten ihre Bedeutung. Hier ist nur ein zusätzlicher Name für kurze Betätigung möglich.",
       "internal_control_source": "Eine Steuerentität der Sauna-Integration kann nicht als Gerät, Bedieneingang oder Heizrückmeldung zugeordnet werden.",
-      "button_gesture_incompatible": "Der gewählte Binärtaster meldet keine doppelte oder dreifache Betätigung. Zuerst die Sitzungsgeste in den Sauna-Einstellungen auf Halten ändern.",
+      "button_gesture_incompatible": "Der gewählte Taster meldet nur Drücken und Loslassen. Zuerst die Sitzungsgeste in den Sauna-Einstellungen auf Halten ändern.",
       "invalid_configuration": "Die Eingabe passt nicht zu den übrigen gespeicherten Einstellungen.",
       "invalid_number": "Bitte eine gültige Zahl eingeben.",
       "positive": "Der Wert muss größer als null sein.",
@@ -170,10 +172,11 @@
       "too_small": "Der Wert liegt unter der zulässigen Untergrenze.",
       "too_large": "Der Wert liegt über der zulässigen Obergrenze.",
       "integer_required": "Bitte eine ganze Zahl eingeben.",
-      "window_not_divisible": "Die Vergleichsdauer muss durch den Abstand der Auswertung teilbar sein.",
+      "window_not_divisible": "Das Zeitfenster muss durch sein Erkennungsraster und den jeweiligen Prüfabstand teilbar sein.",
       "program_catalog_invalid": "Die Mindesttemperatur passt nicht zu den gespeicherten Programmen.",
       "invalid_parameters": "Bitte die eingegebenen Werte prüfen.",
       "unknown_parameter": "Diese Einstellung gehört nicht zu diesem Formular.",
+      "not_applicable": "Diese Einstellung wird mit den zugeordneten Geräten und dem gewählten Erkennungsverfahren nicht verwendet.",
       "parameter_dependency": "Die Änderung betrifft eine weitere Einstellung. {reason}",
       "ambiguous_entity": "Mehrere passende Entitäten vorhanden. Die gewünschte Messung bitte auswählen.",
       "configuration_busy": "Die vorherige Änderung wird noch übernommen. Bitte kurz warten und erneut speichern.",
@@ -183,7 +186,10 @@
       "invalid_entity_id": "Die Entitäts-ID muss gültig sein und ihren bisherigen Typ behalten, zum Beispiel sensor.temperatur.",
       "entity_id_in_use": "Diese Entitäts-ID ist bereits vergeben.",
       "preview_changed": "Die Liste hat sich geändert. Bitte die neue Vorschau prüfen und erneut bestätigen.",
-      "reload_failed": "Eine betroffene Sauna konnte nicht neu geladen werden. Die aktuellen Entitäts-IDs und Zuordnungen bleiben gespeichert."
+      "reload_failed": "Eine betroffene Sauna konnte nicht neu geladen werden. Die aktuellen Entitäts-IDs und Zuordnungen bleiben gespeichert.",
+      "catalog_only": "Dieser Standardwert wird ausschließlich aus dem Parameterkatalog gelesen.",
+      "invalid_notification_user": "Bitte einen angebotenen aktiven Home-Assistant-Benutzer auswählen.",
+      "invalid_notification_targets": "Die Empfänger sind nicht mehr auswählbar. Auswahl prüfen."
     },
     "abort": {
       "heater_already_used": "Dieser Heizaktor ist bereits einer anderen Sauna-Instanz zugeordnet.",
@@ -202,7 +208,10 @@
           "sensors": "Sensoren und Erkennung",
           "light": "Licht",
           "rename_entity": "Entität umbenennen",
-          "cleanup_entities": "Entitäten bereinigen"
+          "cleanup_entities": "Entitäten bereinigen",
+          "runtime": "Daten und Laufzeit",
+          "notification_user": "Benachrichtigungsempfänger",
+          "field_standards": "Standards und Werkseinstellungen"
         }
       },
       "bindings": {
@@ -233,16 +242,17 @@
       "parameters_session_controls": {
         "title": "Sitzung und Taster",
         "data": {
-          "button_hold_seconds": "Taster zum Starten und Beenden halten",
+          "button_hold_seconds": "Haltezeit des Tasters",
           "session_gap_minutes": "Sitzung nach Ausschalten fortsetzen",
-          "manual_override_minutes": "Dauer manueller Ofen- und Lichtwahl"
+          "manual_override_minutes": "Dauer manueller Ofen- und Lichtwahl",
+          "settings_action": "Aktion"
         },
         "data_description": {
-          "button_hold_seconds": "Erforderliche Haltezeit eines Binärtasters; Ereignistaster liefern die erkannte Geste selbst.",
+          "button_hold_seconds": "Erforderliche Haltezeit für einen Taster, der nur Drücken und Loslassen meldet. Vom Gerät erkannte Gesten werden direkt übernommen.",
           "session_gap_minutes": "Innerhalb dieser Pause mit Lichtnachlauf setzt erneutes Einschalten dieselbe Sitzung fort.",
           "manual_override_minutes": "In Automatik endet eine manuelle Ofen- oder Lichtwahl spätestens nach dieser Zeit, bei einem passenden Zustandswechsel früher. Die Betriebsart Manuell ist davon unabhängig."
         },
-        "submit": "Speichern und zurück"
+        "submit": "Weiter"
       },
       "parameters_temperature_control": {
         "title": "Temperaturregelung und Aufheizen",
@@ -253,30 +263,32 @@
           "minimum_heating_minutes": "Mindestheizzeit",
           "thermostat_cooldown_minutes": "Heizpause nach Abschalten",
           "standard_temperature_c": "Standardtemperatur",
-          "warmup_estimation_minutes": "Beobachtungszeit für das Aufheizen"
+          "warmup_estimation_minutes": "Beobachtungszeit für das Aufheizen",
+          "settings_action": "Aktion"
         },
         "data_description": {
           "sauna_min_temperature_c": "Untergrenze für die Solltemperatur. Ein neuer Saunagang kann erst beginnen, wenn eine gültige Temperaturmessung diesen Wert erreicht.",
-          "readiness_offset_c": "Die Temperaturregelung schaltet bei Solltemperatur plus diesem Abstand ab. Mindestheizzeit und Heizen während eines Saunagangs haben Vorrang.",
-          "readiness_hysteresis_c": "Die Temperaturregelung schaltet bei Solltemperatur minus diesem Abstand wieder ein, sobald die Heizpause abgelaufen ist.",
-          "minimum_heating_minutes": "Nach dem Einschalten bleibt der Ofen mindestens so lange an. Ofenkühlung, Ausschalten und Schutzabschaltung haben Vorrang.",
-          "thermostat_cooldown_minutes": "Nach Erreichen der Abschalttemperatur wartet die Temperaturregelung so lange vor dem erneuten Einschalten.",
+          "readiness_offset_c": "Die Temperaturregelung schaltet bei Solltemperatur plus diesem Abstand ab. In Automatik haben Mindestheizzeit und Heizen während eines Saunagangs Vorrang.",
+          "readiness_hysteresis_c": "Die Temperaturregelung schaltet bei Solltemperatur minus diesem Abstand wieder ein. In Automatik muss zusätzlich die Heizpause abgelaufen sein.",
+          "minimum_heating_minutes": "In Automatik bleibt der Ofen nach bestätigtem Heizbeginn mindestens so lange an. Ofenkühlung, Ausschalten und Schutzabschaltung haben Vorrang.",
+          "thermostat_cooldown_minutes": "In Automatik wartet die Temperaturregelung nach Erreichen der Abschalttemperatur so lange vor dem erneuten Einschalten.",
           "standard_temperature_c": "Solltemperatur beim Wechsel zu Konstant oder Manuell. Eine danach gewählte Temperatur gilt weiter; Programme verwenden ihre eigenen Temperaturen.",
           "warmup_estimation_minutes": "Zeitfenster für die Aufheizprognose und den Hinweis auf fehlenden Temperaturanstieg."
         },
-        "submit": "Speichern und zurück"
+        "submit": "Weiter"
       },
       "parameters_heater_feedback": {
         "title": "Schaltbestätigung und Schutz",
         "data": {
           "feedback_timeout_seconds": "Wartezeit auf Schaltbestätigung",
-          "fault_confirmation_seconds": "Schutzabschaltung nach anhaltender Störung"
+          "fault_confirmation_seconds": "Schutzabschaltung nach anhaltender Störung",
+          "settings_action": "Aktion"
         },
         "data_description": {
           "feedback_timeout_seconds": "So lange wird auf den Abschluss eines Schaltbefehls oder die Rückmeldung des angeforderten Schützzustands gewartet.",
           "fault_confirmation_seconds": "Ein zentraler technischer Fehler verriegelt nach dieser Dauer die Schutzabschaltung; ungültige Regeltemperatur stoppt das Heizen schon vorher."
         },
-        "submit": "Speichern und zurück"
+        "submit": "Weiter"
       },
       "parameters_oven_cooling": {
         "title": "Ofenkühlung",
@@ -284,7 +296,8 @@
           "after_run_minutes": "Mindestdauer der Ofenkühlung",
           "oven_cooling_max_minutes": "Höchstdauer der Ofenkühlung",
           "oven_cooling_heat_idle_ratio": "Heizminuten je zusätzlicher Kühlminute",
-          "oven_cooling_half_life_minutes": "Nachwirkung früherer Heizzeiten"
+          "oven_cooling_half_life_minutes": "Nachwirkung früherer Heizzeiten",
+          "settings_action": "Aktion"
         },
         "data_description": {
           "after_run_minutes": "Kürzeste Ofenkühlung nach einem bestätigten Saunagang.",
@@ -292,32 +305,35 @@
           "oven_cooling_heat_idle_ratio": "Die gewichtete Heizzeit wird durch diesen Wert geteilt, bevor Bereitschaftspausen abgezogen werden.",
           "oven_cooling_half_life_minutes": "Nach dieser Zeit zählen frühere Heizzeiten und Bereitschaftspausen nur noch halb so stark für die Kühlzeit."
         },
-        "submit": "Speichern und zurück"
+        "submit": "Weiter"
       },
       "parameters_heater_accounting": {
         "title": "Heizzeit und Verbrauch",
         "data": {
           "power_heating_threshold_w": "Mindestleistung für gezählte Heizzeit",
-          "nominal_power_kw": "Ofenleistung für die Verbrauchsschätzung",
-          "heat_reset_minutes": "Heizzeitzähler nach Heizpause zurücksetzen"
+          "nominal_power_kw": "Ofenleistung",
+          "heat_reset_minutes": "Heizzeitzähler nach Heizpause zurücksetzen",
+          "electricity_price_eur_per_kwh": "Strompreis",
+          "settings_action": "Aktion"
         },
         "data_description": {
           "power_heating_threshold_w": "Erst oberhalb dieser gemessenen Leistung zählt Heizzeit; kleinere Leistungen bleiben im Energieverbrauch enthalten.",
-          "nominal_power_kw": "Ohne nutzbare Leistungsmessung wird die Energie aus dieser Leistung und der gemeldeten Heizzeit geschätzt.",
-          "heat_reset_minutes": "Nach dieser durchgehend bestätigten Zeit ohne Heizen beginnt der Heizzeitzähler wieder bei null."
+          "nominal_power_kw": "Ohne nutzbare Leistungsmessung wird die Energie aus dieser Leistung und der gemeldeten Heizzeit berechnet.",
+          "heat_reset_minutes": "Nach dieser durchgehend bestätigten Zeit ohne Heizen beginnt der Heizzeitzähler wieder bei null.",
+          "electricity_price_eur_per_kwh": "Optionaler Strompreis pro Kilowattstunde."
         },
-        "submit": "Speichern und zurück"
+        "submit": "Weiter"
       },
       "sensors": {
         "title": "Sensoren und Erkennung",
         "menu_options": {
           "parameters_signals": "Messwerte",
           "parameters_door": "Türöffnung und Türschluss",
+          "parameters_presence_direct": "Präsenzsensor",
           "parameters_presence_evaluation": "Personenerkennung und Gangbestätigung",
           "parameters_presence_strong": "Deutliche Personenhinweise",
           "parameters_presence_weak": "Schwache Personenhinweise nach Eintritt",
           "parameters_infusion": "Aufgusserkennung",
-          "parameters_ventilation": "Lüften und Gangende",
           "init": "Zurück zur Übersicht"
         }
       },
@@ -325,45 +341,71 @@
         "title": "Messwerte",
         "data": {
           "median_seconds": "Glättungszeit für Messausreißer",
-          "sensor_timeout_seconds": "Höchstalter der Messwerte"
+          "sensor_timeout_seconds": "Höchstalter der Messwerte",
+          "curve_original_open_contrast": "Öffnungskontrast der Originalkurven",
+          "curve_original_new_infusion_contrast": "Anstiegskontrast für eine neue Aufgussepisode",
+          "curve_original_continuation_contrast": "Anstiegskontrast für eine Aufgussfortsetzung",
+          "curve_original_background_slope": "Normierte Feuchtesteigung des neuen Hintergrunds",
+          "curve_original_background_residual": "Normierter Feuchterestfehler des neuen Hintergrunds",
+          "curve_original_noise_temperature_upper": "Empirische Rauschskala der Temperatur oben",
+          "curve_original_noise_humidity_upper": "Empirische Rauschskala der Feuchte oben",
+          "curve_original_noise_temperature_lower": "Empirische Rauschskala der Temperatur unten",
+          "curve_original_noise_humidity_lower": "Empirische Rauschskala der Feuchte unten",
+          "curve_original_gap_temperature_upper_seconds": "Empirischer Originalabstand der Temperatur oben",
+          "curve_original_gap_humidity_upper_seconds": "Empirischer Originalabstand der Feuchte oben",
+          "curve_original_gap_temperature_lower_seconds": "Empirischer Originalabstand der Temperatur unten",
+          "curve_original_gap_humidity_lower_seconds": "Empirischer Originalabstand der Feuchte unten",
+          "curve_original_kink_factor": "Knicktoleranz der Originalfeuchte",
+          "settings_action": "Aktion"
         },
         "data_description": {
           "median_seconds": "Glättet Temperatur und Feuchte für Tür- und Personensignale sowie die Berechnung des Wassergehalts.",
-          "sensor_timeout_seconds": "Ältere Messwerte werden nicht mehr verwendet. Fehlt dadurch die Temperatur für die Regelung, pausiert die Heizung."
+          "sensor_timeout_seconds": "Ältere Messwerte werden nicht mehr verwendet. Fehlt dadurch die Temperatur für die Regelung, pausiert die Heizung.",
+          "curve_original_open_contrast": "Empirische Grenze für den normierten gemeinsamen Niveauverlust nach einem gebundenen Abfallknick der relativen Feuchte. Der einmalig gebundene Absenkungszeuge benötigt je Temperatur- und Feuchterolle K neue Originale, L = (gebundenes Vorlaufmittel − aktuelles Mittel) / (2 × empirische Abweichungsskala) strikt oberhalb der Grenze und einen aktuellen normierten Temperaturfall an allen Temperaturpositionen strikt über dieser Grenze. Die Öffnungsbestätigung benötigt danach je Temperaturrolle zwei vollständig neue K-Fenster und weiterhin ein gegenüber dem gebundenen Vorlauf ausreichend tieferes Temperaturniveau. Beide Temperaturfenster müssen entweder weiter strikt über dieser Grenze fallen oder die Form eines neuen stabilen tieferen Niveaus erfüllen. Eine aufgelöste Temperaturerholung vor der Bestätigung verwirft den Kandidaten. Der Wert ist keine Wahrscheinlichkeit.",
+          "curve_original_new_infusion_contrast": "Empirische Grenze für den normierten gemeinsamen Feuchteanstieg ohne laufende Aufgussepisode. Nach einem frischen Anstiegsknick der relativen Feuchte liefert ein später beobachteter strikt größerer Kontrast mit mindestens einem neuen Temperatur- und Feuchteoriginal je gebundener Position den starken Anstiegsbeleg. Dieser Beleg bestätigt allein keinen Aufguss. Ein positiver Wasserbeleg bleibt erforderlich. Die frühe Bestätigung benötigt zusätzlich K neue Originale je gebundener Feuchterolle, einen weiterhin strikt größeren Anstieg und einen aktuellen positiven Steigungswechsel der relativen Feuchte. Ein kurzer Puls kann später durch einen Abfall mit K Originalen nach der Spitze je Feuchterolle bestätigt werden. Der Wert ist keine Wahrscheinlichkeit.",
+          "curve_original_continuation_contrast": "Empirische Grenze für den normierten gemeinsamen Feuchteanstieg innerhalb einer laufenden Aufgussepisode. Auch eine weitere Komponente beginnt mit einem frischen Anstiegsknick der relativen Feuchte. Ein später beobachteter strikt größerer Kontrast mit mindestens einem neuen Temperatur- und Feuchteoriginal je gebundener Position liefert den starken Anstiegsbeleg. Ein positiver Wasserbeleg und ein nachfolgender Abfall mit K Originalen nach der Spitze je gebundener Feuchterolle bleiben erforderlich. Weitere Komponenten vor dem bestätigten Abschluss gehören derselben Episode an. Der Wert ist keine Wahrscheinlichkeit.",
+          "curve_original_background_slope": "Empirische Obergrenze für den größten Betrag der normierten aktuellen Feuchtesteigungen oben und unten beim Nachweis eines neuen Hintergrunds. Sie gilt einschließlich der Grenze; die Steigungen des Vorgängerfensters werden dafür nicht begrenzt. Der Hintergrundabschluss benötigt einen vollständig neuen aktuellen Block aus K Originalen je gebundener Feuchterolle bei fortbestehender Hintergrundform. Der Wert ist keine Wahrscheinlichkeit.",
+          "curve_original_background_residual": "Empirische Obergrenze für den größten normierten absoluten linearen Restfehler beider Feuchtekanäle im aktuellen und vorherigen disjunkten Originalfenster. Sie gilt einschließlich der Grenze als Formprüfung des neuen Hintergrunds. Der Hintergrundabschluss benötigt einen vollständig neuen aktuellen Block aus K Originalen je gebundener Feuchterolle bei fortbestehender Hintergrundform. Der Wert ist keine Wahrscheinlichkeit.",
+          "curve_original_noise_temperature_upper": "Medianbetrag der Dreipunktresiduen der oberen Originaltemperatur in den Trainingsdaten. Normiert Steigungs-Störungsgrenzen und lineare Restfehler. Die empirische Skala enthält auch reale kurze Krümmung und ist keine unabhängig bestimmte Sensorfehlergrenze.",
+          "curve_original_noise_humidity_upper": "Medianbetrag der Dreipunktresiduen der oberen Originalfeuchte in den Trainingsdaten. Normiert Steigungs-Störungsgrenzen, lineare Restfehler und Feuchterholung. Die empirische Skala enthält auch reale kurze Krümmung und ist keine unabhängig bestimmte Sensorfehlergrenze.",
+          "curve_original_noise_temperature_lower": "Medianbetrag der Dreipunktresiduen der unteren Originaltemperatur in den Trainingsdaten. Normiert Steigungs-Störungsgrenzen und lineare Restfehler. Die empirische Skala enthält auch reale kurze Krümmung und ist keine unabhängig bestimmte Sensorfehlergrenze.",
+          "curve_original_noise_humidity_lower": "Medianbetrag der Dreipunktresiduen der unteren Originalfeuchte in den Trainingsdaten. Normiert Steigungs-Störungsgrenzen, lineare Restfehler und Feuchterholung. Die empirische Skala enthält auch reale kurze Krümmung und ist keine unabhängig bestimmte Sensorfehlergrenze.",
+          "curve_original_gap_temperature_upper_seconds": "Anfänglicher empirischer Stützbereich der oberen Temperaturoriginale aus dem maximalen Trainingsabstand. Bei vollständiger Historie gilt der größere Wert aus diesem Bereich und dem oberen Tukey-Innenzaun der letzten 2K − 1 vorher abgeschlossenen Originalabstände (Q3 + 1,5 × IQR; K ist die Originalfenstergröße). Der geprüfte Abstand trainiert seine eigene Grenze nicht; später gelernte Takte machen frühere Lücken nicht rückwirkend zulässig. Die daraus bestimmte nächste Grenze begrenzt auch die Frische des jüngsten Originals, ohne durch Warten zu wachsen. Eine Überschreitung macht die betroffene Formauswertung unbekannt; sie ist keine Sensorausfallfrist.",
+          "curve_original_gap_humidity_upper_seconds": "Anfänglicher empirischer Stützbereich der oberen Feuchteoriginale aus dem maximalen Trainingsabstand. Bei vollständiger Historie gilt der größere Wert aus diesem Bereich und dem oberen Tukey-Innenzaun der letzten 2K − 1 vorher abgeschlossenen Originalabstände (Q3 + 1,5 × IQR; K ist die Originalfenstergröße). Der geprüfte Abstand trainiert seine eigene Grenze nicht; später gelernte Takte machen frühere Lücken nicht rückwirkend zulässig. Die daraus bestimmte nächste Grenze begrenzt auch die Frische des jüngsten Originals, ohne durch Warten zu wachsen. Eine Überschreitung macht die betroffene Formauswertung unbekannt; sie ist keine Sensorausfallfrist.",
+          "curve_original_gap_temperature_lower_seconds": "Anfänglicher empirischer Stützbereich der unteren Temperaturoriginale aus dem maximalen Trainingsabstand. Bei vollständiger Historie gilt der größere Wert aus diesem Bereich und dem oberen Tukey-Innenzaun der letzten 2K − 1 vorher abgeschlossenen Originalabstände (Q3 + 1,5 × IQR; K ist die Originalfenstergröße). Der geprüfte Abstand trainiert seine eigene Grenze nicht; später gelernte Takte machen frühere Lücken nicht rückwirkend zulässig. Die daraus bestimmte nächste Grenze begrenzt auch die Frische des jüngsten Originals, ohne durch Warten zu wachsen. Eine Überschreitung macht die betroffene Formauswertung unbekannt; sie ist keine Sensorausfallfrist.",
+          "curve_original_gap_humidity_lower_seconds": "Anfänglicher empirischer Stützbereich der unteren Feuchteoriginale aus dem maximalen Trainingsabstand. Bei vollständiger Historie gilt der größere Wert aus diesem Bereich und dem oberen Tukey-Innenzaun der letzten 2K − 1 vorher abgeschlossenen Originalabstände (Q3 + 1,5 × IQR; K ist die Originalfenstergröße). Der geprüfte Abstand trainiert seine eigene Grenze nicht; später gelernte Takte machen frühere Lücken nicht rückwirkend zulässig. Die daraus bestimmte nächste Grenze begrenzt auch die Frische des jüngsten Originals, ohne durch Warten zu wachsen. Eine Überschreitung macht die betroffene Formauswertung unbekannt; sie ist keine Sensorausfallfrist.",
+          "curve_original_kink_factor": "Skalierbare Toleranz für Steigungswechsel der relativen Feuchte vor Tür- und Aufgusskandidaten. Der Faktor multipliziert den größeren Wert aus der kalibrierten Steigungs-Störungsgröße und dem Medianbetrag vorausgehender Steigungswechsel. Die Toleranz ist keine feste Mindeständerung der relativen Feuchte und keine Wahrscheinlichkeit. 0 deaktiviert nur diese zusätzliche Knicktoleranz."
         },
         "description": "{description}",
-        "submit": "Speichern und zurück"
+        "submit": "Weiter"
       },
       "parameters_door": {
         "title": "Türöffnung und Türschluss",
         "data": {
           "door_window_seconds": "Vergleichszeit für den Temperaturverlauf",
           "door_humidity_seconds": "Vergleichszeit für den Feuchteabfall",
-          "door_open_slope": "Abkühlungsrate für eine Türöffnung",
-          "door_open_drop_c": "Mindestabkühlung für eine Türöffnung",
-          "door_open_humidity_upper": "Mindestabfall der Luftfeuchte oben",
-          "door_open_humidity_lower": "Mindestabfall der Luftfeuchte unten",
-          "door_open_hold_seconds": "Bestätigungszeit der Türöffnung",
-          "door_heating_slope": "Abkühlungsrate trotz Heizen",
-          "door_heating_hold_seconds": "Bestätigungszeit der Abkühlung trotz Heizen",
-          "door_close_slope": "Erwärmungsrate für den Türschluss",
-          "door_close_hold_seconds": "Bestätigungszeit des Türschlusses"
+          "settings_action": "Aktion"
         },
         "data_description": {
-          "door_window_seconds": "Zeitraum zur Bewertung von Abkühlung bei Türöffnung und Erwärmung bei Türschluss.",
-          "door_humidity_seconds": "Über diesen Zeitraum wird der Feuchteabfall gemessen, der zusammen mit einer Abkühlung eine Türöffnung anzeigt.",
-          "door_open_slope": "Der Temperaturtrend muss unter diesem Wert liegen; negative Werte bedeuten Abkühlung.",
-          "door_open_drop_c": "An jeder beteiligten Messposition muss die Temperatur mindestens so weit unter ihren vorherigen Höchstwert fallen, bevor die Bestätigungszeit beginnt.",
-          "door_open_humidity_upper": "Erforderlicher Verlust in Prozentpunkten am oberen Messpunkt als Ergänzung zur Abkühlung.",
-          "door_open_humidity_lower": "Erforderlicher Verlust in Prozentpunkten am unteren Messpunkt als Ergänzung zur Abkühlung.",
-          "door_open_hold_seconds": "So lange muss der kombinierte Öffnungsnachweis aus Abkühlung und Feuchteverlust bestehen.",
-          "door_heating_slope": "Unterhalb dieser Rate ist bei durchgehend bestätigtem Heizen ein zusätzlicher Öffnungsnachweis ohne Feuchteverlust möglich.",
-          "door_heating_hold_seconds": "So lange muss der zusätzliche Öffnungsnachweis bestehen; eine Heizunterbrechung verwirft ihn.",
-          "door_close_slope": "Der Temperaturtrend aller noch auswertbaren beteiligten Messpositionen muss diesen Wert überschreiten.",
-          "door_close_hold_seconds": "So lange muss der Temperaturanstieg für einen Türschluss bestehen."
+          "door_window_seconds": "Zeitraum für den geglätteten Temperaturtrend in der Diagnose und den anfänglichen Temperaturbezug. Bestimmt zusammen mit der Feuchtevergleichszeit den zulässigen zeitlichen Abstand zusammengehöriger Kurvenänderungen.",
+          "door_humidity_seconds": "Zeitraum für die Änderung der relativen Luftfeuchte in der Diagnose. Bestimmt zusammen mit der Temperaturvergleichszeit den zulässigen zeitlichen Abstand zusammengehöriger Kurvenänderungen."
         },
         "description": "{description}",
-        "submit": "Speichern und zurück"
+        "submit": "Weiter"
+      },
+      "parameters_presence_direct": {
+        "title": "Präsenzsensor",
+        "data": {
+          "presence_fallback_delay_seconds": "Wartezeit bis zur Proxy-Erkennung",
+          "presence_recovery_delay_seconds": "Wartezeit bis zum Präsenzsensor",
+          "settings_action": "Aktion"
+        },
+        "data_description": {
+          "presence_fallback_delay_seconds": "Nach dieser durchgehenden Nichtverfügbarkeit des konfigurierten Präsenzsensors übernimmt die Proxy-Erkennung aus Temperatur und Feuchte.",
+          "presence_recovery_delay_seconds": "Nach dieser durchgehenden Verfügbarkeit eines gültigen Ein-/Aus-Zustands übernimmt wieder der konfigurierte Präsenzsensor."
+        },
+        "description": "{description}",
+        "submit": "Weiter"
       },
       "parameters_presence_evaluation": {
         "title": "Personenerkennung und Gangbestätigung",
@@ -371,15 +413,16 @@
           "person_step_seconds": "Auswertungsabstand der Personenerkennung",
           "strong_window_seconds": "Vergleichszeit für deutliche Personenhinweise",
           "weak_window_seconds": "Vergleichszeit für schwache Personenhinweise",
-          "confirmation_minutes": "Frist für Personenhinweis und Aufguss"
+          "confirmation_minutes": "Frist für Personenhinweis und Aufguss",
+          "settings_action": "Aktion"
         },
         "data_description": {
           "person_step_seconds": "In diesem Abstand wird der Feuchteanstieg ausgewertet. Beide Vergleichszeiten müssen ganzzahlige Vielfache dieses Abstands sein.",
           "strong_window_seconds": "Über diesen Zeitraum wird der Anstieg von relativer und absoluter Feuchte ausgewertet. Die Zeit muss ein Vielfaches des Auswertungsabstands sein.",
           "weak_window_seconds": "Über diesen Zeitraum wird ein neuer Feuchteanstieg nach Türöffnung und Türschluss ausgewertet. Die Zeit muss ein Vielfaches des Auswertungsabstands sein.",
-          "confirmation_minutes": "Ab Türschluss gilt eine gemeinsame Frist für Personenhinweise und die Bestätigung des Saunagangs durch einen Aufguss."
+          "confirmation_minutes": "Die gemeinsame Frist für Personenhinweise und die Bestätigung durch einen Aufguss beginnt mit dem möglichen Gangbeginn: nach vollständigem Eintritt, frühestens bei erreichter Mindesttemperatur."
         },
-        "submit": "Speichern und zurück",
+        "submit": "Weiter",
         "description": "{description}"
       },
       "parameters_presence_strong": {
@@ -387,7 +430,8 @@
         "data": {
           "strong_humidity_upper": "Mindestanstieg der Luftfeuchte oben pro Minute",
           "strong_humidity_lower": "Mindestanstieg der Luftfeuchte unten pro Minute",
-          "strong_hold_seconds": "Bestätigungszeit deutlicher Personenhinweise"
+          "strong_hold_seconds": "Bestätigungszeit deutlicher Personenhinweise",
+          "settings_action": "Aktion"
         },
         "data_description": {
           "strong_humidity_upper": "Erforderlicher Anstieg in Prozentpunkten pro Minute am oberen Messpunkt für einen deutlichen Personenhinweis. Gleichzeitig muss die absolute Feuchte zunehmen.",
@@ -395,14 +439,15 @@
           "strong_hold_seconds": "So lange müssen Feuchtetrend und zunehmender Wassergehalt gemeinsam nachgewiesen werden."
         },
         "description": "{description}",
-        "submit": "Speichern und zurück"
+        "submit": "Weiter"
       },
       "parameters_presence_weak": {
         "title": "Schwache Personenhinweise nach Eintritt",
         "data": {
           "weak_humidity_upper": "Mindestanstieg der Luftfeuchte oben pro Minute",
           "weak_humidity_lower": "Mindestanstieg der Luftfeuchte unten pro Minute",
-          "weak_hold_seconds": "Bestätigungszeit schwacher Personenhinweise"
+          "weak_hold_seconds": "Bestätigungszeit schwacher Personenhinweise",
+          "settings_action": "Aktion"
         },
         "data_description": {
           "weak_humidity_upper": "Erforderlicher Anstieg in Prozentpunkten pro Minute am oberen Messpunkt für einen schwachen Personenhinweis. Gleichzeitig muss die absolute Feuchte zunehmen.",
@@ -410,41 +455,19 @@
           "weak_hold_seconds": "So lange muss der neue Feuchteanstieg zusammen mit zunehmendem Wassergehalt nachgewiesen werden."
         },
         "description": "{description}",
-        "submit": "Speichern und zurück"
+        "submit": "Weiter"
       },
       "parameters_infusion": {
         "title": "Aufgusserkennung",
         "data": {
           "infusion_window_seconds": "Vergleichszeit für einen Aufguss",
-          "infusion_humidity": "Mindestanstieg der Luftfeuchte beim Aufguss",
-          "infusion_hold_seconds": "Bestätigungszeit des Aufgusssignals"
+          "settings_action": "Aktion"
         },
         "data_description": {
-          "infusion_window_seconds": "Zeitraum für den Anstieg der relativen Luftfeuchte und des Wassergehalts.",
-          "infusion_humidity": "Erforderlicher Anstieg in Prozentpunkten innerhalb der Vergleichszeit an allen verfügbaren Messpositionen.",
-          "infusion_hold_seconds": "So lange müssen Feuchteanstieg und zunehmender Wassergehalt nachgewiesen werden."
+          "infusion_window_seconds": "Zeitraum für den Anstiegsvergleich der relativen Luftfeuchte und des Wassergehalts sowie den jüngsten Niveauvergleich nach der Feuchtespitze. Bestimmt außerdem den zulässigen zeitlichen Abstand zusammengehöriger Aufgussänderungen."
         },
         "description": "{description}",
-        "submit": "Speichern und zurück"
-      },
-      "parameters_ventilation": {
-        "title": "Lüften und Gangende",
-        "data": {
-          "vent_baseline_seconds": "Suchzeitraum für den Vergleich vor dem Lüften",
-          "vent_drop_upper": "Mindestabkühlung beim Lüften oben",
-          "vent_drop_lower": "Mindestabkühlung beim Lüften unten",
-          "vent_absolute_humidity_loss_percent": "Mindestabnahme des Wassergehalts",
-          "vent_hold_seconds": "Mindestöffnungszeit bei nur einer Messposition"
-        },
-        "data_description": {
-          "vent_baseline_seconds": "Bestimmt den Rückblick, aus dem das letzte vollständige Temperatur-/Feuchtepaar vor den Öffnungshinweisen als Vergleich gewählt wird.",
-          "vent_drop_upper": "Erforderlicher Temperaturverlust gegenüber dem gespeicherten Vergleich vor der Türöffnung.",
-          "vent_drop_lower": "Erforderlicher Temperaturverlust gegenüber dem gespeicherten Vergleich vor der Türöffnung.",
-          "vent_absolute_humidity_loss_percent": "Erforderlicher prozentualer Verlust gegenüber dem Wassergehalt vor der Türöffnung an allen beteiligten Messpositionen.",
-          "vent_hold_seconds": "Mit nur einer gültigen Messposition muss die Tür zusätzlich zu Temperatur- und Wasserverlust mindestens so lange offen sein."
-        },
-        "description": "{description}",
-        "submit": "Speichern und zurück"
+        "submit": "Weiter"
       },
       "light": {
         "title": "Licht",
@@ -461,42 +484,49 @@
           "light_reference_temperature_c": "Kaltpunkt der Lichtkurve",
           "cooling_brightness_percent": "Helligkeit am Kaltpunkt",
           "operation_brightness_percent": "Helligkeit bei Solltemperatur am Tag",
-          "night_brightness_percent": "Helligkeit bei Solltemperatur in der Nacht"
+          "night_brightness_percent": "Helligkeit bei Solltemperatur in der Nacht",
+          "light_night_elevation_degrees": "Sonnenhöhe für Nachtlicht",
+          "light_day_elevation_degrees": "Sonnenhöhe für Tageslicht",
+          "settings_action": "Aktion"
         },
         "data_description": {
           "light_reference_temperature_c": "Ab dieser Temperatur verändert sich die Helligkeit linear bis zum Wert bei Solltemperatur.",
           "cooling_brightness_percent": "Unterer Helligkeitswert der Temperaturkurve, auch bei fehlender Temperatur oder Solltemperatur.",
           "operation_brightness_percent": "Tagesziel der Lichtkurve und normale Helligkeit während eines Saunagangs.",
-          "night_brightness_percent": "Nachtziel der Lichtkurve und normale Helligkeit im Saunagang; die Dämmerung verbindet Tag- und Nachtwert."
+          "night_brightness_percent": "Nachtziel der Lichtkurve und normale Helligkeit im Saunagang; die Dämmerung verbindet Tag- und Nachtwert.",
+          "light_night_elevation_degrees": "Unter dieser Sonnenhöhe gilt die Nachthelligkeit; dazwischen wird bis zur Tagesgrenze linear überblendet.",
+          "light_day_elevation_degrees": "Ab dieser Sonnenhöhe gilt die Betriebshelligkeit. Muss größer als die Nachtgrenze sein."
         },
         "description": "{description}",
-        "submit": "Speichern und zurück"
+        "submit": "Weiter"
       },
       "parameters_light_phases": {
         "title": "Ofenkühlung und Lichtnachlauf",
         "data": {
           "after_run_brightness_percent": "Dimmhelligkeit bei Ofenkühlung",
-          "session_light_brightness_percent": "Helligkeit beim Einschalten und im Nachlauf"
+          "session_light_brightness_percent": "Helligkeit beim Einschalten und im Nachlauf",
+          "settings_action": "Aktion"
         },
         "data_description": {
           "after_run_brightness_percent": "Das Licht blendet zu Kühlbeginn auf diesen Wert ab und steigt danach bis Kühlende wieder zum temperaturabhängigen Ziel.",
           "session_light_brightness_percent": "Lichtwert für „Ein“, die Startbestätigung am Taster und den Lichtnachlauf."
         },
-        "submit": "Speichern und zurück"
+        "submit": "Weiter"
       },
       "parameters_light_transitions": {
         "title": "Lichtgerät und Lichtwechsel",
         "data": {
           "light_transition_seconds": "Dauer automatischer Lichtwechsel",
           "light_output_hysteresis_percent": "Toleranz für Helligkeitsschwankungen",
-          "light_brightness_scale": "Höchste Helligkeitsstufe des Lichtgeräts"
+          "light_brightness_scale": "Höchste Helligkeitsstufe des Lichtgeräts",
+          "settings_action": "Aktion"
         },
         "data_description": {
           "light_transition_seconds": "Dauer der Überblendung bei automatischen Helligkeitswechseln; ohne Dauer wechselt das Licht unmittelbar.",
           "light_output_hysteresis_percent": "Hält die bisherige Helligkeitsstufe bei kleinen Änderungen. Der Wert erweitert die Rundungsgrenze um diese Prozentpunkte; eine manuelle Wahl und Ausschalten wirken sofort.",
           "light_brightness_scale": "Berücksichtigt die Helligkeitsstufen des Geräts beim Abgleich eines Lichtbefehls mit seiner Rückmeldung."
         },
-        "submit": "Speichern und zurück"
+        "submit": "Weiter"
       },
       "binding_entities": {
         "title": "Gerätezuordnung prüfen",
@@ -505,7 +535,7 @@
           "control_input": "Taster oder Betriebsschalter",
           "light": "Dimmbares Saunalicht",
           "control_input_mode": "Bedienart",
-          "button_event_type": "Ereignis bei kurzer Betätigung",
+          "button_event_type": "Bedienereignis",
           "presence_source": "Anwesenheit erkennen"
         },
         "data_description": {
@@ -513,7 +543,7 @@
           "control_input": "Entkoppelter Bedieneingang, getrennt vom Ofen-Schaltausgang.",
           "light": "Dimmbare Leuchte für Automatik und manuelle Bedienung.",
           "control_input_mode": "Taster: kurze Betätigung schaltet den Ofen, die Sitzungsgeste steuert die Sitzung. Betriebsschalter: Ein/Aus steuert die Sitzung.",
-          "button_event_type": "Ereignis der kurzen Betätigung. Leer: Shelly single_push oder single.",
+          "button_event_type": "Beim Taster ergänzt dieser Name eine weitere Kurzbetätigung; bekannte Gerätegesten behalten ihre Bedeutung. Beim Betriebsschalter wählt er das Ereignis, das den Betrieb umschaltet.",
           "presence_source": "Nur die Anwesenheit wechselt die Quelle. Tür und Aufguss werden immer aus Temperatur und Feuchte erkannt."
         },
         "sections": {
@@ -563,7 +593,7 @@
             },
             "data_description": {
               "heater_feedback": "Zusätzlicher binärer Heiznachweis. Der Heizschütz muss hier nicht erneut zugeordnet werden.",
-              "heater_power": "Gültige Messwerte ersetzen die Schätzung von Heizzeit und Energieverbrauch.",
+              "heater_power": "Gültige Leistungsmesswerte dienen als Heiznachweis und zur Berechnung des Energieverbrauchs.",
               "audio_output": "Noch ohne Audioausgabe."
             }
           },
@@ -649,6 +679,64 @@
         "menu_options": {
           "init": "Zurück zur Übersicht"
         }
+      },
+      "runtime": {
+        "title": "Daten und Laufzeit",
+        "menu_options": {
+          "parameters_archive": "Archiv und Übertragung",
+          "init": "Zurück zur Übersicht"
+        }
+      },
+      "parameters_archive": {
+        "title": "Archiv und Übertragung",
+        "data": {
+          "history_context_seconds": "Messwerte vor und nach Sitzungen",
+          "settings_action": "Aktion"
+        },
+        "data_description": {
+          "history_context_seconds": "Zeitlicher Kontext der Sitzungsansicht. Die gespeicherte Vorgabe einer Sitzung bestimmt ihren Archivbereich."
+        },
+        "submit": "Weiter"
+      },
+      "notification_user": {
+        "title": "Benachrichtigungsempfänger",
+        "description": "Explizite Zuordnung zu einem Home-Assistant-Benutzer. Gerätebesitz wird nicht automatisch abgeleitet.",
+        "data": {
+          "user_id": "Home-Assistant-Benutzer"
+        },
+        "submit": "Empfänger auswählen"
+      },
+      "notification_targets": {
+        "title": "Empfänger zuordnen",
+        "description": "Nur Nachricht: einfacher Versand. Companion: offene Daten und Antworten über die vorhandene App-Anbindung; Funktionen hängen von Plattform, App-Version und Berechtigungen ab. Die Auswahl belegt keine Erreichbarkeit. Eine leere Auswahl entfernt die Zuordnung dieses Benutzers.",
+        "data": {
+          "recipients": "Registrierte Benachrichtigungsziele"
+        },
+        "submit": "Speichern und zurück"
+      },
+      "field_standards": {
+        "title": "Standards und Werkseinstellungen",
+        "description": "{context}\n\nÄnderungen werden als Vorschau angezeigt und erst nach Bestätigung übernommen.",
+        "data": {
+          "action": "Aktion"
+        },
+        "submit": "Weiter"
+      },
+      "field_standard_scope": {
+        "title": "Umfang auswählen",
+        "description": "{action}\n\nDie Vorschau enthält alle Einstellungen im gewählten Umfang.",
+        "data": {
+          "scope": "Umfang"
+        },
+        "submit": "Vorschau prüfen"
+      },
+      "field_standard_confirm": {
+        "title": "Änderung prüfen und bestätigen",
+        "description": "{action}\n\n| Einstellung | Werkswert | Standard (sonst Werkswert) | Standard nach Bestätigung | Aktueller Wert | Wert nach Bestätigung | Eigener Standard vorher → nachher |\n| --- | --- | --- | --- | --- | --- | --- |\n{preview}\n\nEigener Standard: ✓ gespeichert, — nicht gespeichert.\n\nBestätigen übernimmt die oben gezeigte Änderung.",
+        "data": {
+          "decision": "Entscheidung"
+        },
+        "submit": "Ausführen"
       }
     }
   },
@@ -663,6 +751,27 @@
       "options": {
         "proxy": "Aus Temperatur und Feuchte",
         "ha_presence": "Mit Präsenzsensor"
+      }
+    },
+    "settings_action": {
+      "options": {
+        "save": "Speichern und zurück",
+        "field_standards": "Standards und Werkseinstellungen…",
+        "discard": "Entwurf verwerfen"
+      }
+    },
+    "field_standard_action": {
+      "options": {
+        "overwrite_standard": "Formularwert als Standard speichern",
+        "restore_standard": "Standard wiederherstellen",
+        "restore_factory": "Werkseinstellungen wiederherstellen",
+        "cancel": "Zurück ohne Änderung"
+      }
+    },
+    "field_standard_decision": {
+      "options": {
+        "confirm": "Bestätigen",
+        "cancel": "Abbrechen"
       }
     }
   }
