@@ -49,8 +49,27 @@ die Auflösungsschwelle `s`, Öffnungsschwelle `γO`, Anstiegsschwellen `γN` un
 Der Katalog legt auch ihre Zuordnung zur Konfigurationsoberfläche fest.
 
 Die Fenster benötigen gültige Originale mit strikt steigenden Zeiten in
-zusammenhängenden Quellenabschnitten. Die zulässigen Abstände gelten auch
-zwischen beiden Fenstern und vom jüngsten Original bis zur Auswertung.
+zusammenhängenden Quellenabschnitten. Je Messkanal bildet
+`curve_original_gap_*` den anfänglichen empirischen Stützbereich. Solange
+weniger als `2K − 1` abgeschlossene Originalabstände vorliegen, gilt nur
+dieser Katalogwert. Danach ergibt sich die Grenze für den nächsten Anschluss
+aus dem größeren Wert von Katalogwert und oberem Tukey-Innenzaun
+`Q3 + 1,5 × IQR` der letzten `2K − 1` zuvor abgeschlossenen Abstände.
+`Q1` und `Q3` sind die Tukey-Hinges; `IQR = Q3 − Q1`. Der gerade geprüfte
+Abstand bestimmt seine eigene Grenze nicht. Ein langsamerer Messstrom
+benötigt zunächst eine vollständige Abstandshistorie und anschließend einen
+vollständigen Originalblock mit durchgängig zulässigen Abständen.
+
+Die Anschlussprüfung umfasst auch den Übergang zwischen beiden Fenstern.
+Jeder Anschluss behält die Entscheidung aus seinem damaligen Quellenpräfix;
+ein später gelernter Takt macht eine frühere Lücke nicht rückwirkend zulässig.
+Historische gültige Stützen bleiben als vergangener Nachweis erhalten.
+Gesondert wird die Frische des jüngsten Originals mit der aus den bereits
+abgeschlossenen Abständen bestimmten nächsten Grenze geprüft. Die Wartezeit
+bis zur Auswertung vergrößert diese Grenze nicht. Diese Zeitstütze ist keine
+Sensorausfallfrist. Ein Wechsel der Quelle oder Verfügbarkeit beginnt einen
+neuen Quellenabschnitt.
+
 Vorhandene gültige Messzeiten bleiben erhalten; ersatzweise verwendete
 Empfangszeiten bilden eine eigene Zeitbasis. Fehlende oder nicht auswertbare
 Stützen sind unbekannt. Sie bestätigen weder ein Ereignis noch dessen Ende.
@@ -367,19 +386,19 @@ gemeinsamen Kandidatenweg eine neue Bindung.
 
 Jede gebundene Bremse führt je T-Rolle das bisherige Fenster mit der höchsten
 belegten aktuellen Steigung als Erholungsreferenz `v_rec`, `E_rec`. Eine
-anhaltende Gegenform benötigt zwei disjunkte `K`-Blöcke, die vollständig nach
-dem jüngsten Original dieser Referenz liegen. Beide müssen selbst aufgelöst
-fallen und gegenüber derselben Erholungsreferenz stärker fallen:
+anhaltende Gegenform benötigt einen aktuellen `K`-Block, dessen Originale
+vollständig nach dem jüngsten Original dieser Referenz liegen. Er muss selbst
+aufgelöst fallen und gegenüber derselben Erholungsreferenz stärker fallen:
 
 ```text
-v_Tp/E_Tp  < −s
-b_Tp/E⁻_Tp < −s
-(v_Tp − v_rec)/(E_Tp + E_rec)  < −s
-(b_Tp − v_rec)/(E⁻_Tp + E_rec) < −s
+v_Tp/E_Tp < −s
+(v_Tp − v_rec)/(E_Tp + E_rec) < −s
 ```
 
 Eine solche Gegenform an einer Rolle verwirft den gemeinsamen
 Schließkandidaten und entwertet im Rollenfallweg deren alte Fall-/Bremsstütze.
+Ein noch überlappender Vorgängerblock hält diesen neuen Gegenbeleg nicht bis
+über die mögliche Schlussbestätigung hinaus zurück.
 Eine einzelne negative Endsekante wird weiterhin diagnostiziert, verwirft
 aber für sich weder die Bindung noch den gehaltenen Fall. Wiederholte Ticks
 und fremde neue Originale ersetzen keine frischen T-Blöcke der betroffenen

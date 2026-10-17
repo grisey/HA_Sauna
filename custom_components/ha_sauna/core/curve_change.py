@@ -24,6 +24,8 @@ support limits come entirely from the caller; event identity stays outside.
 
 from __future__ import annotations
 
+from bisect import bisect_left, bisect_right
+from collections import deque
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from datetime import datetime, timedelta
@@ -62,6 +64,176 @@ def _profile_number(value):
 
 
 @dataclass(frozen=True)
+class OriginalTimeSupport:
+    """Immutable contiguous spans with the next causal report envelope.
+
+    Span boundaries are originals; interior endpoints consumed by ``covers``
+    must come from the caller's original series. Availability and source/epoch
+    identity remain caller-owned. The short interval history permits append
+    updates without revisiting old gap decisions when a ring buffer advances.
+    """
+
+    start_at: datetime
+    newest_at: datetime
+    spans: tuple[tuple[datetime, datetime], ...]
+    next_gap_seconds: float
+    count: int
+    initial_gap_seconds: float
+    intervals: tuple[float, ...] | None
+
+    def covers(self, start_at: datetime, end_at: datetime) -> bool:
+        """Test original endpoints against retained, uninterrupted spans."""
+        try:
+            if not self.start_at <= start_at <= end_at <= self.newest_at:
+                return False
+            index = bisect_right(self.spans, start_at, key=lambda span: span[0]) - 1
+            return index >= 0 and end_at <= self.spans[index][1]
+        except (IndexError, TypeError, ValueError):
+            return False
+
+    def fresh(self, at: datetime) -> bool:
+        """Waiting and repeated ticks never enlarge the next-report limit."""
+        try:
+            return 0 <= (at - self.newest_at).total_seconds() <= self.next_gap_seconds
+        except (AttributeError, IndexError, OverflowError, TypeError, ValueError):
+            return False
+
+    def restrict(self, start_at: datetime, end_at: datetime) -> OriginalTimeSupport:
+        """Bind a small proof without relearning cadence from a short bracket.
+
+        Earlier endpoints retain the conservative initial freshness bound;
+        historical pairing and corrections do not consume present-day age.
+        A bound proof cannot be reused as incremental cadence state.
+        """
+        if not self.covers(start_at, end_at):
+            raise ValueError("cannot bind unsupported original times")
+        return OriginalTimeSupport(
+            start_at=start_at,
+            newest_at=end_at,
+            spans=((start_at, end_at),),
+            next_gap_seconds=(
+                self.next_gap_seconds if end_at == self.newest_at else self.initial_gap_seconds
+            ),
+            count=self.count,
+            initial_gap_seconds=self.initial_gap_seconds,
+            intervals=None,
+        )
+
+
+def _original_cadence_limit(intervals, *, count, initial_gap_seconds):
+    if len(intervals) != 2 * count - 1:
+        return initial_gap_seconds
+    ordered = sorted(intervals)
+    half = (len(ordered) + 1) // 2
+    lower = median(ordered[:half])
+    upper = median(ordered[-half:])
+    # Tukey's conventional upper inner fence; not a fitted event threshold.
+    return max(initial_gap_seconds, upper + 1.5 * (upper - lower))
+
+
+def original_time_support(
+    samples: Sequence[tuple[datetime, float]],
+    *,
+    count: int,
+    max_gap_seconds: float,
+    at: datetime,
+    previous: OriginalTimeSupport | None = None,
+) -> OriginalTimeSupport | None:
+    """Assess each original interval against its preceding causal cadence.
+
+    The catalogue gap is the initial empirical envelope. After a complete
+    two-window span of intervals is known, the larger of that envelope and
+    the upper Tukey inner fence is used. A gap never supplies its own limit.
+    Later observations cannot heal a previously rejected gap. Stable slower
+    streams can establish their own cadence; isolated long intervals remain
+    breaks. This is sampling support, not a device-failure or retention timer.
+    No values are interpolated, timestamps changed, or receipt ages learned.
+
+    ``previous`` must belong to the same count, catalogue bound, source and
+    epoch. The detector guarantees an append-only timestamp prefix (values may
+    be corrected), and must clear it on any identity/availability interruption.
+    Its newest original must still exist in samples. Only appended originals
+    are visited; retained spans and cadence survive ring-buffer eviction.
+    Without previous, all supplied causal originals are assessed once.
+    Per-append work is O(log N + K log K + B), where B is the number of retained
+    spans and N the caller's bounded series length. Cadence storage is O(K). The
+    caller's bounded original buffer bounds B; bound windows store one span.
+    """
+    try:
+        if (
+            not isinstance(count, int)
+            or isinstance(count, bool)
+            or count < 2
+            or not _original_positive(max_gap_seconds)
+            or not isinstance(at, datetime)
+            or not samples
+        ):
+            return None
+        first_at = samples[0][0]
+        if not isinstance(first_at, datetime) or first_at > at:
+            return None
+        initial = float(max_gap_seconds)
+        intervals: deque[float] = deque(maxlen=2 * count - 1)
+        spans = []
+        newest_at = None
+        limit = initial
+        first = 0
+        if previous is not None:
+            if (
+                not isinstance(previous, OriginalTimeSupport)
+                or previous.intervals is None
+                or previous.count != count
+                or previous.initial_gap_seconds != initial
+                or previous.newest_at > at
+                or first_at < previous.start_at
+            ):
+                return None
+            first = bisect_right(samples, previous.newest_at, key=lambda point: point[0])
+            if not first or samples[first - 1][0] != previous.newest_at:
+                return None
+            intervals.extend(previous.intervals)
+            newest_at = previous.newest_at
+            limit = previous.next_gap_seconds
+            oldest_span = bisect_left(previous.spans, first_at, key=lambda span: span[1])
+            spans = list(previous.spans[oldest_span:])
+            if not spans:
+                return None
+            spans[0] = (max(first_at, spans[0][0]), spans[0][1])
+        for index in range(first, len(samples)):
+            stamp, value = samples[index]
+            if not isinstance(stamp, datetime):
+                return None
+            if stamp > at:
+                break
+            if not _profile_number(value):
+                return None
+            if newest_at is None:
+                spans.append((stamp, stamp))
+            else:
+                gap = (stamp - newest_at).total_seconds()
+                if not _original_positive(gap):
+                    return None
+                if gap > limit:
+                    spans.append((stamp, stamp))
+                else:
+                    spans[-1] = (spans[-1][0], stamp)
+                intervals.append(gap)
+            newest_at = stamp
+            limit = _original_cadence_limit(
+                intervals, count=count, initial_gap_seconds=initial
+            )
+            if not _original_positive(limit):
+                return None
+        if newest_at is None:
+            return None
+        return OriginalTimeSupport(
+            first_at, newest_at, tuple(spans), limit, count, initial, tuple(intervals)
+        )
+    except (AttributeError, IndexError, OverflowError, TypeError, ValueError):
+        return None
+
+
+@dataclass(frozen=True)
 class OriginalWindowFeatures:
     """Two disjoint, consecutive original windows and their raw OLS evidence.
 
@@ -83,6 +255,7 @@ class OriginalWindowFeatures:
     mean_minus: float
     r: float
     r_minus: float
+    time_support: OriginalTimeSupport | None = None
 
     @property
     def start_at(self) -> datetime:
@@ -313,6 +486,7 @@ class OriginalWaterPair:
     lower_density: float
     upper_density: float
     available_at: datetime
+    time_support: OriginalTimeSupport | None = None
 
 
 @dataclass(frozen=True)
@@ -341,6 +515,7 @@ class OriginalWaterWindowFeatures:
     b: float
     e: float
     e_minus: float
+    time_support: OriginalTimeSupport | None = None
 
     @property
     def start_at(self) -> datetime:
@@ -633,11 +808,13 @@ def original_window(
     scale: float,
     max_gap_seconds: float,
     at: datetime,
+    time_support: OriginalTimeSupport | None = None,
 ) -> OriginalWindowFeatures | None:
     """Use the last 2K originals at or before at, without repairing their order.
 
-    Every adjacent gap in that block, including the boundary between windows,
-    and the age of its newest original must be within max_gap_seconds. Invalid
+    With time_support, all originals belong to its uninterrupted support and
+    its retained next-gap envelope bounds the newest original's age. Without
+    it, every adjacent gap and the newest age must be within max_gap_seconds. Invalid
     or insufficient support is unknown (None). No interpolation or resampling
     takes place. Work and storage are O(K) for the causal prefix supplied by
     the detector; an optional future suffix costs one visit per skipped point.
@@ -665,15 +842,29 @@ def original_window(
                 continue
             if not _profile_number(value):
                 return None
-            if selected and (selected[-1][0] - stamp).total_seconds() > max_gap_seconds:
+            if (
+                time_support is None
+                and selected
+                and (selected[-1][0] - stamp).total_seconds() > max_gap_seconds
+            ):
                 return None
             selected.append((stamp, float(value)))
             if len(selected) == 2 * count:
                 break
         if len(selected) != 2 * count:
             return None
-        if not 0 <= (at - selected[0][0]).total_seconds() <= max_gap_seconds:
-            return None
+        bound_support = None
+        if time_support is None:
+            if not 0 <= (at - selected[0][0]).total_seconds() <= max_gap_seconds:
+                return None
+        else:
+            if not isinstance(time_support, OriginalTimeSupport) or not time_support.covers(
+                selected[-1][0], selected[0][0]
+            ):
+                return None
+            bound_support = time_support.restrict(selected[-1][0], selected[0][0])
+            if not bound_support.fresh(at):
+                return None
         selected.reverse()
         previous = tuple(selected[:count])
         current = tuple(selected[count:])
@@ -693,6 +884,7 @@ def original_window(
             mean_minus=old[2],
             r=new[3],
             r_minus=old[3],
+            time_support=bound_support,
         )
     except (AttributeError, IndexError, OverflowError, TypeError, ValueError):
         return None
@@ -960,6 +1152,7 @@ def original_kink_tolerance(
     factor: float,
     min_history_windows: int,
     max_gap_seconds: float,
+    time_support: OriginalTimeSupport | None = None,
 ) -> OriginalKinkTolerance | None:
     """Shrink one raw slope change by a caller-scaled causal background.
 
@@ -990,14 +1183,18 @@ def original_kink_tolerance(
         count = len(window.previous)
         if count < 2 or len(window.current) != count:
             return None
+        if time_support is not None and not isinstance(time_support, OriginalTimeSupport):
+            return None
         previous_at = None
         for stamp, value in window.previous + window.current:
             if not isinstance(stamp, datetime) or not _profile_number(value):
                 return None
-            if previous_at is not None and not (
-                0 < (stamp - previous_at).total_seconds() <= max_gap_seconds
-            ):
-                return None
+            if previous_at is not None:
+                if time_support is None:
+                    if not 0 < (stamp - previous_at).total_seconds() <= max_gap_seconds:
+                        return None
+                elif not time_support.covers(previous_at, stamp):
+                    return None
             previous_at = stamp
         start_at = window.start_at
         newest_at = window.newest_at
@@ -1015,11 +1212,22 @@ def original_kink_tolerance(
                 continue
             if not _profile_number(value):
                 return None
-            if history and (stamp - history[-1][0]).total_seconds() > max_gap_seconds:
-                history.clear()
+            if history:
+                if time_support is None:
+                    connected = (stamp - history[-1][0]).total_seconds() <= max_gap_seconds
+                else:
+                    connected = time_support.covers(history[-1][0], stamp)
+                if not connected:
+                    history.clear()
             history.append((stamp, float(value)))
-        if history and (start_at - history[-1][0]).total_seconds() > max_gap_seconds:
-            history.clear()
+        if history:
+            connected = (
+                (start_at - history[-1][0]).total_seconds() <= max_gap_seconds
+                if time_support is None
+                else time_support.covers(history[-1][0], start_at)
+            )
+            if not connected:
+                history.clear()
         historical_changes, historical_levels = [], []
         for end in range(2 * count, len(history) + 1):
             old = _original_line(
@@ -1264,6 +1472,7 @@ def original_water_pair_support(
     humidity_scale: float,
     max_gap_seconds: float,
     at: datetime,
+    time_support: OriginalTimeSupport | None = None,
 ) -> OriginalWaterPairSupport:
     """Assess one RH original with its immediate causal T neighbors.
 
@@ -1320,8 +1529,15 @@ def original_water_pair_support(
             return OriginalWaterPairSupport(
                 "invalid", reason="left_temperature_missing"
             )
+        if time_support is not None and not isinstance(time_support, OriginalTimeSupport):
+            return OriginalWaterPairSupport("invalid", reason="invalid_time_support")
         if after is None:
-            if (humidity_at - before[0]).total_seconds() > max_gap_seconds:
+            pending_supported = (
+                (humidity_at - before[0]).total_seconds() <= max_gap_seconds
+                if time_support is None
+                else before[0] == time_support.newest_at and time_support.fresh(humidity_at)
+            )
+            if not pending_supported:
                 return OriginalWaterPairSupport(
                     "invalid", reason="temperature_support_gap"
                 )
@@ -1329,7 +1545,11 @@ def original_water_pair_support(
                 "pending", reason="right_temperature_pending"
             )
         gap = (after[0] - before[0]).total_seconds()
-        if not 0 <= gap <= max_gap_seconds:
+        if not (
+            0 <= gap <= max_gap_seconds
+            if time_support is None
+            else time_support.covers(before[0], after[0])
+        ):
             return OriginalWaterPairSupport("invalid", reason="temperature_support_gap")
         temperature = before[1]
         if gap:
@@ -1353,6 +1573,11 @@ def original_water_pair_support(
             lower_density=lower,
             upper_density=upper,
             available_at=after[0],
+            time_support=(
+                time_support.restrict(before[0], after[0])
+                if time_support is not None
+                else None
+            ),
         )
         return OriginalWaterPairSupport("ready", pair=pair)
     except (AttributeError, IndexError, OverflowError, TypeError, ValueError):
@@ -1367,6 +1592,7 @@ def original_water_pair(
     humidity_scale: float,
     max_gap_seconds: float,
     at: datetime,
+    time_support: OriginalTimeSupport | None = None,
 ) -> OriginalWaterPair | None:
     """Compatibility view of the causal water-pair support assessment."""
     return original_water_pair_support(
@@ -1376,6 +1602,7 @@ def original_water_pair(
         humidity_scale=humidity_scale,
         max_gap_seconds=max_gap_seconds,
         at=at,
+        time_support=time_support,
     ).pair
 
 
@@ -1452,6 +1679,7 @@ def original_water_window(
     count: int,
     max_gap_seconds: float,
     at: datetime,
+    time_support: OriginalTimeSupport | None = None,
 ) -> OriginalWaterWindowSupport:
     """Use the last exactly 2K consecutive supplied RH-pair identities.
 
@@ -1479,6 +1707,8 @@ def original_water_window(
             )
         previous_at = None
         pending = False
+        if time_support is not None and not isinstance(time_support, OriginalTimeSupport):
+            return OriginalWaterWindowSupport("invalid", reason="invalid_time_support")
         for pair in selected:
             if not _original_water_pair_valid(pair):
                 return OriginalWaterWindowSupport(
@@ -1487,7 +1717,12 @@ def original_water_window(
             stamp = pair.humidity_sample[0]
             if previous_at is not None:
                 gap = (stamp - previous_at).total_seconds()
-                if not 0 < gap <= max_gap_seconds:
+                connected = (
+                    0 < gap <= max_gap_seconds
+                    if time_support is None
+                    else gap > 0 and time_support.covers(previous_at, stamp)
+                )
+                if not connected:
                     return OriginalWaterWindowSupport(
                         "invalid",
                         reason="humidity_order_or_gap",
@@ -1517,6 +1752,13 @@ def original_water_window(
                 b=old[0],
                 e=new[1],
                 e_minus=old[1],
+                time_support=(
+                    time_support.restrict(
+                        previous[0].humidity_sample[0], current[-1].humidity_sample[0]
+                    )
+                    if time_support is not None
+                    else None
+                ),
             ),
         )
     except (AttributeError, IndexError, OverflowError, TypeError, ValueError):

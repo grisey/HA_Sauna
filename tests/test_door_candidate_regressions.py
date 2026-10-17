@@ -127,7 +127,9 @@ class DoorCandidateRegressionTests(unittest.TestCase):
         flow.setUp()
         points, _, _, _ = flow._scenario(merged=False)
         peak = flow.begin + flow.width
-        fall = peak + flow.width
+        # Allow both the local turn and its two subsequent complete blocks
+        # while the final temperature still stays above the pre-infusion value.
+        fall = peak + 2 * flow.width
         gain = abs(flow.temperature - trace(85)[0])
         self.assertGreater(gain, 0)
         temperatures = [

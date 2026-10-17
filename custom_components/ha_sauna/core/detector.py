@@ -27,6 +27,7 @@ from .curve_change import (
     original_humidity_contrasts,
     original_kink_tolerance,
     original_thermal_contrasts,
+    original_time_support,
     original_water_pair,
     original_water_pair_support,
     original_water_window,
@@ -126,6 +127,7 @@ class _OriginalPrefix:
     temperatures: tuple
     humidity_kinks: tuple = ()
     humidities: tuple = ()
+    time_supports: tuple = ()
 
 
 def robust_slope(values, step=BY_KEY["grid_seconds"].default):
@@ -283,6 +285,7 @@ class Detector:
         self._original_window_cache = {}
         self._original_points_cache = {}
         self._original_kink_cache = {}
+        self._original_time_support_cache = {}
         self._original_infusion_candidate = None
 
     @property
@@ -322,6 +325,7 @@ class Detector:
         series["last_original_version"] = None
         series["last_original_received_at"] = None
         series["epoch"] += 1
+        self._original_time_support_cache.pop((position, quantity), None)
         if self.door_episode is not None and position in self.door_episode["positions"]:
             self._reset_original_ventilation(self.door_episode, "original_epoch_changed")
             if not self.open:
@@ -460,9 +464,37 @@ class Detector:
             for quantity in (Quantity.TEMPERATURE, Quantity.HUMIDITY)
         )) for position in self.positions)
 
+    def _original_time_support(self, position, quantity, samples, at):
+        """Eine kausale Zeitstütze je Rolle/Epoche, nur Append neu bewerten."""
+        series = self._curve_series[position, quantity]
+        key = position, quantity
+        cached = self._original_time_support_cache.get(key)
+        same_epoch = cached is not None and cached[0] == series["epoch"]
+        if same_epoch and cached[1] == series["version"]:
+            return cached[2]
+        previous = cached[2] if same_epoch else None
+        support = original_time_support(
+            samples, count=self.p["curve_original_samples"],
+            max_gap_seconds=self.p[f"curve_original_gap_{quantity.value}_{position.value}_seconds"],
+            at=at, previous=previous,
+        )
+        # Ein unerklärter Verlust des Append-Ankers darf nicht im nächsten
+        # Präfix durch ein stilles Neu-Anlernen alte Verbindungen heilen.
+        if support is not None or previous is None:
+            self._original_time_support_cache[key] = (
+                series["epoch"], series["version"], support,
+            )
+        return support
+
+    @staticmethod
+    def _original_prefix_time_support(prefix, position, quantity):
+        return next((support for name, role, support in prefix.time_supports
+                     if name == position.value and role == quantity), None)
+
     def _record_original_prefix(self, received_at, *, original):
         """Jedes angenommene Präfix erhalten; ein Raster ist kein neues Original."""
         points, windows, temperatures, humidity_kinks, humidities = [], [], [], [], []
+        time_supports = []
         for position in self.positions:
             streams = []
             for quantity in (Quantity.TEMPERATURE, Quantity.HUMIDITY):
@@ -479,16 +511,20 @@ class Detector:
             ):
                 series = self._curve_series[position, quantity]
                 gap = self.p[f"curve_original_gap_{quantity.value}_{position.value}_seconds"]
+                support = self._original_time_support(position, quantity, samples, received_at)
+                time_supports.append((position.value, quantity, support))
                 cached = self._original_window_cache.get((position, quantity))
                 feature = cached[1] if cached is not None and cached[0] == series["version"] else None
-                if feature is None:
+                if support is None:
+                    feature = None
+                elif feature is None:
                     feature = original_window(
                         samples, count=self.p["curve_original_samples"],
                         scale=self.p[f"curve_original_noise_{quantity.value}_{position.value}"],
-                        max_gap_seconds=gap, at=received_at,
+                        max_gap_seconds=gap, at=received_at, time_support=support,
                     )
                     self._original_window_cache[position, quantity] = (series["version"], feature)
-                if feature is not None and (received_at - feature.newest_at).total_seconds() > gap:
+                if feature is not None and not support.fresh(received_at):
                     feature = None
                 features.append(feature)
                 if quantity == Quantity.HUMIDITY:
@@ -498,7 +534,7 @@ class Detector:
                             samples, feature,
                             factor=self.p["curve_original_kink_factor"],
                             min_history_windows=self.p["curve_original_kink_history_windows"],
-                            max_gap_seconds=gap,
+                            max_gap_seconds=gap, time_support=support,
                         ) if feature is not None else None)
                         cached = (series["version"], kink)
                         self._original_kink_cache[position] = cached
@@ -515,7 +551,7 @@ class Detector:
             self._original_prefix_overflow = True
         self._original_prefixes.append(_OriginalPrefix(
             received_at, original, self._original_context(), tuple(points), tuple(windows),
-            tuple(temperatures), tuple(humidity_kinks), tuple(humidities),
+            tuple(temperatures), tuple(humidity_kinks), tuple(humidities), tuple(time_supports),
         ))
 
     @staticmethod
@@ -643,9 +679,8 @@ class Detector:
             start = bisect_left(points, stamp, key=lambda point: point[0])
             if start == len(points) or points[start][0] != stamp:
                 return False
-            gap = self.p[f"curve_original_gap_{quantity.value}_{name}_seconds"]
-            if any(not 0 < (right[0] - left[0]).total_seconds() <= gap
-                   for left, right in zip(points[start:], points[start + 1:])):
+            support = self._original_prefix_time_support(prefix, Position(name), quantity)
+            if support is None or not support.covers(stamp, points[-1][0]):
                 return False
         return bool(references)
 
@@ -699,16 +734,37 @@ class Detector:
             for form in followups.values()
         )
 
+    def _original_temperature_counterform(self, window, recovery):
+        """Ein neuer vollständiger T-Block widerlegt die gehaltene Bremse."""
+        form = original_followup(window, recovery)
+        significance = self.p["curve_original_significance"]
+        return bool(
+            form is not None
+            and form.fresh_current == self.p["curve_original_samples"]
+            and form.current_direction < -significance
+            and form.current_change_from_reference_current < -significance
+        )
+
     def _original_temperature_backgrounds(self, prefix, windows):
         """Den beobachteten T-Hintergrund am gebundenen Originalfenster halten."""
         points = {position.value: temperature
                   for position, temperature, _ in prefix.points}
-        return tuple((name, original_kink_tolerance(
-            points[name], window,
-            factor=self.p["curve_original_significance"],
-            min_history_windows=self.p["curve_original_kink_history_windows"],
-            max_gap_seconds=self.p[f"curve_original_gap_temperature_{name}_seconds"],
-        )) for name, window in windows)
+        result = []
+        for name, window in windows:
+            support = self._original_prefix_time_support(prefix, Position(name), Quantity.TEMPERATURE)
+            if support is None or not support.covers(window.start_at, window.newest_at):
+                # Das gebundene historische Fenster bleibt gültig, auch wenn
+                # seine Originale inzwischen den Rollenring verlassen haben.
+                # Der Ereignisbesitzer prüft den fortgeschriebenen Anschluss.
+                support = window.time_support
+            result.append((name, original_kink_tolerance(
+                points[name], window,
+                factor=self.p["curve_original_significance"],
+                min_history_windows=self.p["curve_original_kink_history_windows"],
+                max_gap_seconds=self.p[f"curve_original_gap_temperature_{name}_seconds"],
+                time_support=support,
+            )))
+        return tuple(result)
 
     def _original_opening_infusion_guard(self, candidate, prefix, positions):
         """Aufgussrückkehr nur mit eigenständigem T-Verlust als Öffnung zulassen.
@@ -821,10 +877,14 @@ class Detector:
                        "no_bound_original_infusion"),
         }
 
-    def _original_opening_humidity_connected(self, samples, witness, window, name):
+    def _original_opening_humidity_connected(self, samples, witness, window, name, time_support):
         """Keinen alten RH-Knick über eine vollständig belegte Erholung tragen."""
         count = self.p["curve_original_samples"]
         significance = self.p["curve_original_significance"]
+        # Die alte Zeugenstütze darf den Ring verlassen; der Aufrufer prüft
+        # den fortgeschriebenen Kandidatenanschluss mit _original_contiguous.
+        if time_support is None:
+            return False
         for end in range(2 * count, len(samples) + 1):
             block = samples[end - 2 * count:end]
             if block[count][0] <= witness.onset_at:
@@ -832,7 +892,7 @@ class Detector:
             native = original_window(
                 block, count=count, scale=window.scale,
                 max_gap_seconds=self.p[f"curve_original_gap_humidity_{name}_seconds"],
-                at=block[-1][0],
+                at=block[-1][0], time_support=time_support,
             )
             if native is not None and native.v > significance * native.e:
                 return False
@@ -900,6 +960,7 @@ class Detector:
                 if (quantity == Quantity.HUMIDITY
                         and not self._original_opening_humidity_connected(
                             points[position][index], candidate, window, name,
+                            self._original_prefix_time_support(prefix, position, quantity),
                         )):
                     continue
                 witnesses.append((key, candidate))
@@ -974,19 +1035,11 @@ class Detector:
                 or window.current[-2:] != fall.get("edge_originals", window.current[-2:])
             )):
                 edge = original_edge_change(window, recovery)
-                # Die letzte Kante bleibt Diagnose. Erst zwei vollständig
-                # neue disjunkte Blöcke können die gehaltene Bremse widerlegen.
-                renewed_form = original_followup(window, recovery)
-                count = self.p["curve_original_samples"]
-                renewed = bool(
-                    renewed_form is not None
-                    and renewed_form.fresh_previous == count
-                    and renewed_form.fresh_current == count
-                    and renewed_form.previous_direction < -significance
-                    and renewed_form.current_direction < -significance
-                    and renewed_form.previous_change_from_reference_current < -significance
-                    and renewed_form.current_change_from_reference_current < -significance
-                )
+                # Die letzte Kante bleibt Diagnose. Ein vollständig neuer
+                # Block muss negativ geneigt sein und gegenüber der gehaltenen
+                # Bremse signifikant erneut fallen. Ein älterer Vorgängerblock
+                # darf diesen Gegenbeleg nicht bis nach der Schlussfreigabe sperren.
+                renewed = self._original_temperature_counterform(window, recovery)
                 fall["close_counterform"] = renewed
                 fall["last_edge_counterform"] = bool(
                     edge is not None and edge.direction < -significance
@@ -1072,8 +1125,10 @@ class Detector:
             (cached := self._original_window_cache.get((position, Quantity.HUMIDITY))) is not None
             and cached[0] == self._curve_series[position, Quantity.HUMIDITY]["version"]
             and cached[1] is not None
-            and (now - cached[1].newest_at).total_seconds()
-            <= self.p[f"curve_original_gap_humidity_{position.value}_seconds"]
+            and (support := self._original_time_support(
+                position, Quantity.HUMIDITY,
+                self._original_points_cache[position, Quantity.HUMIDITY][1], now,
+            )) is not None and support.fresh(now)
             for position in positions
         )
 
@@ -1133,9 +1188,13 @@ class Detector:
             else:
                 first = bisect_right(humidities, state["last_rh_at"], key=lambda point: point[0])
             humidity_gap = self.p[f"curve_original_gap_humidity_{position.value}_seconds"]
+            humidity_support = self._original_prefix_time_support(prefix, position, Quantity.HUMIDITY)
+            temperature_support = self._original_prefix_time_support(prefix, position, Quantity.TEMPERATURE)
+            if humidity_support is None or temperature_support is None:
+                return "invalid", {}, {"reason": "original_time_support_unknown", "position": position.value}
             for point in humidities[first:]:
                 if (state["last_rh_at"] is not None
-                        and (point[0] - state["last_rh_at"]).total_seconds() > humidity_gap):
+                        and not humidity_support.covers(state["last_rh_at"], point[0])):
                     return "invalid", {}, {"reason": "humidity_original_gap", "position": position.value}
                 if len(state["pending"]) >= limit:
                     return "invalid", {}, {"reason": "water_pair_pending_overflow", "position": position.value}
@@ -1159,7 +1218,7 @@ class Detector:
                     temperature_scale=self.p[f"curve_original_noise_temperature_{position.value}"],
                     humidity_scale=self.p[f"curve_original_noise_humidity_{position.value}"],
                     max_gap_seconds=self.p[f"curve_original_gap_temperature_{position.value}_seconds"],
-                    at=prefix.received_at,
+                    at=prefix.received_at, time_support=temperature_support,
                 )
                 if paired.status == "pending":
                     waiting = True
@@ -1175,6 +1234,7 @@ class Detector:
                 window = original_water_window(
                     tuple(state["pairs"]), count=count,
                     max_gap_seconds=humidity_gap, at=prefix.received_at,
+                    time_support=humidity_support,
                 )
                 state["window_status"], state["features"] = window.status, window.features
                 if window.status == "invalid":
@@ -1987,18 +2047,10 @@ class Detector:
                             operator="<", threshold=-significance, unit="contrast",
                         ),
                     }
-                    # Ein einzelner negativer Endwert ist kein anhaltender
-                    # neuer Fallast. Beide frischen Blöcke müssen gegenüber
-                    # derselben gehaltenen Bremse wieder stärker fallen.
-                    renewed = original_followup(form.window, supported)
-                    count = self.p["curve_original_samples"]
-                    counterform |= bool(
-                        renewed is not None
-                        and renewed.fresh_previous == count and renewed.fresh_current == count
-                        and renewed.previous_direction < -significance
-                        and renewed.current_direction < -significance
-                        and renewed.previous_change_from_reference_current < -significance
-                        and renewed.current_change_from_reference_current < -significance
+                    # Derselbe neue Block schützt auch den gemeinsamen
+                    # Schlusskandidaten; die Endkante allein löst ihn nicht.
+                    counterform |= self._original_temperature_counterform(
+                        form.window, supported,
                     )
                     if form.window.v > supported.v:
                         recovery[name] = form.window
@@ -2101,8 +2153,9 @@ class Detector:
                 and (episode.get("original_ventilation") or episode.get("original_ventilation_rh"))):
             if any(
                 not self._curve_series[position, quantity]["points"]
-                or (now - self._curve_series[position, quantity]["points"][-1][0]).total_seconds()
-                > self.p[f"curve_original_gap_{quantity.value}_{position.value}_seconds"]
+                or (support := self._original_time_support(
+                    position, quantity, self._original_points_cache[position, quantity][1], now,
+                )) is None or not support.fresh(now)
                 for position in episode["positions"]
                 for quantity in (Quantity.TEMPERATURE, Quantity.HUMIDITY)
             ):
@@ -2139,8 +2192,10 @@ class Detector:
         }, evaluated=self.open)
         return opening, close_candidate, closing, closing_positions
 
-    def _original_rise_witness(self, position, humidity, floor, received_at, branch_floor):
+    def _original_rise_witness(self, position, humidity, floor, received_at, branch_floor, time_support):
         """Ein Zeitzeuge muss Originale des gebundenen RH-Astes tragen."""
+        if time_support is None:
+            return None
         key = ("infusion", position, Quantity.HUMIDITY)
         candidate = self._curve_candidates.get(key)
         if (candidate is None or self._curve_status.get(key, {}).get("status") != "supported"
@@ -2165,20 +2220,21 @@ class Detector:
             onset_samples, count=count,
             scale=self.p[f"curve_original_noise_humidity_{position.value}"],
             max_gap_seconds=self.p[f"curve_original_gap_humidity_{position.value}_seconds"],
-            at=onset_samples[-1][0],
+            at=onset_samples[-1][0], time_support=time_support,
         )
         if (onset_window is None
                 or onset_window.v <= self.p["curve_original_significance"] * onset_window.e):
             return None
         return candidate
 
-    def _original_rise_onsets(self, contrasts, floor, received_at, branch_floors):
+    def _original_rise_onsets(self, contrasts, floor, received_at, branch_floors, prefix):
         """Frühere Zuordnung nur mit RH-Originalen desselben neuen Astes."""
         onsets = {}
         for name, pair in contrasts.positions:
             position = Position(name)
             candidate = self._original_rise_witness(
                 position, pair.humidity, floor, received_at, branch_floors[position],
+                self._original_prefix_time_support(prefix, position, Quantity.HUMIDITY),
             )
             if candidate is not None:
                 onsets[position] = candidate.onset_at
@@ -2231,6 +2287,7 @@ class Detector:
             if position not in component["bases"]:
                 continue
             component["points"][position] = (temperatures, humidities)
+            temperature_support = self._original_prefix_time_support(prefix, position, Quantity.TEMPERATURE)
             base = component["bases"][position]
             end = component["water_end"].get(position, component["support_end"].get(position))
             state = component["water_state"].setdefault(position, {
@@ -2249,12 +2306,14 @@ class Detector:
                 state["overflow"] = True
                 state["pending"] = dict(tuple(state["pending"].items())[-limit:])
             for stamp, point in tuple(state["pending"].items()):
+                if temperature_support is None:
+                    continue
                 pair = original_water_pair(
                     point, temperatures,
                     temperature_scale=self.p[f"curve_original_noise_temperature_{position.value}"],
                     humidity_scale=self.p[f"curve_original_noise_humidity_{position.value}"],
                     max_gap_seconds=self.p[f"curve_original_gap_temperature_{position.value}_seconds"],
-                    at=prefix.received_at,
+                    at=prefix.received_at, time_support=temperature_support,
                 )
                 if pair is None:
                     continue
@@ -2438,7 +2497,7 @@ class Detector:
                     ) for position in positions
                 }
                 valid_onsets = self._original_rise_onsets(
-                    contrasts, floor, prefix.received_at, branch_floors,
+                    contrasts, floor, prefix.received_at, branch_floors, prefix,
                 )
                 intervals = self._original_local_rise_intervals(
                     contrasts.positions, humidity_kinks, branch_floors,
@@ -2493,6 +2552,7 @@ class Detector:
                         candidate = self._original_rise_witness(
                             position, pair.humidity, floor, prefix.received_at,
                             component["branch_floors"][position],
+                            self._original_prefix_time_support(prefix, position, Quantity.HUMIDITY),
                         )
                         if candidate is not None:
                             interval = component["onset_intervals"].get(position)
@@ -4306,7 +4366,7 @@ class Detector:
                 count=self.p["curve_original_samples"], scale=window.scale,
                 max_gap_seconds=self.p[
                     f"curve_original_gap_{quantity.value}_{position.value}_seconds"
-                ], at=window.newest_at,
+                ], at=window.newest_at, time_support=window.time_support,
             )
             if window is None:
                 return (), True
@@ -4473,7 +4533,7 @@ class Detector:
                     temperature_scale=self.p[f"curve_original_noise_temperature_{position.value}"],
                     humidity_scale=self.p[f"curve_original_noise_humidity_{position.value}"],
                     max_gap_seconds=self.p[f"curve_original_gap_temperature_{position.value}_seconds"],
-                    at=max(stamp for stamp, _ in temperatures),
+                    at=max(stamp for stamp, _ in temperatures), time_support=pair.time_support,
                 )
                 state[key] = replacement
                 if key == "maximum":
@@ -4509,7 +4569,7 @@ class Detector:
                         tuple((stamp, value if stamp == corrected_at else old) for stamp, old in points),
                         count=self.p["curve_original_samples"], scale=window.scale,
                         max_gap_seconds=self.p[f"curve_original_gap_humidity_{name}_seconds"],
-                        at=window.newest_at,
+                        at=window.newest_at, time_support=window.time_support,
                     )
                 if window is not None:
                     windows.append((name, window))
