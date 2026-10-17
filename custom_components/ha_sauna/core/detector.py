@@ -2075,6 +2075,27 @@ class Detector:
         self._clear_curve_route("infusion", keep_status=True)
         emit(Kind.INFUSION, effective, episode["positions"])
 
+    def _original_infusion_settling(self, episode, windows):
+        """Den aktuellen Nachlauf mit dem gebundenen Fall derselben Episode vergleichen."""
+        last = episode.get("original_component")
+        if (last is None or episode["interrupted"] or last["context"]
+                != self._original_bound_context(self._original_context(), episode["positions"])):
+            return False, {}
+        references = dict(last.get("fall_reference_windows", ())) if last else {}
+        forms = {
+            name: original_followup(pair.humidity, references[name].humidity)
+            for name, pair in windows if name in references
+        }
+        settled = bool(
+            len(forms) == len(episode["positions"]) and all(
+                form is not None and form.settled_after_decline(
+                    self.p["curve_original_significance"],
+                    self.p["curve_original_background_residual"],
+                ) for form in forms.values()
+            )
+        )
+        return settled, forms
+
     def _original_infusion_evidence(
         self, prefixes, channels, now, decision_at, floor, trace, onset_allowed, emit, allowed,
     ):
@@ -2317,6 +2338,7 @@ class Detector:
                         component["support_end"].clear()
                         component["fall_ready"] = False
                         component.pop("fall_windows", None)
+                        component.pop("fall_reference_windows", None)
                     fallen = bool(
                         component["strong"] and prefix.original
                         and contrasts.fall > significance
@@ -2326,6 +2348,7 @@ class Detector:
                     if fallen:
                         component["fall_ready"] = True
                         component["fall_windows"] = contrasts.positions
+                        component.setdefault("fall_reference_windows", contrasts.positions)
                     if fallen and not component["support_end"]:
                         component["support_end"] = {
                             Position(name): pair.humidity.newest_at
@@ -2483,29 +2506,56 @@ class Detector:
             if episode is None or episode["phase"] != "active":
                 continue
             last = episode.get("original_component")
-            background = bool(
-                (last is not None and last["fall_confirmed"] or bool(episode["interrupted"]))
-                and (component is None or component["fall_confirmed"])
+            settled, settling = self._original_infusion_settling(episode, contrasts.positions)
+            # Nach einer Quellenunterbrechung gibt es keinen vergleichbaren
+            # Fallbeleg. Nur dann bleibt der vorhandene neue Hintergrund nötig.
+            resumed_background = bool(
+                episode["interrupted"]
                 and contrasts.background_slope <= self.p["curve_original_background_slope"]
                 and contrasts.background_residual <= self.p["curve_original_background_residual"]
                 and contrasts.rise <= significance
             )
+            background = bool(
+                (last is not None and last["fall_confirmed"] or bool(episode["interrupted"]))
+                and (component is None or component["fall_confirmed"])
+                and (settled or resumed_background)
+            )
+            trace["original_infusion"]["settling"] = {
+                name: None if form is None else {
+                    "reference_newest_at": form.reference.newest_at,
+                    "reference_slope": form.reference.v,
+                    "previous_slope": form.window.b,
+                    "current_slope": form.window.v,
+                    "previous_slowing": form.previous_change_from_reference_current,
+                    "current_slowing": form.current_change_from_reference_current,
+                    "slope_change": abs(form.window.v - form.window.b),
+                    "slope_change_bound": significance * (form.window.e + form.window.e_minus),
+                    "residual": form.residual,
+                    "settled": form.settled_after_decline(
+                        significance, self.p["curve_original_background_residual"],
+                    ),
+                } for name, form in settling.items()
+            }
             _decision(trace, "infusion_background", background, {
                 "current_original_background": _gate(background),
-                "original_background_slope": _gate(
-                    contrasts.background_slope <= self.p["curve_original_background_slope"],
-                    value=contrasts.background_slope, operator="<=",
-                    threshold=self.p["curve_original_background_slope"], unit="contrast",
-                ),
-                "original_background_residual": _gate(
-                    contrasts.background_residual <= self.p["curve_original_background_residual"],
-                    value=contrasts.background_residual, operator="<=",
-                    threshold=self.p["curve_original_background_residual"], unit="contrast",
-                ),
-                "original_rise_absent": _gate(
-                    contrasts.rise <= significance, value=contrasts.rise,
-                    operator="<=", threshold=significance, unit="contrast",
-                ),
+                "settled_after_original_fall": _gate(settled),
+                "new_background_after_interruption": _gate(resumed_background),
+                **({
+                    "original_background_slope": _gate(
+                        contrasts.background_slope <= self.p["curve_original_background_slope"],
+                        value=contrasts.background_slope, operator="<=",
+                        threshold=self.p["curve_original_background_slope"], unit="contrast",
+                    ),
+                    "original_background_residual": _gate(
+                        contrasts.background_residual <= self.p["curve_original_background_residual"],
+                        value=contrasts.background_residual, operator="<=",
+                        threshold=self.p["curve_original_background_residual"], unit="contrast",
+                    ),
+                    "original_rise_absent": _gate(
+                        contrasts.rise <= significance, value=contrasts.rise,
+                        operator="<=", threshold=significance, unit="contrast",
+                    ),
+                } if episode["interrupted"] else {}),
                 "completed_fall_or_interruption": _gate(bool(
                     last is not None and last["fall_confirmed"] or episode["interrupted"]
                 )),
@@ -4077,6 +4127,7 @@ class Detector:
                 ("binding_windows", "humidity_rise_onset", self.p["curve_original_significance"]),
                 ("rise_windows", "rise", component.get("threshold")),
                 ("fall_windows", "fall", self.p["curve_original_significance"]),
+                ("fall_reference_windows", "fall", self.p["curve_original_significance"]),
             ):
                 if key not in component:
                     continue
@@ -4099,7 +4150,7 @@ class Detector:
                         component_invalid |= humidity.v - humidity.b <= kink.tolerance
                 if contrasts is None or getattr(contrasts, score) <= threshold:
                     component_invalid = True
-                    if key == "fall_windows":
+                    if key in ("fall_windows", "fall_reference_windows"):
                         component["fall_confirmed"] = False
                         component["fall_ready"] = False
                     else:
@@ -4204,11 +4255,13 @@ class Detector:
                     dict(windows),
                     expected_positions=tuple(item.value for item in episode["positions"]),
                 )
-                episode_invalid |= contrasts is None or not (
-                    contrasts.background_slope <= self.p["curve_original_background_slope"]
+                settled, _ = self._original_infusion_settling(episode, windows)
+                episode_invalid |= contrasts is None or not (settled or (
+                    episode["interrupted"]
+                    and contrasts.background_slope <= self.p["curve_original_background_slope"]
                     and contrasts.background_residual <= self.p["curve_original_background_residual"]
                     and contrasts.rise <= self.p["curve_original_significance"]
-                )
+                ))
         if not episode_invalid:
             return
         self._original_infusion_candidate = None

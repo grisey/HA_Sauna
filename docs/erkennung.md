@@ -463,31 +463,38 @@ Verlauf, ersetzt aber nicht den Anfang der gemeinsamen Episode. Erst die
 einmalige Ausgabe übernimmt diesen Beginn in das Aufgussereignis.
 
 Weitere qualifizierte Komponenten vor dem bestätigten Abschluss gehören zu
-derselben Episode und erzeugen keine weitere Zählung. Der Abschluss benötigt
-nach dem belegten Abfall einen neuen aktuellen Hintergrund. Dafür gelten:
+derselben Episode und erzeugen keine weitere Zählung. Der erste belegte
+Fallblock der letzten Komponente bleibt als Referenz mit Steigung `v_D` und
+Fehlermaß `E_D` gebunden. Ein höherer Peak vor der Fallbestätigung verwirft
+diesen Bezug. Für einen anschließenden ruhigeren Verlauf müssen an jeder
+Position beide aktuellen Teilfenster deutlich flacher als der belegte Fall
+sein und untereinander eine gleichbleibende Steigung tragen:
 
 ```text
-Z   = max_p |v_Hp/E_Hp|
-Z_r = max_p {r_Hp, r⁻_Hp}
-G   = (Z ≤ β) und (Z_r ≤ η) und (R ≤ s)
+v_D < −s·E_D
+(v_H − v_D) / (E_H + E_D) > s
+(b_H − v_D) / (E⁻_H + E_D) > s
+|v_H − b_H| ≤ s·(E_H + E⁻_H)
+v_H ≤ s·E_H
+max(r_H, r⁻_H) ≤ η
 ```
 
-Im ununterbrochenen Nachlauf muss die letzte qualifizierte Komponente
-abgefallen sein; ein offener Anstiegskandidat sperrt den Abschluss.
-Der erste Befund `G` bindet nur einen
-Hintergrundkandidaten. `G` muss an jedem folgenden auswertbaren Eingangspräfix
+Der aktuelle Block enthält ausschließlich Feuchteoriginale nach dem
+Fallbeleg. Eine weiter fallende Feuchte ist zulässig; weder eine waagerechte
+Kurve noch das Feuchteniveau vor dem Aufguss werden verlangt. Die lokale
+Steigungsänderung und die Restfehler begrenzen einen noch gekrümmten oder
+unruhigen Abfall. Ein offener neuer Anstieg sperrt den Abschluss.
+
+Der erste erfüllte Befund bindet einen Hintergrundkandidaten. Die Form muss
 bestehen bleiben, bis an allen beteiligten Positionen ein vollständig neuer
 aktueller Feuchteblock mit `K` Originalen und mindestens ein späteres
-Temperaturoriginal vorliegen. Der neue Feuchteblock muss lückenlos an die
-gebundenen Hintergrundoriginale anschließen. Ein widersprechender oder nicht
-auswertbarer Zwischenstand verwirft diesen Hintergrundkandidaten. Nach einer
-Unterbrechung gelten die unten beschriebenen Regeln zum Wiedererwerb.
+Temperaturoriginal vorliegen. Der neue Block muss lückenlos an die gebundenen
+Originale anschließen. Ein widersprechender oder nicht auswertbarer
+Zwischenstand verwirft den Kandidaten. Der Abschluss selbst zählt keinen Aufguss.
 
-Der Hintergrund wird über die aktuelle Feuchtesteigung und die Restfehler
-beider Fenster belegt. Die vorherige Steigung muss dafür nicht bereits flach
-sein. Eine Rückkehr zum Feuchteniveau vor dem Aufguss oder eine zusätzliche
-Wartezeit ist nicht erforderlich. Der Abschluss (`infusion_background`)
-zählt selbst keinen Aufguss.
+Nach einer Quellenunterbrechung ist der alte Fall nicht mehr vergleichbar.
+Nur für diesen Wiedererwerb bleibt der neue Hintergrund durch
+`max_p |v_Hp/E_Hp| ≤ β`, `max_p {r_Hp, r⁻_Hp} ≤ η` und `R ≤ s` begrenzt.
 
 Der Endbeleg gehört ausschließlich zum Quellereignis des tatsächlich
 bestätigten Einzelaufgusses. Der normale Hintergrundabschluss verwendet die

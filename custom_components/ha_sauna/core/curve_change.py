@@ -124,6 +124,27 @@ class OriginalFollowupFeatures:
     current_change_from_reference_current: float
     previous_change_from_reference_current: float
 
+    def settled_after_decline(self, significance: float, residual_limit: float) -> bool:
+        """A fresh, stable shallower trend after an independently observed fall.
+
+        Both local slopes must be resolved above the retained falling slope.
+        Their difference must fit their existing error bounds, with bounded
+        line residuals and no resolved renewed rise. A nonzero continuing fall
+        is allowed. This compares original windows; it assigns no event time.
+        """
+        if not (_original_positive(significance) and _original_positive(residual_limit)):
+            return False
+        window, reference = self.window, self.reference
+        return bool(
+            reference.v < -significance * reference.e
+            and self.fresh_current == len(window.current)
+            and self.current_change_from_reference_current > significance
+            and self.previous_change_from_reference_current > significance
+            and abs(window.v - window.b) <= significance * (window.e + window.e_minus)
+            and self.current_direction <= significance
+            and self.residual <= residual_limit
+        )
+
 
 @dataclass(frozen=True)
 class OriginalEdgeChange:

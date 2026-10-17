@@ -2174,6 +2174,29 @@ class OriginalFollowupArithmeticTests(unittest.TestCase):
                 self.assertEqual(
                     (form.fresh_previous, form.fresh_current), (previous, current)
                 )
+
+    def test_settled_decline_accepts_nonzero_tail_but_rejects_rise_and_continued_curvature(self):
+        for time_factor, value_factor, offset in ((1, 1, 0), (5, 10, 100)):
+            transform = dict(time_factor=time_factor, value_factor=value_factor, offset=offset)
+            reference = self._window((60, 50, 40, 30, 20, 10), **transform)
+            for values, expected in (
+                ((8, 6, 4, 2, 0, -2), True),
+                ((0, -10, -20, -30, -40, -50), False),
+                ((8, 10, 12, 14, 16, 18), False),
+                ((8, 6, 4, 2, -4, -12), False),
+                ((8, 6, 20, 2, 0, -2), False),
+            ):
+                with self.subTest(transform=transform, values=values):
+                    window = self._window(values, start=6, **transform)
+                    form = original_followup(window, reference)
+                    self.assertIsNotNone(form)
+                    self.assertEqual(form.settled_after_decline(1, 2), expected)
+                    if expected:
+                        # The accepted tail has slope -1 in the base units,
+                        # twice the original slope-error bound: it is not flat.
+                        self.assertLess(form.current_direction, -1)
+                        self.assertEqual(form.fresh_current, len(window.current))
+            self.assertFalse(original_followup(reference, reference).settled_after_decline(1, 2))
                 # Fixed previous mean is 10; every current mean is 6.
                 # Their retained level loss is (10-6)/(2*1)=2, even
                 # when both moving sections have become the same plateau.
