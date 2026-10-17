@@ -2018,7 +2018,8 @@ class DetectorTests(unittest.TestCase):
         events += self._feed_ventilation(detector, plateau, first_fall)
         self.assertIsNone(detector.door_episode)
         self.assertTrue(any(
-            row.get("original_forms", {}).get("opening_candidate_reset_reason") == "humidity_fall_ended"
+            row.get("original_forms", {}).get("opening_candidate_reset_reason")
+            == "humidity_fall_ended_without_level"
             for row in traces
         ))
         initial_h, fallen_h = values(0)[1], values(humidity_plateau)[1]
