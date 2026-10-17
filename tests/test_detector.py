@@ -1089,7 +1089,9 @@ class DetectorTests(unittest.TestCase):
         )
         for name, quantities, distinct_originals, force_close, expected in variants:
             with self.subTest(name=name):
-                case = deepcopy(detector)
+                # Parameter values are immutable; mutable owner/evidence state
+                # is copied independently for each identical input variant.
+                case = deepcopy(detector, {id(detector.p): detector.p})
                 bound_close = case.door_episode["original_close"]
                 callbacks, published = [], []
 
@@ -3784,7 +3786,10 @@ class InfusionLifecycleTests(unittest.TestCase):
                 self._feed(detector, rise_two + self.width, points, events)
             self.assertEqual(len(first), 1)
             pending = detector.infusion_episode
-            self.assertEqual(pending.phase, "pending")
+            # Publication is deferred here; a ready native form may already
+            # be active internally, while no event has been booked.
+            self.assertIsNone(pending.confirmed_detection)
+            self.assertIsNone(pending.confirmed_at)
             self.assertEqual(self._infusions(events), [])
             tail = detector._infusion_episode["original_component"]
             self.assertIsNot(tail, first[0])

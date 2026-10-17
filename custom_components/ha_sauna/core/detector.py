@@ -4397,10 +4397,18 @@ class Detector:
             forms = contrasts
             windows = tuple((name, pair.humidity) for name, pair in contrasts.positions)
         last = episode.get("original_component")
-        if last is None or any(
+        peak_source_matches = last is not None and all(
             dict(last["context"])[position][1]
-            != dict(prefix.context)[position][1] for position in positions
-        ):
+            == dict(prefix.context)[position][1] for position in positions
+        )
+        recovered_confirmed_episode = (
+            episode["confirmed_detection"] is not None
+            and all(position in episode["interrupted"] for position in positions)
+        )
+        # Nach echtem Quellenausfall kann ein vollständig eigener neuer
+        # RH-Hintergrund die gebuchte Episode beenden. Er bestätigt keinen
+        # alten Peak oder Fall und verschiebt kein Ende in die Datenlücke.
+        if not peak_source_matches and not recovered_confirmed_episode:
             _decision(trace, "infusion_background", None, {}, evaluated=False,
                       reason="own_peak_support_unavailable")
             return

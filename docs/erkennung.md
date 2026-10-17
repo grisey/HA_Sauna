@@ -960,34 +960,40 @@ jeweiligen Quellenabschnitte gebunden.
 Die neuen Originalblöcke von Öffnung, Schließung und Aufguss müssen zur
 gebundenen Position, Quelle und Zeitbasis passen. Der fortgeschriebene
 Anschlussanker ersetzt keine Prüfung des gesamten neu hinzugekommenen
-Originalabschnitts. Eine überschrittene rollenbezogene Abstandgrenze verwirft
-den davon abhängigen Kandidaten; spätere wieder zusammenhängende Fenster
-übernehmen seine früheren Stützen nicht. Eine Korrektur derselben Probe liefert
-keine Bestätigungsfrische und entwertet davon abhängige gebundene Belege.
+Originalabschnitts. Eine überschrittene rollenbezogene Abstandgrenze macht den
+Anschluss unbekannt. Bereits gebundene Originalbelege bleiben erhalten;
+spätere Fenster überbrücken die unbeobachtete Zwischenzeit nicht. Eine neue
+eigenständige Form erhält ihre eigene Bindung und ihren eigenen Beginn.
+Eine Korrektur derselben Probe liefert keine Bestätigungsfrische und prüft
+die davon abhängigen gebundenen Belege erneut.
 
 Bei der zweiten Lüftungsstufe bleibt das reguläre Warten auf einen rechten
 Temperaturpartner offen. Noch ungepaarte Feuchteoriginale liefern dieser
 Stufe keine Bestätigungsfrische; bereits vollständige, aufeinanderfolgende
 Paarfenster bleiben auswertbar. Die erste Stufe benötigt die gültigen RH- und
-Temperaturoriginale ohne Wasserpaarung. Eine Messlücke, ein
-Quellenwechsel oder eine Korrektur tragender Originale verwirft die davon
-abhängigen Stützen und den unbestätigten Kandidaten. Mit denselben Quellen
+Temperaturoriginale ohne Wasserpaarung. Eine Messlücke lässt den historischen
+Beleg bestehen, ohne eine neue Bestätigung zu liefern. Ein Quellenwechsel,
+ein ungültiger Messwert oder eine widersprechende Korrektur tragender Originale
+entwertet die betroffenen Stützen. Mit denselben Quellen
 können im noch offenen Türvorgang Fall und Abflachung aus zusammenhängenden
 Originalen erneut vollständig belegt werden. Ein tatsächlicher Wechsel der
 anfangs gebundenen Quellen erlaubt diesen Wiedererwerb für dieselbe Öffnung
 nicht.
 
 Ein noch unbestätigter Aufgusskandidat wird bei einem Bruch seiner Quellen
-oder seines Tür- und Betriebskontexts verworfen. Seine zeitliche Gültigkeit ist
-durch das Analysefenster begrenzt; ein abgelaufener Kandidat wird keinem späteren
-Aufguss zugeordnet.
+oder seines Tür- und Betriebskontexts verworfen. Fehlende spätere Meldungen
+allein entwerten ihn nicht. Eine später vollständig beobachtete eigenständige
+Form übernimmt seinen früheren Beginn nicht.
 
 Bei einem bereits gezählten Aufguss pausieren Messlücken, Quellenwechsel und
 vorübergehend fehlende Auswertbarkeit den Abschluss. Die Zuordnung bleibt
 bestehen; ein unbekannter Verlauf belegt weder Abklingen noch ein neues Niveau.
 Nach Wiedererwerb muss der Abschluss auf dem eigenen zusammenhängenden
 Verlauf des tragenden Sensors oder eines gültigen Ersatz-Folgeabschnitts
-erneut belegt werden.
+erneut belegt werden. Auch nach einem Quellenwechsel kann ein vollständig
+neu beobachteter RH-Hintergrund mit anschließendem frischem Originalblock
+die bereits bestätigte Episode beenden. Dieser Verlauf bestätigt keinen
+alten Peak oder Abfall; das Ende liegt am neuen belegten Abschlussraster.
 Die Zuordnung endet bei einer bestätigten Türöffnung oder Betriebsunterbrechung.
 Ein Aus- und Einschalten bleibt auch zwischen Rasterpunkten wirksam.
 
