@@ -554,7 +554,13 @@ class ArchiveTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(off[0]["session_id"], "closing")
         self.assertFalse(stored["session"]["operation_enabled"])
         energy = stored["session"]["energy"]
-        self.assertEqual(stored["session"]["ended_at"], now.isoformat())
+        # Unloading interrupts the recording; it does not invent a session end.
+        self.assertIsNone(stored["session"]["ended_at"])
+        interruptions = [record for record in stored["records"]
+                         if record["kind"] == "interruption"]
+        self.assertEqual(len(interruptions), 1)
+        self.assertEqual(interruptions[0]["received_at"], now.isoformat())
+        self.assertEqual(interruptions[0]["payload"]["reason"], "integration_unloaded")
         self.assertEqual(energy["accounted_at"], now.isoformat())
         self.assertAlmostEqual(
             energy["measured_kwh"], nominal_kw * step.total_seconds() / 3600,
@@ -729,6 +735,7 @@ class ArchiveTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(runtime.controller.manual_heater_ends), 1)
         runtime.device = SimpleNamespace(
             close=AsyncMock(), prepare_light_handoff=AsyncMock(return_value=True),
+            command=False, command_error=False,
         )
         now += timedelta(seconds=1)
         await runtime.close()
