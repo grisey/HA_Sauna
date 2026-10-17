@@ -35,6 +35,7 @@ const makePanel = (admin) => {
   const container = { innerHTML: "" },
     controls = new Map(),
     inputs = new Map(),
+    standardsDialog = { addEventListener() {} },
     save = { disabled: false };
   const panel = Object.assign(fixturePanel(Panel), {
     entry: "test",
@@ -62,6 +63,7 @@ const makePanel = (admin) => {
     },
     $(selector) {
       if (selector === "#settings") return container;
+      if (selector === "#standards-dialog") return standardsDialog;
       if (selector === "#settings-parameters")
         return {
           entries: () => [...inputs.values()].map((input) => [input.name, input.value]),

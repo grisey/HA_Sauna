@@ -74,7 +74,7 @@ test("legacy appearance inherits catalog defaults and individual styles override
   assert.equal(p.instrumentStyle("humidity"), "round");
 });
 
-test("instrument edits preview separately, submit with colors and scales, and reset only the draft", async () => {
+test("instrument edits preview separately, submit with colors and scales, and discard reloads active values", async () => {
   const p = panel(),
     saved = clone(p.state.appearance),
     calls = [];
@@ -104,8 +104,8 @@ test("instrument edits preview separately, submit with colors and scales, and re
   assert.equal(p.appearanceDraft, null);
   assert.equal(p.state.configuration.appearance, p.state.appearance);
   const persisted = clone(p.state.appearance);
-  p.resetAppearanceDraft(true);
-  assert.deepEqual(clone(p.appearanceDraft.instruments), instrumentDefaults());
+  edit(p, "default", "round");
+  assert.equal(p.instrumentStyle("humidity"), "round");
   assert.deepEqual(p.state.appearance, persisted);
   p.resetAppearanceDraft();
   assert.equal(p.appearanceDraft, null);

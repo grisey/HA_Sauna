@@ -10116,8 +10116,14 @@ class SaunaPanel extends HTMLElement {
     });
   }
   historySectionStatistics(start, end, position) {
+    const records = this.shown?.records || [];
+    if (
+      this.chartDataIndex?.records !== records ||
+      this.chartDataIndex.indexedCount !== records.length
+    )
+      this.historyIndex(records);
     const session = this.shown?.session,
-      index = this.historyIndex(this.shown?.records || []),
+      index = this.chartDataIndex,
       hasMeasurementContext = !!session && "measurement_context" in session,
       ttlSeconds = hasMeasurementContext
         ? session.measurement_context?.sensor_timeout_seconds

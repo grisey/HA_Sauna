@@ -487,6 +487,7 @@ for (const selected of [null, "quiet"]) {
 {
   const settings = { innerHTML: "" },
     button = { innerHTML: "" },
+    standardsDialog = { addEventListener() {} },
     library = { dataset: {}, innerHTML: "" };
   const p = Object.assign(fixturePanel(Panel), {
     hass: { user: { is_admin: false } },
@@ -509,6 +510,7 @@ for (const selected of [null, "quiet"]) {
     $: (selector) =>
       ({
         "#settings": settings,
+        "#standards-dialog": standardsDialog,
         "#button-settings": button,
         "#program-library": library,
       })[selector] || null,
