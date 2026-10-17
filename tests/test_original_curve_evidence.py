@@ -3203,6 +3203,7 @@ class NativeInfusionOnsetTests(unittest.TestCase):
             windows, (ORIGIN + timedelta(seconds=8),), intervals), "continuation")
 
     def test_later_curve_fit_cannot_replace_the_first_native_onset_interval(self):
+        from types import SimpleNamespace
         from test_detector import InfusionLifecycleTests, T0
 
         fixture = InfusionLifecycleTests()
@@ -3221,9 +3222,11 @@ class NativeInfusionOnsetTests(unittest.TestCase):
         intervals = dict(component["onset_intervals"])
         self.assertEqual(set(intervals), set(detector.positions))
         beginnings = {position: interval.previous[0] for position, interval in intervals.items()}
+        # The independent native route can bind before the broad curve route
+        # has any candidate. Supply the later helper result at that boundary.
         candidates = {
-            position: replace(detector._curve_candidates["infusion", position, Quantity.HUMIDITY],
-                              onset_at=beginning - timedelta(seconds=fixture.step))
+            position: SimpleNamespace(candidate_id=f"later:{position.value}",
+                                      onset_at=beginning - timedelta(seconds=fixture.step))
             for position, beginning in beginnings.items()
         }
         with patch.object(detector, "_original_rise_witness",

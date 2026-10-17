@@ -2234,7 +2234,7 @@ class InfusionLifecycleTests(unittest.TestCase):
         fall_one = peak_one + self.width
         rise_two = (
             fall_one - self.side * self.step if merged else
-            fall_one + self.p["infusion_window_seconds"] + (self.side + 3) * self.step
+            self._declared_flat_end(fall_one) + (self.side + 3) * self.step
         )
         peak_two = rise_two + self.width
         fall_two = peak_two + self.width
@@ -2254,9 +2254,11 @@ class InfusionLifecycleTests(unittest.TestCase):
         return points, shapes, rise_two, fall_two
 
     def _declared_flat_end(self, fall):
-        # The last changing value is at fall. K identical current originals
-        # first bind at fall + K - 1; K later originals establish the end.
-        return fall + (2 * self.side - 1) * self.step
+        # The current K-block first becomes constant at fall + K - 1.
+        # The preceding block still crosses the fall/plateau knee; its real
+        # residual is retained by _original_forms and rejects that first bind.
+        # Both blocks are flat at fall + 2K - 1, then K new originals follow.
+        return fall + (3 * self.side - 1) * self.step
 
     def _kink_originals(self, *, rising, large, extra=0):
         """A curved background, disjoint flat support and a declared linear turn."""
@@ -3316,12 +3318,21 @@ class InfusionLifecycleTests(unittest.TestCase):
             humidity = confirming["upper"].humidity
             binding = dict(component["binding_windows"])
             binding_humidity = binding["upper"].humidity
-            # Its zero OLS weight preserves the native binding slope, while
-            # its negative weight in the later previous window can remove Q.
-            corrected_at = binding_humidity.previous[len(binding_humidity.previous) // 2][0]
-            self.assertIn(corrected_at, {stamp for stamp, _ in humidity.previous})
-            correction = 2 * self.baseline - self.peak
-            self.assertNotIn(corrected_at, {
+            # Correct the last actual preceding-block original, which also
+            # closes the immutable binding block. Its positive OLS weight
+            # raises b to v: R stays positive while Q becomes zero. The bound
+            # positive knee becomes stronger rather than being removed.
+            corrected_at, previous_value = humidity.previous[-1]
+            self.assertEqual(corrected_at, binding_humidity.current[-1][0])
+            seconds = [(stamp - humidity.previous[0][0]).total_seconds()
+                       for stamp, _ in humidity.previous]
+            center = sum(seconds) / len(seconds)
+            weight = (seconds[-1] - center) / sum((second - center) ** 2
+                                                 for second in seconds)
+            self.assertGreater(weight, 0)
+            correction = previous_value + (humidity.v - humidity.b) / weight
+            self.assertGreater(correction, previous_value)
+            self.assertIn(corrected_at, {
                 stamp for _, pair in component["rise_windows"]
                 for stamp, _ in pair.humidity.previous + pair.humidity.current
             })
@@ -3340,6 +3351,8 @@ class InfusionLifecycleTests(unittest.TestCase):
                 max_gap_seconds=self.p["curve_original_gap_humidity_upper_seconds"],
             )
             self.assertIsNotNone(corrected)
+            self.assertAlmostEqual(corrected.b, humidity.v)
+            self.assertEqual(corrected.v, humidity.v)
             proof = original_contrasts({
                 **confirming, "upper": replace(confirming["upper"], humidity=corrected),
             }, expected_positions=expected)
@@ -3358,14 +3371,28 @@ class InfusionLifecycleTests(unittest.TestCase):
             binding_proof = original_contrasts({
                 **binding, "upper": replace(binding["upper"], humidity=corrected_binding),
             }, expected_positions=expected)
-            self.assertEqual(corrected_binding.v, binding_humidity.v)
+            self.assertGreater(corrected_binding.v, binding_humidity.v)
             self.assertAlmostEqual(corrected_binding.b, binding_humidity.b)
             self.assertGreater(binding_proof.humidity_rise_onset,
                                self.p["curve_original_significance"])
+            rise_windows = dict(component["rise_windows"])
+            rise_humidity = rise_windows["upper"].humidity
+            corrected_rise = original_window(
+                tuple((stamp, correction if stamp == corrected_at else value)
+                      for stamp, value in rise_humidity.previous + rise_humidity.current),
+                count=self.side, scale=rise_humidity.scale, at=rise_humidity.newest_at,
+                max_gap_seconds=self.p["curve_original_gap_humidity_upper_seconds"],
+            )
+            self.assertIsNotNone(corrected_rise)
+            rise_proof = original_contrasts({
+                **rise_windows, "upper": replace(rise_windows["upper"], humidity=corrected_rise),
+            }, expected_positions=expected)
+            self.assertIsNotNone(rise_proof)
+            self.assertGreater(rise_proof.rise, component["threshold"])
             detector._correct_original_infusion(
                 Position.UPPER, Quantity.HUMIDITY, corrected_at, correction,
             )
-            self.assertEqual(component["rise_score"], held_rise)
+            self.assertEqual(component["rise_score"], rise_proof.rise)
             self.assertEqual(water, {
                 position: (state["base"], state["maximum"])
                 for position, state in component["water_state"].items()
@@ -3883,14 +3910,18 @@ class InfusionLifecycleTests(unittest.TestCase):
             self._send(detector, first + 4 * self.step, self.level, events)
             self.assertEqual(detector._infusion_episode["phase"], "active")
             self.assertIsNone(detector._infusion_episode["level_end_at"])
-            rebound = first + 4 * self.step
-            self.assertEqual(detector._infusion_episode["original_background"],
-                             (("upper", self._at(rebound)),))
-            for index in range(1, self.side):
-                self._send(detector, rebound + index * self.step, self.level, events)
+            # The restored original is still stamped first. Neither the tick
+            # nor the two same-stamp reports supply a new RH original.
+            self.assertEqual(detector._infusion_episode["original_background"], witness)
+            # Finish the same flat tail. Its preceding K-block must also clear
+            # the genuine fall/plateau knee before a fresh end block can count.
+            resumed = first + 4 * self.step
+            level_end = resumed + (2 * self.side - 1) * self.step
+            for second in range(first + 5 * self.step, level_end, self.step):
+                self._send(detector, second, self.level, events)
                 self.assertEqual(detector.infusion_episode.phase, "active")
                 self.assertIsNone(detector.infusion_episode.level_end_at)
-            self._send(detector, rebound + self.side * self.step, self.level, events)
+            self._send(detector, level_end, self.level, events)
         self.assertEqual(detector._infusion_episode["phase"], "ended")
         self.assertEqual(len(self._infusions(events)), 1)
 
