@@ -829,7 +829,7 @@ fs.mkdirSync(output, { recursive: true });
   // Activating an event replaces the range with the same source-bound
   // selection used by its marker, values and event details.
   const infusionMarker = selectionPanel.locator(
-    '.history-event-marker[data-history-event-id="infusion-proof"]',
+    '[data-history-lower-band] .history-event-band-segment[data-history-event-id="infusion-proof"]',
   );
   await infusionMarker.click();
   await settleSelection();
