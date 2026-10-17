@@ -1464,8 +1464,16 @@ fs.mkdirSync(output, { recursive: true });
       `${action} remains within the narrow viewport`,
     );
   }
+  const contextWindowBefore = await selectionPage.evaluate(() => [...f.panel.window]);
   await selectionPanel.locator("[data-history-selection-context]").press("Enter");
+  await selectionPage.waitForFunction(() => !f.panel.historyViewTransition, null, {
+    timeout: settings.browser.timeouts_ms.interaction,
+  });
   await settleSelection();
+  const contextWindowAfter = await selectionPage.evaluate(() => [...f.panel.window]);
+  assert.notDeepEqual(contextWindowAfter, contextWindowBefore);
+  assert.ok(contextWindowAfter[0] <= narrowSelection.selection.start);
+  assert.ok(contextWindowAfter[1] >= narrowSelection.selection.end);
   assert.deepEqual((await selectedValues()).selection, narrowSelection.selection);
   const overviewTab = selectionPanel.locator('.main-tabs [data-action="overview"]');
   await overviewTab.click();
