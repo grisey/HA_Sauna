@@ -277,16 +277,13 @@ class DoorCandidateRegressionTests(unittest.TestCase):
     def test_real_door_fall_after_infusion_may_remain_above_preinfusion_temperature(self):
         flow = detector_fixtures.InfusionLifecycleTests()
         flow.setUp()
-        points, _, _, _ = flow._scenario(merged=False)
-        peak = flow.begin + flow.width
-        # Allow both the local turn and its two subsequent complete blocks
-        # while the final temperature still stays above the pre-infusion value.
-        fall = peak + 2 * flow.width
+        points, peak, door_at, fall = flow._infusion_then_independent_door()
         gain = abs(flow.temperature - trace(85)[0])
         self.assertGreater(gain, 0)
         temperatures = [
             (0, flow.temperature), (flow.begin, flow.temperature),
             (peak, flow.temperature + 2 * gain),
+            (door_at, flow.temperature + 2 * gain),
             (fall, flow.temperature + gain),
         ]
         detector, events = Detector(flow.parameters, T0), []
@@ -336,9 +333,10 @@ class DoorCandidateRegressionTests(unittest.TestCase):
             })
 
         detector.observer = observe
-        flow._feed(detector, peak, points, events, temperatures=temperatures)
+        flow._feed(detector, door_at, points, events, temperatures=temperatures)
         self.assertIn(Kind.INFUSION, [event.kind for event in events])
         self.assertIsNotNone(detector.infusion_episode)
+        self.assertEqual(detector.infusion_episode.phase, "active")
         flow._feed(detector, fall, points, events, temperatures=temperatures)
         opens = [event for event in events if event.kind == Kind.DOOR_OPEN]
         self.assertEqual(len(opens), 1, msg=json.dumps(
@@ -346,7 +344,7 @@ class DoorCandidateRegressionTests(unittest.TestCase):
         ))
         observed = flow._value(temperatures, (opens[0].trace_at - T0).total_seconds())
         self.assertGreater(observed, flow.temperature)
-        self.assertGreaterEqual(opens[0].effective_at, flow._at(peak))
+        self.assertGreaterEqual(opens[0].effective_at, flow._at(door_at))
         self.assertLessEqual(opens[0].effective_at, opens[0].trace_at)
 
 

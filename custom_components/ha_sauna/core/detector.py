@@ -1862,14 +1862,101 @@ class Detector:
             result.append((name, cached[1]))
         return tuple(result)
 
-    def _original_opening_infusion_guard(self, candidate, prefix, positions, state):
-        """Aufgussrückkehr durch einen eigenen neuen lokalen T-Fall abgrenzen.
+    def _original_infusion_return_evidence(self, component, prefix):
+        """Den ersten vollständig eigenen RH-Rücklauf beim Aufguss halten."""
+        if (component is None or not (component.get("strong") or component.get("qualified"))
+                or not prefix.original
+                or component["received_at"] > prefix.received_at
+                or component["context"] != self._original_bound_context(
+                    prefix.context, component["positions"],
+                )
+                or not self._original_prefix_valid(
+                    prefix, component["positions"], (Quantity.HUMIDITY,),
+                )):
+            return
+        significance = self.p["curve_original_significance"]
+        returns = component.setdefault("humidity_returns", {})
+        windows = dict(prefix.humidities)
+        for position in component["positions"]:
+            name = position.value
+            window = windows.get(name)
+            peak = component["peaks"].get(position)
+            held = returns.get(name)
+            if (window is None or peak is None or window.current[0][0] <= peak[0]
+                    or held is not None and held["peak"] == peak):
+                continue
+            if window.v < -significance * window.e:
+                # Unveränderlicher erster Fall; ein späterer, steilerer Ast
+                # darf diese Referenz nicht fortlaufend ersetzen.
+                returns[name] = {
+                    "peak": peak, "window": window, "received_at": prefix.received_at,
+                }
 
-        Gebundene native RH-Anstiege liefern ihre T-Baselines zur Diagnose.
-        Ein tieferes Niveau allein belegt noch keinen zusätzlichen Türvorgang.
-        Die vorhandene lokale T-Form muss ihn gegenüber ihrer vorherigen
-        Bewegung mit eigenen Folgeoriginalen abgrenzen. Sie darf auch oberhalb
-        der früheren Aufgussbaseline liegen.
+    def _original_opening_return_evidence(self, candidate, prefix, positions):
+        """Einen späteren RH-Knick mit eigenem Vorlauf und Folgeblock belegen."""
+        witnesses = dict(candidate["onset_witnesses"])
+        references = candidate.get("infusion_references", {})
+        current = dict(prefix.humidities)
+        significance = self.p["curve_original_significance"]
+        threshold = self.p["curve_original_open_contrast"]
+        count = self.p["curve_original_samples"]
+        roles = {}
+        for position in positions:
+            applicable = tuple(
+                (received_at, reference["component"])
+                for received_at, reference in references.items()
+                if position in reference["component"]["positions"]
+                and (reference["component"].get("strong") or reference["component"].get("qualified"))
+            )
+            if not applicable:
+                continue
+            received_at, component = max(applicable, key=lambda item: item[0])
+            name = position.value
+            held = component.get("humidity_returns", {}).get(name)
+            witness = witnesses.get(("door_open", position, Quantity.HUMIDITY))
+            native = None
+            if (held is not None and held["peak"] == component["peaks"].get(position)
+                    and witness is not None):
+                for intervals in (
+                    candidate.get("local_humidity_onset_intervals", {}),
+                    candidate["humidity_fall_transition_intervals"],
+                    candidate["humidity_onset_intervals"],
+                ):
+                    proposed = intervals.get(name)
+                    if proposed is None:
+                        continue
+                    window = proposed["window"]
+                    if (window.start_at > held["window"].newest_at
+                            and window.previous[-1][0] <= witness.onset_at <= window.newest_at
+                            and proposed["kink"].effective_change < 0):
+                        native = proposed
+                        break
+            form = (original_followup(current[name], native["window"])
+                    if native is not None and name in current else None)
+            supported = bool(
+                form is not None and form.fresh_current == count
+                and form.current_direction < -threshold
+                and form.current_change < -significance
+                and form.reference_level_loss > threshold
+            )
+            roles[name] = {
+                "result": supported, "component_received_at": received_at,
+                "peak": component["peaks"].get(position),
+                "return_newest_at": held["window"].newest_at if held else None,
+                "native_start_at": native["window"].start_at if native else None,
+                "native_newest_at": native["window"].newest_at if native else None,
+                "onset_at": witness.onset_at if witness is not None else None,
+                "followup": self._original_followup_trace(
+                    {(name, Quantity.HUMIDITY): form} if form is not None else None,
+                ),
+            }
+        return {"result": all(role["result"] for role in roles.values()), "positions": roles}
+
+    def _original_opening_infusion_guard(self, candidate, prefix, positions, state):
+        """Aufgussreferenzen und ergänzende lokale T-Fallbelege bereitstellen.
+
+        Die RH-Astzuordnung wird nach der Aktualisierung der Türzeugen gelesen.
+        Ein lokaler T-Fall allein macht die erste Aufgussrückkehr nicht zur Tür.
         """
         context = self._original_bound_context(prefix.context, positions)
         episode = state["infusion"]
@@ -1878,17 +1965,23 @@ class Detector:
             components.extend((episode.get("original_start_component"),
                                episode.get("original_component")))
         references = candidate.setdefault("infusion_references", {})
+        for identity, reference in tuple(references.items()):
+            owner = reference["component"]
+            if not (owner.get("strong") or owner.get("qualified")):
+                references.pop(identity)
         for component in components:
             if (component is None or not (component.get("strong") or component.get("qualified"))
                     or component["received_at"] > prefix.received_at
                     or self._original_bound_context(component["context"], positions) != context
                     or not all(position in component["positions"] for position in positions)):
                 continue
+            self._original_infusion_return_evidence(component, prefix)
             identity = component["received_at"]
             if identity not in references:
                 windows = tuple((name, pair) for name, pair in component["binding_windows"]
                                 if Position(name) in positions)
                 references[identity] = {
+                    "component": component,
                     "windows": windows,
                     "temperature_backgrounds": self._original_temperature_backgrounds(
                         prefix, tuple((name, pair.temperature) for name, pair in windows),
@@ -3250,6 +3343,13 @@ class Detector:
                     candidate["onset_witnesses"] = tuple(bound.items())
                     if changed:
                         candidate["onset_witness_received_at"] = prefix.received_at
+                if candidate is not None:
+                    return_evidence = self._original_opening_return_evidence(candidate, prefix, positions)
+                    infusion_independent &= return_evidence["result"]
+                    infusion_guard["independent_humidity_branch"] = return_evidence
+                    infusion_guard["result"] = infusion_independent
+                    if not return_evidence["result"]:
+                        infusion_guard["reason"] = "own_humidity_branch_not_separated"
                 points = {position.value: tuple(self._original_segment_points(prefix, position, quantity)
                                                 for quantity in (Quantity.TEMPERATURE, Quantity.HUMIDITY))
                           for position, _, _ in prefix.points}
@@ -4532,6 +4632,12 @@ class Detector:
     def _original_infusion_background(self, prefix, now, decision_at, trace, contrasts=None, *, state):
         """RH-Abschluss fortführen; unbekannte T-Formen widerlegen ihn nicht."""
         episode = state["infusion"]
+        components = [state["infusion_candidate"]]
+        if episode is not None:
+            components.extend((episode.get("original_component"),
+                               episode.get("original_start_component")))
+        for component in components:
+            self._original_infusion_return_evidence(component, prefix)
         if episode is None or episode["phase"] not in ("pending", "active"):
             return
         positions = episode["positions"]
@@ -6162,6 +6268,27 @@ class Detector:
                 self._original_context(), component["positions"],
             ):
                 continue
+            if quantity == Quantity.HUMIDITY:
+                held = component.get("humidity_returns", {}).get(position.value)
+                if held is not None:
+                    window = held["window"]
+                    if any(stamp == corrected_at for stamp, _ in window.previous + window.current):
+                        corrected_window = original_window(
+                            tuple((stamp, value if stamp == corrected_at else old)
+                                  for stamp, old in window.previous + window.current),
+                            count=self.p["curve_original_samples"], scale=window.scale,
+                            max_gap_seconds=self.p[f"curve_original_gap_humidity_{position.value}_seconds"],
+                            at=window.newest_at, time_support=window.time_support,
+                        )
+                        if (corrected_window is not None and corrected_window.v
+                                < -self.p["curve_original_significance"] * corrected_window.e):
+                            held["window"] = corrected_window
+                        else:
+                            component_invalid = True
+                    if held["peak"][0] == corrected_at:
+                        # Die bestehende Komponenteninvalidierung verwirft
+                        # einen unbekannten Peakbezug ohne neue Dauersperre.
+                        component_invalid = True
             kink = dict(component.get("humidity_kinks", ())).get(position.value)
             if (quantity == Quantity.HUMIDITY and kink is not None and kink.factor > 0
                     and kink.status == "history"
@@ -6268,6 +6395,8 @@ class Detector:
                     component_invalid = True
             if state is None:
                 if component_invalid:
+                    component["strong"] = component["qualified"] = False
+                    component.pop("humidity_returns", None)
                     if position_state["infusion_candidate"] is component:
                         position_state["infusion_candidate"] = None
                     episode_invalid |= episode is not None and any(
@@ -6318,6 +6447,10 @@ class Detector:
                     **episode["water"][position], "change": change,
                 }
             if component_invalid:
+                # Auch gehaltene Tür- und Startreferenzen sehen dieselbe
+                # widerrufene Qualifikation; die gebuchte Detection bleibt.
+                component["strong"] = component["qualified"] = False
+                component.pop("humidity_returns", None)
                 if position_state["infusion_candidate"] is component:
                     position_state["infusion_candidate"] = None
                 episode_invalid |= episode is not None and any(

@@ -370,8 +370,53 @@ Bestätigung nicht zurück.
 
 ### Abgrenzung zum Aufgussabklingen
 
-Ein nativer starker oder bereits qualifizierter RH-Anstiegsbesitzer desselben
-Quellen- und Epochenkontexts liefert seine gebundenen Temperaturbaselines.
+Der erste Feuchterücklauf nach einer Aufgussspitze gehört zu dieser
+Aufgusskomponente. Die Komponente hält das erste aufgelöst fallende native
+RH-Fenster, dessen aktueller `K`-Block vollständig nach dem eigenen Peak
+liegt. Dieser erste Rücklauf wird nicht durch einen späteren stärkeren Fall
+ersetzt. Pro Sensor ist die jüngste gebundene starke oder qualifizierte
+Komponente desselben Quellen- und Epochenkontexts maßgeblich. Eine fortgesetzte
+weitere Spitze besitzt ihren eigenen Rücklauf.
+
+Ein späterer Türknick benötigt seinen eigenen nativen RH-Vorlauf vollständig
+nach diesem ersten Rücklaufblock. Der unterstützte RH-Zeuge muss zum
+beobachteten neuen Knick gehören; sein Beginn liegt zwischen dem letzten
+Original des eigenen Vorlaufblocks und dem jüngsten Original des Knickfensters.
+Der Knick benötigt die bestehende negative Knicktoleranzentscheidung. Ein
+vollständig neuer aktueller RH-Folgeblock nach diesem Knickfenster bestätigt
+seine eigene Richtung, Steigungsänderung und Absenkung:
+
+```text
+vF < −s · EF                         erster Rücklauf nach dem eigenen Peak
+Beginn des neuen RH-Vorlaufs > jüngstes Original des Rücklaufblocks
+δ_eff,Kn < 0                        eigener späterer Abwärtsknick
+alle Folgeoriginale > jüngstes Original des Knickfensters
+vN / EN < −γO
+(vN − bKn) / (EN + E⁻Kn) < −s
+(H̄⁻Kn − H̄N) / (2 · RH-Skala) > γO
+```
+
+`bKn` und `H̄⁻Kn` stammen aus dem eigenen Vorlauf des neuen Knicks. Dieser
+Vorlauf darf bereits fallen: Eine Tür kann einen bestehenden Rücklauf weiter
+nach unten knicken. Eine vorausgehende Bremsung, waagerechte Feuchte oder die
+Rückkehr zum Voraufgussniveau sind keine Bedingung. Der Türbestand konsumiert
+die gespeicherte Aufgussreferenz nach Aktualisierung seiner RH-Zeugen; ein
+alter Beginn wird nicht künstlich nach vorn verschoben.
+
+Die Referenz bleibt beim bestehenden Aufgussbesitzer erhalten. Ein neuer
+Peak erhält eine neue Zuordnung, Originalkorrekturen werden auf den gebundenen
+Zeitstützen geprüft. Ein widerlegter Rücklauf- oder Peakbezug wird über die
+bestehende Komponenteninvalidierung behandelt. Sie widerruft die aktuelle
+starke beziehungsweise qualifizierte Eigenschaft des gemeinsamen Objekts;
+auch bereits gehaltene Start- und Türreferenzen dürfen es danach nicht mehr
+als gültigen Rücklauf konsumieren. Eine bereits gebuchte Aufguss-Detection
+bleibt erhalten. Es gibt keine zusätzliche
+Alterssperre oder dauerhafte Sperrflagge. Aktuelle Knick- und Folgefenster
+benötigen ihre eigene gültige Originalstütze. Aufgusszählung und Gangendregel
+bleiben bei ihren vorhandenen Besitzern.
+
+Derselbe native RH-Anstiegsbesitzer liefert seine gebundenen
+Temperaturbaselines zur Diagnose.
 Berücksichtigt werden die aktuelle Aufgusskomponente sowie Anfangs- und
 aktuelle Komponente einer noch ausstehenden oder aktiven Originalepisode.
 Die Referenzen bleiben beim Öffnungskandidaten erhalten. Der diagnostische
@@ -421,7 +466,9 @@ Ohne aktuell unterstützten lokalen T-Fall
 bleibt das Vorgängermittel der ursprünglichen Bindungsreferenz maßgeblich;
 die RH-Referenz und die bisherigen Frischebedingungen ändern sich nicht.
 
-Die zusätzliche Prüfung verlangt den neuen lokalen T-Fall desselben Sensors.
+Die zusätzliche Prüfung verlangt den eigenen späteren RH-Knick mit seinem
+Vorlauf und Folgeblock sowie den neuen lokalen T-Fall desselben Sensors.
+Der T-Fall ersetzt die RH-Zuordnung nicht.
 Ohne gebundenen nativen Aufgussbesitzer entfällt diese zusätzliche
 Prüfung. Der fortgeschriebene Anschluss des Türbesitzers bleibt maßgeblich;
 eine alte Aufgussbaseline muss dafür nicht dauerhaft im Originalring liegen.

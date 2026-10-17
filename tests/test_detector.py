@@ -3974,17 +3974,41 @@ class InfusionLifecycleTests(unittest.TestCase):
         self.assertEqual(len(consumed), 1)
         self.assertEqual(consumed[0].received_at, infusion.detected_at)
 
-    def test_real_rh_negative_kink_can_open_a_door_inside_an_active_infusion(self):
-        points, _, _, _ = self._scenario(merged=False)
+    def _infusion_then_independent_door(self, *, accelerating=False):
+        """Existing rise/return, then a distinct RH turn before episode closure."""
         peak = self.begin + self.width
-        fall = peak + self.width
+        return_end = peak + self.width
+        # Two original blocks distinguish the weaker decline from the later
+        # downward turn. RH keeps falling: no horizontal plateau is required.
+        door_at = return_end + 2 * self.side * self.step
+        end = door_at + 2 * self.width
+        return_slope = (self.peak - self.level) / self.width
+        door_level = self.level - return_slope * (door_at - return_end) / (
+            1 if accelerating else self.side
+        )
+        final_level = (door_level - 2 * return_slope * (end - door_at)
+                       if accelerating else door_level - (self.peak - self.baseline))
+        points = [
+            (0, self.baseline), (self.begin, self.baseline), (peak, self.peak),
+            (return_end, self.level), (door_at, door_level),
+            (end, final_level),
+        ]
+        return points, peak, door_at, end
+
+    def test_real_rh_negative_kink_can_open_a_door_inside_an_active_infusion(self):
+        points, peak, door_at, fall = self._infusion_then_independent_door()
         detector = Detector(self.parameters, T0)
         events = []
-        self._feed(detector, peak, points, events)
+        self._feed(detector, door_at, points, events)
         self.assertEqual(len(self._infusions(events)), 1)
         active = detector.infusion_episode
         self.assertEqual(active.phase, "active")
-        temperatures = [(0, self.temperature), (peak, self.temperature),
+        returns = detector._infusion_episode["original_component"]["humidity_returns"]
+        self.assertTrue(returns)
+        for held in returns.values():
+            self.assertLess(held["window"].v, 0)
+            self.assertLess(held["window"].newest_at, self._at(door_at))
+        temperatures = [(0, self.temperature), (door_at, self.temperature),
                         (fall, trace(85)[0])]
         guard_records, first_current_block, references, last_record = [], {}, {}, {}
         original_guard = detector._original_opening_infusion_guard
@@ -4049,13 +4073,127 @@ class InfusionLifecycleTests(unittest.TestCase):
                 "position_selection": detector.diagnostic.get("position_selection"),
             }, default=str, sort_keys=True),
         )
+        opening = next(item for item in events if item.kind == Kind.DOOR_OPEN)
+        self.assertGreaterEqual(opening.effective_at, self._at(door_at))
+        self.assertLessEqual(opening.effective_at, opening.trace_at)
         self.assertTrue(detector.open)
         self.assertIsNone(detector.infusion_episode)
         candidate = detector.door_episode["original_open"]
         self.assertGreater(candidate["humidity_fall_onset"],
                            self.p["curve_original_significance"])
-        self.assertGreater(candidate["received_at"], self._at(peak))
+        self.assertGreater(candidate["received_at"], self._at(door_at))
         self.assertGreater(candidate["confirmation_received_at"], candidate["received_at"])
+
+    def test_independent_door_kink_can_accelerate_an_unbraked_infusion_return(self):
+        points, _, door_at, end = self._infusion_then_independent_door(accelerating=True)
+        detector, events = Detector(self.parameters, T0), []
+        self._feed(detector, door_at, points, events)
+        self.assertEqual(len(self._infusions(events)), 1)
+        self.assertEqual(detector.infusion_episode.phase, "active")
+        self.assertNotIn(Kind.DOOR_OPEN, [event.kind for event in events])
+        temperatures = [(0, self.temperature), (door_at, self.temperature),
+                        (end, trace(85)[0])]
+        self._feed(detector, end, points, events, temperatures=temperatures)
+        opens = [event for event in events if event.kind == Kind.DOOR_OPEN]
+        self.assertEqual(len(opens), 1)
+        self.assertGreaterEqual(opens[0].effective_at, self._at(door_at))
+        self.assertLessEqual(opens[0].effective_at, opens[0].trace_at)
+
+    def test_first_infusion_return_is_not_also_a_door_opening(self):
+        """The old two positive fixtures reused this same first RH return."""
+        for above_baseline in (False, True):
+            with self.subTest(above_baseline=above_baseline):
+                points, _, _, _ = self._scenario(merged=False)
+                peak = self.begin + self.width
+                gain = abs(self.temperature - trace(85)[0])
+                fall = peak + (2 if above_baseline else 1) * self.width
+                temperatures = (
+                    [(0, self.temperature), (self.begin, self.temperature),
+                     (peak, self.temperature + 2 * gain), (fall, self.temperature + gain)]
+                    if above_baseline else
+                    [(0, self.temperature), (peak, self.temperature), (fall, trace(85)[0])]
+                )
+                detector, events, rows = Detector(self.parameters, T0), [], []
+                detector.observer = rows.append
+                self._feed(detector, peak, points, events, temperatures=temperatures)
+                self.assertEqual(len(self._infusions(events)), 1)
+                self.assertEqual(detector.infusion_episode.phase, "active")
+                self._feed(detector, fall, points, events, temperatures=temperatures)
+                self.assertNotIn(Kind.DOOR_OPEN, [event.kind for event in events])
+                self.assertFalse(detector.open)
+                guards = [row.get("original_forms", {}).get("infusion_decay_guard")
+                          for row in rows]
+                self.assertTrue(any(
+                    guard and guard["new_local_temperature_fall"]["result"]
+                    and not guard["independent_humidity_branch"]["result"]
+                    for guard in guards
+                ), msg="The original local-T path must be reached and rejected by RH ownership.")
+
+    def test_continued_infusion_peak_keeps_its_own_first_return(self):
+        points, _, _, fall = self._scenario(merged=True)
+        second_peak = fall - self.width
+        temperatures = [(0, self.temperature), (second_peak, self.temperature),
+                        (fall, trace(85)[0])]
+        detector, events = Detector(self.parameters, T0), []
+        self._feed(detector, second_peak, points, events, temperatures=temperatures)
+        self.assertEqual(len(self._infusions(events)), 1)
+        self._feed(detector, fall, points, events, temperatures=temperatures)
+        self.assertEqual(len(self._infusions(events)), 1)
+        self.assertNotIn(Kind.DOOR_OPEN, [event.kind for event in events])
+        self.assertFalse(detector.open)
+
+    def test_corrected_first_return_withdraws_cached_door_reference(self):
+        """Exercise the existing correction API and its retained consumer refs."""
+        points, _, _, _ = self._scenario(merged=False)
+        peak = self.begin + self.width
+        end = peak + self.width
+        temperatures = [(0, self.temperature), (peak, self.temperature),
+                        (end, trace(85)[0])]
+        detector, events, seen = Detector(self.parameters, T0), [], []
+        original_guard = detector._original_opening_infusion_guard
+
+        def observe(candidate, prefix, positions, state):
+            result = original_guard(candidate, prefix, positions, state)
+            seen.append((candidate, prefix, positions, state))
+            return result
+
+        with patch.object(detector, "_original_opening_infusion_guard", side_effect=observe):
+            self._feed(detector, end, points, events, temperatures=temperatures)
+        self.assertEqual(len(self._infusions(events)), 1)
+        self.assertNotIn(Kind.DOOR_OPEN, [event.kind for event in events])
+        episode = detector._infusion_episode
+        detection = episode["confirmed_detection"]
+        component = episode["original_component"]
+        position = episode["positions"][0]
+        candidate, prefix, positions, state = next(
+            row for row in reversed(seen) if any(
+                reference["component"] is component
+                for reference in row[0]["infusion_references"].values()
+            )
+        )
+        window = component["humidity_returns"][position.value]["window"]
+        corrected_at, previous_value = window.current[-1]
+        seconds = [(stamp - window.current[0][0]).total_seconds()
+                   for stamp, _ in window.current]
+        center = sum(seconds) / len(seconds)
+        weight = (seconds[-1] - center) / sum((second - center) ** 2 for second in seconds)
+        self.assertGreater(weight, 0)
+        # Same OLS correction construction as the existing Q-correction case:
+        # remove this retained fall, without inventing a new observation time.
+        correction = previous_value - window.v / weight
+        detector._correct_original_infusion(position, Quantity.HUMIDITY, corrected_at, correction)
+        self.assertFalse(component["strong"])
+        self.assertFalse(component["qualified"])
+        self.assertNotIn("humidity_returns", component)
+        self.assertIs(detector.infusion_episode.confirmed_detection, detection)
+        self.assertEqual(self._infusions(events), [detection])
+        # The old object is deliberately retained by this consumer, as allowed
+        # by the correction API. Both reads must ignore its revoked evidence.
+        evidence = detector._original_opening_return_evidence(candidate, prefix, positions)
+        self.assertNotIn(position.value, evidence["positions"])
+        original_guard(candidate, prefix, positions, state)
+        self.assertFalse(any(reference["component"] is component
+                             for reference in candidate["infusion_references"].values()))
 
     def test_early_confirmation_q_correction_is_an_existing_interface_special_case(self):
         """Historical correction contract; no observed HA sensor path is claimed."""
