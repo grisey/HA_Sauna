@@ -36,6 +36,8 @@ class R04DoorRecoveryTests(unittest.TestCase):
             print("R04 executed native close diagnosis: " + json.dumps({
                 "case": case,
                 "at": row["at"],
+                "position_selection": row.get("position_selection", {}),
+                "position_evidence": row.get("position_evidence", {}),
                 "original_forms": {
                     key: form.get(key) for key in (
                         "received_at", "candidate_received_at", "confirmation_received_at",
