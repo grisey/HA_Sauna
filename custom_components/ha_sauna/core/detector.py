@@ -6691,6 +6691,7 @@ class Detector:
         else:
             candidates = bound_candidates
             if not candidates:
+                self._invalidate_curve_proposal(proposal_key, "no_bound_original_onset")
                 return fallback
         if any(candidate.onset_at < floor for _, candidate in candidates):
             self._invalidate_curve_proposal(proposal_key, boundary_reason)
@@ -7439,7 +7440,9 @@ class Detector:
                     "ventilation_after_onset" if self._curve_ventilation_at is not None
                     else "outside_door_episode"
                 ),
-                bound_candidates=episode.get("closing_onset_witnesses"),
+                # Native confirmation gives onset authority only to its own
+                # bound T forms. An unrelated available proposal is not one.
+                bound_candidates=episode.get("closing_onset_witnesses", ()),
             )
             self.open = False
             self.closed_at = now

@@ -585,7 +585,10 @@ Beginn aus genau diesen gehaltenen T-Formen. Das gilt auch, wenn der
 Feuchte-Erholungszweig trägt und die Erwärmungszweige keinen Schluss belegen.
 Die bestehende Prüfung des Tür- und Betriebskontexts bleibt erhalten.
 Ein anderer früherer Kurvenkandidat
-liefert für diesen Schluss keinen Beginn.
+liefert für diesen Schluss keinen Beginn. Fehlt ein an die native
+Schlussbestätigung gebundener T-Formbeleg, bleibt der Ereignisbeginn am
+Bestätigungsraster. Ein nur gleichzeitig verfügbarer, ungebundener
+Kurvenvorschlag darf diesen Beginn nicht rückdatieren.
 
 ### Anhaltende Gegenform und Originalkorrektur
 

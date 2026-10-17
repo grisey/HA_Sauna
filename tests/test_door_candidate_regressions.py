@@ -99,14 +99,55 @@ class DoorCandidateRegressionTests(unittest.TestCase):
                         if item["status"] == "consumed"
                     ],
                 }, default=str, sort_keys=True))
-                self.assertTrue(form["discrete_temperature_braking"]["result"])
-                witnesses = form["temperature_braking_witnesses"]
-                self.assertEqual(set(witnesses), set(closes[0].channels))
-                for witness in witnesses.values():
-                    self.assertIsNotNone(witness["fresh_newest_at"])
-                    self.assertIsNotNone(witness["fresh_observed_at"])
-                    self.assertGreater(witness["fresh_newest_at"], witness["first_newest_at"])
-                    self.assertLessEqual(witness["fresh_observed_at"], form["confirmation_received_at"])
+                self.assertGreaterEqual(closes[0].effective_at, braking_at)
+                self.assertIsNotNone(proof)
+                self.assertLess(proof.candidate_at, proof.confirmed_at)
+                self.assertEqual(proof.confirmed_at, form["confirmation_received_at"])
+                self.assertLessEqual(proof.confirmed_at, closes[0].trace_at)
+                self.assertTrue(form["new_original"])
+                self.assertTrue(form["later_original_confirmation"]["result"])
+                consumed = [item for item in row["curve_proposals"].get("door_close", ())
+                            if item["status"] == "consumed"]
+                if form["discrete_temperature_braking"]["result"]:
+                    witnesses = form["temperature_braking_witnesses"]
+                    self.assertEqual(set(witnesses), set(closes[0].channels))
+                    self.assertEqual(len(consumed), 1)
+                    self.assertEqual(consumed[0]["attribution_basis"], "original_close_binding")
+                    self.assertEqual(
+                        set(consumed[0]["consumed_candidate_ids"]),
+                        {witness["candidate_id"] for witness in witnesses.values()},
+                    )
+                    for witness in witnesses.values():
+                        self.assertIsNotNone(witness["fresh_newest_at"])
+                        self.assertIsNotNone(witness["fresh_observed_at"])
+                        self.assertGreater(witness["fresh_newest_at"], witness["first_newest_at"])
+                        self.assertLessEqual(witness["fresh_observed_at"], proof.confirmed_at)
+                else:
+                    # A slightly negative measured slope can be unresolved
+                    # at the configured scale. Its two own settled blocks
+                    # prove the close, not an unrelated historical onset.
+                    self.assertTrue(form["temperature_close_terms"]["plateau_close"])
+                    self.assertTrue(form["sustained_temperature_braking"]["result"])
+                    self.assertEqual(closes[0].effective_at, closes[0].trace_at)
+                    self.assertFalse(consumed)
+                    self.assertFalse(any(
+                        item["status"] in ("available", "bound")
+                        for item in row["curve_proposals"].get("door_close", ())
+                    ))
+                    followups = form["temperature_level_followup"]
+                    self.assertEqual(set(followups), set(closes[0].channels))
+                    for roles in followups.values():
+                        self.assertEqual(set(roles), {"temperature"})
+                        support = roles["temperature"]
+                        self.assertEqual(support["fresh_previous"], fixture.count)
+                        self.assertEqual(support["fresh_current"], fixture.count)
+                        self.assertLess(support["current_direction"], 0)
+                        for key in ("previous_direction", "current_direction"):
+                            self.assertLessEqual(
+                                abs(support[key]), fixture.values["curve_original_significance"],
+                            )
+                        self.assertGreater(support["current_start_at"], support["reference_newest_at"])
+                        self.assertLessEqual(support["newest_at"], proof.confirmed_at)
 
     def test_smooth_open_cooling_is_not_a_discrete_closing_transition(self):
         fixture = self.fixture
