@@ -104,6 +104,7 @@ class Controller:
             raise ValueError("Ungültiger Betriebsmodus")
         self.direct_presence: OccupancyInput | None = None
         self._direct_presence_history = []
+        self._direct_presence_coverage_breaks = []
         self._direct_presence_catchup = 0
         self._presence_entry: PresenceEntry | None = None
         self.parameters = parameters
@@ -258,16 +259,25 @@ class Controller:
         if self._session is not None:
             timeline = self._session.timeline
             if timeline.entry_cycle_available:
-                presence_before = min(at, timeline.anchor.effective_at)
+                proof = timeline.anchor.door_close_evidence
+                presence_before = min(at, timeline.anchor.effective_at,
+                                      proof.candidate_at if proof is not None else at)
             opening = timeline.opening if timeline.door == Door.OPEN else timeline.closed_opening
-            if (timeline.active is not None and opening is not None
-                    and opening.effective_at > timeline.active.started_at):
+            if (opening is not None and (timeline.door == Door.OPEN
+                    or timeline.active is not None
+                    and opening.effective_at > timeline.active.started_at)):
                 presence_before = min(presence_before, opening.effective_at)
         past = [index for index, report in enumerate(self._direct_presence_history)
                 if report.timing.effective_at is not None
                 and report.timing.effective_at <= presence_before]
         if past:
             self._direct_presence_history = self._direct_presence_history[past[-1]:]
+        past_breaks = [index for index, stamp in enumerate(self._direct_presence_coverage_breaks)
+                       if stamp <= presence_before]
+        if past_breaks:
+            self._direct_presence_coverage_breaks = self._direct_presence_coverage_breaks[
+                past_breaks[-1]:
+            ]
 
     def _recognition_context_current(self, at):
         """A later operation-OFF boundary retires an earlier recognition stretch."""
@@ -1126,8 +1136,8 @@ class Controller:
             self._presence_entry = None
             if (self.control_mode == "automatic"
                     and timeline.active.recognition_kind == Kind.PRESENCE_CONFIRMED):
-                # The accepted entry already owns presence at closure. A later
-                # OFF while the door stays closed does not undo that proof.
+                # The accepted entry proves occupancy behind the closed door.
+                # A departure requires a new opening.
                 self._abort_after_run(at)
         if (previous.active_gang_temperature_id is not None
                 and (timeline.active is None
@@ -1720,6 +1730,11 @@ class Controller:
         if not defer_evaluation:
             self.advance(at, evaluate=False)
         self.direct_presence = value
+        if (previous is not None and previous.qualified_presence
+                and not value.qualified_presence):
+            # A proxy projection cannot prolong the sensor's coverage. This
+            # boundary is neither an absence assertion nor a gang retraction.
+            self._direct_presence_coverage_breaks.append(at)
         session = self._session
         if (value.qualified_presence and value.timing.first_usable_at is not None
                 and session is not None and session.timeline.active is None
@@ -1738,19 +1753,55 @@ class Controller:
         # can describe the current input but cannot rewrite that history.
         if value.qualified_presence:
             self._direct_presence_history.append(value)
-        # Presence at closure establishes a stay. Subsequent sensor pulses
-        # cannot undo that entry without another observed door opening.
+        # A proven sensor-presence interval establishes a stay. Departure
+        # requires another opening; unchanged ON needs no fresh report.
         if self._session is None:
             self._direct_presence_history = [value] if value.qualified_presence else []
         if not defer_evaluation:
             self._evaluate(at)
         return True
 
+    def _presence_across_closing(self, closure, at):
+        """Sensor ON from this candidate through its confirmation and onward.
+
+        Unchanged ON covers the interval without an additional message or
+        arbitrary holding period. Once proven, occupancy is bound to this
+        closed door until another opening permits a departure.
+        """
+        proof = closure.door_close_evidence
+        if proof is None:
+            return None
+        history = [report for report in self._direct_presence_history
+                   if report.timing.effective_at is not None
+                   and report.timing.received_at is not None
+                   and report.timing.received_at <= self._received_at(at)]
+        start = next((index for index in range(len(history) - 1, -1, -1)
+                      if history[index].timing.effective_at <= proof.candidate_at), None)
+        if start is None:
+            return None
+        report = history[start]
+        usable_at = report.timing.first_usable_at or report.timing.effective_at
+        if (not report.available or not report.qualified_presence
+                or report.occupancy != "present" or usable_at > proof.candidate_at):
+            return None
+        breaks = [stamp for stamp in self._direct_presence_coverage_breaks
+                  if max(report.timing.effective_at, usable_at) <= stamp]
+        for item in history[start + 1:]:
+            if (not item.available or not item.qualified_presence
+                    or item.occupancy != "present"):
+                breaks.append(item.timing.effective_at)
+            elif (item.timing.first_usable_at is not None
+                  and item.timing.first_usable_at > proof.candidate_at):
+                breaks.append(item.timing.first_usable_at)
+        if breaks and min(breaks) <= proof.confirmed_at:
+            return None
+        return report
+
     def _reconcile_direct_presence(self, at, *, entry_event=None):
         """Observe entry independently of its temperature admission.
 
-        Presence at closure establishes a stay until another door opening;
-        its qualified entry can wait for the minimum temperature.
+        Sensor presence across the closing candidate and its confirmation
+        establishes a stay; its entry can wait for the minimum temperature.
         A running gang instead uses absence and ventilation of its exit opening;
         neither temperature nor a heater phase can prevent that completion.
         """
@@ -1762,16 +1813,13 @@ class Controller:
             if session is not None and session.timeline.active is None
             and session.timeline.entry_cycle_available else None
         )
-        report = (
-            next((report for report in reversed(self._direct_presence_history)
-                  if report.timing.effective_at is not None
-                  and report.timing.effective_at <= closure.effective_at
-                  and report.timing.received_at is not None
-                  and report.timing.received_at <= self._received_at(at)), None)
-            if closure is not None else (
-                self._direct_presence_history[-1] if self._direct_presence_history else None
-            )
-        )
+        if closure is not None:
+            entry = self._presence_entry
+            report = (entry.presence if entry is not None
+                      and entry.closure.event_id == closure.event_id
+                      else self._presence_across_closing(closure, at))
+        else:
+            report = self._direct_presence_history[-1] if self._direct_presence_history else None
         if (session is None or not session.operation_enabled or report is None
                 or not report.available or not report.qualified_presence
                 or report.timing.effective_at is None or report.timing.received_at is None
@@ -1788,9 +1836,8 @@ class Controller:
                 or not self._recognition_context_current(opening.effective_at)):
             return False
         if t.active is None:
-            # Presence and proxy door recognition can be processed in either
-            # order. The state at the actual recorded closure is decisive;
-            # a new ON after that closure still cannot reuse an empty entry.
+            # The sensor must cover the whole retained closing candidate.
+            # A late ON cannot turn an earlier interrupted interval into a stay.
             if (closure is not None
                     and report.occupancy == "present"):
                 self._presence_entry = PresenceEntry(closure, report)
@@ -1805,19 +1852,17 @@ class Controller:
         else:
             # Absence belongs to this exit opening. ON pulses while the door
             # remains open do not erase the observed departure; a new stay is
-            # established by presence at the following closure.
+            # established by continuous sensor presence across the next
+            # closing candidate and its confirmation.
             history = [item for item in self._direct_presence_history
                        if item.timing.effective_at is not None
                        and item.timing.received_at is not None
                        and item.timing.received_at <= self._received_at(at)]
-            before_open = next((item for item in reversed(history)
-                                if item.timing.effective_at <= opening.effective_at), None)
             absence = next((item for item in reversed(history)
                             if item.available and item.occupancy == "absent"
                             and (t.door != Door.CLOSED or t.anchor is not None
                                  and item.timing.effective_at <= t.anchor.effective_at)
-                            and (item.timing.effective_at >= opening.effective_at
-                                 or item is before_open)), None)
+                            and item.timing.effective_at >= opening.effective_at), None)
             if absence is None:
                 return False
             report = absence

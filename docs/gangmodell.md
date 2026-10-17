@@ -62,40 +62,44 @@ Vorschau und Zustandsentität verwenden dafür dieselbe Ableitung.
 
 ## Gang durch qualifizierte Belegungszustände bestätigen
 
-Ein qualifizierter Belegungszustand beschreibt fortbestehende Anwesenheit oder
-Abwesenheit. Beim Schließen einer vollständigen Türfolge muss verfügbare,
-qualifizierte Anwesenheit anliegen.
-Sie kann bereits vor der Öffnung bestanden haben. Entscheidend ist die gemeldete
-Zustandszeit zusammen mit ihrer tatsächlichen fachlichen Nutzbarkeit. Erst nach dem
-Türschluss beginnende Anwesenheit verwendet diese Türfolge nicht erneut. Ein
-erst nach dem Türschluss fachlich nutzbarer Beleg kann den Eintritt ebenfalls
-nicht rückwirkend bestätigen. Bei gleichem Zeitstempel zählt die tatsächliche
-Verarbeitungsreihenfolge; ein bereits abgeschlossener Eintritt wird durch
-spätere Auswertung nicht wieder gültig.
+Nur der Sensorbetrieb liefert dauerhafte Präsenz. Verfügbare, qualifizierte
+Anwesenheit muss vom Beginn des Türschlusskandidaten durch dessen Bestätigung
+hindurch und darüber hinaus vorliegen. Ein unveränderter ON-Zustand gilt weiter;
+dafür sind weder eine zusätzliche Meldung noch eine festgelegte Haltedauer nötig.
+OFF, unbekannte oder nicht verfügbare Zustände und ein Quellenwechsel innerhalb
+dieses Intervalls unterbrechen den Nachweis. Erst nach Kandidatenbeginn
+einsetzendes ON kann die fehlende Strecke nicht rückwirkend ersetzen.
+Der Kandidatenbeginn und seine Bestätigung stammen aus demselben erhaltenen
+Türschlussbeleg; der rückblickend zugeordnete Türzeitpunkt ersetzt sie nicht.
+Zustandszeit, Empfang und tatsächliche Quellenfreigabe bleiben getrennt. Bei
+gleichem Zeitstempel zählt die tatsächliche Verarbeitungsreihenfolge.
 Liegt die Temperatur beim Eintritt noch unter der Mindesttemperatur, bleibt der
 belegte Eintritt bis zu einer neuen Türöffnung erhalten. Der Gang beginnt beim Erreichen
 der Grenze, ohne erneute Türfolge und ohne Rückdatierung auf den kälteren Eintritt.
-Eine spätere Abwesenheitsmeldung ohne erneute Türöffnung hebt den beim
-Türschluss belegten Aufenthalt nicht auf.
+Bei geschlossener Tür bleibt die Person im Raum. Ein Austritt setzt eine erneute
+Türöffnung voraus. Diese nächste Öffnung löst die Bindung des Aufenthalts an den
+vorherigen Türschluss. Ein folgender Eintritt benötigt
+den Präsenznachweis seines eigenen Türschlusskandidaten; alte Aufenthaltsbelege
+werden nicht auf eine spätere Türfolge übertragen.
 Ein Gang endet durch einen zusammengehörigen Austrittsvorgang: neue
 Türöffnung, zugehörige Abwesenheit und bestätigtes Durchlüften dieser Öffnung.
-Die Abwesenheit kann wegen unterschiedlicher Sensorlaufzeiten bereits vor dem
-thermischen Öffnungshinweis gemeldet sein und muss dieser Öffnung zugehören.
+Der ursprüngliche Beginn der Abwesenheit muss zur neuen Türöffnung oder danach
+liegen. Ein späterer Empfang des Türereignisses ändert diese Zuordnung nicht.
 Einzelne Anwesenheitsmeldungen während der offenen Tür verwerfen den
 Abwesenheitsbeleg nicht. Ohne verfügbaren Präsenzzustand bleibt der Abschluss
 offen. Ein anschließender Türschluss verwirft den belegten Austritt ebenfalls
 nicht; dessen Abwesenheit kann verspätet eintreffen. Eine ältere Austrittsfolge
 kann keinen später begonnenen Gang beenden.
 
-Präsenz beim anschließenden Türschluss bestätigt einen neuen Aufenthalt.
-Dafür ist keine zusätzliche Mindestdauer erforderlich. Derselbe Türvorgang
+Durchgehende Sensorpräsenz ab dem anschließenden Türschlusskandidaten bis über
+dessen Bestätigung hinaus bestätigt einen neuen Aufenthalt. Derselbe Türvorgang
 kann den Austritt des alten und den Eintritt des neuen Gangs tragen; beide
-Gänge überlappen sich nicht. Eine Abwesenheitsmeldung bei weiter geschlossener
-Tür beendet den bestätigten Aufenthalt nicht.
+Gänge überlappen sich nicht. Bei geschlossener Tür bleibt der bestätigte
+Aufenthalt bis zum nächsten Türvorgang bestehen.
 
 | Beleg | Wirkung |
 | --- | --- |
-| Eintritt mit Anwesenheit und erreichter Mindesttemperatur | Bestätigter Gang, ohne Wartefrist oder erforderlichen Aufguss |
+| Eintritt mit durchgehendem Sensorpräsenzbeleg und erreichter Mindesttemperatur | Bestätigter Gang, ohne zusätzliche Wartefrist oder erforderlichen Aufguss |
 | Öffnen zum Verlassen mit zugehöriger Abwesenheit und bestätigtem Lüften | Gangende beim vollständigen Nachweis, auch nach dem anschließenden Türschluss |
 | Einzelne Präsenzmeldung, Türschluss ohne Öffnung oder bloßer Zeitablauf | Kein Übergang |
 | Durchlüften der Austrittsöffnung ohne zugehörige Abwesenheit | Kein Gangende |
@@ -103,6 +107,8 @@ Tür beendet den bestätigten Aufenthalt nicht.
 
 Aufgüsse werden dem Gang zugeordnet, bestätigen ihn aber nicht erneut.
 Gemeldete Zustandszeiten gelten ohne Abzug eines vermuteten Sensorverzugs.
+Einzelne Personensignale des Proxybetriebs belegen dieses Präsenzintervall nicht;
+für sie gelten die nachfolgenden Regeln des indirekten Verfahrens.
 
 `unknown` und `unavailable` belegen keine Abwesenheit. Ein dadurch allein
 unvollständiger Austrittsnachweis beendet den Gang nicht. Die Wirkung aktueller

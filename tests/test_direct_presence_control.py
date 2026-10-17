@@ -7,7 +7,7 @@ from test_foundation import event, selected_occupancy
 
 from custom_components.ha_sauna.archive import plain, session_has_gangs
 from custom_components.ha_sauna.core.presence import binary_presence
-from custom_components.ha_sauna.core.timeline import Confirmation, Door, Event, Kind
+from custom_components.ha_sauna.core.timeline import Confirmation, Door, DoorCloseEvidence, Event, Kind
 
 
 class DirectPresenceControlTests(unittest.TestCase):
@@ -114,10 +114,10 @@ class DirectPresenceControlTests(unittest.TestCase):
 
     def test_leaving_is_seen_before_the_thermal_opening_hint(self):
         self.start()
-        # The occupant has left; thermal door recognition follows the faster
-        # presence report. Neither report alone establishes ventilation.
+        # Receipt of recognition follows presence, but the original opening
+        # still precedes the departure. Neither alone establishes ventilation.
         self.report("off", 4)
-        self.door(Kind.DOOR_OPEN, 5)
+        self.c.process(Event("delayed-open", "s", Kind.DOOR_OPEN, at(3.5), at(5)))
         self.c.advance(at(6))
         self.assertIsNotNone(self.c.session.timeline.active)
         self.assertIsNone(self.c.session.after_run)
@@ -257,7 +257,8 @@ class DirectPresenceControlTests(unittest.TestCase):
         self.report("on", 8)
         self.c.process(Event("late-vent", "s", Kind.VENTILATION, at(6.5), at(9)))
         self.assertEqual(self.c.session.timeline.completed[0].ended_at, at(9))
-        self.c.process(Event("late-exit-close", "s", Kind.DOOR_CLOSE, at(8.5), at(10)))
+        self.c.process(Event("late-exit-close", "s", Kind.DOOR_CLOSE, at(8.5), at(10),
+                                     door_close_evidence=DoorCloseEvidence(at(8.5), at(9.5))))
         self.assertEqual(self.c.session.timeline.active.started_at, at(9))
         self.assertEqual(self.c.session.timeline.active.start_source_event_id, "late-exit-close")
         self.assertEqual(self.c.session.timeline.gang_count, 1)
@@ -269,7 +270,8 @@ class DirectPresenceControlTests(unittest.TestCase):
         self.door(Kind.VENTILATION, 7)
         self.report("on", 8)
         self.report("off", 10)
-        self.c.process(Event("late-return-close", "s", Kind.DOOR_CLOSE, at(9), at(11)))
+        self.c.process(Event("late-return-close", "s", Kind.DOOR_CLOSE, at(9), at(11),
+                                     door_close_evidence=DoorCloseEvidence(at(9), at(9.5))))
         self.assertEqual(self.c.session.timeline.active.started_at, at(9))
         self.assertIsNone(self.c.session.after_run)
         self.assertEqual(self.c.phase, "saunagang")
@@ -299,7 +301,8 @@ class DirectPresenceControlTests(unittest.TestCase):
                 self.door(Kind.DOOR_OPEN, 5)
                 self.report("on", present_at)
                 self.c.process(Event("delayed-close", "s", Kind.DOOR_CLOSE,
-                                     at(10), at(13), at(13), at(12)))
+                                     at(10), at(13), at(13), at(12),
+                                     door_close_evidence=DoorCloseEvidence(at(10), at(12))))
                 self.assertEqual(self.c.session.timeline.active is not None, present_at == 9)
                 if present_at == 9:
                     self.assertEqual(self.c.session.timeline.active.started_at, at(10))
@@ -316,7 +319,8 @@ class DirectPresenceControlTests(unittest.TestCase):
         self.assertFalse(any(e.kind == "gang_confirmed" for e in self.c.consumer_events))
         self.c.process(Event("real-open", "s", Kind.DOOR_OPEN, at(301), at(303)))
         self.assertIsNone(self.c.session.timeline.active)
-        self.c.process(Event("real-close", "s", Kind.DOOR_CLOSE, at(304), at(305)))
+        self.c.process(Event("real-close", "s", Kind.DOOR_CLOSE, at(304), at(305),
+                                     door_close_evidence=DoorCloseEvidence(at(304), at(304.5))))
 
         gang = self.c.session.timeline.active
         self.assertIsNotNone(gang)
@@ -388,7 +392,8 @@ class DirectPresenceControlTests(unittest.TestCase):
                 self.door(Kind.DOOR_OPEN, 1)
                 self.report(before_close, 2)
                 self.report(after_close, 5)
-                self.c.process(Event("late-close", "s", Kind.DOOR_CLOSE, at(4), at(6)))
+                self.c.process(Event("late-close", "s", Kind.DOOR_CLOSE, at(4), at(6),
+                                     door_close_evidence=DoorCloseEvidence(at(4), at(4.5))))
                 self.assertEqual(self.c.session.timeline.active is not None, expected)
                 self.assertEqual(sum(e.kind == "gang_confirmed" for e in self.c.consumer_events),
                                  int(expected))
@@ -610,7 +615,8 @@ class DirectPresenceRuntimeTests(unittest.TestCase):
             await runtime.receive(Event("entry-open", sid, Kind.DOOR_OPEN, clock[0], clock[0]))
             await presence("on", 2, 2)
             clock[0] = T0 + timedelta(seconds=3)
-            await runtime.receive(Event("entry-close", sid, Kind.DOOR_CLOSE, clock[0], clock[0]))
+            await runtime.receive(Event("entry-close", sid, Kind.DOOR_CLOSE, clock[0], clock[0],
+                                        door_close_evidence=DoorCloseEvidence(clock[0], clock[0])))
             gang_id = runtime.session.timeline.active.gang_id
 
             # Reuse the opening's water fall; its later plateau with continuing
@@ -705,7 +711,9 @@ class DirectPresenceRuntimeTests(unittest.TestCase):
                 clock[0] = START + timedelta(seconds=second)
                 item = Event(name, sid, kind,
                     START + timedelta(seconds=second if effective is None else effective),
-                    clock[0])
+                    clock[0], door_close_evidence=DoorCloseEvidence(
+                        START + timedelta(seconds=second if effective is None else effective),
+                        clock[0]) if kind == Kind.DOOR_CLOSE else None)
                 await runtime.receive(item)
                 return item
 
@@ -798,7 +806,10 @@ class DirectPresenceRuntimeTests(unittest.TestCase):
             async def door(name, kind, effective, detected):
                 clock[0] = START + timedelta(seconds=detected)
                 await runtime.receive(Event(name, sid, kind,
-                    START + timedelta(seconds=effective), clock[0]))
+                    START + timedelta(seconds=effective), clock[0],
+                    door_close_evidence=DoorCloseEvidence(
+                        START + timedelta(seconds=effective), clock[0])
+                    if kind == Kind.DOOR_CLOSE else None))
 
             async def presence(state, second):
                 clock[0] = START + timedelta(seconds=second)
@@ -862,7 +873,8 @@ class DirectPresenceRuntimeTests(unittest.TestCase):
             await runtime.accept_presence(binary_presence("binary_sensor.presence", "on", clock[0], clock[0]))
             self.assertIsNone(runtime.session.timeline.active)
             clock[0] += timedelta(seconds=1)
-            runtime._process_event(Event("entry-close", sid, Kind.DOOR_CLOSE, clock[0], clock[0]))
+            runtime._process_event(Event("entry-close", sid, Kind.DOOR_CLOSE, clock[0], clock[0],
+                                        door_close_evidence=DoorCloseEvidence(clock[0], clock[0])))
             runtime.persist()
             self.assertEqual(runtime.session.timeline.active.confirmation, Confirmation.CONFIRMED)
             self.assertEqual(runtime.configuration_model.presence_source, "ha_presence")

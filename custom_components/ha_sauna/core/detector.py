@@ -36,7 +36,7 @@ from .curve_change import (
 from .models import Measurement, Position, Quantity
 from .moisture import KELVIN_OFFSET_C, absolute_humidity
 from .parameters import BY_KEY
-from .timeline import InfusionEnd, Kind, utc
+from .timeline import DoorCloseEvidence, InfusionEnd, Kind, utc
 
 
 @dataclass(frozen=True)
@@ -46,6 +46,7 @@ class Detection:
     detected_at: object
     channels: tuple[str, ...]
     trace_at: object | None = None
+    door_close_evidence: DoorCloseEvidence | None = None
 
 
 @dataclass(frozen=True)
@@ -837,6 +838,7 @@ class Detector:
                 fall["close_counterform"] = edge_counterform
                 if edge_counterform:
                     episode.pop("original_close", None)
+                    fall.pop("recovery_received_at", None)
                 # Eine einzelne Endkante sperrt den Schluss, ersetzt aber
                 # ohne aufgelösten K-Fall nicht die historische Fallstütze.
                 renewed = bool(
@@ -873,6 +875,7 @@ class Detector:
                     fall["continuity_at"] = window.newest_at
                 if (fall is not None and not fall.get("close_counterform", False)
                         and window.v >= -significance * window.e):
+                    fall.setdefault("recovery_received_at", prefix.received_at)
                     recovery = fall.get("recovery_window")
                     if recovery is None or window.v > recovery.v:
                         fall["recovery_window"] = window
@@ -1870,6 +1873,13 @@ class Detector:
             if closing:
                 forms["confirmation_received_at"] = prefix.received_at
                 forms["confirmation_originals"] = newest
+                candidate_at = (candidate["received_at"] if candidate is not None else max(
+                    episode["original_temperature_falls"][position]["recovery_received_at"]
+                    for position in closing_positions
+                ))
+                episode["closing_evidence"] = DoorCloseEvidence(
+                    candidate_at, prefix.received_at,
+                )
                 if candidate is not None:
                     candidate["confirmation_windows"] = tuple(
                         (position.value, dict(prefix.temperatures)[position.value])
@@ -5348,13 +5358,14 @@ class Detector:
             if self.observer:
                 self.observer(trace)
 
-        def emit(kind, effective_at=None, event_channels=None):
+        def emit(kind, effective_at=None, event_channels=None, *, door_close_evidence=None):
             detection = Detection(
                 kind,
                 effective_at or now,
                 decision_at,
                 tuple(c.value for c in (event_channels or channels)),
                 now,
+                door_close_evidence,
             )
             output.append(detection)
             if kind == Kind.INFUSION:
@@ -5563,7 +5574,8 @@ class Detector:
             self._curve_closed_since = now
             self._curve_door_context += 1
             self._clear_curve_route("door_close", keep_status=True)
-            emit(Kind.DOOR_CLOSE, close_effective, closing_positions)
+            emit(Kind.DOOR_CLOSE, close_effective, closing_positions,
+                 door_close_evidence=episode.get("closing_evidence"))
             self.baseline = {}
             self.ventilation_degraded = False
             self.ventilation_positions = ()

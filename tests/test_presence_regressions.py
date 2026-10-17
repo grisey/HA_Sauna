@@ -14,7 +14,7 @@ from custom_components.ha_sauna.core.button import END_HOLD
 from custom_components.ha_sauna.core.parameters import Parameters
 from custom_components.ha_sauna.core.presence import binary_presence
 from custom_components.ha_sauna.core.presence import ProxyPresenceSource
-from custom_components.ha_sauna.core.timeline import Event, Kind
+from custom_components.ha_sauna.core.timeline import DoorCloseEvidence, Event, Kind
 from custom_components.ha_sauna.runtime import Configuration, SaunaRuntime
 
 
@@ -41,7 +41,10 @@ def _runtime(clock):
 
 def _event(runtime, kind, seconds, event_id):
     at = START + timedelta(seconds=seconds)
-    return Event(event_id, runtime.session.session_id, kind, at, at)
+    # Synthetic confirmed door fixture; interval-specific cases supply both times.
+    return Event(event_id, runtime.session.session_id, kind, at, at,
+                 door_close_evidence=DoorCloseEvidence(at, at)
+                 if kind == Kind.DOOR_CLOSE else None)
 
 
 class PresenceRegressionTests(unittest.TestCase):

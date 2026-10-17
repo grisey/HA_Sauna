@@ -14,7 +14,7 @@ from custom_components.ha_sauna.core.defaults import section
 from custom_components.ha_sauna.core.input_handoff import InputTiming, OccupancyInput
 from custom_components.ha_sauna.core.models import Deadline, HeatingTime, Measurement, Position, Quantity, Session
 from custom_components.ha_sauna.core.parameters import BY_KEY, DEFINITIONS, ParameterError, Parameters
-from custom_components.ha_sauna.core.timeline import Confirmation, Event, Kind
+from custom_components.ha_sauna.core.timeline import Confirmation, DoorCloseEvidence, Event, Kind
 from custom_components.ha_sauna.runtime import Configuration, SaunaRuntime
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -50,7 +50,10 @@ def metadata(binding):
 
 def event(key, kind, seconds, session="s"):
     at = T0 + timedelta(seconds=seconds)
-    return Event(key, session, kind, at, at)
+    # Synthetic confirmed door fixture; interval-specific cases supply both times.
+    return Event(key, session, kind, at, at,
+                 door_close_evidence=DoorCloseEvidence(at, at)
+                 if kind == Kind.DOOR_CLOSE else None)
 
 
 def selected_occupancy(report, evaluated_at):

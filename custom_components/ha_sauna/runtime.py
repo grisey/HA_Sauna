@@ -747,6 +747,7 @@ class SaunaRuntime:
                     detection.detected_at,
                     booking_at=booking_at,
                     trace_at=detection.trace_at,
+                    door_close_evidence=detection.door_close_evidence,
                 )
                 if detection.kind == Kind.INFUSION:
                     # Retain the exact confirmation across advance calls; the

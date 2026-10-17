@@ -4202,7 +4202,11 @@ class InfusionLifecycleTests(unittest.TestCase):
 
         first_peak = self.begin + self.width
         first_fall = first_peak + self.width
-        door_start = first_fall + max(1, self.side - 2) * self.step
+        # Reuse the native opening from
+        # test_real_rh_negative_kink_can_open_a_door_inside_an_active_infusion:
+        # the first peak turns into the shared RH/T fall while the infusion
+        # is still active. A later, smaller second RH turn is not substituted.
+        door_start = first_peak
         door_bottom = door_start + self.width
         water_plateau = door_bottom + self.width
         close_start = water_plateau + max(
@@ -4212,40 +4216,43 @@ class InfusionLifecycleTests(unittest.TestCase):
         next_rise = close_end + self.p["infusion_window_seconds"] + self.p["median_seconds"]
         next_peak = next_rise + self.width
         next_fall = next_peak + self.width
-        # Reuse the same physical opening as the detector's water-form tests.
         fixture = DetectorTests()
-        fixture_begin, fixture_plateau, _, fixture_values = fixture._ventilation_curve(
-            Detector(self.parameters, T0),
-        )
-        initial_t, initial_h = fixture_values(0)
-        fallen_t, fallen_h = fixture_values(fixture_begin + (fixture_plateau - fixture_begin) // 2)
-        cold = self.temperature + fallen_t - initial_t
-        dry = self.level + fallen_h - initial_h
+        cold, dry = trace(85)[0], self.level
+        # Keep the established two-stage ventilation geometry: RH settles
+        # first; water settles later while temperature continues to fall.
         close_temperature = cold + (cold - self.temperature) * (close_start - door_bottom) / self.width
         plateau_temperature = cold + (cold - self.temperature) * (water_plateau - door_bottom) / self.width
         plateau_water = absolute_humidity(plateau_temperature, dry)
         close_humidity = fixture._humidity_for_water(close_temperature, plateau_water)
+        closed_humidity = fixture._humidity_for_water(self.temperature, plateau_water)
+        next_peak_humidity = closed_humidity + (self.peak - self.level)
         points = [
             (0, self.baseline), (self.begin, self.baseline), (first_peak, self.peak),
-            (first_fall, self.level), (door_start, self.level),
             (door_bottom, dry), (water_plateau, dry), (close_start, close_humidity),
-            (close_end, self.level), (next_rise, self.level), (next_peak, self.peak),
-            (next_fall, self.level),
+            (close_end, closed_humidity), (next_rise, closed_humidity),
+            (next_peak, next_peak_humidity), (next_fall, closed_humidity),
         ]
         temperatures = [(0, self.temperature), (door_start, self.temperature),
                         (door_bottom, cold), (close_start, close_temperature),
                         (close_end, self.temperature)]
         points = [(second, fixture._humidity_for_water(
             self._value(temperatures, second), plateau_water,
-        ) if water_plateau <= second <= close_start else self._value(points, second))
+        ) if water_plateau <= second <= next_rise else self._value(points, second))
             for second in range(0, next_fall + self.step, self.step)]
         shapes = [self._shape("rise", self.begin, first_peak),
                   self._shape("decay", first_peak, first_fall),
                   self._shape("rise", next_rise, next_peak),
                   self._shape("decay", next_peak, next_fall)]
         for quantity in (Quantity.TEMPERATURE, Quantity.HUMIDITY):
-            shapes.extend((self._shape("open", door_start, door_bottom, quantity),
-                           self._shape("close", close_start, close_end, quantity)))
+            shapes.append(self._shape("open", door_start, door_bottom, quantity))
+        shapes.append(self._shape("close", close_start, close_end, Quantity.TEMPERATURE))
+        # The closure only warms the retained air. No water is added before
+        # the separately declared second infusion; its RH gain is unchanged.
+        for second in range(water_plateau, next_rise + self.step, self.step):
+            self.assertAlmostEqual(absolute_humidity(
+                self._value(temperatures, second), self._value(points, second),
+            ), plateau_water)
+        self.assertAlmostEqual(next_peak_humidity - closed_humidity, self.peak - self.level)
         episodes_at_opening, opening_proofs, event_evidence = [], [], []
 
         def water_witness(witness):

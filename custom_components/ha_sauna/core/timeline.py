@@ -52,6 +52,20 @@ class UnresolvedTransition(ValueError):
 
 
 @dataclass(frozen=True)
+class DoorCloseEvidence:
+    """Observed candidate and confirmation of one retained closing proof."""
+
+    candidate_at: datetime
+    confirmed_at: datetime
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "candidate_at", utc(self.candidate_at))
+        object.__setattr__(self, "confirmed_at", utc(self.confirmed_at))
+        if self.candidate_at > self.confirmed_at:
+            raise ValueError("Türschlusskandidat muss vor seiner Bestätigung liegen")
+
+
+@dataclass(frozen=True)
 class Event:
     """Ereignis mit dem ursprünglichen Diagnose-/Bestätigungsraster.
 
@@ -66,6 +80,7 @@ class Event:
     detected_at: datetime
     booking_at: datetime | None = None
     trace_at: datetime | None = None
+    door_close_evidence: DoorCloseEvidence | None = None
 
     def __post_init__(self) -> None:
         if not self.event_id or not self.session_id or not isinstance(self.kind, Kind):
@@ -86,6 +101,11 @@ class Event:
                 raise ValueError(
                     "Bestätigungszeit muss zwischen Ereignis- und Buchungszeit liegen"
                 )
+        if self.door_close_evidence is not None:
+            if (self.kind != Kind.DOOR_CLOSE
+                    or not isinstance(self.door_close_evidence, DoorCloseEvidence)
+                    or self.door_close_evidence.confirmed_at > self.booking_at):
+                raise ValueError("Türschlussbeleg benötigt seine bereits bestätigte Schließung")
 
     @property
     def confirmation_at(self) -> datetime:
