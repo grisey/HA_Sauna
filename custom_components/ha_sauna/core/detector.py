@@ -130,6 +130,7 @@ class _OriginalPrefix:
     time_supports: tuple = ()
     changed_position: Position | None = None
     input_time: tuple | None = None
+    changed_quantity: Quantity | None = None
 
 
 def robust_slope(values, step=BY_KEY["grid_seconds"].default):
@@ -521,8 +522,18 @@ class Detector:
     def _original_door_evidence(self, prefixes, channels, now, decision_at, trace, emit):
         result = (False, False, False, ())
         route = "door_close" if self.open else "door_open"
+        group_original_roles = set()
         for index, prefix in enumerate(prefixes):
             stage_confirmation_allowed = self._original_input_group_end(prefixes, index)
+            if prefix.changed_position is not None and prefix.changed_quantity is not None:
+                role = prefix.changed_position, prefix.changed_quantity
+                if prefix.original:
+                    group_original_roles.add(role)
+                else:
+                    group_original_roles.discard(role)
+            stage_original_roles = frozenset(group_original_roles)
+            if stage_confirmation_allowed:
+                group_original_roles.clear()
             result = (False, False, False, ())
             outcomes, records, local_results, previous_stages = {}, {}, {}, {}
             for position in self.positions:
@@ -537,6 +548,7 @@ class Detector:
                 local_results[position] = self._original_door_position_evidence(
                     (prefix,), (position,), now, decision_at, local, state,
                     stage_confirmation_allowed=stage_confirmation_allowed,
+                    stage_original_roles=stage_original_roles,
                 )
                 episode = state["door"]
                 candidate = (self._close_position_binding(episode) if self.open else
@@ -1169,7 +1181,7 @@ class Detector:
             self._clear_curve_series(position, quantity)
             self._record_original_prefix(
                 measurement.received_at, original=False, changed_position=position,
-                input_time=(time_basis, point_at),
+                input_time=(time_basis, point_at), changed_quantity=quantity,
             )
             return
         if series["points"] and (
@@ -1186,7 +1198,7 @@ class Detector:
             # die bestehenden Entwertungen auch nach dem Sensortimeout.
             self._record_original_prefix(
                 measurement.received_at, original=False, changed_position=position,
-                input_time=(time_basis, point_at),
+                input_time=(time_basis, point_at), changed_quantity=quantity,
             )
             return
         if corrected:
@@ -1260,7 +1272,7 @@ class Detector:
             series["last_original_received_at"] = measurement.received_at
         self._record_original_prefix(
             measurement.received_at, original=not corrected, changed_position=position,
-            input_time=(time_basis, point_at),
+            input_time=(time_basis, point_at), changed_quantity=quantity,
         )
 
     def _original_context(self):
@@ -1297,7 +1309,7 @@ class Detector:
                      if name == position.value and role == quantity), None)
 
     def _record_original_prefix(
-        self, received_at, *, original, changed_position=None, input_time=None,
+        self, received_at, *, original, changed_position=None, input_time=None, changed_quantity=None,
     ):
         """Jedes angenommene Präfix erhalten; ein Raster ist kein neues Original."""
         points, windows, temperatures, humidity_kinks, humidities = [], [], [], [], []
@@ -1363,7 +1375,7 @@ class Detector:
         self._original_prefixes.append(_OriginalPrefix(
             received_at, original, self._original_context(), tuple(points), tuple(windows),
             tuple(temperatures), tuple(humidity_kinks), tuple(humidities), tuple(time_supports),
-            changed_position, input_time,
+            changed_position, input_time, changed_quantity,
         ))
 
     @staticmethod
@@ -1746,13 +1758,13 @@ class Detector:
         return tuple(result)
 
     def _original_opening_infusion_guard(self, candidate, prefix, positions, state):
-        """Aufgussrückkehr nur mit eigenständigem T-Verlust als Öffnung zulassen.
+        """Aufgussrückkehr durch einen eigenen neuen lokalen T-Fall abgrenzen.
 
-        Die nativen RH-Anstiegsbesitzer liefern ihre unveränderten T-Baselines.
-        Neue vollständige T-Blöcke können einen Verlust unter diese Baselines
-        belegen. Auch oberhalb davon bleibt ein neuer lokaler T-Fall zulässig:
-        ein eigener abwärts gerichteter T-Knick und zwei neue weiterhin stärker
-        fallende Blöcke müssen ihn gegenüber der lokalen Bewegung abgrenzen.
+        Gebundene native RH-Anstiege liefern ihre T-Baselines zur Diagnose.
+        Ein tieferes Niveau allein belegt noch keinen zusätzlichen Türvorgang.
+        Die vorhandene lokale T-Form muss ihn gegenüber ihrer vorherigen
+        Bewegung mit eigenen Folgeoriginalen abgrenzen. Sie darf auch oberhalb
+        der früheren Aufgussbaseline liegen.
         """
         context = self._original_bound_context(prefix.context, positions)
         episode = state["infusion"]
@@ -1848,13 +1860,13 @@ class Detector:
                 "support": self._original_support(reference["windows"]),
                 "contiguous_support": _gate(contiguous), "positions": roles,
             })
-        admitted = independent or new_local_fall
+        admitted = not references or new_local_fall
         return admitted, {
             "result": admitted, "native_infusion_references": tuple(diagnostics),
+            "baseline_temperature_loss": _gate(independent if references else None),
             "new_local_temperature_fall": {"result": new_local_fall, "positions": local_roles},
-            "reason": ("independent_temperature_loss" if references and independent else
-                       "new_local_temperature_fall" if new_local_fall else
-                       "infusion_return_without_independent_temperature_loss" if references else
+            "reason": ("new_local_temperature_fall" if new_local_fall else
+                       "infusion_return_without_new_temperature_fall" if references else
                        "no_bound_original_infusion"),
         }
 
@@ -2459,7 +2471,7 @@ class Detector:
 
     def _original_ventilation_evidence(
         self, prefix, channels, now, decision_at, trace, episode, *, closing, close_value=None,
-        stage_confirmation_allowed=True,
+        stage_confirmation_allowed=True, stage_original_roles=(),
     ):
         """RH-Lüften und danach vollständiges AH-Lüften in derselben Tür."""
         candidate = episode.get("original_open") if episode is not None else None
@@ -2520,10 +2532,27 @@ class Detector:
                 "opening_sources_coherent": _gate(sources_coherent),
             }, evaluated=False, reason="opening_sources_or_originals_unavailable")
             return
-        if not prefix.original:
-            # Gebundene Korrekturen/Lücken werden bereits beim Eingang
-            # entwertet. Ein fremdes Nichtoriginal ist weder ihre Gegenform
-            # noch eine neue Bestätigungsstütze.
+        # Eine fremde letzte Meldung erzeugt kein eigenes Original. Sie
+        # darf aber die bereits vorliegenden eigenen Originalrollen derselben
+        # Gruppe nicht verdecken. Eigene Korrekturen behalten den Rücksprung;
+        # die native Frischeprüfung unten verlangt weiterhin neue T- UND RH-Stützen.
+        own_group_original = (
+            stage_confirmation_allowed
+            and prefix.changed_position is not None
+            and prefix.changed_position not in positions
+            and all(any((position, quantity) in stage_original_roles
+                        for quantity in (Quantity.TEMPERATURE, Quantity.HUMIDITY))
+                    for position in positions)
+        )
+        record["own_group_original"] = own_group_original
+        record["group_original_roles"] = tuple(
+            (position.value, quantity.value)
+            for position in positions
+            for quantity in (Quantity.TEMPERATURE, Quantity.HUMIDITY)
+            if (position, quantity) in stage_original_roles
+        )
+        if not prefix.original and not own_group_original:
+            # Gebundene Korrekturen/Lücken wurden bereits beim Eingang entwertet.
             candidate = episode.get("original_ventilation")
             record.update(
                 candidate_at=candidate["received_at"] if candidate is not None else None,
@@ -2823,7 +2852,8 @@ class Detector:
             }
 
     def _original_door_position_evidence(
-        self, prefixes, channels, now, decision_at, trace, state, *, stage_confirmation_allowed=True,
+        self, prefixes, channels, now, decision_at, trace, state, *,
+        stage_confirmation_allowed=True, stage_original_roles=(),
     ):
         """Türformen und Lüftung kausal im einzigen Türbestand fortschreiben."""
         opening = closing = close_candidate = False
@@ -2854,6 +2884,7 @@ class Detector:
                     self._original_ventilation_evidence(
                         prefix, channels, now, decision_at, trace, episode, closing=False,
                         stage_confirmation_allowed=stage_confirmation_allowed,
+                        stage_original_roles=stage_original_roles,
                     )
                     continue
             elif not complete_prefix:
@@ -3414,6 +3445,7 @@ class Detector:
                     self._original_ventilation_evidence(
                         prefix, channels, now, decision_at, trace, episode, closing=False,
                         stage_confirmation_allowed=stage_confirmation_allowed,
+                        stage_original_roles=stage_original_roles,
                     )
                 if opening:
                     episode["original_humidity_minima"] = {
@@ -3453,6 +3485,7 @@ class Detector:
                 self._original_ventilation_evidence(
                     prefix, channels, now, decision_at, trace, episode, closing=False,
                     stage_confirmation_allowed=stage_confirmation_allowed,
+                    stage_original_roles=stage_original_roles,
                 )
                 continue
             if minima is None and same_opening_sources and contrasts is not None:
@@ -3508,6 +3541,7 @@ class Detector:
                     self._original_ventilation_evidence(
                         prefix, channels, now, decision_at, trace, episode, closing=False,
                         stage_confirmation_allowed=stage_confirmation_allowed,
+                        stage_original_roles=stage_original_roles,
                     )
                     continue
             if candidate is not None and tuple(name for name, _ in candidate["newest"]) != tuple(
@@ -3711,6 +3745,7 @@ class Detector:
             self._original_ventilation_evidence(
                 prefix, channels, now, decision_at, trace, episode, closing=closing,
                 close_value=closing_value, stage_confirmation_allowed=stage_confirmation_allowed,
+                stage_original_roles=stage_original_roles,
             )
             if closing:
                 break

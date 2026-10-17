@@ -1072,7 +1072,7 @@ class DetectorTests(unittest.TestCase):
         target_values = dict(zip(
             (Quantity.TEMPERATURE, Quantity.HUMIDITY), values(second), strict=True,
         ))
-        # One measured precondition serves four publication contracts. The
+        # One measured precondition serves the publication contracts. The
         # thermal comparison is declared only to isolate arbitration; the
         # source history, windows, owners and public callbacks remain real.
         variants = (
@@ -1086,6 +1086,10 @@ class DetectorTests(unittest.TestCase):
              [Kind.VENTILATION]),
             ("ventilation_with_last_lower_invalid", (Quantity.HUMIDITY, Quantity.TEMPERATURE), False, False,
              [Kind.VENTILATION]),
+            ("ventilation_with_last_lower_correction", (Quantity.HUMIDITY, Quantity.TEMPERATURE), False, False,
+             [Kind.VENTILATION]),
+            ("upper_correction_then_lower_invalid", (Quantity.HUMIDITY, Quantity.TEMPERATURE), False, False,
+             []),
         )
         for name, quantities, distinct_originals, force_close, expected in variants:
             with self.subTest(name=name):
@@ -1093,6 +1097,7 @@ class DetectorTests(unittest.TestCase):
                 # is copied independently for each identical input variant.
                 case = deepcopy(detector, {id(detector.p): detector.p})
                 bound_close = case.door_episode["original_close"]
+                bound_relative = case.door_episode["original_ventilation_rh"]
                 callbacks, published = [], []
 
                 def closing_form(temperatures, **kwargs):
@@ -1115,6 +1120,16 @@ class DetectorTests(unittest.TestCase):
                 with (patch.object(case, "_original_temperature_braking_forms", return_value=False),
                       patch("custom_components.ha_sauna.core.detector.original_thermal_contrasts",
                             side_effect=closing_form)):
+                    if distinct_originals:
+                        # The earlier group must contain both fresh own roles.
+                        # RH alone cannot confirm while T is still at its bound
+                        # timestamp; the later T group independently closes.
+                        earlier = second - step / 2
+                        for position in case.positions:
+                            self.assertTrue(case.accept(measurement(
+                                position, Quantity.TEMPERATURE, values(earlier)[0], second,
+                                measured=confirmation_at - timedelta(seconds=step / 2),
+                            )))
                     for quantity in quantities:
                         original_at = confirmation_at
                         if distinct_originals and quantity == Quantity.HUMIDITY:
@@ -1124,9 +1139,22 @@ class DetectorTests(unittest.TestCase):
                                 position, quantity, target_values[quantity], second,
                                 measured=original_at,
                             ))
-                    if name == "ventilation_with_last_lower_invalid":
-                        # Same upper originals as the positive control. Only the
-                        # unused lower RH role ends this group with a non-original.
+                    if name in ("ventilation_with_last_lower_correction",
+                                "upper_correction_then_lower_invalid"):
+                        position = (Position.UPPER if name == "upper_correction_then_lower_invalid"
+                                    else Position.LOWER)
+                        # Correct the new confirming RH sample at the same stamp
+                        # using another actual value from this fixture's fall.
+                        corrected_humidity = values(humidity_plateau - step)[1]
+                        self.assertNotEqual(corrected_humidity, target_values[Quantity.HUMIDITY])
+                        self.assertTrue(case.accept(measurement(
+                            position, Quantity.HUMIDITY, corrected_humidity, second,
+                            measured=confirmation_at,
+                        )))
+                    if name in ("ventilation_with_last_lower_invalid",
+                                "upper_correction_then_lower_invalid"):
+                        # The foreign lower input ends this same group; it
+                        # carries no new upper evidence.
                         self.assertEqual(case._door_owner, Position.UPPER)
                         self.assertTrue(case.accept(measurement(
                             Position.LOWER, Quantity.HUMIDITY, None, second,
@@ -1139,7 +1167,8 @@ class DetectorTests(unittest.TestCase):
                 self.assertEqual([item.kind for item in batch if item.kind in (
                     Kind.DOOR_CLOSE, Kind.VENTILATION, Kind.VENTILATION_COMPLETE,
                 )], expected, case.diagnostic)
-                if name == "ventilation_with_last_lower_invalid":
+                if name in ("ventilation_with_last_lower_invalid",
+                            "upper_correction_then_lower_invalid"):
                     # The lower invalidation must not change either upper epoch.
                     epochs = dict(case._original_context())
                     former = dict(before_context)
@@ -1148,7 +1177,8 @@ class DetectorTests(unittest.TestCase):
                         former[Position.LOWER][0], former[Position.LOWER][1] + 1,
                     ))
                     self.assertEqual([item.channels for item in batch
-                                      if item.kind == Kind.VENTILATION], [(Position.UPPER.value,)])
+                                      if item.kind == Kind.VENTILATION],
+                                     [(Position.UPPER.value,)] if Kind.VENTILATION in expected else [])
                 else:
                     self.assertEqual(case._original_context(), before_context)
                 self.assertEqual(len(published), expected.count(Kind.VENTILATION))
@@ -1171,6 +1201,13 @@ class DetectorTests(unittest.TestCase):
                         self.assertTrue(ventilation["relative_humidity"]["confirmable"])
                     self.assertFalse(case.open)
                     self.assertIsNone(case.door_episode)
+                elif name == "upper_correction_then_lower_invalid":
+                    # A foreign group terminator must not restore the supporting
+                    # upper candidate invalidated by the preceding own correction.
+                    self.assertTrue(case.open)
+                    upper = case._position_state(Position.UPPER)["door"]
+                    self.assertNotIn("original_ventilation_rh_confirmed", upper)
+                    self.assertIsNot(upper.get("original_ventilation_rh"), bound_relative)
                 else:
                     self.assertTrue(case.open)
                     completed = case.door_episode["original_ventilation_rh_confirmed"]

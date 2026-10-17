@@ -377,15 +377,15 @@ Ein nativer starker oder bereits qualifizierter RH-Anstiegsbesitzer desselben
 Quellen- und Epochenkontexts liefert seine gebundenen Temperaturbaselines.
 Berücksichtigt werden die aktuelle Aufgusskomponente sowie Anfangs- und
 aktuelle Komponente einer noch ausstehenden oder aktiven Originalepisode.
-Die Referenzen bleiben beim Öffnungskandidaten erhalten. Jede Referenz kann
-je T-Rolle durch einen vollständig neuen aktuellen `K`-Block mit aufgelöstem
-Fall und eigenständigem Verlust unter ihr damaliges Vorlaufniveau erfüllt
-werden. Dafür gelten `a_Tp < −γO Eᵃ_Tp` und `D_Tp > γO`, ausgewertet nur auf
-den aktuellen `K`-Originalen mit dem lokalen Hintergrund dieser
-Aufgussreferenz.
+Die Referenzen bleiben beim Öffnungskandidaten erhalten. Der diagnostische
+Niveauvergleich prüft je T-Rolle einen vollständig neuen aktuellen `K`-Block
+mit aufgelöstem Fall und Verlust unter ihr damaliges Vorlaufniveau:
+`a_Tp < −γO Eᵃ_Tp` und `D_Tp > γO`, ausgewertet auf den aktuellen
+`K`-Originalen mit dem lokalen Hintergrund dieser Aufgussreferenz.
+Ein solcher Niveauverlust allein belegt keinen zusätzlichen Türvorgang.
 
-Eine Unterschreitung der Voraufgussbaseline ist keine zwingende Bedingung.
-Alternativ kann die Temperaturreihe des Sensors einen eigenen neuen lokalen Abwärtsknick binden.
+Die Temperaturreihe des Sensors benötigt einen eigenen neuen lokalen
+Abwärtsknick. Dessen Verlauf darf oberhalb der Voraufgussbaseline liegen.
 Die T-Knicktoleranz verwendet wie die RH-Toleranz den größeren Wert aus
 Kataloggröße und historischer Steigungsänderung, jedoch mit Faktor `s`:
 
@@ -421,19 +421,17 @@ D_Tp = (T̄ᵈ_p − T̄ᵃ_p − mᵈ_Tp)/Sᵈ_Tp
 
 `mᵈ_Tp` und `Sᵈ_Tp` folgen derselben Hintergrundnormierung wie oben. Der
 ausgewertete Originalsuffix beginnt strikt nach dem jüngsten Original dieser
-T-Knickreferenz; Richtung und Schwellen bleiben unverändert. Die Auswahl gilt
-je Rolle auch dann, wenn die zusätzliche Prüfung insgesamt über die
-Aufgussreferenzen erfüllt wird. Ohne aktuell unterstützten lokalen T-Fall
+T-Knickreferenz; Richtung und Schwellen bleiben unverändert.
+Ohne aktuell unterstützten lokalen T-Fall
 bleibt das Vorgängermittel der ursprünglichen Bindungsreferenz maßgeblich;
 die RH-Referenz und die bisherigen Frischebedingungen ändern sich nicht.
 
-Die Prüfung verlangt somit entweder die unabhängigen Niveauverluste gegen
-alle eigenen gebundenen Aufgussreferenzen oder den neuen lokalen T-Fall
-desselben Sensors. Ohne gebundenen nativen Aufgussbesitzer entfällt diese zusätzliche
+Die zusätzliche Prüfung verlangt den neuen lokalen T-Fall desselben Sensors.
+Ohne gebundenen nativen Aufgussbesitzer entfällt diese zusätzliche
 Prüfung. Der fortgeschriebene Anschluss des Türbesitzers bleibt maßgeblich;
 eine alte Aufgussbaseline muss dafür nicht dauerhaft im Originalring liegen.
-Die allgemeinen RH-Zeugen und die gemeinsame Absenkung bleiben in beiden
-Fällen erforderlich. Das reale Abklingen nach einem Aufguss begründet keine
+Die allgemeinen RH-Zeugen und die gemeinsame Absenkung bleiben
+erforderlich. Das reale Abklingen nach einem Aufguss begründet keine
 zusätzliche Sperre oder Mindestwartezeit. Ein Abschluss- oder Abklingstatus
 ist kein Veto; eine belegte Türöffnung kann einen noch aktiven Aufguss beenden.
 
@@ -936,6 +934,11 @@ Ihre Formen werden weiterhin je Eingangspräfix ausgewertet. Eine neue
 Lüftungsstufe wird erst am Ende dieser Gruppe bestätigt und ausgegeben;
 ein darin bereits bestätigbarer Türschluss hat Vorrang. Es wird weder auf
 künftige Meldungen gewartet noch ein späterer Messwert vorweggenommen.
+Eine abschließende Korrektur oder ungültige Meldung des unbenutzten Sensors
+verdeckt keine bereits vorliegenden eigenen Originale dieser Gruppe.
+Korrekturen entfernen ihre betroffene Rolle aus der Gruppenfrische;
+die Bestätigung benötigt weiterhin neue gültige Originale beider Messgrößen
+des tatsächlich verwendeten Sensors.
 
 Verschiedene Empfangs- oder Originalzeiten bleiben getrennt. Ein zuvor
 bestätigtes Durchlüften und ein späterer Türschluss bleiben daher auch innerhalb
