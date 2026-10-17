@@ -235,7 +235,8 @@ class PresentationTests(unittest.TestCase):
                     self.assertEqual(steps[step_id]["title"], subgroup["label"])
                     self.assertEqual(
                         steps[step_id]["data"],
-                        {item["key"]: item["label"] for item in fields},
+                        {item["key"]: item["label"] for item in fields}
+                        | {"settings_action": "Aktion"},
                     )
                     self.assertEqual(
                         steps[step_id]["data_description"],
