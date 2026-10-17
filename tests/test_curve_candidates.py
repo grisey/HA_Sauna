@@ -377,12 +377,17 @@ class CurveCandidateTests(unittest.TestCase):
             onset_at=None,
             direction=None,
             onset_not_before=None,
+            onset_bounds=None,
+            hinge_order=1,
         ):
             # Reuse the supplied fixture channels in opposite input roles:
             # its large RH fall then precedes the shared minimum T loss.
             onset_at = onset_at or at(70)
             if (
                 not points
+                or hinge_order != 1
+                or onset_bounds is not None
+                and not onset_bounds[0] <= onset_at <= onset_bounds[1]
                 or points[0][1] != trace(0)[1]
                 or onset_at not in {stamp for stamp, _ in points}
                 or sum(stamp > onset_at for stamp, _ in points)
