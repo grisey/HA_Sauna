@@ -933,7 +933,10 @@ fs.mkdirSync(output, { recursive: true });
     const history = f.panel.$("#history");
     return history.scrollHeight - history.clientHeight;
   });
-  assert.ok(scrollRoom > 0, "the shorter viewport provides real internal history overflow");
+  assert.ok(
+    scrollRoom > 0,
+    "the shorter viewport provides real internal history overflow",
+  );
   await readout.hover();
   const scrollBefore = await selectionPage.evaluate(() => {
     const readout = f.panel.$(".history-readout"),
@@ -1461,7 +1464,7 @@ fs.mkdirSync(output, { recursive: true });
       `${action} remains within the narrow viewport`,
     );
   }
-  await selectionPanel.locator("[data-history-selection-context]").click();
+  await selectionPanel.locator("[data-history-selection-context]").press("Enter");
   await settleSelection();
   assert.deepEqual((await selectedValues()).selection, narrowSelection.selection);
   const overviewTab = selectionPanel.locator('.main-tabs [data-action="overview"]');
