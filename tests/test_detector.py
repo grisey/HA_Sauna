@@ -3063,6 +3063,13 @@ class InfusionLifecycleTests(unittest.TestCase):
     def test_native_infusion_end_uses_rh_while_temperature_messages_pause(self):
         points, _, next_rise, next_fall = self._scenario(merged=False)
         fall = self.begin + 2 * self.width
+        # Keep the first background and the resumed T/RH baseline separate
+        # from the second rise; the pause concerns only the first RH ending.
+        shift = 4 * self.side * self.step
+        points = [(second + shift if second >= next_rise else second, value)
+                  for second, value in points]
+        next_rise += shift
+        next_fall += shift
         results = []
         for paused in (False, True):
             with self.subTest(temperature_paused=paused):
@@ -3071,7 +3078,7 @@ class InfusionLifecycleTests(unittest.TestCase):
                 self._feed(detector, fall, points, events)
                 self.assertEqual(len(self._infusions(events)), 1)
                 first = self._infusions(events)[0]
-                for second in range(fall + self.step, fall + (4 * self.side + 1) * self.step, self.step):
+                for second in range(fall + self.step, fall + (3 * self.side + 1) * self.step, self.step):
                     self._send(
                         detector, second, self._value(points, second), events,
                         omit=tuple((position, Quantity.TEMPERATURE) for position in Position)
@@ -3082,10 +3089,38 @@ class InfusionLifecycleTests(unittest.TestCase):
                 results.append(detector.infusion_episode.level_end_at)
                 # Resuming T and a genuinely separate rise still creates a
                 # second event rather than reopening the first episode.
-                self._feed(detector, next_fall, points, events)
+                self._feed(detector, next_fall + self.side * self.step, points, events)
                 self.assertEqual(len(self._infusions(events)), 2)
                 self.assertGreater(self._infusions(events)[1].effective_at, results[-1])
-        self.assertEqual(results[0], results[1])
+        self.assertEqual(len(results), 2)
+        if len(results) == 2:
+            self.assertEqual(results[0], results[1])
+
+    def test_pending_infusion_keeps_bound_evidence_across_empirical_gap(self):
+        points, shapes, _, _ = self._scenario(merged=False)
+        detector = Detector(self.parameters, T0, (Position.UPPER,))
+        events = []
+        first = self.begin + (self.side + 1) * self.step
+        gap = ceil(max(self.p[f"curve_original_gap_{quantity.value}_upper_seconds"]
+                       for quantity in (Quantity.TEMPERATURE, Quantity.HUMIDITY))) + self.step
+        # Continue a real rise after the unavailable interval. Its evidence is
+        # still the same bound component; neither the gap nor ticks confirm it.
+        end = first + gap + (2 * self.side + 2) * self.step
+        points = [(0, self.baseline), (self.begin, self.baseline),
+                  (end + self.width, self.peak)]
+        shapes = [self._shape("rise", self.begin, end + self.width)]
+        with self._patch_math(shapes):
+            self._feed(detector, first, points, events)
+            component = detector._original_infusion_candidate
+            owner = detector.infusion_episode
+            self.assertIsNotNone(component)
+            self.assertEqual(owner.phase, "pending")
+            events.extend(detector.advance(self._at(first + gap - self.step), enabled=True))
+            self.assertIs(detector._original_infusion_candidate, component)
+            self._feed(detector, end, points, events)
+            self.assertIs(detector._original_infusion_candidate, component)
+            self.assertEqual(detector.infusion_episode.bound_at, owner.bound_at)
+            self.assertEqual(self._infusions(events), [])
 
     def test_pending_rise_is_not_expired_by_ticks_without_counterevidence(self):
         points, shapes, _, _ = self._scenario(merged=False)
@@ -3731,12 +3766,9 @@ class InfusionLifecycleTests(unittest.TestCase):
                     self._feed(detector, next_fall, points, events)
                 infusions = self._infusions(events)
                 self.assertEqual(len(infusions), 2)
-                if separated:
-                    self.assertGreater(infusions[1].effective_at, first.level_end_at)
-                    self.assertNotEqual(detector.infusion_episode.bound_at, first.bound_at)
-                    self.assertIs(detector.infusion_episode.confirmed_detection, infusions[1])
-                else:
-                    self.assertEqual(detector.infusion_episode, first)
+                self.assertGreater(infusions[1].effective_at, first.level_end_at)
+                self.assertNotEqual(detector.infusion_episode.bound_at, first.bound_at)
+                self.assertIs(detector.infusion_episode.confirmed_detection, infusions[1])
 
     def test_infusion_confirmation_needs_new_original_not_ticks_or_same_time_correction(self):
         points, shapes, _, _ = self._scenario(merged=False)

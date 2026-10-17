@@ -252,12 +252,17 @@ class Controller:
                 if gate[0] <= at]
         if past:
             self._gang_temperature_gates = self._gang_temperature_gates[past[-1]:]
-        # An entry below the minimum can remain pending after the detector has
-        # advanced. Keep its occupancy history until a new door cycle replaces
-        # it, including any absence that interrupted the waiting entry.
+        # Retain the current door operation's occupancy evidence. An ON pulse
+        # during an open exit must not trim away its earlier absence proof.
         presence_before = at
-        if self._session is not None and self._session.timeline.entry_cycle_available:
-            presence_before = min(at, self._session.timeline.anchor.effective_at)
+        if self._session is not None:
+            timeline = self._session.timeline
+            if timeline.entry_cycle_available:
+                presence_before = min(at, timeline.anchor.effective_at)
+            opening = timeline.opening if timeline.door == Door.OPEN else timeline.closed_opening
+            if (timeline.active is not None and opening is not None
+                    and opening.effective_at > timeline.active.started_at):
+                presence_before = min(presence_before, opening.effective_at)
         past = [index for index, report in enumerate(self._direct_presence_history)
                 if report.timing.effective_at is not None
                 and report.timing.effective_at <= presence_before]
@@ -1120,11 +1125,9 @@ class Controller:
         if previous.timeline.active is None and timeline.active is not None:
             self._presence_entry = None
             if (self.control_mode == "automatic"
-                    and timeline.active.recognition_kind == Kind.PRESENCE_CONFIRMED
-                    and self.direct_presence is not None
-                    and self.direct_presence.available
-                    and self.direct_presence.qualified_presence
-                    and self.direct_presence.occupancy == "present"):
+                    and timeline.active.recognition_kind == Kind.PRESENCE_CONFIRMED):
+                # The accepted entry already owns presence at closure. A later
+                # OFF while the door stays closed does not undo that proof.
                 self._abort_after_run(at)
         if (previous.active_gang_temperature_id is not None
                 and (timeline.active is None

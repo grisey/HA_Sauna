@@ -1104,10 +1104,15 @@ def original_humidity_contrasts(
         if any(not _original_window_valid(window) for _, window in positions):
             return None
         slopes = tuple(window.v / window.e for _, window in positions)
-        changes = tuple((window.v - window.b) / (window.e + window.e_minus)
-                        for _, window in positions)
+        changes = []
+        for _, window in positions:
+            difference = window.v - window.b
+            error = window.e + window.e_minus
+            if not _profile_number(difference) or not _original_positive(error):
+                return None
+            changes.append(difference / error)
         residuals = tuple(value for _, window in positions for value in (window.r, window.r_minus))
-        if not all(_profile_number(value) for value in slopes + changes + residuals):
+        if not all(_profile_number(value) for value in slopes + tuple(changes) + residuals):
             return None
         return OriginalHumidityContrasts(
             positions, min(slopes), min(-value for value in slopes),

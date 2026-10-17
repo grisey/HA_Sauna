@@ -215,6 +215,7 @@ class DirectPresenceControlTests(unittest.TestCase):
         self.door(Kind.DOOR_OPEN, 5)
         self.report("off", 6)
         self.report("on", 7)
+        self.c.discard_recognition_context_before(at(7.5))
         self.door(Kind.VENTILATION, 8)
         self.assertIsNone(self.c.session.timeline.active)
         self.assertEqual(self.c.session.timeline.completed[0].ended_at, at(8))
@@ -249,6 +250,18 @@ class DirectPresenceControlTests(unittest.TestCase):
         self.assertEqual(self.c.session.timeline.active.started_at, at(9))
         self.assertEqual(self.c.session.timeline.active.start_source_event_id, "late-exit-close")
         self.assertEqual(self.c.session.timeline.gang_count, 1)
+
+    def test_late_closed_entry_ends_cooling_despite_later_absence_report(self):
+        self.start()
+        self.door(Kind.DOOR_OPEN, 5)
+        self.report("off", 6)
+        self.door(Kind.VENTILATION, 7)
+        self.report("on", 8)
+        self.report("off", 10)
+        self.c.process(Event("late-return-close", "s", Kind.DOOR_CLOSE, at(9), at(11)))
+        self.assertEqual(self.c.session.timeline.active.started_at, at(9))
+        self.assertIsNone(self.c.session.after_run)
+        self.assertEqual(self.c.phase, "saunagang")
 
     def test_initial_closed_door_does_not_establish_an_entry_cycle(self):
         timeline = self.c.session.timeline
@@ -582,14 +595,14 @@ class DirectPresenceRuntimeTests(unittest.TestCase):
             fixture = DetectorTests()
             detector = fixture._ventilation_detector()
             _, plateau, end, values = fixture._ventilation_curve(detector)
-            found = fixture._feed_ventilation(detector, plateau, values)
+            found = fixture._feed_pending_ventilation(detector, end, values)
             self.assertTrue(detector.open)
             self.assertFalse(any(item.kind == Kind.VENTILATION for item in found))
             runtime.detector = detector
-            opening_end = plateau
+            opening_end = detector.index * detector.grid_seconds
             opening_index = detector.index
             clock[0] = T0 + timedelta(seconds=opening_end)
-            runtime.controller.set_temperature(values(plateau)[0], clock[0])
+            runtime.controller.set_temperature(values(opening_end)[0], clock[0])
             for index, item in enumerate(found):
                 await runtime.receive(Event(f"fixture:{index}", sid, item.kind,
                                             item.effective_at, clock[0]))
@@ -597,7 +610,7 @@ class DirectPresenceRuntimeTests(unittest.TestCase):
             await presence("off", opening_end + .2, opening_end + .2)
             self.assertIsNotNone(runtime.session.timeline.active)
             step = detector.grid_seconds
-            for second in range(plateau + step, end + step, step):
+            for second in range(opening_end + step, end + step, step):
                 temperature, humidity = values(second)
                 for position in (Position.UPPER, Position.LOWER):
                     self.assertTrue(detector.accept(measurement(
@@ -607,7 +620,7 @@ class DirectPresenceRuntimeTests(unittest.TestCase):
                         position, Quantity.HUMIDITY, humidity, second,
                         measured=T0 + timedelta(seconds=second))))
             self.assertEqual(detector.index, opening_index)
-            self.assertEqual(len(detector.pending), 4 * ((end - plateau) // step))
+            self.assertEqual(len(detector.pending), 4 * ((end - opening_end) // step))
 
             received = end + 1
             await presence(state, opening_end + .7, received)

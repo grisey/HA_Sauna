@@ -2146,10 +2146,16 @@ class Detector:
             if component is not None and not self._original_contiguous(
                 prefix, component["continuity"],
             ):
-                self._pause_infusion_episode()
-                episode = self._infusion_episode
-                component = None
-                trace["original_infusion"]["candidate_reset_reason"] = "original_support_disconnected"
+                # Zeitabstand oder ausgelagerte Ringstütze sind kein Gegenbeleg.
+                # Die gebundenen Originale bleiben beim selben Besitzer. Neue
+                # Bestätigungen brauchen weiterhin neue auswertbare RH-Blöcke,
+                # den gebundenen Formnachweis und positive Wasserbelege.
+                trace["original_infusion"]["support_continuity"] = _gate(
+                    None, reason="unobserved_original_interval",
+                )
+                component["resume_after"] = {
+                    name: pair.humidity.newest_at for name, pair in contrasts.positions
+                }
             if component is not None and prefix.original:
                 component["continuity"] = tuple(
                     (name, quantity, window.newest_at)
@@ -2277,6 +2283,11 @@ class Detector:
                         form.fresh_current == self.p["curve_original_samples"]
                         for form in followups.values()
                     )
+                    resumed_block = all(
+                        pair.humidity.current[0][0] > component["resume_after"][name]
+                        for name, pair in contrasts.positions
+                    ) if component.get("resume_after") else True
+                    fresh_block = fresh_block and resumed_block
                     # Die beobachtete Aststärke ist noch keine Bestätigung.
                     # Ein kurzer klarer Puls darf seinen starken Anstieg
                     # behalten und später durch den ganzen Fallblock belegen.
@@ -2307,7 +2318,7 @@ class Detector:
                         component["fall_ready"] = False
                         component.pop("fall_windows", None)
                     fallen = bool(
-                        component["strong"] and prefix.original
+                        component["strong"] and prefix.original and resumed_block
                         and contrasts.fall > significance
                         and all(pair.humidity.current[0][0] > component["peaks"][Position(name)][0]
                                 for name, pair in contrasts.positions)

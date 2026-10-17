@@ -90,7 +90,7 @@ Originale und Raster-Haltewerte erhöhen die Anzahl nicht.
 Ein gesondert gebundener Folgezeuge bildet eine weitere feste Referenz;
 die Frische seiner Folgeblöcke wird gegen seine eigenen Originalzeiten geprüft.
 
-Für Öffnung, Schließung und eine laufende Aufgusskomponente wird der
+Für Öffnung und Schließung wird der
 lückenlose Anschluss je beteiligter Messposition und Messgröße an jedem
 auswertbaren Eingangspräfix geprüft. Der Anschlussanker rückt mit dem jüngsten
 Original weiter; die fachliche Referenz der Bindung bleibt dabei unverändert.
@@ -98,6 +98,11 @@ Damit muss der ursprüngliche Kandidatenbeginn bei einem langen Ast nicht
 dauerhaft im Ringspeicher liegen. Eine Lücke zwischen den fortgeschriebenen
 Ankern und den neuen Originalen kann auch dann den Kandidaten verwerfen, wenn
 die jüngsten `2K` Originale für sich wieder gültige Fenster bilden.
+Eine laufende Aufgusskomponente behält dagegen ihre bereits gebundenen
+Originalbelege bei zeitlich unbekanntem Anschluss. Die Lücke selbst bestätigt
+nichts; neue Entscheidungen benötigen weiterhin auswertbare neue Originalblöcke,
+den ursprünglichen Formnachweis und positive Wasserbelege im selben Quellen-
+und Ereigniskontext.
 
 ### RH-Beginn und Knicktoleranz
 
