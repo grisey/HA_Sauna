@@ -37,9 +37,12 @@ def local_features(
     onset_at=None,
     direction=None,
     onset_not_before=None,
+    hinge_order=1,
     target=None,
 ):
-    """Controlled local evidence; the R04 method below uses real mathematics."""
+    """Controlled linear-kink evidence; R04 below uses real mathematics."""
+    if hinge_order != 1:
+        return None
     onset_at = onset_at or target
     result = supported_opening(
         samples,
@@ -1284,7 +1287,7 @@ class CurveCandidateLifecycleTests(unittest.TestCase):
             # its test methods. The old curve-package route remains below.
             recovery = r04_recovery.R04DoorRecoveryTests()
             row = next(item for item in observed if item["at"] == close.trace_at)
-            self.assertEqual(close.channels, ("upper", "lower"))
+            self.assertEqual(close.channels, (Position.UPPER.value,))
             recovery._assert_native_earlier_attribution(
                 row, close, inputs, values, package,
             )

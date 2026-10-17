@@ -2813,9 +2813,11 @@ class OriginalCurveFollowupTests(unittest.TestCase):
         self.assertNotIn(Kind.INFUSION, [item.kind for item in events])
         candidate = detector._original_infusion_candidate
         self.assertIsNotNone(candidate)
+        self.assertEqual(candidate["positions"], (Position.UPPER,))
         bound = {name: humidity for name, _, humidity in candidate["newest"]}
+        self.assertEqual(set(bound), {Position.UPPER.value})
         originals = self._originals(detector)
-        for position in detector.positions:
+        for position in candidate["positions"]:
             self.assertLess(
                 sum(
                     stamp > bound[position.value]
@@ -2835,6 +2837,7 @@ class OriginalCurveFollowupTests(unittest.TestCase):
         )
         infusions = [item for item in events if item.kind is Kind.INFUSION]
         self.assertEqual(len(infusions), 1)
+        self.assertEqual(infusions[0].channels, (Position.UPPER.value,))
         self.assertGreater(infusions[0].trace_at, peak_at)
 
     def test_renewed_fall_prevents_late_isolated_recovery_confirming_old_close(self):
@@ -3355,8 +3358,9 @@ class NativeInfusionOnsetTests(unittest.TestCase):
                     break
         component = detector._original_infusion_candidate
         self.assertIsNotNone(component)
+        self.assertEqual(component["positions"], (Position.UPPER,))
         intervals = dict(component["onset_intervals"])
-        self.assertEqual(set(intervals), set(detector.positions))
+        self.assertEqual(set(intervals), {Position.UPPER})
         beginnings = {position: interval.previous[0] for position, interval in intervals.items()}
         # The independent native route can bind before the broad curve route
         # has any candidate. Supply the later helper result at that boundary.
@@ -3365,11 +3369,16 @@ class NativeInfusionOnsetTests(unittest.TestCase):
                                       onset_at=beginning - timedelta(seconds=fixture.step))
             for position, beginning in beginnings.items()
         }
+        original_witness = detector._original_rise_witness
         with patch.object(detector, "_original_rise_witness",
-                          side_effect=lambda position, *_: candidates[position]):
+                          side_effect=lambda position, *args: (
+                              candidates[position] if position in candidates
+                              else original_witness(position, *args)
+                          )):
             fixture._feed(detector, peak + fixture.width, points, events)
         infusions = fixture._infusions(events)
         self.assertEqual(len(infusions), 1)
+        self.assertEqual(infusions[0].channels, (Position.UPPER.value,))
         self.assertEqual(infusions[0].effective_at, min(beginnings.values()))
         self.assertEqual(component["onset_intervals"], intervals)
         self.assertEqual(component["onset_witnesses"], {})

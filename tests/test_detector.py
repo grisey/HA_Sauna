@@ -872,6 +872,41 @@ class DetectorTests(unittest.TestCase):
         self.assertEqual([item.kind for item in events].count(Kind.PERSON_STRONG), 1)
 
 
+    def test_lower_loss_keeps_the_upper_person_hold_and_confirmation(self):
+        detector = Detector(detection_parameters(), T0)
+        reference = Detector(detection_parameters(), T0)
+        p = detector.p
+        step = p["person_step_seconds"]
+        first_full = ceil((p["median_seconds"] - 1 + p["strong_window_seconds"]) / step) * step
+        actual, expected = [], []
+        for second in range(ceil(first_full) + 1):
+            actual += sample(detector, second, 80, 30 + .03 * second)
+            expected += sample(reference, second, 80, 30 + .03 * second)
+        self.assertGreater(detector.diagnostic["holds"].get("strong", 0), 0)
+        self.assertEqual(detector._person_owner["strong"], Position.UPPER)
+        self.assertNotIn(Kind.PERSON_STRONG, [item.kind for item in actual])
+        gap_at = detector.index + 1
+        complete = gap_at + ceil(p["strong_hold_seconds"] + 2 * step)
+        for second in range(gap_at, complete + 1):
+            expected += sample(reference, second, 80, 30 + .03 * second)
+            if second == gap_at:
+                for position in detector.positions:
+                    for quantity, value in ((Quantity.TEMPERATURE, 80),
+                                            (Quantity.HUMIDITY, 30 + .03 * second)):
+                        self.assertTrue(detector.accept(measurement(
+                            position, quantity, None if position == Position.LOWER else value,
+                            second,
+                        )))
+                actual += detector.advance(T0 + timedelta(seconds=second), enabled=True)
+            else:
+                actual += sample(detector, second, 80, 30 + .03 * second)
+            self.assertEqual(actual, expected)
+            self.assertEqual(detector.diagnostic["holds"].get("strong", 0),
+                             reference.diagnostic["holds"].get("strong", 0))
+        strong = [item for item in actual if item.kind == Kind.PERSON_STRONG]
+        self.assertEqual(len(strong), 1)
+        self.assertEqual(strong[0].channels, (Position.UPPER.value,))
+
     def test_gap_restarts_an_unfinished_strong_hold(self):
         detector = Detector(detection_parameters(), T0)
         p = detector.p
@@ -1762,9 +1797,15 @@ class DetectorTests(unittest.TestCase):
                     self.assertNotEqual(detector._curve_proposal_status[proposal_key]["status"],
                                         "consumed")
                 else:
-                    self.assertFalse(detector._original_humidity_available(
-                        detector.positions, T0 + timedelta(seconds=stale_at),
-                    ))
+                    # A valid current sensor remains available even when its
+                    # original window is too old to supply a fresh confirmation.
+                    at = T0 + timedelta(seconds=stale_at)
+                    self.assertTrue(detector._original_humidity_available(detector.positions, at))
+                    support = detector._original_time_support_cache[
+                        Position.UPPER, Quantity.HUMIDITY
+                    ][2]
+                    self.assertIsNotNone(support)
+                    self.assertFalse(support.fresh(at))
                     self.assertNotIn("confirmation_received_at", detector.door_episode["original_open"])
 
 
@@ -1934,12 +1975,28 @@ class DetectorTests(unittest.TestCase):
         second = (detector.index + 1) * step
         events += sample(detector, second, current - .1 * step, 30, detector.positions,
                          humidity_cadence=cadence)
-        self.assertNotIn(Kind.DOOR_OPEN, [item.kind for item in events])
-        self.assertFalse(detector.open)
-        self.assertNotEqual(detector._curve_candidates[key].candidate_id, original.candidate_id)
-        self.assertTrue(all(candidate.candidate_id != original.candidate_id
-                            for _, candidate in detector._curve_proposals[proposal_key].candidates))
-        self.assertIsNone(detector._curve_proposals[proposal_key].evidence_bound_at)
+        # The completed new fall may confirm on its next supporting original.
+        # Its own identity and epoch must supply that confirmation, never the
+        # pre-loss candidate or the flat recovery interval.
+        openings = [item for item in events if item.kind == Kind.DOOR_OPEN]
+        self.assertEqual(len(openings), 1)
+        self.assertTrue(detector.open)
+        opening = openings[0]
+        self.assertEqual(opening.channels, (Position.UPPER.value,))
+        self.assertEqual(opening.effective_at, fresh.onset_at)
+        self.assertEqual(opening.trace_at, T0 + timedelta(seconds=second))
+        self.assertEqual(opening.detected_at, opening.trace_at)
+        evidence = detector._curve_status[key]
+        self.assertEqual(evidence["candidate_id"], fresh.candidate_id)
+        self.assertGreater(evidence["fresh_newest_at"], fresh.first_newest_at)
+        self.assertEqual(evidence["fresh_observed_at"], opening.trace_at)
+        consumed = detector._curve_proposal_status[proposal_key]
+        self.assertEqual(consumed["status"], "consumed")
+        self.assertEqual(consumed["consumed_candidate_ids"], (fresh.candidate_id,))
+        self.assertEqual(consumed["positions"], (Position.UPPER.value,))
+        self.assertEqual(tuple(witness["source_epochs"] for witness in consumed["witnesses"]),
+                         (fresh.context[1],))
+        self.assertTrue(all(witness["supported"] for witness in consumed["confirmation"]))
 
     def test_additional_door_rule_uses_the_leading_available_sensor(self):
         cases = (
@@ -3247,6 +3304,51 @@ class InfusionLifecycleTests(unittest.TestCase):
             self.assertIs(detector._original_infusion_candidate, component)
             self.assertEqual(detector.infusion_episode.bound_at, owner.bound_at)
             self.assertEqual(self._infusions(events), [])
+
+    def test_new_observed_pulse_after_gap_uses_its_own_beginning(self):
+        points, shapes, next_rise, next_fall = self._scenario(merged=False)
+        detector = Detector(self.parameters, T0, (Position.UPPER,))
+        events = []
+        first = self.begin + (self.side + 1) * self.step
+        resume = next_rise - (2 * self.side + 1) * self.step
+        self.assertGreater(resume - first, max(
+            self.p[f"curve_original_gap_{quantity.value}_upper_seconds"]
+            for quantity in (Quantity.TEMPERATURE, Quantity.HUMIDITY)
+        ))
+        # Omit reports from the existing first pulse's unobserved peak/tail.
+        # The second pulse and its preceding plateau keep their original inputs.
+        with self._patch_math(shapes):
+            self._feed(detector, first, points, events)
+            old = detector.infusion_episode
+            component = detector._position_state(Position.UPPER)["infusion_candidate"]
+            context = detector._original_context()
+            self.assertIsNotNone(component)
+            self.assertEqual(old.phase, "pending")
+            self.assertEqual(self._infusions(events), [])
+            events.extend(detector.advance(self._at(resume - self.step), enabled=True))
+            self.assertIs(detector._position_state(Position.UPPER)["infusion_candidate"], component)
+            self.assertEqual(detector.infusion_episode.bound_at, old.bound_at)
+            self.assertEqual(self._infusions(events), [])
+            self._feed(detector, resume, points, events)
+            self.assertIs(detector._position_state(Position.UPPER)["infusion_candidate"], component)
+            self.assertEqual(self._infusions(events), [])
+            support = detector._original_time_support_cache[
+                Position.UPPER, Quantity.HUMIDITY
+            ][2]
+            self.assertFalse(support.covers(self._at(first), self._at(resume)))
+            self._feed(detector, next_fall, points, events)
+        infusions = self._infusions(events)
+        self.assertEqual(len(infusions), 1)
+        self.assertEqual(infusions[0].effective_at, self._at(next_rise))
+        self.assertGreater(infusions[0].trace_at, self._at(next_rise))
+        self.assertEqual(infusions[0].channels, (Position.UPPER.value,))
+        self.assertEqual(detector._original_context(), context)
+        self.assertNotEqual(detector.infusion_episode.bound_at, old.bound_at)
+        current = detector._position_state(Position.UPPER)["infusion_candidate"]
+        self.assertIsNot(current, component)
+        self.assertTrue(all(pair.temperature.start_at >= self._at(resume)
+                            and pair.humidity.start_at >= self._at(resume)
+                            for _, pair in current["binding_windows"]))
 
     def test_pending_rise_is_not_expired_by_ticks_without_counterevidence(self):
         points, shapes, _, _ = self._scenario(merged=False)

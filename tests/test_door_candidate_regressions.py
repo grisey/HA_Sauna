@@ -113,6 +113,8 @@ class DoorCandidateRegressionTests(unittest.TestCase):
         def observe(row):
             if Kind.DOOR_OPEN in row.get("signals", ()):
                 diagnostic = detector_fixtures.opening_diagnostic(detector, row)
+                diagnostic["position_selection"] = row.get("position_selection", {})
+                diagnostic["position_evidence"] = row.get("position_evidence", {})
                 diagnostic["humidity_context"] = {
                     position.value: tuple(series[field] for field in ("source", "time_basis", "epoch"))
                     for (position, quantity), series in detector._curve_series.items()

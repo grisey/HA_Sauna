@@ -28,8 +28,10 @@ Positionen bilden kein künstliches Messpaar.
 Standardmäßig führt der obere Sensor. Ein eigener klarer Beleg benötigt keine
 Bestätigung durch den unteren Sensor. Abweichende Werte, Ausfälle oder
 Korrekturen an der unbenutzten zweiten Position verändern diesen Beleg nicht.
-Bei fehlender benötigter Datengrundlage oben kann ein gültiger unterer Sensor
-mit seinen eigenen Originalen übernehmen.
+Ist ein benötigter oberer Messwert nicht mehr auswertbar, kann ein gültiger
+unterer Sensor mit seinen eigenen Originalen übernehmen. Ein lediglich noch
+nicht wieder auswertbares Kurvenfenster macht den führenden Sensor nicht
+unverfügbar und erlaubt für sich keinen Ersatz.
 
 Der zweite Sensor wird nur bei einem bereits vorhandenen, noch unklaren
 Muster des führenden Sensors zur Klärung herangezogen. Ein vollständig
@@ -118,8 +120,18 @@ Historische gültige Stützen bleiben als vergangener Nachweis erhalten.
 Gesondert wird die Frische des jüngsten Originals mit der aus den bereits
 abgeschlossenen Abständen bestimmten nächsten Grenze geprüft. Die Wartezeit
 bis zur Auswertung vergrößert diese Grenze nicht. Diese Zeitstütze ist keine
-Sensorausfallfrist. Ein Wechsel der Quelle oder Verfügbarkeit beginnt einen
-neuen Quellenabschnitt.
+Sensorausfallfrist. Ein Wechsel der Quelle oder Zeitbasis sowie ein ausdrücklich
+ungültiger Messwert beginnen einen neuen Quellenabschnitt. Ein bloßer
+Sensor-Timeout ändert die aktuelle Verfügbarkeit, erhält aber gültige
+historische Stützen.
+
+Fehlen neue Originale, warten bereits gültig gebundene Fall-, Schluss- und
+Lüftungsbelege unverändert. Ein fehlendes aktuelles Auswertefenster
+ist weder eine Gegenform noch eine Bestätigung. Auch ein späterer Messwert
+mit größerem Abstand belegt zunächst nur einen unbekannten Anschluss.
+Die Lücke darf weder überbrückt noch allein als Widerlegung verwendet werden.
+Ein Quellenwechsel, ein ungültiger Wert oder die Korrektur tragender Originale
+wird unabhängig davon geprüft.
 
 Vorhandene gültige Messzeiten bleiben erhalten; ersatzweise verwendete
 Empfangszeiten bilden eine eigene Zeitbasis. Fehlende oder nicht auswertbare
@@ -163,19 +175,20 @@ Originale und Raster-Haltewerte erhöhen die Anzahl nicht.
 Ein gesondert gebundener Folgezeuge bildet eine weitere feste Referenz;
 die Frische seiner Folgeblöcke wird gegen seine eigenen Originalzeiten geprüft.
 
-Für Öffnung und Schließung wird der
+Für Öffnung, Schließung und die Lüftungsstufen wird der
 lückenlose Anschluss je verwendeter Messgröße des Sensors an jedem
 auswertbaren Eingangspräfix geprüft. Der Anschlussanker rückt mit dem jüngsten
 Original weiter; die fachliche Referenz der Bindung bleibt dabei unverändert.
 Damit muss der ursprüngliche Kandidatenbeginn bei einem langen Ast nicht
 dauerhaft im Ringspeicher liegen. Eine Lücke zwischen den fortgeschriebenen
-Ankern und den neuen Originalen kann auch dann den Kandidaten verwerfen, wenn
-die jüngsten `2K` Originale für sich wieder gültige Fenster bilden.
-Eine laufende Aufgusskomponente behält dagegen ihre bereits gebundenen
-Originalbelege bei zeitlich unbekanntem Anschluss. Die Lücke selbst bestätigt
-nichts; neue Entscheidungen benötigen weiterhin auswertbare neue Originalblöcke,
-den ursprünglichen Formnachweis und positive Wasserbelege im selben Quellen-
-und Ereigniskontext.
+Ankern und den neuen Originalen unterbricht den nachgewiesenen Anschluss,
+auch wenn die jüngsten `2K` Originale für sich wieder gültige Fenster bilden.
+Die bereits gültigen gebundenen Originalbelege bleiben als Referenz erhalten.
+Die Lücke selbst bestätigt nichts; neue Entscheidungen benötigen weiterhin
+passende neue eigene Originalblöcke und den fachlichen Formnachweis im selben
+Quellen- und Ereigniskontext. Bei Aufgüssen gehören dazu die positiven
+Wasserbelege. Solange diese Voraussetzungen fehlen, bleibt die Entscheidung
+offen.
 
 ### RH-Beginn und Knicktoleranz
 
