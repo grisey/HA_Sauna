@@ -1772,6 +1772,7 @@ class Detector:
                     not self._original_opening_humidity_connected(
                         points[key[1].value][1], onset,
                         windows[key[1].value].humidity, key[1].value,
+                        self._original_prefix_time_support(prefix, key[1], key[2]),
                     )
                     for key, onset in candidate["onset_witnesses"]
                     if key[2] == Quantity.HUMIDITY
