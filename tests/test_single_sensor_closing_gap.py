@@ -48,7 +48,7 @@ class SingleSensorClosingGapTests(unittest.TestCase):
             Position.UPPER, Quantity.TEMPERATURE
         ][2]
         self.assertIsNotNone(support)
-        self.assertTrue(support.fresh(fixture.at(tick)))
+        self.assertTrue(support.pairing_fresh(fixture.at(tick)))
         self.assertEqual(
             support.newest_at,
             detector.latest[Position.UPPER, Quantity.TEMPERATURE].measured_at,
@@ -117,7 +117,7 @@ class SingleSensorClosingGapTests(unittest.TestCase):
                 # Reach the observed original-cadence gap, while the existing
                 # sensor timeout still permits every frozen upper measurement.
                 self.assertFalse(
-                    support.fresh(last_at),
+                    support.pairing_fresh(last_at),
                     "The existing tail must extend beyond the own original cadence",
                 )
                 for sample in upper_samples:
@@ -140,7 +140,7 @@ class SingleSensorClosingGapTests(unittest.TestCase):
                     self.assertIs(
                         self.upper_candidate(detector), candidate,
                         f"Bound close lost without a new upper original at {now}; "
-                        f"delivery={delivery}, original_support_fresh={support.fresh(now)}",
+                        f"delivery={delivery}, original_support_fresh={support.pairing_fresh(now)}",
                     )
                     self.assertEqual(candidate["received_at"], bound_at)
                     self.assertEqual(candidate["windows"], bound_windows)
@@ -153,7 +153,7 @@ class SingleSensorClosingGapTests(unittest.TestCase):
                 )
                 if delivery != "ticks_only":
                     self.assertTrue(
-                        any(not support.fresh(record["at"]) for record in choices),
+                        any(not support.pairing_fresh(record["at"]) for record in choices),
                         "The lower reports must actually exercise selection after the own cadence gap",
                     )
                 for sample in upper_samples:
@@ -173,7 +173,7 @@ class SingleSensorClosingGapTests(unittest.TestCase):
         bound_at, windows = candidate["received_at"], candidate["windows"]
         for sample in samples:
             self.assertGreater((last_at - sample.received_at).total_seconds(), timeout)
-        self.assertFalse(support.fresh(last_at))
+        self.assertFalse(support.pairing_fresh(last_at))
         # No fabricated sensor report extends freshness. Current availability
         # must expire while the already observed historical form stays intact.
         for current_tick in range(tick + 1, last_tick + 1):
@@ -322,7 +322,7 @@ class SingleSensorClosingGapTests(unittest.TestCase):
         self.assertEqual(results[True].door_close_evidence, results[False].door_close_evidence)
         self.assertEqual(results[True].trace_at, results[False].trace_at)
 
-    def test_first_original_after_silence_cannot_bridge_missing_close_support(self):
+    def test_first_original_after_silence_keeps_native_anchor_without_tick_confirmation(self):
         detector, events, candidate, support, tick = self.seed_bound_upper_close()
         fixture = self.fixture
         resume_tick = fixture.recovery_end
@@ -336,7 +336,7 @@ class SingleSensorClosingGapTests(unittest.TestCase):
             for quantity in (Quantity.TEMPERATURE, Quantity.HUMIDITY)
         }
         last_upper = detector.latest[Position.UPPER, Quantity.TEMPERATURE].measured_at
-        self.assertFalse(support.fresh(resume_at))
+        self.assertFalse(support.pairing_fresh(resume_at))
         self.assertLess(
             (resume_at - last_upper).total_seconds(),
             fixture.parameters.values["sensor_timeout_seconds"],
@@ -383,10 +383,8 @@ class SingleSensorClosingGapTests(unittest.TestCase):
             Position.UPPER, Quantity.TEMPERATURE
         ][2]
         self.assertIsNotNone(resumed_support)
-        self.assertFalse(
-            resumed_support.covers(last_upper, resume_at),
-            "Retaining a bound proof must not connect originals across the observed gap",
-        )
+        self.assertTrue(resumed_support.covers(last_upper, resume_at))
+        self.assertFalse(resumed_support.pairing_covers(last_upper, resume_at))
 
     def seed_correctable_bound_upper_close(self):
         """Target an actually bound original while it is still the latest input.

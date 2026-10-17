@@ -74,14 +74,13 @@ Index `p` bezeichnet diese Position; aus den beiden Geräten wird kein
 positionsübergreifender Mindestbeleg gebildet. Die getrennten Originalzeiten
 der beiden Messgrößen bleiben erhalten.
 
-Die Fensterdiagnose hält für beide Positionen und Messgrößen die tatsächlich
-verwendete Quelle, ihren Abschnitt, die Originalanzahl und die Entscheidung
-über die Zeitstütze fest. Bei getrennten Stützen bleiben die betroffenen
-Originalzeiten und die damals verwendete Lückengrenze erhalten; eine spätere
-Meldung berechnet diese Grenze nicht rückwirkend neu. Fehlende Originale,
-unterbrochene Stützen und abgelaufene Frische sind getrennte Ablehnungsgründe.
-Diese Angaben bleiben auch ohne gebundenes Muster sichtbar. Sie beschreiben
-die Auswertbarkeit des Eingangs und ändern weder Sensorvorrang noch Formregeln.
+Die Fensterdiagnose hält für beide Positionen und Messgrößen Quelle,
+Quellenabschnitt, Originalanzahl und Auswertbarkeit fest. Gültige native
+Originalfenster werden unabhängig vom Berichtstakt ausgewertet. Der getrennte
+Zuordnungsbereich für abgeleitete Wasserpaare bewahrt seine bisherigen
+Abstandsgrenzen; seine Einschränkung ist keine ungültige native Messfolge.
+Diese Angaben bleiben auch ohne gebundenes Muster sichtbar und ändern weder
+Sensorvorrang noch Formregeln.
 
 ## Kurvenbeginn und Bestätigung
 
@@ -108,43 +107,30 @@ Katalogparameter. `E` begrenzt die Steigungsänderung unter der zusätzlichen
 Annahme von Wertstörungen bis `ε`; daraus folgt keine zugesicherte
 Sensorgenauigkeit oder Ereigniswahrscheinlichkeit.
 
-Fenstergröße, positionsbezogene Skalen und zulässige Originalabstände sowie
+Fenstergröße, positionsbezogene Skalen und Grenzen der Wasserpaarung sowie
 die Auflösungsschwelle `s`, Öffnungsschwelle `γO`, Anstiegsschwellen `γN` und
 `γC` und Hintergrundgrenzen `β` und `η` stehen als `curve_original_*` im
 [`Parameterkatalog`](../custom_components/ha_sauna/defaults.json).
 Der Katalog legt auch ihre Zuordnung zur Konfigurationsoberfläche fest.
 
-Die Fenster benötigen gültige Originale mit strikt steigenden Zeiten in
-zusammenhängenden Quellenabschnitten. Je Messkanal bildet
-`curve_original_gap_*` den anfänglichen empirischen Stützbereich. Solange
-weniger als `2K − 1` abgeschlossene Originalabstände vorliegen, gilt nur
-dieser Katalogwert. Danach ergibt sich die Grenze für den nächsten Anschluss
-aus dem größeren Wert von Katalogwert und oberem Tukey-Innenzaun
-`Q3 + 1,5 × IQR` der letzten `2K − 1` zuvor abgeschlossenen Abstände.
-`Q1` und `Q3` sind die Tukey-Hinges; `IQR = Q3 − Q1`. Der gerade geprüfte
-Abstand bestimmt seine eigene Grenze nicht. Ein langsamerer Messstrom
-benötigt zunächst eine vollständige Abstandshistorie und anschließend einen
-vollständigen Originalblock mit durchgängig zulässigen Abständen.
+Die Fenster benötigen endliche gültige Originale mit strikt steigenden Zeiten
+innerhalb derselben Quelle, Zeitbasis und Epoche. OLS verwendet die tatsächlichen
+Zeitabstände. Ein unregelmäßiger Berichtstakt oder das Alter eines bereits
+berechneten Fensters entwertet diese vergangenen Originale nicht. Zwischenwerte
+werden für diese Auswertung weder ergänzt noch als beobachtet behandelt.
 
-Die Anschlussprüfung umfasst auch den Übergang zwischen beiden Fenstern.
-Jeder Anschluss behält die Entscheidung aus seinem damaligen Quellenpräfix;
-ein später gelernter Takt macht eine frühere Lücke nicht rückwirkend zulässig.
-Historische gültige Stützen bleiben als vergangener Nachweis erhalten.
-Gesondert wird die Frische des jüngsten Originals mit der aus den bereits
-abgeschlossenen Abständen bestimmten nächsten Grenze geprüft. Die Wartezeit
-bis zur Auswertung vergrößert diese Grenze nicht. Diese Zeitstütze ist keine
-Sensorausfallfrist. Ein Wechsel der Quelle oder Zeitbasis sowie ein ausdrücklich
-ungültiger Messwert beginnen einen neuen Quellenabschnitt. Ein bloßer
-Sensor-Timeout ändert die aktuelle Verfügbarkeit, erhält aber gültige
-historische Stützen.
+Ein Quellenwechsel, eine andere Zeitbasis oder ein ausdrücklich ungültiger
+Messwert beginnt einen neuen Quellenabschnitt. Korrekturen tragender Originale
+prüfen die abhängigen Belege erneut. Ein bloßer Sensor-Timeout verändert die
+aktuelle Verfügbarkeit, erhält aber gültige historische Belege. Erkennung und
+Heizsteuerung konsumieren ihren jeweiligen Verfügbarkeitsvertrag; eine aus
+Meldeabständen gelernte zweite Ausfallfrist entsteht nicht.
 
 Fehlen neue Originale, warten bereits gültig gebundene Fall-, Schluss- und
-Lüftungsbelege unverändert. Ein fehlendes aktuelles Auswertefenster
-ist weder eine Gegenform noch eine Bestätigung. Auch ein späterer Messwert
-mit größerem Abstand belegt zunächst nur einen unbekannten Anschluss.
-Die Lücke darf weder überbrückt noch allein als Widerlegung verwendet werden.
-Ein Quellenwechsel, ein ungültiger Wert oder die Korrektur tragender Originale
-wird unabhängig davon geprüft.
+Lüftungsbelege. Schweigen liefert weder eine Gegenform noch eine Bestätigung.
+Ein späteres gültiges Original derselben Quelle wird mit seiner tatsächlichen
+Zeit ausgewertet. Der unbekannte physikalische Verlauf zwischen den Originalen
+wird dadurch nicht nachträglich zu einer beobachteten Messfolge.
 
 Vorhandene gültige Messzeiten bleiben erhalten; ersatzweise verwendete
 Empfangszeiten bilden eine eigene Zeitbasis. Fehlende oder nicht auswertbare
@@ -193,15 +179,13 @@ lückenlose Anschluss je verwendeter Messgröße des Sensors an jedem
 auswertbaren Eingangspräfix geprüft. Der Anschlussanker rückt mit dem jüngsten
 Original weiter; die fachliche Referenz der Bindung bleibt dabei unverändert.
 Damit muss der ursprüngliche Kandidatenbeginn bei einem langen Ast nicht
-dauerhaft im Ringspeicher liegen. Eine Lücke zwischen den fortgeschriebenen
-Ankern und den neuen Originalen unterbricht den nachgewiesenen Anschluss,
-auch wenn die jüngsten `2K` Originale für sich wieder gültige Fenster bilden.
-Die bereits gültigen gebundenen Originalbelege bleiben als Referenz erhalten.
-Die Lücke selbst bestätigt nichts; neue Entscheidungen benötigen weiterhin
-passende neue eigene Originalblöcke und den fachlichen Formnachweis im selben
-Quellen- und Ereigniskontext. Bei Aufgüssen gehören dazu die positiven
-Wasserbelege. Solange diese Voraussetzungen fehlen, bleibt die Entscheidung
-offen.
+dauerhaft im Ringspeicher liegen. Ein unerklärter Verlust des fortgeschriebenen
+Ankers oder ein anderer Quellenabschnitt unterbricht dessen Verbindung; ein
+ungewöhnlicher Meldeabstand allein tut das nicht. Bereits gebundene gültige
+Originalbelege bleiben als Referenz erhalten. Neue Entscheidungen benötigen
+weiterhin passende neue eigene Originalblöcke und den fachlichen Formnachweis
+im selben Quellen- und Ereigniskontext. Bei Aufgüssen gehören dazu die positiven
+Wasserbelege. Solange diese Voraussetzungen fehlen, bleibt die Entscheidung offen.
 
 ### RH-Beginn und Knicktoleranz
 
@@ -219,10 +203,10 @@ A↓   = min(−v_Hp/E_Hp, −q_Hp)
 Zusätzlich wird die Steigungsdifferenz `δ_p = v_Hp − b_Hp` je Position gegen
 eine Knicktoleranz geprüft. Ihr historischer Maßstab stammt ausschließlich aus
 Originalen strikt vor dem Anfang des aktuellen `2K`-Blocks. Verwendet wird der
-jüngste zusammenhängende Abschnitt derselben Quelle und Zeitbasis innerhalb
-der gespeicherten Kurvenoriginale. Die zulässigen Originalabstände gelten
-innerhalb dieser Historie und an ihrem Anschluss an den aktuellen Block;
-eine größere Lücke schneidet ältere Historie ab.
+vorhandene gültige Abschnitt derselben Quelle und Zeitbasis innerhalb
+der gespeicherten Kurvenoriginale. Unregelmäßige Meldeabstände schneiden diese
+bekannten historischen Werte nicht ab. Tatsächliche Quellenunterbrechungen
+und ungültige Originale bleiben getrennt.
 
 Aus diesem Abschnitt werden alle um jeweils ein Original verschobenen
 vollständigen `2K`-Blöcke gebildet. Jedes Paar aus zwei disjunkten
@@ -623,7 +607,8 @@ aber für sich weder die Bindung noch den gehaltenen Fall. Wiederholte Ticks
 und fremde neue Originale ersetzen keine frischen T-Blöcke der betroffenen
 Rolle.
 
-Eine Lücke oder ein Quellenbruch entwertet die davon abhängigen Nachweise.
+Ein tatsächlicher Verlust benötigter Originalstützen oder ein Quellenbruch
+entwertet die davon abhängigen Nachweise; ein Meldeabstand allein tut das nicht.
 Eine echte T-Korrektur bei gleichem Originalzeitpunkt entwertet auch dann den
 gebundenen Schließkandidaten, wenn der korrigierte letzte Wert außerhalb der
 früheren Referenzfenster liegt. Berührt die Korrektur ein Original des
@@ -694,9 +679,22 @@ Die Wasserqualifikation verwendet zu jedem Feuchteoriginal die unmittelbar
 benachbarten Temperaturoriginale. Bei gleicher Zeit genügt das eine
 Temperaturoriginal; sonst wird die Temperatur dazwischen linear zugeordnet.
 Das Paar ist erst verfügbar, wenn auch das rechte Temperaturoriginal vorliegt
-und der zulässige Stützabstand eingehalten ist. Aus den Wertskalen `ε_Tp` und
-`ε_Hp` werden mit dem vorhandenen Modell für absolute Feuchte eine untere
-Dichte `ρ⁻` und eine obere Dichte `ρ⁺` berechnet. Der Wasserbeleg bleibt auf
+und der getrennte Zuordnungsbereich eingehalten ist. Aus den Wertskalen `ε_Tp`
+und `ε_Hp` werden mit dem vorhandenen Modell für absolute Feuchte eine untere
+Dichte `ρ⁻` und eine obere Dichte `ρ⁺` berechnet. Diese Hülle setzt die lineare
+Temperaturzuordnung voraus; sie begrenzt keinen beliebigen unbekannten Verlauf
+zwischen den Temperaturoriginalen. Die größere native Auswertbarkeit erweitert
+diesen abgeleiteten Zuordnungsbereich nicht.
+
+Für Wasserpaare behalten `curve_original_gap_*` ihren bisherigen anfänglichen
+Bereich. Nach `2K − 1` abgeschlossenen Abständen gilt weiterhin das Maximum aus
+diesem Wert und dem oberen Tukey-Innenzaun `Q3 + 1,5 × IQR` der vorherigen
+Abstände. Der gerade geprüfte Abstand trainiert seine eigene Grenze nicht;
+eine später gelernte Grenze verändert frühere Paarzulässigkeit nicht. Die
+nächste Grenze beschränkt auch das Warten auf einen noch fehlenden T-Partner.
+Eine Überschreitung bleibt eine ungeklärte abgeleitete Zuordnung und liefert
+keinen neuen AH-Nachweis. Native T-/RH-Fenster und ihre historischen Belege
+werden dadurch nicht widerlegt. Der Wasserbeleg bleibt auf
 die RH-Originale des gebundenen Anstiegsastes begrenzt. Je Position endet
 seine Stützmenge beim jüngsten RH-Original des ersten gültigen Endbelegs
 `v_Hp ≤ s E_Hp`; ein Anstieg an einer unbenutzten Position verändert ihn nicht. Spätere
@@ -986,12 +984,11 @@ jeweiligen Quellenabschnitte gebunden.
 Die neuen Originalblöcke von Öffnung, Schließung und Aufguss müssen zur
 gebundenen Position, Quelle und Zeitbasis passen. Der fortgeschriebene
 Anschlussanker ersetzt keine Prüfung des gesamten neu hinzugekommenen
-Originalabschnitts. Eine überschrittene rollenbezogene Abstandgrenze macht den
-Anschluss unbekannt. Bereits gebundene Originalbelege bleiben erhalten;
-spätere Fenster überbrücken die unbeobachtete Zwischenzeit nicht. Eine neue
-eigenständige Form erhält ihre eigene Bindung und ihren eigenen Beginn.
-Eine Korrektur derselben Probe liefert keine Bestätigungsfrische und prüft
-die davon abhängigen gebundenen Belege erneut.
+Originalabschnitts. Quellenwechsel, ungültige Werte und fehlende benötigte
+Anker bleiben Grenzen. Ein längerer Berichtabstand allein trennt vorhandene
+Originale nicht. Eine neue eigenständige Form erhält ihre eigene Bindung und
+ihren eigenen Beginn. Eine Korrektur derselben Probe liefert keine
+Bestätigungsfrische und prüft die davon abhängigen gebundenen Belege erneut.
 
 Bei der zweiten Lüftungsstufe bleibt das reguläre Warten auf einen rechten
 Temperaturpartner offen. Noch ungepaarte Feuchteoriginale liefern dieser
