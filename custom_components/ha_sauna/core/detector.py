@@ -24,6 +24,7 @@ from .curve_change import (
     original_edge_change,
     original_flattening,
     original_followup,
+    original_humidity_contrasts,
     original_kink_tolerance,
     original_thermal_contrasts,
     original_water_pair,
@@ -122,6 +123,7 @@ class _OriginalPrefix:
     windows: tuple
     temperatures: tuple
     humidity_kinks: tuple = ()
+    humidities: tuple = ()
 
 
 def robust_slope(values, step=BY_KEY["grid_seconds"].default):
@@ -461,7 +463,7 @@ class Detector:
 
     def _record_original_prefix(self, received_at, *, original):
         """Jedes angenommene Präfix erhalten; ein Raster ist kein neues Original."""
-        points, windows, temperatures, humidity_kinks = [], [], [], []
+        points, windows, temperatures, humidity_kinks, humidities = [], [], [], [], []
         for position in self.positions:
             streams = []
             for quantity in (Quantity.TEMPERATURE, Quantity.HUMIDITY):
@@ -506,13 +508,15 @@ class Detector:
                     ))
             if features[0] is not None:
                 temperatures.append((position.value, features[0]))
+            if features[1] is not None:
+                humidities.append((position.value, features[1]))
             if all(feature is not None for feature in features):
                 windows.append((position.value, OriginalPositionWindows(*features)))
         if len(self._original_prefixes) == self._original_prefixes.maxlen:
             self._original_prefix_overflow = True
         self._original_prefixes.append(_OriginalPrefix(
             received_at, original, self._original_context(), tuple(points), tuple(windows),
-            tuple(temperatures), tuple(humidity_kinks),
+            tuple(temperatures), tuple(humidity_kinks), tuple(humidities),
         ))
 
     @staticmethod
@@ -1977,7 +1981,7 @@ class Detector:
         if any(onset <= episode["level_end_at"] for onset in onsets):
             return "continuation"
         if (len(onsets) == len(windows)
-                or all(pair.humidity.start_at > episode["level_end_at"] for _, pair in windows)):
+                or all(pair.humidity.current[0][0] > episode["level_end_at"] for _, pair in windows)):
             return "new"
         return "unknown"
 
@@ -2093,13 +2097,11 @@ class Detector:
             if prefix.received_at < floor:
                 continue
             if not self._original_prefix_valid(prefix, positions):
-                if episode is not None:
-                    episode["original_background"] = None
+                self._original_infusion_background(prefix, now, decision_at, trace)
                 continue
             contrasts = original_contrasts(dict(prefix.windows), expected_positions=expected)
             if contrasts is None:
-                if episode is not None:
-                    episode["original_background"] = None
+                self._original_infusion_background(prefix, now, decision_at, trace)
                 continue
             humidity_kinks = self._original_humidity_kinks(prefix, positions)
             kink_gate = self._original_humidity_kink_gate(humidity_kinks, rising=True)
@@ -2155,21 +2157,8 @@ class Detector:
                         contrasts.positions, (Quantity.TEMPERATURE, Quantity.HUMIDITY),
                     )
                 )
-            # Der Kandidatenablauf begrenzt unbestätigte Belege. Ein bereits
-            # wasserqualifizierter Folgeanstieg der bestätigten Episode bleibt
-            # bis zu seinem Fall geführt; ein optional früherer Onset darf
-            # diesen laufenden Ownerbestand nicht vorzeitig verwerfen.
-            if (component is not None
-                    and contrasts.rise <= significance
-                    and (not component["qualified"] or episode is None
-                         or episode["phase"] == "pending") and (
-                        prefix.received_at - min(component["onsets"].values())
-                    ).total_seconds() > self.p["curve_window_seconds"]):
-                if (episode is not None and episode["phase"] == "pending"
-                        and episode.get("original_component") is component):
-                    self._finish_infusion_context("pending_original_expired")
-                    episode = None
-                self._original_infusion_candidate = component = None
+            # Fehlende spätere Messungen widerlegen keinen gebundenen Anstieg.
+            # Ein belegter Hintergrund oder Gegenbeleg beendet Pending-Evidenz.
             if component is not None and prefix.original:
                 end_windows = dict(component["rise_end_windows"])
                 for name, pair in contrasts.positions:
@@ -2479,74 +2468,101 @@ class Detector:
                             )
                             trace["conditions"]["infusion"] = True
                             trace["decisions"]["infusion"]["result"] = True
-            episode = self._infusion_episode
-            if episode is None or episode["phase"] != "active":
-                continue
-            last = episode.get("original_component")
-            background = bool(
-                (last is not None and last["fall_confirmed"] or bool(episode["interrupted"]))
-                and (component is None or component["fall_confirmed"])
-                and contrasts.background_slope <= self.p["curve_original_background_slope"]
-                and contrasts.background_residual <= self.p["curve_original_background_residual"]
-                and contrasts.rise <= significance
+            self._original_infusion_background(prefix, now, decision_at, trace, contrasts)
+
+    def _original_infusion_background(self, prefix, now, decision_at, trace, contrasts=None):
+        """RH-Abschluss fortführen; unbekannte T-Formen widerlegen ihn nicht."""
+        episode = self._infusion_episode
+        if episode is None or episode["phase"] not in ("pending", "active"):
+            return
+        positions = episode["positions"]
+        if not self._original_prefix_valid(prefix, positions, (Quantity.HUMIDITY,)):
+            return
+        if contrasts is None:
+            forms = original_humidity_contrasts(
+                dict(prefix.humidities),
+                expected_positions=tuple(position.value for position in positions),
             )
-            _decision(trace, "infusion_background", background, {
-                "current_original_background": _gate(background),
-                "original_background_slope": _gate(
-                    contrasts.background_slope <= self.p["curve_original_background_slope"],
-                    value=contrasts.background_slope, operator="<=",
-                    threshold=self.p["curve_original_background_slope"], unit="contrast",
-                ),
-                "original_background_residual": _gate(
-                    contrasts.background_residual <= self.p["curve_original_background_residual"],
-                    value=contrasts.background_residual, operator="<=",
-                    threshold=self.p["curve_original_background_residual"], unit="contrast",
-                ),
-                "original_rise_absent": _gate(
-                    contrasts.rise <= significance, value=contrasts.rise,
-                    operator="<=", threshold=significance, unit="contrast",
-                ),
-                "completed_fall_or_interruption": _gate(bool(
-                    last is not None and last["fall_confirmed"] or episode["interrupted"]
-                )),
-                "no_open_rise_component": _gate(component is None or component["fall_confirmed"]),
-            })
-            if not background:
+            if forms is None:
+                # Kein neuer Beleg: die bisherigen Originale bleiben erhalten.
+                return
+            windows = forms.positions
+        else:
+            forms = contrasts
+            windows = tuple((name, pair.humidity) for name, pair in contrasts.positions)
+        last = episode.get("original_component")
+        component = self._original_infusion_candidate
+        pending = episode["phase"] == "pending"
+        fallen = bool(last is not None and (
+            last["fall_confirmed"] or pending and last["rise_ended"]
+        ) or episode["interrupted"])
+        no_rise = component is None or component["fall_confirmed"] or (
+            pending and component["rise_ended"]
+        )
+        background = bool(
+            fallen and no_rise
+            and forms.background_slope <= self.p["curve_original_background_slope"]
+            and forms.background_residual <= self.p["curve_original_background_residual"]
+            and forms.rise <= self.p["curve_original_significance"]
+        )
+        _decision(trace, "infusion_background", background, {
+            "current_original_background": _gate(background),
+            "original_background_slope": _gate(
+                forms.background_slope <= self.p["curve_original_background_slope"],
+                value=forms.background_slope, operator="<=",
+                threshold=self.p["curve_original_background_slope"], unit="contrast",
+            ),
+            "original_background_residual": _gate(
+                forms.background_residual <= self.p["curve_original_background_residual"],
+                value=forms.background_residual, operator="<=",
+                threshold=self.p["curve_original_background_residual"], unit="contrast",
+            ),
+            "original_rise_absent": _gate(
+                forms.rise <= self.p["curve_original_significance"], value=forms.rise,
+                operator="<=", threshold=self.p["curve_original_significance"], unit="contrast",
+            ),
+            "completed_fall_or_interruption": _gate(fallen),
+            "no_open_rise_component": _gate(no_rise),
+        })
+        newest = tuple((name, window.newest_at) for name, window in windows)
+        if not background:
+            episode["original_background"] = None
+        elif episode.get("original_background") is None:
+            if prefix.original:
+                episode["original_background"] = newest
+                episode["original_end_windows"] = windows
+        elif prefix.original and all(
+            stamp > dict(episode["original_background"])[name] for name, stamp in newest
+        ):
+            references = episode["original_end_windows"]
+            # Der neue aktuelle RH-Block muss selbst vollständig auswertbar
+            # sein. Eine vorherige Lücke entwertet den alten Beleg nicht; das
+            # Ende wird ausschließlich am jetzt belegten Raster ausgegeben.
+            current = dict(windows)
+            followups = {(name, Quantity.HUMIDITY): original_followup(current[name], reference)
+                         for name, reference in references}
+            fresh_block = all(form is not None and form.fresh_current == self.p["curve_original_samples"]
+                              for form in followups.values())
+            trace.setdefault("original_infusion", {}).update(
+                background_followup=self._original_followup_trace(
+                    {key: form for key, form in followups.items() if form is not None}
+                ), complete_fresh_background_block=_gate(fresh_block),
+            )
+            if fresh_block:
+                if pending:
+                    self._finish_infusion_context("pending_original_background")
+                    return
+                episode["phase"] = "ended"
+                episode["level_end_at"] = now
+                episode["end_basis"] = "original_background"
+                self._update_infusion_end(episode, InfusionEnd(
+                    now, decision_at, now, episode["end_basis"], "evidence_grid",
+                ))
                 episode["original_background"] = None
-            elif episode.get("original_background") is None:
-                if prefix.original:
-                    episode["original_background"] = self._original_newest(contrasts)
-                    episode["original_end_windows"] = contrasts.positions
-            elif prefix.original and self._original_newer(contrasts, episode["original_background"]):
-                followups = self._original_followups(
-                    prefix, self._original_role_windows(
-                        episode["original_end_windows"], (Quantity.HUMIDITY,),
-                    ),
-                )
-                fresh_block = bool(followups) and all(
-                    form.fresh_current == self.p["curve_original_samples"]
-                    for form in followups.values()
-                )
-                trace["original_infusion"].update(
-                    background_followup=self._original_followup_trace(followups),
-                    complete_fresh_background_block=_gate(fresh_block),
-                )
-                if followups is None:
-                    episode["original_background"] = None
-                elif fresh_block:
-                    episode["phase"] = "ended"
-                    episode["level_end_at"] = now
-                    episode["end_basis"] = "original_background"
-                    self._update_infusion_end(episode, InfusionEnd(
-                        episode["level_end_at"], decision_at, now,
-                        episode["end_basis"], "evidence_grid",
-                    ))
-                    episode["original_background"] = None
-                    episode["original_end_windows"] = contrasts.positions
-                    self._infusion_segment_start = {
-                        Position(name): pair.humidity.current[0][0]
-                        for name, pair in contrasts.positions
-                    }
+                episode["original_end_windows"] = windows
+                self._infusion_segment_start = {
+                    Position(name): window.current[0][0] for name, window in windows
+                }
 
     def _clear_curve_route(self, route, *, keep_status=False, reason=None, position=None):
         if reason is not None:
@@ -4194,20 +4210,29 @@ class Detector:
                     for key in ("original_component", "original_start_component")
                 )
         if (episode is not None and position in episode["positions"]
-                and episode.get("original_end_windows")):
-            windows, changed = self._correct_original_windows(
-                episode["original_end_windows"], position, quantity, corrected_at, value,
-            )
+                and quantity == Quantity.HUMIDITY and episode.get("original_end_windows")):
+            windows, changed = [], False
+            for name, window in episode["original_end_windows"]:
+                points = window.previous + window.current
+                if name == position.value and any(stamp == corrected_at for stamp, _ in points):
+                    changed = True
+                    window = original_window(
+                        tuple((stamp, value if stamp == corrected_at else old) for stamp, old in points),
+                        count=self.p["curve_original_samples"], scale=window.scale,
+                        max_gap_seconds=self.p[f"curve_original_gap_humidity_{name}_seconds"],
+                        at=window.newest_at,
+                    )
+                if window is not None:
+                    windows.append((name, window))
             if changed:
-                episode["original_end_windows"] = windows
-                contrasts = original_contrasts(
-                    dict(windows),
-                    expected_positions=tuple(item.value for item in episode["positions"]),
+                episode["original_end_windows"] = tuple(windows)
+                forms = original_humidity_contrasts(
+                    dict(windows), expected_positions=tuple(item.value for item in episode["positions"]),
                 )
-                episode_invalid |= contrasts is None or not (
-                    contrasts.background_slope <= self.p["curve_original_background_slope"]
-                    and contrasts.background_residual <= self.p["curve_original_background_residual"]
-                    and contrasts.rise <= self.p["curve_original_significance"]
+                episode_invalid |= forms is None or not (
+                    forms.background_slope <= self.p["curve_original_background_slope"]
+                    and forms.background_residual <= self.p["curve_original_background_residual"]
+                    and forms.rise <= self.p["curve_original_significance"]
                 )
         if not episode_invalid:
             return

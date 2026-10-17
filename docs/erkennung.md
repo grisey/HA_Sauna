@@ -477,11 +477,17 @@ abgefallen sein; ein offener Anstiegskandidat sperrt den Abschluss.
 Der erste Befund `G` bindet nur einen
 Hintergrundkandidaten. `G` muss an jedem folgenden auswertbaren Eingangspräfix
 bestehen bleiben, bis an allen beteiligten Positionen ein vollständig neuer
-aktueller Feuchteblock mit `K` Originalen und mindestens ein späteres
-Temperaturoriginal vorliegen. Der neue Feuchteblock muss lückenlos an die
-gebundenen Hintergrundoriginale anschließen. Ein widersprechender oder nicht
-auswertbarer Zwischenstand verwirft diesen Hintergrundkandidaten. Nach einer
-Unterbrechung gelten die unten beschriebenen Regeln zum Wiedererwerb.
+aktueller Feuchteblock mit `K` Originalen vorliegt. Dieser Abschluss benötigt
+nur die gebundenen Feuchterollen; neue Temperaturoriginale sind dafür nicht
+nötig. Ein widersprechender auswertbarer Feuchteverlauf verwirft den
+Hintergrundkandidaten. Fehlende oder momentan nicht auswertbare Daten lassen
+den bisherigen Beleg bestehen und bestätigen nichts zusätzlich. Nach einer
+Messlücke muss der neue aktuelle Feuchteblock selbst vollständig auswertbar
+sein; die unbeobachtete Zwischenzeit erhält keinen rückdatierten Endbeleg.
+Ein unbestätigter Anstieg verfällt nicht allein nach einer Zeitfrist. Ein
+vollständig belegter Hintergrund ohne bestätigten Puls schließt seinen
+Kandidaten ab. Quellenwechsel und Korrekturen tragender Originale werden
+weiterhin am jeweiligen Beleg geprüft.
 
 Der Hintergrund wird über die aktuelle Feuchtesteigung und die Restfehler
 beider Fenster belegt. Die vorherige Steigung muss dafür nicht bereits flach
@@ -509,10 +515,12 @@ Gangübergänge noch die Aufgusszählung.
 Ein später erkannter Anstieg setzt denselben Aufguss fort, sobald an einer
 Position ein gültiger Beginnbeleg spätestens beim Abschluss liegt. Andernfalls
 wird er einer neuen Episode zugeordnet, wenn sämtliche bei der Bindung
-verwendeten RH-Originale aller beteiligten Positionen nach dem Abschluss
-liegen; zusätzliche Kurvenbeginnbelege sind dafür nicht erforderlich.
+verwendeten aktuellen `K` RH-Originale aller beteiligten Positionen nach dem
+Abschluss liegen. Das vorherige Referenzfenster darf den alten Hintergrund
+überlappen; es belegt den Steigungswechsel und gehört nicht zum neuen
+Anstiegsblock. Zusätzliche Kurvenbeginnbelege sind dafür nicht erforderlich.
 Auch gültige Beginnbelege aller Positionen nach dem Abschluss erlauben diese
-Zuordnung. Überlappen die gebundenen RH-Fenster den Abschluss ohne solche
+Zuordnung. Überlappt der gebundene aktuelle RH-Block den Abschluss ohne solche
 Belege, bleibt die Zuordnung offen. Jeder weitere Aufguss
 benötigt erneut starken Anstieg und Wasserqualifikation sowie einen der
 beschriebenen Bestätigungswege. Im ununterbrochenen Nachlauf bleibt der

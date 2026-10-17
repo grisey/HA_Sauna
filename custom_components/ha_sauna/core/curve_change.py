@@ -219,6 +219,18 @@ class OriginalThermalContrasts:
 
 
 @dataclass(frozen=True)
+class OriginalHumidityContrasts:
+    """RH forms over the required positions, independent of temperature support."""
+
+    positions: tuple[tuple[str, OriginalWindowFeatures], ...]
+    rise: float
+    fall: float
+    background_slope: float
+    background_residual: float
+    humidity_rise_change: float
+
+
+@dataclass(frozen=True)
 class OriginalContrasts:
     """Raw min/max contrasts over exactly the caller's required positions.
 
@@ -1079,6 +1091,32 @@ def original_thermal_contrasts(
         return None
 
 
+def original_humidity_contrasts(
+    windows: Mapping[str, OriginalWindowFeatures], *, expected_positions: Sequence[str],
+) -> OriginalHumidityContrasts | None:
+    """Use the same RH arithmetic with or without evaluable temperature windows."""
+    try:
+        expected = tuple(expected_positions)
+        if (not expected or any(not isinstance(name, str) for name in expected)
+                or len(set(expected)) != len(expected)):
+            return None
+        positions = tuple((name, windows[name]) for name in expected)
+        if any(not _original_window_valid(window) for _, window in positions):
+            return None
+        slopes = tuple(window.v / window.e for _, window in positions)
+        changes = tuple((window.v - window.b) / (window.e + window.e_minus)
+                        for _, window in positions)
+        residuals = tuple(value for _, window in positions for value in (window.r, window.r_minus))
+        if not all(_profile_number(value) for value in slopes + changes + residuals):
+            return None
+        return OriginalHumidityContrasts(
+            positions, min(slopes), min(-value for value in slopes),
+            max(abs(value) for value in slopes), max(residuals), min(changes),
+        )
+    except (AttributeError, IndexError, KeyError, OverflowError, TypeError, ValueError):
+        return None
+
+
 def original_contrasts(
     windows: Mapping[str, OriginalPositionWindows],
     *,
@@ -1108,29 +1146,15 @@ def original_contrasts(
         )
         if thermal is None:
             return None
-        opening_terms = []
-        humidity_terms = []
-        humidity_change_terms = []
-        residual_terms = []
+        humidity_forms = original_humidity_contrasts(
+            {position: pair.humidity for position, pair in positions},
+            expected_positions=expected,
+        )
+        if humidity_forms is None:
+            return None
         recovery_terms = []
         for position, pair in positions:
             humidity = pair.humidity
-            if not _original_window_valid(humidity):
-                return None
-            slope_difference = humidity.v - humidity.b
-            difference_error = humidity.e + humidity.e_minus
-            if not _profile_number(slope_difference) or not _original_positive(
-                difference_error
-            ):
-                return None
-            humidity_change = slope_difference / difference_error
-            if not _profile_number(humidity_change):
-                return None
-            humidity_rise = humidity.v / humidity.e
-            opening_terms.append(-humidity_rise)
-            humidity_terms.append(humidity_rise)
-            humidity_change_terms.append(humidity_change)
-            residual_terms.extend((humidity.r, humidity.r_minus))
             if humidity_minima is not None:
                 minimum = humidity_minima[position]
                 if not _profile_number(minimum):
@@ -1142,13 +1166,13 @@ def original_contrasts(
                 ):
                     return None
                 recovery_terms.append(recovery_difference / recovery_scale)
-        opening = min(thermal.opening, min(opening_terms))
+        opening = min(thermal.opening, humidity_forms.fall)
         braking = thermal.braking
         warming_min, warming_max = thermal.warming_min, thermal.warming_max
-        rise, fall = min(humidity_terms), min(-value for value in humidity_terms)
-        humidity_rise_change = min(humidity_change_terms)
-        background_slope = max(abs(value) for value in humidity_terms)
-        background_residual = max(residual_terms)
+        rise, fall = humidity_forms.rise, humidity_forms.fall
+        humidity_rise_change = humidity_forms.humidity_rise_change
+        background_slope = humidity_forms.background_slope
+        background_residual = humidity_forms.background_residual
         recovery = min(recovery_terms) if humidity_minima is not None else None
         closing = (
             max(min(braking, recovery), thermal.closing)
