@@ -1084,6 +1084,8 @@ class DetectorTests(unittest.TestCase):
              [Kind.VENTILATION, Kind.DOOR_CLOSE]),
             ("ventilation_without_close", (Quantity.HUMIDITY, Quantity.TEMPERATURE), False, False,
              [Kind.VENTILATION]),
+            ("ventilation_with_last_lower_invalid", (Quantity.HUMIDITY, Quantity.TEMPERATURE), False, False,
+             [Kind.VENTILATION]),
         )
         for name, quantities, distinct_originals, force_close, expected in variants:
             with self.subTest(name=name):
@@ -1120,14 +1122,33 @@ class DetectorTests(unittest.TestCase):
                                 position, quantity, target_values[quantity], second,
                                 measured=original_at,
                             ))
+                    if name == "ventilation_with_last_lower_invalid":
+                        # Same upper originals as the positive control. Only the
+                        # unused lower RH role ends this group with a non-original.
+                        self.assertEqual(case._door_owner, Position.UPPER)
+                        self.assertTrue(case.accept(measurement(
+                            Position.LOWER, Quantity.HUMIDITY, None, second,
+                            measured=confirmation_at,
+                        )))
                     batch = case.advance(confirmation_at, enabled=True, on_detection=delivered)
                 # Signals already delivered to a consumer cannot be repaired by
                 # changing the returned list or final diagnostic afterwards.
                 self.assertEqual(callbacks, batch)
                 self.assertEqual([item.kind for item in batch if item.kind in (
                     Kind.DOOR_CLOSE, Kind.VENTILATION, Kind.VENTILATION_COMPLETE,
-                )], expected)
-                self.assertEqual(case._original_context(), before_context)
+                )], expected, case.diagnostic)
+                if name == "ventilation_with_last_lower_invalid":
+                    # The lower invalidation must not change either upper epoch.
+                    epochs = dict(case._original_context())
+                    former = dict(before_context)
+                    self.assertEqual(epochs[Position.UPPER], former[Position.UPPER])
+                    self.assertEqual(epochs[Position.LOWER], (
+                        former[Position.LOWER][0], former[Position.LOWER][1] + 1,
+                    ))
+                    self.assertEqual([item.channels for item in batch
+                                      if item.kind == Kind.VENTILATION], [(Position.UPPER.value,)])
+                else:
+                    self.assertEqual(case._original_context(), before_context)
                 self.assertEqual(len(published), expected.count(Kind.VENTILATION))
                 for was_published, originals in published:
                     self.assertTrue(was_published)
