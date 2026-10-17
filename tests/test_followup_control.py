@@ -133,12 +133,15 @@ class FollowupControlTests(unittest.TestCase):
         c.process(ev(Kind.PERSON_STRONG, 20, effective=10))
         c.process(ev(Kind.INFUSION, 25))
         c.process(ev(Kind.DOOR_OPEN, 30))
+        self.assertEqual(c.phase, "saunagang")
+        before_vent = c.phase_projection(at(34)).intervals
+        self.assertEqual(before_vent[-1].phase, "saunagang")
+        self.assertEqual(before_vent[-1].ended_at, at(34))
         c.process(ev(Kind.VENTILATION, 35))
         c.advance(at(40))
         projected = c.phase_projection(at(40)).intervals
         self.assertEqual([(i.phase, i.started_at, i.ended_at) for i in projected], [
-            ("aufheizen", at(0), at(5)), ("saunagang", at(5), at(30)),
-            ("aufheizen", at(30), at(35)),
+            ("aufheizen", at(0), at(5)), ("saunagang", at(5), at(35)),
             ("nachlauf", at(35), at(40))])
         control = c.phase_projection(at(40), physical_gangs=False).intervals
         self.assertEqual([(i.phase, i.started_at, i.ended_at) for i in control], [

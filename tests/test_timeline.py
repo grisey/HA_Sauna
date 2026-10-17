@@ -504,7 +504,7 @@ class DoorCycleProjectionTests(unittest.IsolatedAsyncioTestCase):
         self.assertIsNone(active_gang_duration_seconds({**before, "active": None}, at(7)))
         self.assertEqual(plain(c.session.timeline), before)
 
-    async def test_statistical_gang_bounds_use_owned_door_times_without_retiming_control(self):
+    async def test_gang_bounds_end_at_confirmed_ventilation_without_retiming_control(self):
         from custom_components.ha_sauna.core.phases import project_session
 
         c = controller()
@@ -520,8 +520,8 @@ class DoorCycleProjectionTests(unittest.IsolatedAsyncioTestCase):
         gang = c.session.timeline.completed[0]
         expected = [{
             "gang_id": gang.gang_id,
-            "started_at": at(2).isoformat(), "ended_at": at(5).isoformat(),
-            "start_source_event_id": "entry-close", "end_source_event_id": "exit",
+            "started_at": at(2).isoformat(), "ended_at": at(8).isoformat(),
+            "start_source_event_id": "entry-close", "end_source_event_id": "vent",
             "complete": True,
         }]
         self.assertEqual(project_gang_intervals(c.session.timeline), expected)
@@ -529,13 +529,27 @@ class DoorCycleProjectionTests(unittest.IsolatedAsyncioTestCase):
         visible = project_session(c.session, at(9))
         control = project_session(c.session, at(9), physical_gangs=False)
         self.assertEqual([(item.started_at, item.ended_at) for item in visible.intervals
-                          if item.phase == "saunagang"], [(at(2), at(5))])
+                          if item.phase == "saunagang"], [(at(2), at(8))])
         self.assertEqual([(item.started_at, item.ended_at) for item in control.intervals
                           if item.phase == "saunagang"], [(at(2), at(8))])
         self.assertEqual(gang.ended_at, at(8))
         self.assertEqual(c.session.after_run.requested_at, at(8))
         self.assertEqual(plain(c.session), before)
         self.assertEqual(tuple(c.decisions), decisions)
+
+    async def test_open_exit_keeps_gang_duration_running_until_ventilation(self):
+        c = controller()
+        for source in (event("entry", Kind.DOOR_OPEN, 1),
+                       event("close", Kind.DOOR_CLOSE, 2),
+                       event("water", Kind.INFUSION, 3),
+                       event("exit", Kind.DOOR_OPEN, 5)):
+            c.process(source)
+        self.assertIsNone(project_gang_intervals(c.session.timeline)[0]["ended_at"])
+        self.assertEqual(active_gang_duration_seconds(c.session.timeline, at(7)), 5)
+        self.assertEqual(c.phase, "saunagang")
+        c.process(event("vent", Kind.VENTILATION, 8))
+        self.assertEqual(project_gang_intervals(c.session.timeline)[0]["ended_at"],
+                         at(8).isoformat())
 
     async def test_operation_off_and_missing_source_do_not_invent_statistical_exit(self):
         c = controller()

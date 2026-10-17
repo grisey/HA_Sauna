@@ -28,12 +28,13 @@ def _merge(items, item):
     items.append(item)
 
 
-def project_session(session, now, *, physical_gangs=True) -> PhaseProjection:
+def project_session(session, now, *, physical_gangs=False) -> PhaseProjection:
     """Project [session start, min(now, end)) from independent factual tracks.
 
-    Display/statistics use associated door times. The cooling policy explicitly
-    selects the existing booked gang times; it must not acquire new readiness
-    pauses from a historical door attribution. Retractions remove
+    Operating phases use booked gang times through confirmed ventilation.
+    Physical occupancy remains a separate gang interval; its earlier exit must
+    not expose a heating/readiness phase before the cooling demand. An explicit
+    physical overlay is available for interval inspection only. Retractions remove
     only that overlay, exposing the independently maintained base phase. Missing
     evidence remains unknown, including unknown contactor state (never a pause).
     """

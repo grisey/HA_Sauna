@@ -316,13 +316,13 @@ def _projection_time(value):
 
 
 def project_gang_intervals(timeline: Timeline | Mapping, *, door_cycles=None) -> list[dict]:
-    """Statistische Gangzeiten aus den zugeordneten Türquellen ableiten.
+    """Gangzeiten vom zugeordneten Eintritt bis zum bestätigten Abschluss.
 
-    Steuerungszeiten im Gangobjekt bleiben unverändert. Nur ein zugeordneter
-    Eintritt liefert seinen Türschluss als Beginn; nur der belegte Austritt
-    liefert seine Öffnung als Ende. Betrieb-AUS und fehlende Altarchivquellen
-    erzeugen keine physischen Türzeiten. Alle Bezüge kommen aus derselben
-    Türzyklusprojektion und behalten deren Mehrdeutigkeitsprüfung.
+    Der Türschluss liefert den Beginn. Die Austrittsöffnung allein beendet
+    den Gang nicht: Erst ihr zugeordneter Lüftungs- beziehungsweise
+    Präsenzabschluss liefert das gebuchte Ende. Betrieb-AUS und fehlende
+    Altarchivquellen erzeugen keinen Lüftungsnachweis. Alle Türbezüge behalten
+    die Mehrdeutigkeitsprüfung der gemeinsamen Türzyklusprojektion.
     """
     get = _projection_value
     cycles = project_door_cycles(timeline) if door_cycles is None else door_cycles
@@ -342,7 +342,11 @@ def project_gang_intervals(timeline: Timeline | Mapping, *, door_cycles=None) ->
         entry = entries[0] if len(entries) == 1 else None
         exit_cycle = exits[0] if len(exits) == 1 else None
         start = entry["ended_at"] if entry is not None else None
-        end = exit_cycle["started_at"] if exit_cycle is not None else None
+        if start is not None and get(gang, "start_basis") == "previous_gang_end":
+            start = get(gang, "started_at")
+            start = _projection_time(start).isoformat() if _projection_time(start) else None
+        end_at = _projection_time(get(gang, "ended_at")) if exit_cycle is not None else None
+        end = end_at.isoformat() if end_at is not None else None
         if start is not None and end is not None and _projection_time(end) < _projection_time(start):
             end, exit_cycle = None, None
         result.append({
@@ -350,7 +354,7 @@ def project_gang_intervals(timeline: Timeline | Mapping, *, door_cycles=None) ->
             "started_at": start,
             "ended_at": end,
             "start_source_event_id": entry["event_ids"][-1] if entry is not None else None,
-            "end_source_event_id": exit_cycle["id"] if exit_cycle is not None else None,
+            "end_source_event_id": get(gang, "end_event_id") if end is not None else None,
             "complete": start is not None and end is not None,
         })
     return result
@@ -650,7 +654,7 @@ def apply(
             preparation=state.open_ventilation,
             open_ventilation=None,
         )
-        if (state.active is not None
+        if (state.active is not None and proxy_presence
                 and state.active.confirmation == Confirmation.CONFIRMED):
             # A confirmed gang consumes door cycles within that same stay.
             # A provisional gang keeps its own start anchor; a newer cycle
@@ -685,8 +689,12 @@ def apply(
                 start_source_event_id=anchor.event_id,
                 recognition_event_id=event.event_id,
                 recognition_kind=event.kind,
-                start_basis=("door_close" if start == anchor.effective_at
-                             else "minimum_temperature"),
+                start_basis=(
+                    "door_close" if start == anchor.effective_at else
+                    "previous_gang_end" if any(previous.ended_at == start
+                                               for previous in state.completed) else
+                    "minimum_temperature"
+                ),
                 preparation_event_id=(
                     state.preparation.event_id if state.preparation else None
                 ),
@@ -713,10 +721,7 @@ def apply(
         result = replace(state, active=None, completed=state.completed + (finished,),
                          rejected_start_sources=(*state.rejected_start_sources,
                                                  opening.event_id),
-                         resolved_presence_close_id=(
-                             state.anchor.event_id if state.anchor
-                             else state.resolved_presence_close_id
-                         ))
+                         resolved_presence_close_id=state.resolved_presence_close_id)
     elif event.kind == Kind.VENTILATION:
         if state.door != Door.OPEN:
             raise ValueError("Durchlüftungsbestätigung benötigt eine offene Episode")

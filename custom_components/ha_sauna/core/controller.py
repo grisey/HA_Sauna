@@ -1266,7 +1266,10 @@ class Controller:
         """
         if not timeline.entry_cycle_available:
             return None
-        return max(timeline.anchor.effective_at, self._gang_temperature_gates[-1][0])
+        return max(
+            timeline.anchor.effective_at, self._gang_temperature_gates[-1][0],
+            *(gang.ended_at for gang in timeline.completed if gang.ended_at is not None),
+        )
 
     def _gang_control_start_at(self, timeline):
         """Derive control windows from the source's existing confirmation."""
@@ -1732,11 +1735,8 @@ class Controller:
         # can describe the current input but cannot rewrite that history.
         if value.qualified_presence:
             self._direct_presence_history.append(value)
-        if (value.qualified_presence and self._presence_entry is not None
-                and effective_at is not None
-                and effective_at >= self._presence_entry.closure.confirmation_at
-                and (not value.available or value.occupancy != "present")):
-            self._presence_entry = None
+        # Presence at closure establishes a stay. Subsequent sensor pulses
+        # cannot undo that entry without another observed door opening.
         if self._session is None:
             self._direct_presence_history = [value] if value.qualified_presence else []
         if not defer_evaluation:
@@ -1796,25 +1796,25 @@ class Controller:
                     or self._gang_start_blocked(session)):
                 return False
             effective = self._gang_entry_start_at(t)
-            if effective > entry.closure.confirmation_at:
-                # The occupancy observed at entry must persist while waiting.
-                # A later ON cannot revive an entry interrupted by OFF/unknown.
-                if any(
-                    item.timing.effective_at is not None
-                    and max(item.timing.effective_at,
-                            item.timing.first_usable_at or item.timing.effective_at)
-                    >= entry.closure.confirmation_at
-                    and item.timing.received_at is not None
-                    and item.timing.received_at <= self._received_at(at)
-                    and (not item.available or not item.qualified_presence
-                         or item.occupancy != "present")
-                    for item in self._direct_presence_history
-                ):
-                    self._presence_entry = None
-                    return False
             kind = Kind.PRESENCE_CONFIRMED
             source, report = entry.closure, entry.presence
         else:
+            # Absence belongs to this exit opening. ON pulses while the door
+            # remains open do not erase the observed departure; a new stay is
+            # established by presence at the following closure.
+            history = [item for item in self._direct_presence_history
+                       if item.timing.effective_at is not None
+                       and item.timing.received_at is not None
+                       and item.timing.received_at <= self._received_at(at)]
+            before_open = next((item for item in reversed(history)
+                                if item.timing.effective_at <= opening.effective_at), None)
+            absence = next((item for item in reversed(history)
+                            if item.available and item.occupancy == "absent"
+                            and (item.timing.effective_at >= opening.effective_at
+                                 or item is before_open)), None)
+            if absence is None:
+                return False
+            report = absence
             effective = t.presence_exit_at(max(
                 report.timing.effective_at,
                 report.timing.first_usable_at or report.timing.effective_at,
@@ -1967,7 +1967,7 @@ class Controller:
             history = history[:-1]
         self._session = replace(session, base_phases=history + (mark,))
 
-    def phase_projection(self, now, *, physical_gangs=True):
+    def phase_projection(self, now, *, physical_gangs=False):
         from .phases import project_session
         return project_session(self._session, now, physical_gangs=physical_gangs) if self._session else None
 

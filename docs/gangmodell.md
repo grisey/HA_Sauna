@@ -45,12 +45,15 @@ zum Lüften geöffnet und offengelassen. Die spätere Rückkehr durch diese
 offene Tür kann mit dem anschließenden Türschluss einen neuen Eintritt belegen.
 Das Ende des alten Gangs verbraucht diesen späteren Türschluss nicht.
 
-Für Verlauf und Statistik reicht der zugeordnete Aufenthalt vom Türschluss
-des Eintritts bis zur Türöffnung des Austritts. Diese Zeiten werden aus den
-Quellereignissen der vorhandenen Türzuordnung abgeleitet. Die bestätigte
-Gangerkennung und das gebuchte Gangende behalten ihre eigenen Zeitpunkte;
-Heizung und Ofenkühlung verwenden weiterhin den damals bekannten Zustand.
-Fehlende Türquellen oder Betrieb-AUS belegen keinen physischen Austrittszeitpunkt.
+Für Verlauf, Statistik und Betriebsphase reicht der Gang vom zugeordneten
+Eintritt bis zum bestätigten Abschluss des Austrittsvorgangs. Die Türöffnung
+allein beendet ihn nicht. Das Durchlüften gehört zu dieser vorher beobachteten
+Öffnung; bei Führung durch einen Präsenzsensor gehört außerdem der
+Abwesenheitsnachweis dazu. Die Gangdauer endet am gebuchten Abschluss dieses
+zusammengehörigen Vorgangs. Bis dahin bleibt die Phase **Saunagang** bestehen;
+dazwischen entsteht keine zusätzliche Aufheiz- oder Bereitschaftsphase.
+Türöffnung und Türschluss bleiben als eigene Ereignisse sichtbar.
+Fehlende Türquellen oder Betrieb-AUS ersetzen keinen Austrittsnachweis.
 Bei unvollständigen Altarchiven bleibt der bisher aufgezeichnete Abschnitt
 als unvollständige Zeitzuordnung erhalten.
 Die angezeigte Dauer eines aktiven Gangs verwendet denselben belegten
@@ -70,20 +73,25 @@ nicht rückwirkend bestätigen. Bei gleichem Zeitstempel zählt die tatsächlich
 Verarbeitungsreihenfolge; ein bereits abgeschlossener Eintritt wird durch
 spätere Auswertung nicht wieder gültig.
 Liegt die Temperatur beim Eintritt noch unter der Mindesttemperatur, bleibt der
-belegte Eintritt bei anhaltender Präsenz erhalten. Der Gang beginnt beim Erreichen
+belegte Eintritt bis zu einer neuen Türöffnung erhalten. Der Gang beginnt beim Erreichen
 der Grenze, ohne erneute Türfolge und ohne Rückdatierung auf den kälteren Eintritt.
-Abwesenheit oder ein unbekannter Präsenzzustand unterbrechen diesen Nachweis.
-Ein Gang endet erst bei einer neuen Austrittsöffnung, bestätigtem Lüften
-derselben Öffnung und anliegender Abwesenheit. Diese kann bereits vor dem
-thermischen Öffnungshinweis gemeldet sein. Die Nachweise können in beliebiger
-Reihenfolge eintreffen; Anwesenheit, `unknown` oder `unavailable`
-vor dem vollständigen Nachweis verhindern das Gangende.
-Ein anschließender Türschluss verwirft den belegten Austritt nicht. Die
-Abwesenheit kann auch erst danach gemeldet werden oder beginnen; maßgeblich
-bleiben dieselbe Austrittsöffnung, ihr bestätigtes Lüften und die weiterhin
-gültige Abwesenheit. Erneute Anwesenheit überholt einen früheren
-Abwesenheitsnachweis. Eine ältere Austrittsfolge kann keinen später begonnenen
-Gang beenden.
+Eine spätere Abwesenheitsmeldung ohne erneute Türöffnung hebt den beim
+Türschluss belegten Aufenthalt nicht auf.
+Ein Gang endet durch einen zusammengehörigen Austrittsvorgang: neue
+Türöffnung, zugehörige Abwesenheit und bestätigtes Durchlüften dieser Öffnung.
+Die Abwesenheit kann wegen unterschiedlicher Sensorlaufzeiten bereits vor dem
+thermischen Öffnungshinweis gemeldet sein und muss dieser Öffnung zugehören.
+Einzelne Anwesenheitsmeldungen während der offenen Tür verwerfen den
+Abwesenheitsbeleg nicht. Ohne verfügbaren Präsenzzustand bleibt der Abschluss
+offen. Ein anschließender Türschluss verwirft den belegten Austritt ebenfalls
+nicht; dessen Abwesenheit kann verspätet eintreffen. Eine ältere Austrittsfolge
+kann keinen später begonnenen Gang beenden.
+
+Präsenz beim anschließenden Türschluss bestätigt einen neuen Aufenthalt.
+Dafür ist keine zusätzliche Mindestdauer erforderlich. Derselbe Türvorgang
+kann den Austritt des alten und den Eintritt des neuen Gangs tragen; beide
+Gänge überlappen sich nicht. Eine Abwesenheitsmeldung bei weiter geschlossener
+Tür beendet den bestätigten Aufenthalt nicht.
 
 | Beleg | Wirkung |
 | --- | --- |
