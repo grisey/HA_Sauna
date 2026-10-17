@@ -31,6 +31,7 @@ from .curve_change import (
     original_water_pair_support,
     original_water_window,
     original_window,
+    original_window_changes,
 )
 from .models import Measurement, Position, Quantity
 from .moisture import KELVIN_OFFSET_C, absolute_humidity
@@ -1970,8 +1971,25 @@ class Detector:
                 onsets[position] = candidate.onset_at
         return onsets
 
+    def _original_local_rise_intervals(self, windows, kinks, branch_floors):
+        """Retain the first supported rise interval inside each bound RH block."""
+        result = {}
+        significance = self.p["curve_original_significance"]
+        kinks = dict(kinks)
+        for name, pair in windows:
+            kink = kinks.get(name)
+            if kink is None:
+                continue
+            changes = original_window_changes(pair.humidity, tolerance=kink.tolerance)
+            for change in changes or ():
+                if (change.previous[0] >= branch_floors[Position(name)]
+                        and min(change.direction, change.change) > significance):
+                    result[Position(name)] = change
+                    break
+        return result
+
     @staticmethod
-    def _original_infusion_assignment(episode, windows, onsets):
+    def _original_infusion_assignment(episode, windows, onsets, intervals=None):
         """Native RH-Trennung und zulässige frühere Astzeugen gemeinsam zuordnen."""
         if episode is None:
             return "new"
@@ -1980,6 +1998,13 @@ class Detector:
         onsets = tuple(onsets)
         if any(onset <= episode["level_end_at"] for onset in onsets):
             return "continuation"
+        if intervals and len(intervals) == len(windows):
+            first_edges = tuple(intervals.values())
+            if any(edge.current[0] <= episode["level_end_at"] for edge in first_edges):
+                return "continuation"
+            if all(edge.previous[0] > episode["level_end_at"] for edge in first_edges):
+                return "new"
+            return "unknown"
         if (len(onsets) == len(windows)
                 or all(pair.humidity.current[0][0] > episode["level_end_at"] for _, pair in windows)):
             return "new"
@@ -2064,8 +2089,14 @@ class Detector:
             onset_allowed=onset_allowed,
         )
         if effective == now:
-            if len(witnesses) == len(episode["positions"]):
-                beginning = min(candidate.onset_at for candidate in witnesses.values())
+            beginnings = {
+                position: witnesses[position].onset_at if position in witnesses else
+                component["onset_intervals"][position].previous[0]
+                for position in episode["positions"]
+                if position in witnesses or position in component.get("onset_intervals", {})
+            }
+            if len(beginnings) == len(episode["positions"]):
+                beginning = min(beginnings.values())
                 if (floor <= beginning <= now and (
                     onset_allowed is None or onset_allowed(Kind.INFUSION, beginning, now)
                 )):
@@ -2196,10 +2227,15 @@ class Detector:
                 valid_onsets = self._original_rise_onsets(
                     contrasts, floor, prefix.received_at, branch_floors,
                 )
-                onsets = {position: valid_onsets.get(position, prefix.received_at)
+                intervals = self._original_local_rise_intervals(
+                    contrasts.positions, humidity_kinks, branch_floors,
+                )
+                onsets = {position: valid_onsets.get(position,
+                          intervals[position].previous[0] if position in intervals
+                          else prefix.received_at)
                           for position in positions}
                 assignment = self._original_infusion_assignment(
-                    episode, contrasts.positions, valid_onsets.values(),
+                    episode, contrasts.positions, valid_onsets.values(), intervals,
                 )
                 component = {
                     "context": context, "positions": tuple(positions),
@@ -2231,6 +2267,7 @@ class Detector:
                     "rise_end_windows": (),
                     "water_state": {},
                     "onset_witnesses": {},
+                    "onset_intervals": intervals,
                 }
                 self._original_infusion_candidate = component
             if component is not None and not component["fall_confirmed"]:
@@ -2261,6 +2298,7 @@ class Detector:
                                              for candidate in component["onset_witnesses"].values())
                         component["assignment"] = self._original_infusion_assignment(
                             episode, component["binding_windows"], valid_onsets,
+                            component["onset_intervals"],
                         )
                     component["continuing"] = component["assignment"] == "continuation"
                     threshold = self.p[
@@ -2346,6 +2384,10 @@ class Detector:
                         binding_received_at=component["received_at"],
                         binding_originals=component["newest"],
                         binding_support=self._original_support(component["binding_windows"]),
+                        native_onset_intervals={position.value: {
+                            "from": edge.previous[0], "to": edge.current[0],
+                            "direction": edge.direction, "change": edge.change,
+                        } for position, edge in component["onset_intervals"].items()},
                         continued_support=self._original_support(contrasts.positions),
                         followup=self._original_followup_trace(followups),
                         complete_fresh_original_block=_gate(fresh_block),
@@ -4118,6 +4160,19 @@ class Detector:
                     component["rise_score"] = contrasts.rise
                 if key == "binding_windows" and contrasts is not None:
                     component["humidity_rise_onset"] = contrasts.humidity_rise_onset
+                    if quantity == Quantity.HUMIDITY:
+                        intervals = self._original_local_rise_intervals(
+                            windows, component["humidity_kinks"], component["branch_floors"],
+                        )
+                        previous_interval = component.get("onset_intervals", {}).get(position)
+                        current_interval = intervals.get(position)
+                        if previous_interval is not None:
+                            component_invalid |= current_interval is None or (
+                                previous_interval.previous[0], previous_interval.current[0]
+                            ) != (current_interval.previous[0], current_interval.current[0])
+                        # Recompute only the corrected immutable support. No
+                        # later block may replace this original onset interval.
+                        component["onset_intervals"] = intervals
                     if quantity == Quantity.HUMIDITY and kink is not None and kink.factor > 0:
                         humidity = dict(windows)[position.value].humidity
                         # Nur den korrigierten gebundenen Anstieg mit seiner

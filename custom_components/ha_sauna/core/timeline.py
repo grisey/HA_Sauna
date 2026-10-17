@@ -318,7 +318,8 @@ def _projection_time(value):
 def project_gang_intervals(timeline: Timeline | Mapping, *, door_cycles=None) -> list[dict]:
     """Gangzeiten vom zugeordneten Eintritt bis zum bestätigten Abschluss.
 
-    Der Türschluss liefert den Beginn. Die Austrittsöffnung allein beendet
+    Der zugeordnete Eintritt mit erfüllten Startbedingungen liefert den Beginn.
+    Die Austrittsöffnung allein beendet
     den Gang nicht: Erst ihr zugeordneter Lüftungs- beziehungsweise
     Präsenzabschluss liefert das gebuchte Ende. Betrieb-AUS und fehlende
     Altarchivquellen erzeugen keinen Lüftungsnachweis. Alle Türbezüge behalten
@@ -341,10 +342,8 @@ def project_gang_intervals(timeline: Timeline | Mapping, *, door_cycles=None) ->
         entries, exits = roles.get("entry", ()), roles.get("exit", ())
         entry = entries[0] if len(entries) == 1 else None
         exit_cycle = exits[0] if len(exits) == 1 else None
-        start = entry["ended_at"] if entry is not None else None
-        if start is not None and get(gang, "start_basis") == "previous_gang_end":
-            start = get(gang, "started_at")
-            start = _projection_time(start).isoformat() if _projection_time(start) else None
+        start_at = _projection_time(get(gang, "started_at")) if entry is not None else None
+        start = start_at.isoformat() if start_at is not None else None
         end_at = _projection_time(get(gang, "ended_at")) if exit_cycle is not None else None
         end = end_at.isoformat() if end_at is not None else None
         if start is not None and end is not None and _projection_time(end) < _projection_time(start):
@@ -361,7 +360,7 @@ def project_gang_intervals(timeline: Timeline | Mapping, *, door_cycles=None) ->
 
 
 def active_gang_duration_seconds(timeline, now, *, intervals=None) -> float | None:
-    """Anzeigedauer des aktiven Gangs ab seinem belegten Türschluss.
+    """Anzeigedauer des aktiven Gangs ab seinem belegten Beginn.
 
     Die bereits projizierten Intervalle können vom Verbraucher mitgegeben
     werden. Ohne zugeordneten Beginn bleibt die Dauer unbekannt; die

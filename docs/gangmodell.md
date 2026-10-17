@@ -57,7 +57,7 @@ Fehlende Türquellen oder Betrieb-AUS ersetzen keinen Austrittsnachweis.
 Bei unvollständigen Altarchiven bleibt der bisher aufgezeichnete Abschnitt
 als unvollständige Zeitzuordnung erhalten.
 Die angezeigte Dauer eines aktiven Gangs verwendet denselben belegten
-Eintritt. Fehlt dessen Türschluss, bleibt die Dauer unbekannt. API,
+Beginn bei erfüllter Mindesttemperatur. Fehlt dessen Türschluss, bleibt die Dauer unbekannt. API,
 Vorschau und Zustandsentität verwenden dafür dieselbe Ableitung.
 
 ## Gang durch qualifizierte Belegungszustände bestätigen

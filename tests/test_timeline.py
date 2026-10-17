@@ -487,6 +487,21 @@ class TimelineTests(unittest.TestCase):
 
 
 class DoorCycleProjectionTests(unittest.IsolatedAsyncioTestCase):
+    async def test_displayed_duration_excludes_entry_below_minimum_temperature(self):
+        c = controller()
+        minimum = c.parameters.values["sauna_min_temperature_c"]
+        c.set_temperature(minimum - 1, at(0))
+        c.process(event("entry", Kind.DOOR_OPEN, 1))
+        c.process(event("close", Kind.DOOR_CLOSE, 2))
+        c.process(event("cold-water", Kind.INFUSION, 3))
+        self.assertIsNone(c.session.timeline.active)
+        c.set_temperature(minimum, at(4))
+        c.process(event("water", Kind.INFUSION, 5))
+        self.assertEqual(c.session.timeline.active.started_at, at(4))
+        self.assertEqual(project_gang_intervals(c.session.timeline)[0]["started_at"],
+                         at(4).isoformat())
+        self.assertEqual(active_gang_duration_seconds(c.session.timeline, at(6)), 2)
+
     async def test_active_duration_uses_physical_entry_and_keeps_unknown_source_unknown(self):
         c = controller()
         for source in (

@@ -3142,3 +3142,62 @@ class OriginalCurveFollowupTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class NativeInfusionOnsetTests(unittest.TestCase):
+    def window(self, values, *, scale=0.1):
+        points = tuple((ORIGIN + timedelta(seconds=second), value)
+                       for second, value in values)
+        return original_window(points, count=len(points) // 2, scale=scale,
+                               max_gap_seconds=10, at=points[-1][0])
+
+    def test_local_secants_keep_original_intervals_and_analytic_error_bounds(self):
+        values = [(0, 0), (1, 0), (2, 0), (3, 10), (5, 14), (6, 20)]
+        window = self.window(values)
+        changes = curves.original_window_changes(window)
+        self.assertEqual([(item.previous[0], item.current[0]) for item in changes],
+                         [(ORIGIN + timedelta(seconds=a), ORIGIN + timedelta(seconds=b))
+                          for a, b in ((2, 3), (3, 5), (5, 6))])
+        for item, direction, change in zip(changes, (50, 20, 30), (100 / 3, 10, 20)):
+            self.assertAlmostEqual(item.direction, direction)
+            self.assertAlmostEqual(item.change, change)
+        tolerant = curves.original_window_changes(window, tolerance=2)
+        self.assertEqual([item.change for item in tolerant], [5, 1, 3])
+        scaled = self.window([(time, 7 + 10 * value) for time, value in values], scale=1)
+        for left, right in zip(tolerant, curves.original_window_changes(scaled, tolerance=20)):
+            self.assertAlmostEqual(left.direction, right.direction)
+            self.assertAlmostEqual(left.change, right.change)
+        self.assertIsNone(curves.original_window_changes(window, tolerance=float("nan")))
+        self.assertIsNone(curves.original_window_changes(window, tolerance=-1))
+        flat = self.window([(second, 0) for second in range(-3, 3)])
+        edge = original_edge_change(window, flat)
+        self.assertAlmostEqual(changes[-1].direction, edge.direction)
+        self.assertAlmostEqual(changes[-1].change, edge.change)
+
+    def test_native_rise_inside_overlapping_k_block_is_assigned_by_its_interval(self):
+        parameters = Parameters({})
+        detector = Detector(parameters, ORIGIN)
+        windows, kinks = [], []
+        for name, offset in (("upper", 0), ("lower", .1)):
+            values = [(second + offset, 20 + max(0, second - 10) * 3)
+                      for second in range(14)]
+            humidity = self.window(values)
+            temperature = self.window([(second + offset, 80) for second in range(14)])
+            windows.append((name, OriginalPositionWindows(temperature, humidity)))
+            kinks.append((name, original_kink_tolerance(
+                tuple((ORIGIN + timedelta(seconds=t), value) for t, value in values),
+                humidity, factor=0, min_history_windows=1, max_gap_seconds=10)))
+        intervals = detector._original_local_rise_intervals(
+            tuple(windows), tuple(kinks), {position: ORIGIN for position in detector.positions})
+        self.assertEqual(set(intervals), set(detector.positions))
+        self.assertTrue(all(pair.humidity.current[0][0] < ORIGIN + timedelta(seconds=9)
+                            for _, pair in windows))
+        for end, expected in ((9, "new"), (10.5, "unknown"), (12, "continuation")):
+            with self.subTest(end=end):
+                episode = {"phase": "ended", "level_end_at": ORIGIN + timedelta(seconds=end)}
+                self.assertEqual(detector._original_infusion_assignment(
+                    episode, windows, (), intervals), expected)
+        # An independently valid earlier onset remains continuation evidence.
+        self.assertEqual(detector._original_infusion_assignment(
+            {"phase": "ended", "level_end_at": ORIGIN + timedelta(seconds=9)},
+            windows, (ORIGIN + timedelta(seconds=8),), intervals), "continuation")

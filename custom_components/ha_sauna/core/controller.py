@@ -1813,6 +1813,8 @@ class Controller:
                                 if item.timing.effective_at <= opening.effective_at), None)
             absence = next((item for item in reversed(history)
                             if item.available and item.occupancy == "absent"
+                            and (t.door != Door.CLOSED or t.anchor is not None
+                                 and item.timing.effective_at <= t.anchor.effective_at)
                             and (item.timing.effective_at >= opening.effective_at
                                  or item is before_open)), None)
             if absence is None:
@@ -1970,7 +1972,7 @@ class Controller:
             history = history[:-1]
         self._session = replace(session, base_phases=history + (mark,))
 
-    def phase_projection(self, now, *, physical_gangs=False):
+    def phase_projection(self, now, *, physical_gangs=True):
         from .phases import project_session
         return project_session(self._session, now, physical_gangs=physical_gangs) if self._session else None
 

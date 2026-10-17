@@ -28,13 +28,12 @@ def _merge(items, item):
     items.append(item)
 
 
-def project_session(session, now, *, physical_gangs=False) -> PhaseProjection:
+def project_session(session, now, *, physical_gangs=True) -> PhaseProjection:
     """Project [session start, min(now, end)) from independent factual tracks.
 
-    Operating phases use booked gang times through confirmed ventilation.
-    Physical occupancy remains a separate gang interval; its earlier exit must
-    not expose a heating/readiness phase before the cooling demand. An explicit
-    physical overlay is available for interval inspection only. Retractions remove
+    Gang overlays continue through the confirmed exit operation. Its opening
+    alone must not expose a heating/readiness phase before the cooling demand.
+    The shared gang projection retains incomplete source evidence. Retractions remove
     only that overlay, exposing the independently maintained base phase. Missing
     evidence remains unknown, including unknown contactor state (never a pause).
     """

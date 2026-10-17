@@ -87,6 +87,17 @@ class DirectPresenceControlTests(unittest.TestCase):
         self.assertEqual(self.c.session.timeline.completed[0].ended_at, at(7))
         self.assertEqual(self.c.session.after_run.requested_at, at(7))
 
+    def test_absence_starting_after_occupied_close_does_not_finish_the_gang(self):
+        self.start()
+        gang_id = self.c.session.timeline.active.gang_id
+        self.door(Kind.DOOR_OPEN, 5)
+        self.door(Kind.VENTILATION, 6)
+        self.door(Kind.DOOR_CLOSE, 7)
+        self.report("off", 8)
+        self.assertEqual(self.c.session.timeline.active.gang_id, gang_id)
+        self.assertEqual(self.c.session.timeline.completed, ())
+        self.assertIsNone(self.c.session.after_run)
+
 
 
     def test_delayed_opening_matches_absence_without_a_close(self):
@@ -595,7 +606,7 @@ class DirectPresenceRuntimeTests(unittest.TestCase):
             fixture = DetectorTests()
             detector = fixture._ventilation_detector()
             _, plateau, end, values = fixture._ventilation_curve(detector)
-            found = fixture._feed_pending_ventilation(detector, end, values)
+            _, found = fixture._feed_pending_ventilation(detector, end, values)
             self.assertTrue(detector.open)
             self.assertFalse(any(item.kind == Kind.VENTILATION for item in found))
             runtime.detector = detector

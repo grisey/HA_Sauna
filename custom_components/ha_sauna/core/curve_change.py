@@ -870,6 +870,54 @@ def original_decline_evidence(
         return None
 
 
+@dataclass(frozen=True)
+class OriginalWindowChange:
+    """A resolved secant within immutable original support, not a point estimate."""
+
+    previous: tuple[datetime, float]
+    current: tuple[datetime, float]
+    direction: float
+    change: float
+
+
+def _original_secant_contrasts(previous, current, scale, slope, error, tolerance=0.0):
+    duration = (current[0] - previous[0]).total_seconds()
+    if not _original_positive(duration):
+        return None
+    observed = (current[1] - previous[1]) / duration
+    bound = 2 * scale / duration
+    change_bound = max(bound + error, tolerance)
+    if (not _profile_number(observed) or not _original_positive(bound)
+            or not _original_positive(change_bound)):
+        return None
+    values = observed / bound, (observed - slope) / change_bound
+    return values if all(_profile_number(value) for value in values) else None
+
+
+def original_window_changes(window, *, tolerance=0.0):
+    """Compare each current secant with the same previous K-block background.
+
+    The supplied tolerance stays frozen. This localizes an already observed
+    window transition; it neither establishes an event nor moves its support.
+    """
+    try:
+        if (not _original_window_valid(window) or not _profile_number(tolerance)
+                or tolerance < 0):
+            return None
+        points = (window.previous[-1], *window.current)
+        changes = []
+        for previous, current in zip(points, points[1:]):
+            contrasts = _original_secant_contrasts(
+                previous, current, window.scale, window.b, window.e_minus, tolerance,
+            )
+            if contrasts is None:
+                return None
+            changes.append(OriginalWindowChange(previous, current, *contrasts))
+        return tuple(changes)
+    except (AttributeError, IndexError, OverflowError, TypeError, ValueError):
+        return None
+
+
 def original_edge_change(
     window: OriginalWindowFeatures,
     reference: OriginalWindowFeatures,
@@ -890,27 +938,16 @@ def original_edge_change(
         ):
             return None
         previous, current = window.current[-2:]
-        duration = (current[0] - previous[0]).total_seconds()
-        if not _original_positive(duration):
-            return None
-        slope = (current[1] - previous[1]) / duration
-        error = 2 * window.scale / duration
-        change_error = error + reference.e
-        if (
-            not _profile_number(slope)
-            or not _original_positive(error)
-            or not _original_positive(change_error)
-        ):
-            return None
-        direction = slope / error
-        change = (slope - reference.v) / change_error
-        if not all(_profile_number(value) for value in (direction, change)):
+        contrasts = _original_secant_contrasts(
+            previous, current, window.scale, reference.v, reference.e,
+        )
+        if contrasts is None:
             return None
         return OriginalEdgeChange(
             window=window,
             reference=reference,
-            direction=direction,
-            change=change,
+            direction=contrasts[0],
+            change=contrasts[1],
         )
     except (AttributeError, IndexError, OverflowError, TypeError, ValueError):
         return None

@@ -458,6 +458,22 @@ nachfolgenden Fallbeleg. Die Bestätigung erfolgt pro Episode einmal;
 der spätere Abfall erzeugt nach einer frühen Bestätigung kein zweites Ereignis.
 Die Steuerung reagiert bei der tatsächlichen Bestätigung. Ein gesondert
 belegter früherer Beginn bleibt der historischen Zuordnung vorbehalten.
+Der native RH-Block kann seinen Anstieg auch innerhalb der gebundenen
+Originalstütze lokalisieren. Dafür werden benachbarte Originalwerte des
+aktuellen Blocks mit der Steigung des unveränderten Vorgängerblocks verglichen.
+Die Sekantenskala beträgt `2 ε_H/Δt`; für die Steigungsänderung gilt das Maximum
+aus dieser Skala plus der Fehlerschranke des Vorgängerblocks und der bereits
+gebundenen Knicktoleranz. Der erste aufgelöst positive Schritt mit einer
+signifikanten positiven Steigungsänderung liefert ein Beginnintervall zwischen
+seinen beiden Originalzeitpunkten. Er bestätigt allein keinen Aufguss: Stärke,
+Wasserqualifikation und frischer Anstiegs- oder Fallblock bleiben erforderlich.
+Ohne gesonderten früheren Beginnzeugen wird die linke Originalstütze dieses
+Intervalls als zugeordneter Beginn verwendet; die Intervallgrenzen bleiben in der
+Diagnose erhalten. Ein exakter Zeitpunkt zwischen beiden Messungen wird nicht
+behauptet. Liegen solche Intervalle an allen Positionen vollständig nach dem
+vorherigen Ende, belegen sie einen neuen Ast auch dann, wenn ältere ruhige
+Punkte seines Auswertungsfensters noch vor diesem Ende liegen. Ein überlappendes
+Beginnintervall bleibt ungeklärt; ein früherer gültiger Beginn bleibt Fortsetzung.
 Der erste gültige Beginnzeuge eines Anstiegs bleibt je Messposition gebunden.
 Spätere Fits, deren Stützung bereits Spitze und Abfall umfasst, ersetzen ihn
 nicht durch einen früheren Knick. Eine Korrektur seiner Originalwerte prüft
