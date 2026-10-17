@@ -5,7 +5,6 @@ projection checks vary ownership/continuity records obtained from that fixture;
 they test the selection boundary, not physical event quality.
 """
 
-from copy import deepcopy
 import unittest
 
 import test_detector as fixtures
@@ -22,9 +21,13 @@ class InfusionSelectionIdentityTests(unittest.TestCase):
         fixture.setUp()
         cls.fixture = fixture
         cls.points, _, cls.next_rise, cls.next_fall = fixture._scenario(merged=False)
+
+    @classmethod
+    def build_retained(cls):
+        fixture = cls.fixture
         detector = Detector(fixture.parameters, fixtures.T0)
         events = []
-        cls.retained = None
+        retained = None
         for second in range(0, cls.next_fall + fixture.step, fixture.step):
             cls.send(detector, second, upper_second_pulse=False)
             events.extend(detector.advance(fixture._at(second), enabled=True))
@@ -36,12 +39,13 @@ class InfusionSelectionIdentityTests(unittest.TestCase):
             if (episode.get("confirmation_ready") and episode["confirmed_detection"] is None
                     and first is not None and current is not first
                     and not current["qualified"] and second >= cls.next_rise):
-                cls.retained = detector, state, first, current, second
+                retained = detector, state, first, current, second
                 break
-        if cls.retained is None:
+        if retained is None:
             raise AssertionError("Existing two-pulse fixture did not reach the retained-ready/new-pending boundary")
         if any(event.kind is Kind.INFUSION for event in events):
             raise AssertionError("An idle available primary must not publish the unused secondary pulse")
+        return retained
 
     @classmethod
     def send(cls, detector, second, *, upper_second_pulse):
@@ -91,7 +95,7 @@ class InfusionSelectionIdentityTests(unittest.TestCase):
         self.assertEqual(len(infusions), 1)
 
     def test_ready_projection_keeps_its_own_binding_and_connection_state(self):
-        detector, state, first, current, _ = self.retained
+        detector, state, first, current, _ = self.build_retained()
         self.assertNotEqual(first["received_at"], current["received_at"])
         expected_span = detector._bound_position_span(first)
         self.assertNotEqual(expected_span, detector._bound_position_span(current))
@@ -138,7 +142,7 @@ class InfusionSelectionIdentityTests(unittest.TestCase):
         self.assertEqual(episode["onset_at"], infusions[0].effective_at)
 
     def test_retained_proof_is_not_relabelled_after_a_native_source_change(self):
-        detector, state, first, _, second = deepcopy(self.retained)
+        detector, state, first, _, second = self.build_retained()
         retained_state = dict(state)
         original = dict(first["position_bindings"][Position.LOWER])
         following = second + self.fixture.step
