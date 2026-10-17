@@ -32,6 +32,7 @@ class Kind(StrEnum):
     CONFIRMATION_EXPIRED = "confirmation_expired"
     PRESENCE_CONFIRMED = "presence_confirmed"
     PRESENCE_ENDED = "presence_ended"
+    PRESENCE_CLOSE_ENDED = "presence_close_ended"
 
 
 class Door(StrEnum):
@@ -264,6 +265,18 @@ class Timeline:
             return None
         return max(utc(absence_at), opening.effective_at, ventilation.effective_at)
 
+    def presence_close_exit_at(self) -> datetime | None:
+        """Structural fallback bound; controller supplies the sensor finding."""
+        if (self.active is None
+                or self.door != Door.CLOSED or self.anchor is None
+                or self.anchor.door_close_evidence is None
+                or self.closed_opening is None
+                or self.closed_opening.effective_at <= self.active.started_at
+                or self.closed_opening.event_id in self.rejected_start_sources
+                or self.exit_ventilation is not None):
+            return None
+        return self.anchor.booking_at
+
     @property
     def gang_count(self) -> int:
         return sum(g.confirmation == Confirmation.CONFIRMED for g in self.completed)
@@ -341,8 +354,10 @@ def project_gang_intervals(timeline: Timeline | Mapping, *, door_cycles=None) ->
     Der zugeordnete Eintritt mit erfüllten Startbedingungen liefert den Beginn.
     Die Austrittsöffnung allein beendet den Gang nicht. Ihr bestätigtes
     Durchlüften liefert den Abschluss, bei direkter Präsenz zusammen mit
-    dem zugehörigen Abwesenheitsnachweis. Betrieb-AUS und fehlende
-    Altarchivquellen erzeugen keinen Lüftungsnachweis. Alle Türbezüge behalten
+    dem zugehörigen Abwesenheitsnachweis. Im Sensorbetrieb kann außerdem
+    der bestätigte Schluss ohne dauerhafte Anwesenheit den Gang beenden.
+    Dieser Auffangabschluss, Betrieb-AUS und fehlende Altarchivquellen
+    erzeugen keinen Lüftungsnachweis. Alle Türbezüge behalten
     die Mehrdeutigkeitsprüfung der gemeinsamen Türzyklusprojektion.
     """
     get = _projection_value
@@ -533,6 +548,12 @@ def project_door_cycles(timeline: Timeline | Mapping) -> list[dict]:
                         and detected_at >= ventilation_detected_at):
                     cycle["ventilation_complete_at"] = at.isoformat()
                     cycle["ventilation_complete_event_id"] = event_id
+        elif current is not None and kind == Kind.PRESENCE_CLOSE_ENDED:
+            episode = evidence[current]
+            if (episode["ended_at"] is not None
+                    and episode["ended_at"] <= at
+                    and episode["ventilation_at"] is None):
+                exit_cycles[event_id] = current
         elif current is not None and kind == Kind.PRESENCE_ENDED:
             episode = evidence[current]
             ventilation = episode["ventilation_at"]
@@ -588,11 +609,13 @@ def project_door_cycles(timeline: Timeline | Mapping) -> list[dict]:
         end_event, _, end_at = sources[end_source]
         episode = evidence[exit_cycle]
         end_kind, end_reason = get(end_event, "kind"), get(gang, "end_reason")
-        expected_reason = ("presence_exit" if end_kind == Kind.PRESENCE_ENDED
-                           else "ventilation")
+        expected_reason = (
+            "presence_close" if end_kind == Kind.PRESENCE_CLOSE_ENDED else
+            "presence_exit" if end_kind == Kind.PRESENCE_ENDED else "ventilation"
+        )
         if (end_reason not in (None, expected_reason)
                 or episode["started_at"] < started_at
-                or (end_kind == Kind.PRESENCE_ENDED
+                or (end_kind in (Kind.PRESENCE_ENDED, Kind.PRESENCE_CLOSE_ENDED)
                     and (episode["started_at"] <= started_at
                          or episode["ventilation_event_id"] in ambiguous_ids))
                 or (entry is not None
@@ -615,6 +638,7 @@ def project_door_cycles(timeline: Timeline | Mapping) -> list[dict]:
 
 def apply(
     state: Timeline, event: Event, *, gang_start_at: datetime | None = None,
+    qualified_presence: bool | None = None,
 ) -> Timeline:
     """Ein Ereignis verarbeiten, ohne den bisherigen Zustand zu verändern.
 
@@ -622,13 +646,15 @@ def apply(
     letzten abgeschlossenen Türöffnungsepisode. Jeder neue Gang benötigt eine
     ungenutzte vollständige Öffnungs- und Schließfolge.
     Ein bestehender Gang behält seine ursprüngliche Zuordnung bei Türbetätigung.
-    Die Bestätigungsart des aktiven Gangs bestimmt den Austrittsbeleg.
+    Die aktuelle Belegungsquelle bestimmt den Austrittsbeleg. Ohne explizite
+    Quellenübergabe bleibt die Bestätigungsart des aktiven Gangs maßgeblich.
     Die vollständige Lüftung ergänzt allein ``processed``; ihr vorangehender
     Lüftungsbeleg derselben Öffnung führt weiterhin das Gangende.
     """
     proxy_presence = (
         state.active is not None
-        and state.active.recognition_kind != Kind.PRESENCE_CONFIRMED
+        and (not qualified_presence if qualified_presence is not None
+             else state.active.recognition_kind != Kind.PRESENCE_CONFIRMED)
     )
     if event.session_id != state.session_id:
         raise ValueError("Ereignis gehört zu einer anderen Session")
@@ -729,6 +755,17 @@ def apply(
         result = replace(result, active=gang)
         if event.kind == Kind.PRESENCE_CONFIRMED:
             result = replace(result, resolved_presence_close_id=state.anchor.event_id)
+    elif event.kind == Kind.PRESENCE_CLOSE_ENDED:
+        close_at = state.presence_close_exit_at()
+        if close_at is None or event.effective_at < close_at:
+            raise ValueError("Sensor-Auffangende benötigt einen neuen bestätigten Türschluss")
+        finished = replace(state.active, ended_at=event.booking_at,
+                           end_event_id=event.event_id, end_reason="presence_close")
+        result = replace(state, active=None, completed=state.completed + (finished,),
+                         rejected_start_sources=(*state.rejected_start_sources,
+                                                 state.closed_opening.event_id,
+                                                 state.anchor.event_id),
+                         resolved_presence_close_id=state.anchor.event_id)
     elif event.kind == Kind.PRESENCE_ENDED:
         opening = state.opening if state.door == Door.OPEN else state.closed_opening
         if state.presence_exit_at(event.effective_at) != event.effective_at:

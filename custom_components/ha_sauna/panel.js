@@ -417,6 +417,7 @@ const events = {
   confirmation_expired: "Vorläufigen Gang aufgehoben",
   presence_confirmed: "Gangbeginn · Präsenz nach Türvorgang",
   presence_ended: "Gangende · Abwesenheit und Durchlüften",
+  presence_close_ended: "Gangende · Türschluss ohne dauerhafte Anwesenheit",
 };
 const historyEventMarkerKinds = new Set(["door_open", "door_close", "infusion"]);
 const gangConfirmed = (g) =>
@@ -9982,6 +9983,7 @@ class SaunaPanel extends HTMLElement {
               door_close: "Türschluss erkannt",
               presence_confirmed: "Türvorgang abgeschlossen · Präsenz belegt",
               presence_ended: "Austrittsöffnung · Abwesenheit und Durchlüften belegt",
+              presence_close_ended: "Türschluss · keine dauerhafte Sensoranwesenheit",
               infusion: "Feuchteanstieg erkannt",
             }[e.kind] ||
             events[e.kind] ||

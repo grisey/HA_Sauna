@@ -642,7 +642,9 @@ class PresenceHandoverRuntimeTests(unittest.IsolatedAsyncioTestCase):
                 ("exit-ventilation", Kind.VENTILATION, 6),
             ):
                 clock[0] = at(second)
-                await runtime.receive(event(key, kind, second))
+                item = (Event(key, "s", kind, at(3.5), clock[0])
+                        if kind == Kind.DOOR_OPEN else event(key, kind, second))
+                await runtime.receive(item)
             self.assertIsNone(runtime.session.timeline.active)
             clock[0] = at(7)
             await runtime.accept_presence(

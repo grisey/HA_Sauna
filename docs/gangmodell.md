@@ -49,8 +49,9 @@ Für Verlauf, Statistik und Betriebsphase reicht der Gang vom zugeordneten
 Eintritt bis zum bestätigten Abschluss des Austrittsvorgangs. Die Türöffnung
 allein beendet ihn nicht. Das Durchlüften gehört zu dieser vorher beobachteten
 Öffnung; bei Führung durch einen Präsenzsensor gehört außerdem der
-Abwesenheitsnachweis dazu. Die Gangdauer endet am gebuchten Abschluss dieses
-zusammengehörigen Vorgangs. Bis dahin bleibt die Phase **Saunagang** bestehen;
+Abwesenheitsnachweis dazu. Im Sensorbetrieb kann die unten beschriebene
+Auffangregel den Austritt beim bestätigten Türschluss abschließen.
+Die Gangdauer endet am gebuchten Abschluss dieses zusammengehörigen Vorgangs. Bis dahin bleibt die Phase **Saunagang** bestehen;
 dazwischen entsteht keine zusätzliche Aufheiz- oder Bereitschaftsphase.
 Türöffnung und Türschluss bleiben als eigene Ereignisse sichtbar.
 Fehlende Türquellen oder Betrieb-AUS ersetzen keinen Austrittsnachweis.
@@ -97,12 +98,28 @@ kann den Austritt des alten und den Eintritt des neuen Gangs tragen; beide
 Gänge überlappen sich nicht. Bei geschlossener Tür bleibt der bestätigte
 Aufenthalt bis zum nächsten Türvorgang bestehen.
 
+Als Auffangregel endet ein laufender Gang im Sensorbetrieb auch dann, wenn
+nach einer neuen Öffnung der zugehörige Türschluss bestätigt wird, keine
+dauerhafte Sensoranwesenheit für diesen Schluss vorliegt und das Durchlüften
+noch nicht bestätigt ist. Dafür muss der Sensorzustand auswertbar sein;
+`unknown` und `unavailable` lösen diesen Abschluss nicht aus. Ein kurzes ON
+innerhalb des Türvorgangs ersetzt den erforderlichen durchgehenden
+Anwesenheitsbeleg nicht. Dieser Abschluss wird als **Türschluss ohne dauerhafte
+Anwesenheit** geführt und erzeugt keinen Lüftungsbeleg. Gangphase und Dauer
+enden mit seiner Buchung; die Ofenkühlung schließt ohne Heizlücke an.
+
+Im Proxybetrieb gilt diese Auffangregel nicht. Das Gangende durch bestätigtes
+Durchlüften der zugehörigen Öffnung benötigt dort keinen Präsenzzustand.
+Die aktuell ausgewählte Quelle bestimmt die Abschlussregel, auch nach einem
+Quellenwechsel; die ursprüngliche Bestätigungsart des Gangs bleibt erhalten.
+
 | Beleg | Wirkung |
 | --- | --- |
 | Eintritt mit durchgehendem Sensorpräsenzbeleg und erreichter Mindesttemperatur | Bestätigter Gang, ohne zusätzliche Wartefrist oder erforderlichen Aufguss |
 | Öffnen zum Verlassen mit zugehöriger Abwesenheit und bestätigtem Lüften | Gangende beim vollständigen Nachweis, auch nach dem anschließenden Türschluss |
 | Einzelne Präsenzmeldung, Türschluss ohne Öffnung oder bloßer Zeitablauf | Kein Übergang |
-| Durchlüften der Austrittsöffnung ohne zugehörige Abwesenheit | Kein Gangende |
+| Durchlüften der Austrittsöffnung ohne zugehörige Abwesenheit im Sensorbetrieb | Kein Gangende durch Lüften |
+| Bestätigter neuer Türschluss ohne dauerhafte Sensoranwesenheit, Zustand auswertbar, Lüften noch nicht bestätigt | Gangende durch Auffangregel |
 | Betrieb-AUS | Ende des offenen Gangs |
 
 Aufgüsse werden dem Gang zugeordnet, bestätigen ihn aber nicht erneut.

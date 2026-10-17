@@ -1091,6 +1091,8 @@ class Controller:
             return Result(self._session, cooling_person_signal, blocked, event.event_id)
         timeline = apply(
             previous.timeline, event,
+            qualified_presence=(self.direct_presence.qualified_presence
+                                if self.direct_presence is not None else None),
             gang_start_at=(self._gang_entry_start_at(previous.timeline)
                            if event.kind in GANG_SIGNALS
                            and previous.timeline.active is None else None),
@@ -1797,6 +1799,30 @@ class Controller:
             return None
         return report
 
+    def _presence_close_fallback(self, timeline, at):
+        """No sustained sensor occupancy at a new close, before ventilation."""
+        close_at = timeline.presence_close_exit_at()
+        current = self.direct_presence
+        if (close_at is None or current is None or not current.qualified_presence
+                or not current.available or current.occupancy not in ("present", "absent")):
+            return None
+        closure = timeline.anchor
+        proof = closure.door_close_evidence
+        report = next((item for item in reversed(self._direct_presence_history)
+                       if item.timing.effective_at is not None
+                       and item.timing.effective_at <= proof.confirmed_at
+                       and item.timing.received_at is not None
+                       and item.timing.received_at <= self._received_at(at)), None)
+        if (report is None or not report.available or not report.qualified_presence
+                or report.occupancy not in ("present", "absent")
+                or (report.occupancy == "absent"
+                    and report.timing.effective_at < timeline.closed_opening.effective_at)
+                or (report.timing.first_usable_at is not None
+                    and report.timing.first_usable_at > proof.candidate_at)
+                or self._presence_across_closing(closure, at) is not None):
+            return None
+        return report
+
     def _reconcile_direct_presence(self, at, *, entry_event=None):
         """Observe entry independently of its temperature admission.
 
@@ -1863,19 +1889,21 @@ class Controller:
                             and (t.door != Door.CLOSED or t.anchor is not None
                                  and item.timing.effective_at <= t.anchor.effective_at)
                             and item.timing.effective_at >= opening.effective_at), None)
-            if absence is None:
+            if self._direct_presence_catchup:
                 return False
-            report = absence
-            effective = t.presence_exit_at(max(
-                report.timing.effective_at,
-                report.timing.first_usable_at or report.timing.effective_at,
-            ))
-            if (self._direct_presence_catchup
-                    or report.occupancy != "absent"
-                    or effective is None):
-                return False
-            kind = Kind.PRESENCE_ENDED
-            source = opening
+            effective = (t.presence_exit_at(max(
+                absence.timing.effective_at,
+                absence.timing.first_usable_at or absence.timing.effective_at,
+            )) if absence is not None else None)
+            if effective is not None:
+                report = absence
+                kind, source = Kind.PRESENCE_ENDED, opening
+            else:
+                report = self._presence_close_fallback(t, at)
+                if report is None:
+                    return False
+                effective = t.presence_close_exit_at()
+                kind, source = Kind.PRESENCE_CLOSE_ENDED, t.anchor
         if effective > at:
             return False
         self.process(Event(
