@@ -6,6 +6,8 @@ private files, desired gang counts or skipped tests are used here.
 """
 
 from collections.abc import Sequence
+from copy import deepcopy
+import json
 from datetime import timedelta
 from types import SimpleNamespace
 import unittest
@@ -46,22 +48,22 @@ class OriginalTimeSupportTests(unittest.TestCase):
         values = (fixture[0][1],) * (2 * self.count) + tuple(value for _, value in fixture)
         return tuple((ORIGIN + index * interval, value) for index, value in enumerate(values)), interval
 
-    def support(self, samples, *, position="upper", quantity="humidity", at=None, previous=None):
+    def support(self, samples, *, position="upper", quantity="humidity", at=None, previous=None, diagnostic=None):
         arguments = channel_arguments(self.values, position, quantity)
         return original_time_support(
             samples,
             count=arguments["count"],
             max_gap_seconds=arguments["max_gap_seconds"],
             at=samples[-1][0] if at is None else at,
-            previous=previous,
+            previous=previous, diagnostic=diagnostic,
         )
 
-    def window(self, samples, support, *, at=None, position="upper", quantity="humidity"):
+    def window(self, samples, support, *, at=None, position="upper", quantity="humidity", diagnostic=None):
         return original_window(
             samples,
             **channel_arguments(self.values, position, quantity),
             at=samples[-1][0] if at is None else at,
-            time_support=support,
+            time_support=support, diagnostic=diagnostic,
         )
 
     def test_regular_slower_originals_keep_values_and_native_times_in_every_role(self):
@@ -95,7 +97,15 @@ class OriginalTimeSupportTests(unittest.TestCase):
         support = self.support(initial)
         self.assertIsNotNone(support)
         self.assertFalse(support.covers(initial[0][0], initial[-1][0]))
-        self.assertIsNone(self.window(initial, support))
+        diagnostic = {}
+        self.assertIsNone(self.window(initial, support, diagnostic=diagnostic))
+        self.assertEqual(diagnostic["reason"], "unsupported_original_window")
+        self.assertEqual(diagnostic["selected_count"], 2 * self.count)
+        self.assertEqual(diagnostic["start_at"], initial[0][0])
+        self.assertEqual(diagnostic["newest_at"], initial[-1][0])
+        self.assertEqual(diagnostic["spans"], support.spans)
+        self.assertEqual(diagnostic["breaks"], support.breaks)
+        self.assertTrue(diagnostic["breaks"])
         self.assertIsNotNone(self.window(samples, self.support(samples)))
 
     def test_long_gap_cannot_train_itself_or_be_healed_by_later_cadence(self):
@@ -103,14 +113,21 @@ class OriginalTimeSupportTests(unittest.TestCase):
         before = samples[-1][0]
         after = before + 2 * self.count * interval
         broken = samples + ((after, samples[-1][1]),)
-        support = self.support(broken, previous=self.support(samples))
+        previous = self.support(samples)
+        support = self.support(broken, previous=previous)
+        rejected_interval = (before, after, (after - before).total_seconds(), previous.next_gap_seconds)
+        self.assertIn(rejected_interval, support.breaks)
         self.assertFalse(support.covers(before, after))
-        self.assertIsNone(self.window(broken, support))
+        diagnostic = {}
+        self.assertIsNone(self.window(broken, support, diagnostic=diagnostic))
+        self.assertEqual(diagnostic["reason"], "unsupported_original_window")
+        self.assertIn(rejected_interval, diagnostic["breaks"])
         # A genuinely different later cadence may be learned, but cannot alter
         # the retained rejection of the earlier gap.
         later = tuple((after + index * (after - before), samples[-1][1]) for index in range(1, 4 * self.count))
         final = self.support(broken + later, previous=support)
         self.assertFalse(final.covers(before, after))
+        self.assertIn(rejected_interval, final.breaks)
         self.assertFalse(final.covers(before, later[-1][0]))
         self.assertIsNotNone(self.window(broken + later, final))
 
@@ -121,7 +138,14 @@ class OriginalTimeSupportTests(unittest.TestCase):
         self.assertTrue(support.fresh(boundary))
         self.assertFalse(support.fresh(boundary + timedelta.resolution))
         self.assertIsNotNone(self.window(samples, support, at=boundary))
-        self.assertIsNone(self.window(samples, support, at=boundary + timedelta.resolution))
+        diagnostic = {}
+        self.assertIsNone(self.window(
+            samples, support, at=boundary + timedelta.resolution, diagnostic=diagnostic,
+        ))
+        self.assertEqual(diagnostic["reason"], "support_age_exceeded")
+        self.assertEqual(diagnostic["limit_seconds"], support.next_gap_seconds)
+        self.assertEqual(diagnostic["newest_at"], samples[-1][0])
+        self.assertGreater(diagnostic["age_seconds"], diagnostic["limit_seconds"])
         future = samples + ((boundary + self.count * interval, samples[-1][1]),)
         self.assertEqual(self.support(future, at=samples[-1][0]), support)
         self.assertEqual(self.support(samples, at=boundary + timedelta.resolution), support)
@@ -164,7 +188,11 @@ class OriginalTimeSupportTests(unittest.TestCase):
 
         series = CountedSeries(samples + ((samples[-1][0] + interval, value),))
         at = series.values[-1][0]
-        updated = self.support(series, at=at, previous=previous)
+        diagnostic = {}
+        updated = self.support(series, at=at, previous=previous, diagnostic=diagnostic)
+        self.assertEqual(diagnostic["reason"], "ready")
+        self.assertEqual(diagnostic["newest_at"], at)
+        self.assertEqual(diagnostic["next_gap_seconds"], updated.next_gap_seconds)
         self.assertIsNotNone(updated)
         # One initial timestamp, binary search, overlap check, one new point.
         self.assertLessEqual(series.reads, len(series).bit_length() + 3)
@@ -185,7 +213,10 @@ class OriginalTimeSupportTests(unittest.TestCase):
                 ))
         previous = self.support(samples)
         disconnected = ((samples[-1][0] + interval, samples[-1][1]),)
-        self.assertIsNone(self.support(disconnected, previous=previous))
+        diagnostic = {}
+        self.assertIsNone(self.support(disconnected, previous=previous, diagnostic=diagnostic))
+        self.assertEqual(diagnostic["reason"], "missing_previous_anchor")
+        self.assertEqual(diagnostic["anchor_at"], previous.newest_at)
         bound = previous.restrict(samples[-2][0], samples[-1][0])
         self.assertIsNone(self.support(samples, previous=bound))
 
@@ -343,7 +374,8 @@ class OriginalTimeAdapterTests(unittest.TestCase):
             for position in (Position.UPPER, Position.LOWER)
             for quantity in (Quantity.TEMPERATURE, Quantity.HUMIDITY)
         )) + fixture_step
-        detector = Detector(parameters, T0)
+        observed = []
+        detector = Detector(parameters, T0, observer=observed.append)
         for index in range(4 * count):
             at = T0 + index * interval
             seconds = (at - T0).total_seconds()
@@ -356,6 +388,27 @@ class OriginalTimeAdapterTests(unittest.TestCase):
                     ))
             prefix = self._advance_with_original_prefix(detector, at)
         self.assertEqual(len(prefix.windows), len(detector.positions))
+        records = {(position, quantity): record
+                   for position, quantity, record in prefix.window_diagnostics}
+        self.assertEqual(set(records), {
+            (position.value, quantity.value)
+            for position in detector.positions
+            for quantity in (Quantity.TEMPERATURE, Quantity.HUMIDITY)
+        })
+        published = observed[-1]["original_window_diagnostics"]
+        selection = observed[-1]["position_selection"]["door_open"]
+        self.assertTrue(all(item["status"] == "idle" for item in selection["results"].values()))
+        for (position, quantity), record in records.items():
+            with self.subTest(position=position, quantity=quantity):
+                self.assertTrue(record["window_ready"])
+                self.assertEqual(record["window"]["reason"], "ready")
+                series = detector._curve_series[Position(position), Quantity(quantity)]
+                self.assertEqual(record["source"], series["source"])
+                self.assertEqual(record["epoch"], series["epoch"])
+                self.assertEqual(record["time_basis"], series["time_basis"])
+                self.assertEqual(published[position][quantity], record)
+        saved_records = deepcopy(records)
+        json.dumps(published, default=str, allow_nan=False)
         self.assertTrue(detector._original_humidity_available(detector.positions, at))
         references = tuple(
             (name, Quantity.HUMIDITY, pair.humidity.start_at)
@@ -380,6 +433,34 @@ class OriginalTimeAdapterTests(unittest.TestCase):
         self.assertFalse(detector._original_humidity_available(
             detector.positions, at + interval
         ))
+        changed_records = {(position, quantity): record
+                           for position, quantity, record in changed.window_diagnostics}
+        role = Position.UPPER.value, Quantity.HUMIDITY.value
+        reset = changed_records[role]
+        self.assertEqual(reset["source"], "sensor.changed_humidity")
+        self.assertGreater(reset["epoch"], records[role]["epoch"])
+        self.assertFalse(reset["window_ready"])
+        self.assertEqual(reset["window"]["reason"], "insufficient_originals")
+        self.assertEqual(reset["window"]["selected_count"], reset["available_count"])
+        self.assertLess(reset["window"]["selected_count"], reset["window"]["required_count"])
+        self.assertEqual(records, saved_records, "later source changes cannot rewrite the captured prefix")
+        # Only lower RH reports again; the held upper T window now exceeds
+        # its own already learned cadence without a second fit.
+        late_at = at + 2 * interval
+        self.assertTrue(detector.accept(measurement(
+            Position.LOWER, Quantity.HUMIDITY, trace(0)[1],
+            (late_at - T0).total_seconds(),
+        )))
+        late = self._advance_with_original_prefix(detector, late_at)
+        late_records = {(position, quantity): record
+                        for position, quantity, record in late.window_diagnostics}
+        thermal = late_records[Position.UPPER.value, Quantity.TEMPERATURE.value]
+        self.assertFalse(thermal["window_ready"])
+        self.assertTrue(thermal["window"]["cache_hit"])
+        self.assertEqual(thermal["window"]["reason"], "detector_support_age_exceeded")
+        self.assertEqual(thermal["window"]["limit_seconds"], thermal["time_support"]["next_gap_seconds"])
+        self.assertGreater(thermal["window"]["age_seconds"], thermal["window"]["limit_seconds"])
+        self.assertEqual(records, saved_records)
 
 
 if __name__ == "__main__":

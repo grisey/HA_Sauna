@@ -74,6 +74,15 @@ Index `p` bezeichnet diese Position; aus den beiden Geräten wird kein
 positionsübergreifender Mindestbeleg gebildet. Die getrennten Originalzeiten
 der beiden Messgrößen bleiben erhalten.
 
+Die Fensterdiagnose hält für beide Positionen und Messgrößen die tatsächlich
+verwendete Quelle, ihren Abschnitt, die Originalanzahl und die Entscheidung
+über die Zeitstütze fest. Bei getrennten Stützen bleiben die betroffenen
+Originalzeiten und die damals verwendete Lückengrenze erhalten; eine spätere
+Meldung berechnet diese Grenze nicht rückwirkend neu. Fehlende Originale,
+unterbrochene Stützen und abgelaufene Frische sind getrennte Ablehnungsgründe.
+Diese Angaben bleiben auch ohne gebundenes Muster sichtbar. Sie beschreiben
+die Auswertbarkeit des Eingangs und ändern weder Sensorvorrang noch Formregeln.
+
 ## Kurvenbeginn und Bestätigung
 
 Die gemeinsame Türerkennung und die Aufgusserkennung verwenden je Messkanal

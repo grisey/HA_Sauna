@@ -80,6 +80,8 @@ class OriginalTimeSupport:
     count: int
     initial_gap_seconds: float
     intervals: tuple[float, ...] | None
+    # Passive record of the interval and limit used when a span was split.
+    breaks: tuple[tuple[datetime, datetime, float, float], ...] = ()
 
     def covers(self, start_at: datetime, end_at: datetime) -> bool:
         """Test original endpoints against retained, uninterrupted spans."""
@@ -131,6 +133,12 @@ def _original_cadence_limit(intervals, *, count, initial_gap_seconds):
     return max(initial_gap_seconds, upper + 1.5 * (upper - lower))
 
 
+def _original_support_diagnostic(diagnostic, reason, **details):
+    """Copy an executed branch; never evaluate a second support decision."""
+    if diagnostic is not None:
+        diagnostic.update(reason=reason, **details)
+
+
 def original_time_support(
     samples: Sequence[tuple[datetime, float]],
     *,
@@ -138,6 +146,7 @@ def original_time_support(
     max_gap_seconds: float,
     at: datetime,
     previous: OriginalTimeSupport | None = None,
+    diagnostic: dict | None = None,
 ) -> OriginalTimeSupport | None:
     """Assess each original interval against its preceding causal cadence.
 
@@ -159,6 +168,8 @@ def original_time_support(
     spans and N the caller's bounded series length. Cadence storage is O(K). The
     caller's bounded original buffer bounds B; bound windows store one span.
     """
+    if diagnostic is not None:
+        diagnostic.clear()
     try:
         if (
             not isinstance(count, int)
@@ -168,13 +179,16 @@ def original_time_support(
             or not isinstance(at, datetime)
             or not samples
         ):
+            _original_support_diagnostic(diagnostic, "invalid_arguments")
             return None
         first_at = samples[0][0]
         if not isinstance(first_at, datetime) or first_at > at:
+            _original_support_diagnostic(diagnostic, "invalid_first_timestamp")
             return None
         initial = float(max_gap_seconds)
         intervals: deque[float] = deque(maxlen=2 * count - 1)
         spans = []
+        breaks = []
         newest_at = None
         limit = initial
         first = 0
@@ -187,9 +201,14 @@ def original_time_support(
                 or previous.newest_at > at
                 or first_at < previous.start_at
             ):
+                _original_support_diagnostic(diagnostic, "invalid_previous_support")
                 return None
             first = bisect_right(samples, previous.newest_at, key=lambda point: point[0])
             if not first or samples[first - 1][0] != previous.newest_at:
+                _original_support_diagnostic(
+                    diagnostic, "missing_previous_anchor", anchor_at=previous.newest_at,
+                    first_at=first_at,
+                )
                 return None
             intervals.extend(previous.intervals)
             newest_at = previous.newest_at
@@ -197,23 +216,32 @@ def original_time_support(
             oldest_span = bisect_left(previous.spans, first_at, key=lambda span: span[1])
             spans = list(previous.spans[oldest_span:])
             if not spans:
+                _original_support_diagnostic(diagnostic, "missing_retained_span")
                 return None
             spans[0] = (max(first_at, spans[0][0]), spans[0][1])
+            breaks = [item for item in previous.breaks if item[0] >= first_at]
         for index in range(first, len(samples)):
             stamp, value = samples[index]
             if not isinstance(stamp, datetime):
+                _original_support_diagnostic(diagnostic, "invalid_original_timestamp", index=index)
                 return None
             if stamp > at:
                 break
             if not _profile_number(value):
+                _original_support_diagnostic(diagnostic, "nonfinite_original_value", original_at=stamp)
                 return None
             if newest_at is None:
                 spans.append((stamp, stamp))
             else:
                 gap = (stamp - newest_at).total_seconds()
                 if not _original_positive(gap):
+                    _original_support_diagnostic(
+                        diagnostic, "nonpositive_interval", before_at=newest_at,
+                        after_at=stamp, gap_seconds=gap,
+                    )
                     return None
                 if gap > limit:
+                    breaks.append((newest_at, stamp, gap, limit))
                     spans.append((stamp, stamp))
                 else:
                     spans[-1] = (spans[-1][0], stamp)
@@ -223,13 +251,22 @@ def original_time_support(
                 intervals, count=count, initial_gap_seconds=initial
             )
             if not _original_positive(limit):
+                _original_support_diagnostic(diagnostic, "invalid_cadence_limit", original_at=stamp)
                 return None
         if newest_at is None:
+            _original_support_diagnostic(diagnostic, "no_causal_originals")
             return None
-        return OriginalTimeSupport(
-            first_at, newest_at, tuple(spans), limit, count, initial, tuple(intervals)
+        _original_support_diagnostic(
+            diagnostic, "ready", start_at=first_at, newest_at=newest_at,
+            next_gap_seconds=limit, initial_gap_seconds=initial,
+            interval_count=len(intervals), span_count=len(spans),
         )
-    except (AttributeError, IndexError, OverflowError, TypeError, ValueError):
+        return OriginalTimeSupport(
+            first_at, newest_at, tuple(spans), limit, count, initial, tuple(intervals),
+            breaks=tuple(breaks),
+        )
+    except (AttributeError, IndexError, OverflowError, TypeError, ValueError) as error:
+        _original_support_diagnostic(diagnostic, "invalid_support_input", error_type=type(error).__name__)
         return None
 
 
@@ -817,6 +854,7 @@ def original_window(
     max_gap_seconds: float,
     at: datetime,
     time_support: OriginalTimeSupport | None = None,
+    diagnostic: dict | None = None,
 ) -> OriginalWindowFeatures | None:
     """Use the last 2K originals at or before at, without repairing their order.
 
@@ -828,6 +866,16 @@ def original_window(
     the detector; an optional future suffix costs one visit per skipped point.
     The caller retains source continuity and any earlier history validity.
     """
+    if diagnostic is not None:
+        diagnostic.clear()
+    selected = []
+
+    def record(reason, **details):
+        _original_support_diagnostic(
+            diagnostic, reason, required_count=2 * count, selected_count=len(selected),
+            **details,
+        )
+
     try:
         if (
             not isinstance(count, int)
@@ -837,41 +885,71 @@ def original_window(
             or not _original_positive(max_gap_seconds)
             or not isinstance(at, datetime)
         ):
+            _original_support_diagnostic(diagnostic, "invalid_arguments")
             return None
-        selected = []
         later = None
         for stamp, value in reversed(samples):
             if not isinstance(stamp, datetime):
+                record("invalid_original_timestamp")
                 return None
             if later is not None and stamp >= later:
+                record("nonincreasing_original_times", original_at=stamp, later_at=later)
                 return None
             later = stamp
             if stamp > at:
                 continue
             if not _profile_number(value):
+                record("nonfinite_original_value", original_at=stamp)
                 return None
             if (
                 time_support is None
                 and selected
                 and (selected[-1][0] - stamp).total_seconds() > max_gap_seconds
             ):
+                record(
+                    "catalog_gap_exceeded", before_at=stamp, after_at=selected[-1][0],
+                    gap_seconds=(selected[-1][0] - stamp).total_seconds(),
+                    limit_seconds=max_gap_seconds,
+                )
                 return None
             selected.append((stamp, float(value)))
             if len(selected) == 2 * count:
                 break
         if len(selected) != 2 * count:
+            record("insufficient_originals")
             return None
+        if diagnostic is not None:
+            diagnostic.update(start_at=selected[-1][0], newest_at=selected[0][0])
         bound_support = None
         if time_support is None:
             if not 0 <= (at - selected[0][0]).total_seconds() <= max_gap_seconds:
+                record(
+                    "catalog_age_exceeded", age_seconds=(at - selected[0][0]).total_seconds(),
+                    limit_seconds=max_gap_seconds,
+                )
                 return None
         else:
             if not isinstance(time_support, OriginalTimeSupport) or not time_support.covers(
                 selected[-1][0], selected[0][0]
             ):
+                details = {}
+                if diagnostic is not None and isinstance(time_support, OriginalTimeSupport):
+                    details = {
+                        "support_start_at": time_support.start_at,
+                        "support_newest_at": time_support.newest_at,
+                        "spans": tuple(span for span in time_support.spans
+                                       if span[1] >= selected[-1][0] and span[0] <= selected[0][0]),
+                        "breaks": tuple(item for item in time_support.breaks
+                                        if selected[-1][0] <= item[0] < item[1] <= selected[0][0]),
+                    }
+                record("unsupported_original_window", **details)
                 return None
             bound_support = time_support.restrict(selected[-1][0], selected[0][0])
             if not bound_support.fresh(at):
+                record(
+                    "support_age_exceeded", age_seconds=(at - bound_support.newest_at).total_seconds(),
+                    limit_seconds=bound_support.next_gap_seconds,
+                )
                 return None
         selected.reverse()
         previous = tuple(selected[:count])
@@ -879,7 +957,9 @@ def original_window(
         old = _original_line(previous, scale)
         new = _original_line(current, scale)
         if old is None or new is None:
+            record("unresolved_line", previous_resolved=old is not None, current_resolved=new is not None)
             return None
+        record("ready")
         return OriginalWindowFeatures(
             previous=previous,
             current=current,
@@ -894,7 +974,8 @@ def original_window(
             r_minus=old[3],
             time_support=bound_support,
         )
-    except (AttributeError, IndexError, OverflowError, TypeError, ValueError):
+    except (AttributeError, IndexError, OverflowError, TypeError, ValueError) as error:
+        _original_support_diagnostic(diagnostic, "invalid_window_input", error_type=type(error).__name__)
         return None
 
 

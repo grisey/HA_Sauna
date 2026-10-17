@@ -131,6 +131,7 @@ class _OriginalPrefix:
     changed_position: Position | None = None
     input_time: tuple | None = None
     changed_quantity: Quantity | None = None
+    window_diagnostics: tuple = ()
 
 
 def robust_slope(values, step=BY_KEY["grid_seconds"].default):
@@ -564,6 +565,14 @@ class Detector:
         route = "door_close" if self.open else "door_open"
         group_original_roles = set()
         for index, prefix in enumerate(prefixes):
+            # Retain both positions even when their native form is idle. The
+            # records were captured at input consumption, not reconstructed here.
+            trace["original_window_diagnostics"] = {
+                position.value: {
+                    quantity: record for name, quantity, record in prefix.window_diagnostics
+                    if name == position.value
+                } for position in self.positions
+            }
             stage_confirmation_allowed = self._original_input_group_end(prefixes, index)
             if prefix.changed_position is not None and prefix.changed_quantity is not None:
                 role = prefix.changed_position, prefix.changed_quantity
@@ -1351,25 +1360,30 @@ class Detector:
             for quantity in (Quantity.TEMPERATURE, Quantity.HUMIDITY)
         )) for position in self.positions)
 
-    def _original_time_support(self, position, quantity, samples, at):
+    def _original_time_support(self, position, quantity, samples, at, *, diagnostic=None):
         """Eine kausale Zeitstütze je Rolle/Epoche, nur Append neu bewerten."""
         series = self._curve_series[position, quantity]
         key = position, quantity
         cached = self._original_time_support_cache.get(key)
         same_epoch = cached is not None and cached[0] == series["epoch"]
         if same_epoch and cached[1] == series["version"]:
+            if diagnostic is not None:
+                diagnostic.update(cached[3], cache_hit=True, evaluated_at=cached[4])
             return cached[2]
         previous = cached[2] if same_epoch else None
+        support_diagnostic = {}
         support = original_time_support(
             samples, count=self.p["curve_original_samples"],
             max_gap_seconds=self.p[f"curve_original_gap_{quantity.value}_{position.value}_seconds"],
-            at=at, previous=previous,
+            at=at, previous=previous, diagnostic=support_diagnostic,
         )
+        if diagnostic is not None:
+            diagnostic.update(support_diagnostic, cache_hit=False, evaluated_at=at)
         # Ein unerklärter Verlust des Append-Ankers darf nicht im nächsten
         # Präfix durch ein stilles Neu-Anlernen alte Verbindungen heilen.
         if support is not None or previous is None:
             self._original_time_support_cache[key] = (
-                series["epoch"], series["version"], support,
+                series["epoch"], series["version"], support, support_diagnostic, at,
             )
         return support
 
@@ -1384,6 +1398,7 @@ class Detector:
         """Jedes angenommene Präfix erhalten; ein Raster ist kein neues Original."""
         points, windows, temperatures, humidity_kinks, humidities = [], [], [], [], []
         time_supports = []
+        window_diagnostics = []
         for position in self.positions:
             streams = []
             for quantity in (Quantity.TEMPERATURE, Quantity.HUMIDITY):
@@ -1400,21 +1415,46 @@ class Detector:
             ):
                 series = self._curve_series[position, quantity]
                 gap = self.p[f"curve_original_gap_{quantity.value}_{position.value}_seconds"]
-                support = self._original_time_support(position, quantity, samples, received_at)
+                support_record = {}
+                support = self._original_time_support(
+                    position, quantity, samples, received_at, diagnostic=support_record,
+                )
                 time_supports.append((position.value, quantity, support))
                 cached = self._original_window_cache.get((position, quantity))
                 feature = cached[1] if cached is not None and cached[0] == series["version"] else None
+                window_record = (
+                    {**cached[2], "cache_hit": True, "evaluated_at": cached[3]}
+                    if feature is not None else {}
+                )
                 if support is None:
                     feature = None
+                    window_record = {"reason": "time_support_unavailable", "evaluated_at": received_at}
                 elif feature is None:
                     feature = original_window(
                         samples, count=self.p["curve_original_samples"],
                         scale=self.p[f"curve_original_noise_{quantity.value}_{position.value}"],
                         max_gap_seconds=gap, at=received_at, time_support=support,
+                        diagnostic=window_record,
                     )
-                    self._original_window_cache[position, quantity] = (series["version"], feature)
+                    self._original_window_cache[position, quantity] = (
+                        series["version"], feature, dict(window_record), received_at,
+                    )
+                    window_record.update(cache_hit=False, evaluated_at=received_at)
                 if feature is not None and not support.fresh(received_at):
                     feature = None
+                    window_record.update(
+                        reason="detector_support_age_exceeded", evaluated_at=received_at,
+                        age_seconds=(received_at - support.newest_at).total_seconds(),
+                        limit_seconds=support.next_gap_seconds,
+                    )
+                window_diagnostics.append((position.value, quantity.value, {
+                    "source": series["source"], "epoch": series["epoch"],
+                    "version": series["version"], "time_basis": series["time_basis"],
+                    "source_started_at": series["started_at"],
+                    "received_at": received_at, "available_count": len(samples),
+                    "window_ready": feature is not None,
+                    "time_support": support_record, "window": window_record,
+                }))
                 features.append(feature)
                 if quantity == Quantity.HUMIDITY:
                     cached = self._original_kink_cache.get(position)
@@ -1445,7 +1485,7 @@ class Detector:
         self._original_prefixes.append(_OriginalPrefix(
             received_at, original, self._original_context(), tuple(points), tuple(windows),
             tuple(temperatures), tuple(humidity_kinks), tuple(humidities), tuple(time_supports),
-            changed_position, input_time, changed_quantity,
+            changed_position, input_time, changed_quantity, tuple(window_diagnostics),
         ))
 
     @staticmethod
