@@ -250,6 +250,16 @@ test("tables, diagnostics, annotations and session labels use each fixed local z
         processed: [event],
         retracted: [],
       },
+      gang_intervals: [
+        {
+          gang_id: gang.gang_id,
+          started_at: at,
+          ended_at: later,
+          start_source_event_id: "entry-close",
+          end_source_event_id: "exit-open",
+          complete: true,
+        },
+      ],
       heating: { intervals: [{ started_at: at, ended_at: later }] },
     };
     const records = [
