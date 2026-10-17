@@ -1,5 +1,6 @@
 """Focused counterexamples on existing inputs; real replay review remains separate."""
 
+from copy import deepcopy
 from datetime import timedelta
 import hashlib
 import json
@@ -183,10 +184,21 @@ class DoorCandidateRegressionTests(unittest.TestCase):
         self.assertEqual(hashlib.sha256(payload).hexdigest(), manifest["source_curves_sha256"])
         curves = json.loads(payload)["curves"]
         detector, events = fixture._detector(), []
-        observed_openings = []
+        observed_openings, pending_openings = [], []
         supplied_originals = {role: {} for role in CLIMATE}
 
         def observe(row):
+            forms = row.get("original_forms") or {}
+            if forms.get("candidate_received_at") is not None:
+                pending_openings.append(deepcopy({
+                    "at": row["at"],
+                    "forms": {key: forms.get(key) for key in (
+                        "binding_onsets", "native_humidity_onset_intervals",
+                        "infusion_decay_guard", "opening_confirmation",
+                        "resolved_joint_fall", "bound_humidity_onsets",
+                    )},
+                }))
+                del pending_openings[:-(2 * fixture.count + 2)]
             if Kind.DOOR_OPEN in row.get("signals", ()):
                 diagnostic = detector_fixtures.opening_diagnostic(detector, row)
                 diagnostic["position_selection"] = row.get("position_selection", {})
@@ -228,7 +240,9 @@ class DoorCandidateRegressionTests(unittest.TestCase):
                 elapsed += curve["duration_s"]
                 exit_at = ORIGIN + timedelta(seconds=elapsed)
         opens = [event for event in events if event.kind == Kind.DOOR_OPEN]
-        self.assertEqual(len(opens), 1)
+        self.assertEqual(len(opens), 1, msg="RECORDED_EXIT_PENDING=" + json.dumps(
+            pending_openings, default=str, sort_keys=True,
+        ))
         self.assertGreaterEqual(opens[0].effective_at, exit_at, msg=json.dumps(
             observed_openings, default=str, sort_keys=True,
         ))

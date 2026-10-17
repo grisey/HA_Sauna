@@ -3827,7 +3827,11 @@ class InfusionLifecycleTests(unittest.TestCase):
             support = detector._original_time_support_cache[
                 Position.UPPER, Quantity.HUMIDITY
             ][2]
-            self.assertFalse(support.covers(self._at(first), self._at(resume)))
+            # Native endpoints remain owned by this same source despite the
+            # missing reports. The unknown interval still cannot support a
+            # derived water pair; no unobserved peak or tail is invented.
+            self.assertTrue(support.covers(self._at(first), self._at(resume)))
+            self.assertFalse(support.pairing_covers(self._at(first), self._at(resume)))
             self._feed(detector, next_fall, points, events)
         infusions = self._infusions(events)
         self.assertEqual(len(infusions), 1)
@@ -4012,6 +4016,21 @@ class InfusionLifecycleTests(unittest.TestCase):
                         (fall, trace(85)[0])]
         guard_records, first_current_block, references, last_record = [], {}, {}, {}
         original_guard = detector._original_opening_infusion_guard
+        original_onsets = detector._original_opening_onset_witnesses
+        local_supports = []
+
+        def observe_onsets(episode, prefix, windows, **kwargs):
+            witnesses = original_onsets(episode, prefix, windows, **kwargs)
+            if kwargs.get("transitions") is not None:
+                for key, witness in witnesses:
+                    native = kwargs["onset_intervals"][key[1].value]["window"]
+                    originals = tuple(detector._original_segment_points(prefix, key[1], key[2]))
+                    expected = tuple(point for point in originals
+                                     if native.start_at <= point[0] <= prefix.received_at)
+                    self.assertEqual(witness.original_points, expected)
+                    self.assertTrue(all(point in expected for point in native.previous + native.current))
+                    local_supports.append(any(point[0] < native.start_at for point in originals))
+            return witnesses
 
         def observe_guard(candidate, prefix, positions, state):
             result = original_guard(candidate, prefix, positions, state)
@@ -4059,7 +4078,10 @@ class InfusionLifecycleTests(unittest.TestCase):
                     })
             return result
 
-        with patch.object(detector, "_original_opening_infusion_guard", side_effect=observe_guard):
+        with (
+            patch.object(detector, "_original_opening_infusion_guard", side_effect=observe_guard),
+            patch.object(detector, "_original_opening_onset_witnesses", side_effect=observe_onsets),
+        ):
             self._feed(detector, fall, points, events, temperatures=temperatures)
         self.assertEqual(
             [item.kind for item in events].count(Kind.DOOR_OPEN), 1,
@@ -4073,6 +4095,8 @@ class InfusionLifecycleTests(unittest.TestCase):
                 "position_selection": detector.diagnostic.get("position_selection"),
             }, default=str, sort_keys=True),
         )
+        self.assertTrue(local_supports, "A real local witness must reach the door owner")
+        self.assertTrue(any(local_supports), "The later branch excludes older supplied originals")
         opening = next(item for item in events if item.kind == Kind.DOOR_OPEN)
         self.assertGreaterEqual(opening.effective_at, self._at(door_at))
         self.assertLessEqual(opening.effective_at, opening.trace_at)
@@ -4081,7 +4105,19 @@ class InfusionLifecycleTests(unittest.TestCase):
         candidate = detector.door_episode["original_open"]
         self.assertGreater(candidate["humidity_fall_onset"],
                            self.p["curve_original_significance"])
-        self.assertGreater(candidate["received_at"], self._at(door_at))
+        # The original tentative candidate keeps its history. The selected
+        # later RH branch, not that old seed, must own the actual door onset.
+        for key, witness in candidate["onset_witnesses"]:
+            local = candidate["local_humidity_onset_intervals"][key[1].value]
+            self.assertGreaterEqual(local["interval"].previous[0], self._at(door_at))
+            self.assertGreater(local["received_at"], self._at(door_at))
+            self.assertLess(local["kink"].effective_change, 0)
+            self.assertGreaterEqual(witness.onset_at, local["window"].previous[-1][0])
+            self.assertLessEqual(witness.onset_at, local["window"].newest_at)
+            self.assertGreaterEqual(witness.first_observed_at, self._at(door_at))
+            self.assertLessEqual(witness.first_observed_at, candidate["confirmation_received_at"])
+            self.assertGreater(local["window"].start_at, returns[key[1].value]["window"].newest_at)
+            self.assertGreater(candidate["confirmation_received_at"], local["received_at"])
         self.assertGreater(candidate["confirmation_received_at"], candidate["received_at"])
 
     def test_independent_door_kink_can_accelerate_an_unbraked_infusion_return(self):
@@ -5095,14 +5131,11 @@ class InfusionLifecycleTests(unittest.TestCase):
     def test_door_context_assigns_a_new_infusion_to_the_next_real_gang(self):
         from json import dumps
 
-        first_peak = self.begin + self.width
+        # Reuse the same separated physical return and later door branch as
+        # the active-infusion opening regression. Consumer ownership below
+        # still exercises the full door/ventilation/next-gang sequence.
+        entry_points, first_peak, door_start, door_bottom = self._infusion_then_independent_door()
         first_fall = first_peak + self.width
-        # Reuse the native opening from
-        # test_real_rh_negative_kink_can_open_a_door_inside_an_active_infusion:
-        # the first peak turns into the shared RH/T fall while the infusion
-        # is still active. A later, smaller second RH turn is not substituted.
-        door_start = first_peak
-        door_bottom = door_start + self.width
         water_plateau = door_bottom + self.width
         close_start = water_plateau + max(
             self.p["infusion_window_seconds"], self.p["median_seconds"],
@@ -5112,7 +5145,7 @@ class InfusionLifecycleTests(unittest.TestCase):
         next_peak = next_rise + self.width
         next_fall = next_peak + self.width
         fixture = DetectorTests()
-        cold, dry = trace(85)[0], self.level
+        cold, dry = trace(85)[0], self._value(entry_points, door_bottom)
         # Keep the established two-stage ventilation geometry: RH settles
         # first; water settles later while temperature continues to fall.
         close_temperature = cold + (cold - self.temperature) * (close_start - door_bottom) / self.width
@@ -5122,8 +5155,7 @@ class InfusionLifecycleTests(unittest.TestCase):
         closed_humidity = fixture._humidity_for_water(self.temperature, plateau_water)
         next_peak_humidity = closed_humidity + (self.peak - self.level)
         points = [
-            (0, self.baseline), (self.begin, self.baseline), (first_peak, self.peak),
-            (door_bottom, dry), (water_plateau, dry), (close_start, close_humidity),
+            *entry_points, (water_plateau, dry), (close_start, close_humidity),
             (close_end, closed_humidity), (next_rise, closed_humidity),
             (next_peak, next_peak_humidity), (next_fall, closed_humidity),
         ]

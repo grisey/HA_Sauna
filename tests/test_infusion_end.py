@@ -276,12 +276,12 @@ class InfusionEndDetectorTests(unittest.TestCase):
         """Native producer-to-consumer guards, not a physical event-quality oracle."""
         fixture = detector_fixtures.InfusionLifecycleTests()
         fixture.setUp()
-        points, _, _, _ = fixture._scenario(merged=False)
-        peak = fixture.begin + fixture.width
-        fall = peak + fixture.width
+        # Reuse the separate, later door turn. The first infusion return is
+        # not itself an opening; its negative ownership test remains intact.
+        points, peak, door_at, fall = fixture._infusion_then_independent_door()
         temperatures = [
             (0, fixture.temperature),
-            (peak, fixture.temperature),
+            (door_at, fixture.temperature),
             (fall, detector_fixtures.trace(85)[0]),
         ]
         detector = Detector(fixture.parameters, T0)
@@ -391,6 +391,7 @@ class InfusionEndDetectorTests(unittest.TestCase):
         self.assertEqual(len(ends), 1)
         self.assertIs(ends[0].confirmed_detection, infusions[0])
         end, opening = ends[0].end, openings[0]
+        self.assertGreaterEqual(opening.effective_at, at(door_at))
         self.assertEqual(
             end,
             InfusionEnd(

@@ -463,22 +463,19 @@ class DeviceFeedbackTests(unittest.TestCase):
         controller.set_heater_override(None, at)
 
     async def prepare_infusion_packet(self, runtime, adapter, clock, at):
-        """Reserve the K-th post-peak humidity original for the caller.
+        """Reserve the K-th fresh rising RH original after binding.
 
-        A 20-to-28 RH rise supplies the strong, water-positive component.
-        Exactly K-1 falling originals precede the caller's RH=24 original:
-        the current K-original window still contains the peak until that packet
-        (docs/erkennung.md, Aufgussbestätigung). Ticks cannot replace originals.
-        No detected candidate or confirmation time determines the input sequence.
+        The existing 20-to-24 RH input rises over K+1 original steps. Its
+        first step binds the component; K-1 subsequent originals precede
+        the caller's RH=24 packet. That packet completes the fresh K-block
+        for early-rise confirmation. Ticks cannot replace originals.
+        Input times are fixed from the catalog K, not a detected outcome.
         """
         values = runtime.configuration.parameters.values
-        side = values["curve_min_side_samples"]
         count = values["curve_original_samples"]
         step = timedelta(seconds=values["grid_seconds"])
-        flank_steps = 2 * side + 2
-        peak_at = at - count * step
-        rising_at = peak_at - flank_steps * step
-        baseline_start = rising_at - (side + 1) * step
+        rising_at = at - (count + 1) * step
+        baseline_start = rising_at - (2 * count - 1) * step
         baseline_end = baseline_start - step
         self.assertLessEqual(
             clock[0], baseline_end, "Insufficient original-report prefix",
@@ -497,7 +494,6 @@ class DeviceFeedbackTests(unittest.TestCase):
             if event.kind == Kind.INFUSION
         )
         baseline_humidity, final_humidity = 20, 24
-        peak_humidity = final_humidity + (final_humidity - baseline_humidity)
 
         async def originals(humidity):
             await asyncio.gather(*(
@@ -556,32 +552,26 @@ class DeviceFeedbackTests(unittest.TestCase):
             clock[0] = min(baseline_end, clock[0] + interval)
             await originals(baseline_humidity)
             acknowledge()
-        for index in range(side + 2):
+        for index in range(2 * count):
             clock[0] = baseline_start + index * step
             await originals(baseline_humidity)
             acknowledge()
 
-        for index in range(1, flank_steps + 1):
+        for index in range(1, count + 1):
             clock[0] = rising_at + index * step
             await originals(
                 baseline_humidity
-                + (peak_humidity - baseline_humidity) * index / flank_steps,
+                + (final_humidity - baseline_humidity) * index / (count + 1),
             )
             acknowledge()
             no_early_confirmation()
-        onset_at = pending_pulse()["onset_at"]
-
-        for index in range(1, count):
-            clock[0] = peak_at + index * step
-            await originals(
-                peak_humidity + (final_humidity - peak_humidity) * index / count,
-            )
-            acknowledge()
-            no_early_confirmation()
-            self.assertEqual(pending_pulse()["onset_at"], onset_at)
         self.assertEqual(clock[0], at - step)
+        pending_pulse()
+        component = runtime.detector._infusion_episode["original_component"]
+        self.assertEqual(component["received_at"], rising_at + step,
+                         "Fixture must bind on its declared first rising original")
+        self.assertFalse(component["fall_ready"])
         no_early_confirmation()
-        self.assertEqual(pending_pulse()["onset_at"], onset_at)
         clock[0] = at
 
     @staticmethod
@@ -984,8 +974,33 @@ class DeviceFeedbackTests(unittest.TestCase):
             self.assertEqual(clock[0], T0 + timedelta(seconds=confirmation_at))
             self.assertFalse(old.infusion_events)
             adapter.apply = AsyncMock(wraps=adapter.apply)
+            observed = runtime.detector.observer
+            confirmations = []
+
+            def observe(trace):
+                if Kind.INFUSION in trace["signals"]:
+                    confirmations.append((
+                        trace["at"], adapter.measurements["upper_humidity"],
+                    ))
+                if observed is not None:
+                    observed(trace)
+
+            runtime.detector.observer = observe
 
             def packet_result():
+                if confirmation_at <= confirmation:
+                    self.assertEqual(len(confirmations), 1)
+                else:
+                    self.assertLessEqual(len(confirmations), 1)
+                for sampled_at, humidity in confirmations:
+                    self.assertEqual(sampled_at, clock[0])
+                    self.assertEqual(humidity.received_at, clock[0])
+                    self.assertEqual(humidity.value, 24)
+                infusions = [event for event in runtime.session.timeline.processed
+                             if event.kind == Kind.INFUSION]
+                self.assertEqual(len(infusions), len(confirmations))
+                for event in infusions:
+                    self.assertEqual(event.detected_at, clock[0])
                 self.report_infusion_packet(
                     runtime, adapter, clock[0], adapter.apply.await_count,
                     tick_first=tick_first,
@@ -1032,7 +1047,9 @@ class DeviceFeedbackTests(unittest.TestCase):
                         })
                         continue
                     gang = runtime.session.timeline.active
-                    self.assertTrue(gang.infusion_events)
+                    self.assertEqual(len(gang.infusion_events), 1)
+                    self.assertEqual(gang.infusion_events[0].detected_at,
+                                     T0 + timedelta(seconds=confirmation_at))
                     self.assertEqual((gang.gang_id, gang.started_at),
                                      (old.gang_id, old.started_at))
                     self.assertEqual(runtime.presence.current.occupancy, "present")

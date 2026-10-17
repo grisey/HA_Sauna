@@ -2178,6 +2178,7 @@ class Detector:
                     for stamp, value in native["window"].previous + native["window"].current
                 ):
                     continue
+                local_native = native is not None and transitions is not None
                 current_native_branch = bool(
                     current_candidate and native is not None
                     and (bounds is None or bounds[0] <= candidate.onset_at <= bounds[1])
@@ -2185,7 +2186,7 @@ class Detector:
                     <= native["window"].newest_at
                     and candidate.features.onset_at == candidate.onset_at
                 )
-                if (not current_candidate
+                if (local_native or not current_candidate
                         or native_onset is not None and (
                             candidate.onset_at != native_onset
                             or candidate.features.onset_at != native_onset
@@ -2194,6 +2195,13 @@ class Detector:
                     # Das Raster kann bereits spätere Präfixe enthalten.
                     # Sein Fit ist dann kein Zeuge dieser ersten Bindung.
                     start = prefix.received_at - timedelta(seconds=self.p["curve_window_seconds"])
+                    if native is not None:
+                        # Die lokale Ersatzprüfung gehört nur zum gebundenen
+                        # nativen Vorlauf und seinen echten Folgeoriginalen.
+                        # Die allgemeine Suche behält ihren bisherigen Vorlauf
+                        # und nimmt zusätzlich die vollständige native Stütze.
+                        start = (native["window"].start_at if local_native else
+                                 min(start, native["window"].start_at))
                     support = tuple(point for point in points[position][index]
                                     if start <= point[0] <= prefix.received_at)
                     fit_context = position, quantity, source, series["time_basis"], context
@@ -2236,10 +2244,11 @@ class Detector:
                             features.onset_at, prefix.received_at, context, features,
                             support, features.newest_at,
                         )
-                    elif not current_native_branch:
+                    elif local_native or not current_native_branch:
                         continue
-                    # Eine abgelehnte Sekantenlokalisierung widerlegt keine
-                    # aktuelle eigene Form innerhalb desselben belegten Astes.
+                    # Nur die allgemeine Zuordnung darf eine vorhandene eigene
+                    # Form weitertragen. Lokal braucht die eigene Stütze ihren
+                    # Formbeleg; ein breiterer alter Fit ersetzt ihn nicht.
                 # Die erste gemeinsame Bindung ist kein Zeitfenster für den
                 # physischen RH-Beginn jeder Rolle. Der eigene unterstützte
                 # Originalfit darf früher oder erst später einsetzen; Quelle,
@@ -3318,9 +3327,18 @@ class Detector:
                                 changed = True
                     transitions = candidate.get("temperature_fall_witnesses", {})
                     local_intervals = candidate.setdefault("local_humidity_onset_intervals", {})
-                    for name, interval in active_intervals.items():
+                    for name, interval in current_intervals.items():
+                        # Der spätere lokale Ast gehört zur aktuellen eigenen
+                        # RH-Stütze, nicht zur ersten Sekante des alten Falls.
+                        # Erst der aufgelöste Gesamtknick wird fest gehalten;
+                        # eine frühere Einzel-Sekante mit Nullkontrast darf ihn
+                        # nicht verbrauchen. Folgeoriginale prüfen dieses feste
+                        # Fenster, statt den Bezug bei jedem Präfix zu verschieben.
+                        held = local_intervals.get(name)
                         if (name in transitions and transitions[name].start_at
-                                <= interval["interval"].previous[0] <= transitions[name].newest_at):
+                                <= interval["interval"].previous[0] <= transitions[name].newest_at
+                                and interval["kink"].effective_change < 0
+                                and (held is None or held["kink"].effective_change >= 0)):
                             local_intervals[name] = interval
                     if infusion_guard["new_local_temperature_fall"]["result"]:
                         # T regt nur die Zuordnung an. Ersetzen darf allein

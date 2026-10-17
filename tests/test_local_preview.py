@@ -5,6 +5,7 @@ from dataclasses import asdict
 from datetime import timedelta
 from unittest.mock import patch
 
+from custom_components.ha_sauna.core.timeline import DoorCloseEvidence, Kind
 from custom_components.ha_sauna.settings import ConfigurationLocked
 from tools.local_preview import PREVIEW_DEFAULTS, Preview
 
@@ -135,6 +136,18 @@ class LocalPreviewTests(unittest.TestCase):
             self.preview.action("/preview/parameters", {"preset_step_c": current})
 
     def test_cooling_exposes_the_same_reason_as_rejected_heater_action(self):
+        timeline = self.preview.c.session.timeline
+        self.assertEqual(len(timeline.completed), 1)
+        gang = timeline.completed[0]
+        self.assertEqual(gang.recognition_kind, Kind.PRESENCE_CONFIRMED)
+        closure = next(event for event in timeline.processed
+                       if event.event_id == gang.start_source_event_id)
+        self.assertIsInstance(closure.door_close_evidence, DoorCloseEvidence)
+        self.assertEqual(
+            (closure.door_close_evidence.candidate_at,
+             closure.door_close_evidence.confirmed_at),
+            (closure.effective_at, closure.detected_at),
+        )
         for admin in (True, False):
             with self.subTest(admin=admin):
                 self.preview.admin = admin
@@ -344,6 +357,9 @@ class LocalPreviewTests(unittest.TestCase):
         self.preview.admin = False
         phase = self.preview.c.session.after_run
         self.assertIsNotNone(phase)
+        self.assertEqual(
+            phase.phase_id, self.preview.c.session.timeline.completed[-1].gang_id,
+        )
         session_id = self.preview.c.session.session_id
         token = self.preview.state()["session"]["after_run"]["phase_id"]
         self.assertIn("presence:direct:", phase.phase_id)
@@ -494,6 +510,9 @@ class LocalPreviewTests(unittest.TestCase):
         self.assertEqual(self.preview.state()["last_session"]["timeline"]["session_id"], session_id)
         self.assertEqual(self.preview.archive()[0]["session_id"], session_id)
         completed = self.preview.archive(session_id)
+        saved_gangs = completed["session"]["timeline"]["completed"]
+        self.assertEqual(len(saved_gangs), 1)
+        self.assertEqual(saved_gangs[0]["recognition_kind"], Kind.PRESENCE_CONFIRMED)
         self.assertIsNotNone(completed["session"]["ended_at"])
         self.assertTrue(completed["records"])
         self.assertTrue(completed["phase_projection"]["intervals"])

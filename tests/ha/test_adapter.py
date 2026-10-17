@@ -74,7 +74,9 @@ class AdapterTests(unittest.IsolatedAsyncioTestCase):
             ),
         )
         self.registry_entries = {}
-        registry = SimpleNamespace(async_get=self.registry_entries.get)
+        registry = SimpleNamespace(
+            async_get=self.registry_entries.get, entities=self.registry_entries,
+        )
         registry_patch = patch.object(self.module.er, "async_get", return_value=registry)
         registry_patch.start()
         self.addCleanup(registry_patch.stop)
@@ -83,7 +85,9 @@ class AdapterTests(unittest.IsolatedAsyncioTestCase):
         self.flow.handler = "ha_sauna"
         self.flow.context = {"source": "user"}
         self.temp = tempfile.TemporaryDirectory()
-        self.hass.config = SimpleNamespace(path=lambda *parts: str(Path(self.temp.name).joinpath(*parts)))
+        self.hass.config = SimpleNamespace(
+            path=lambda *parts: str(Path(self.temp.name).joinpath(*parts)), components=set(),
+        )
 
     async def asyncTearDown(self):
         if getattr(self.entry, "runtime_data", None) and not self.entry.runtime_data.closed:
@@ -980,6 +984,7 @@ class AdapterTests(unittest.IsolatedAsyncioTestCase):
     async def test_setup_unload_without_device_transport_never_starts_session(self):
         from custom_components.ha_sauna import async_setup_entry, async_unload_entry
         self.hass.services = MagicMock()
+        self.hass.services.has_service.return_value = False
         with patch("custom_components.ha_sauna.device.HADevice.start", new_callable=AsyncMock), patch("homeassistant.helpers.event.async_track_time_interval", return_value=lambda: None):
             self.assertTrue(await async_setup_entry(self.hass, self.entry))
         self.assertIsNone(self.entry.runtime_data.session)
@@ -995,7 +1000,8 @@ class AdapterTests(unittest.IsolatedAsyncioTestCase):
             handoff.assert_awaited_once()
         self.assertIsNone(self.entry.runtime_data.session)
         self.assertTrue(self.entry.runtime_data.closed)
-        self.assertEqual(self.hass.services.mock_calls, [])
+        # Setup may register notification services; it must not call actors.
+        self.hass.services.async_call.assert_not_called()
 
     async def test_corrupt_configuration_rejected_on_setup(self):
         from homeassistant.exceptions import ConfigEntryError

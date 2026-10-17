@@ -72,10 +72,9 @@ class StartAvailabilityTests(unittest.TestCase):
         c.process(event("entry-open", Kind.DOOR_OPEN, 0))
         c.process(event("close", Kind.DOOR_CLOSE, 1))
         c.process(event("person", Kind.PERSON_STRONG, 2))
-        # Die Anzeige verwendet den belegten Türschluss auch dann, wenn die
-        # gespeicherte Steuerungsspanne später beginnt.
-        active = replace(c.session.timeline.active, started_at=at(2))
-        c._session = replace(c.session, timeline=replace(c.session.timeline, active=active))
+        # Bei erfüllten Startbedingungen beginnt der Gang am Türschluss.
+        # Beide Anzeigen konsumieren diesen belegten Beginn unverändert.
+        active = c.session.timeline.active
         availability = start_availability(c, at(62))
 
         self.assertEqual(availability["gang_elapsed_seconds"], 61)
@@ -83,7 +82,7 @@ class StartAvailabilityTests(unittest.TestCase):
         self.assertIsNone(availability["until_ready_seconds"])
         self.assertNotIn("start_window_seconds", availability)
         self.assertIs(c.session.timeline.active, active)
-        self.assertEqual(active.started_at, at(2))
+        self.assertEqual(active.started_at, at(1))
 
         # Ohne Türquelle erfinden beide Anzeigen keine physische Dauer.
         c._session = replace(c.session, timeline=replace(c.session.timeline, processed=()))

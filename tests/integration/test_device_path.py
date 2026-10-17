@@ -307,10 +307,10 @@ class DevicePathTests(unittest.IsolatedAsyncioTestCase):
         self.assertIsNone(self.runtime.device.estimated_ready_seconds(self.now))
 
     async def test_infusion_confirms_presence_and_person_checks_stop_while_further_infusions_work(self):
-        from custom_components.ha_sauna.core.timeline import Event, Kind
+        from custom_components.ha_sauna.core.timeline import Confirmation, Event, Kind
         await self.runtime.set_operation(True)
         await self.hass.async_block_till_done()
-        first_gang = None
+        provisional_gang = first_gang = None
         for second in range(161):
             self.now = self.base + timedelta(seconds=second)
             temperature = 70 + second*.01
@@ -326,6 +326,8 @@ class DevicePathTests(unittest.IsolatedAsyncioTestCase):
                         f"entry:{kind.value}", self.runtime.session.session_id, kind, self.now, self.now
                     ))
             active = self.runtime.session.timeline.active
+            if active and not active.infusion_events:
+                provisional_gang = provisional_gang or active
             if active and active.infusion_events:
                 first_gang = first_gang or active
                 self.assertEqual(active.gang_id, first_gang.gang_id)
@@ -333,11 +335,20 @@ class DevicePathTests(unittest.IsolatedAsyncioTestCase):
                 if second % 5 == 0:
                     self.assertFalse(self.runtime.detector.diagnostic["checks"]["strong"])
                     self.assertNotIn("strong_temperature_slope", self.runtime.detector.diagnostic["metrics"]["upper"])
+        self.assertIsNotNone(provisional_gang)
+        self.assertEqual(provisional_gang.recognition_kind, Kind.PERSON_STRONG)
+        self.assertEqual(provisional_gang.confirmation, Confirmation.PROVISIONAL)
         self.assertIsNotNone(first_gang)
-        self.assertEqual(first_gang.recognition_kind, Kind.INFUSION)
+        self.assertEqual(first_gang.confirmation, Confirmation.CONFIRMED)
+        self.assertEqual((first_gang.gang_id, first_gang.started_at,
+                          first_gang.recognition_kind, first_gang.recognition_event_id),
+                         (provisional_gang.gang_id, provisional_gang.started_at,
+                          provisional_gang.recognition_kind, provisional_gang.recognition_event_id))
+        self.assertLessEqual(provisional_gang.detected_at, first_gang.confirmed_at)
         self.assertEqual(len(self.runtime.session.timeline.active.infusion_events), 2)
-        self.assertFalse(any(e.kind in (Kind.PERSON_STRONG,Kind.PERSON_WEAK)
-                             for e in self.runtime.session.timeline.processed))
+        people = [e for e in self.runtime.session.timeline.processed
+                  if e.kind in (Kind.PERSON_STRONG, Kind.PERSON_WEAK)]
+        self.assertEqual([e.event_id for e in people], [provisional_gang.recognition_event_id])
         self.assertTrue(self.heater.is_on)
         await self.runtime.archive.flush()
         import asyncio
@@ -345,7 +356,7 @@ class DevicePathTests(unittest.IsolatedAsyncioTestCase):
         detections = [r["payload"]["event"]["kind"] for r in data["records"] if r["kind"] == "detection"]
         # Entry events were supplied directly; only the real detector outputs
         # belong to detection records in this sensor-path test.
-        self.assertEqual(detections, [Kind.INFUSION, Kind.INFUSION])
+        self.assertEqual(detections, [Kind.PERSON_STRONG, Kind.INFUSION, Kind.INFUSION])
         self.assertEqual(first_gang.start_source_event_id, f"entry:{Kind.DOOR_CLOSE.value}")
 
     async def test_light_uses_real_service_for_temperature_curve_and_phase_ramps(self):
@@ -1262,7 +1273,7 @@ class DevicePathTests(unittest.IsolatedAsyncioTestCase):
             path.unlink()
 
     async def test_manual_recognition_emits_no_actor_services_and_archives_operator_inputs(self):
-        from custom_components.ha_sauna.core.timeline import Event, Kind
+        from custom_components.ha_sauna.core.timeline import DoorCloseEvidence, Event, Kind
         from custom_components.ha_sauna.settings import async_set_control_mode
 
         source = "binary_sensor.manual_presence"
@@ -1286,17 +1297,46 @@ class DevicePathTests(unittest.IsolatedAsyncioTestCase):
 
         async def door(name, kind):
             now = self.runtime._clock()
-            await self.runtime.receive(Event(name, identity, kind, now, now))
+            # This test supplies declared door observations, not a proxy fit.
+            # The explicit closing observation must carry its own evidence.
+            proof = DoorCloseEvidence(now, now) if kind == Kind.DOOR_CLOSE else None
+            await self.runtime.receive(Event(
+                name, identity, kind, now, now, door_close_evidence=proof,
+            ))
             await self.hass.async_block_till_done()
 
         await self.set_source("presence", "on")
         await door("entry-open", Kind.DOOR_OPEN)
         await door("entry-close", Kind.DOOR_CLOSE)
+        report = self.runtime.presence.external[source]
+        self.assertEqual(report.source, source)
+        self.assertEqual(report.assertion, "direct_presence")
+        self.assertTrue(report.available)
+        self.assertEqual(report.occupancy, "present")
+        occupancy = c.direct_presence
+        self.assertTrue(occupancy.available)
+        self.assertTrue(occupancy.qualified_presence)
+        self.assertEqual(occupancy.report_id, report.report_id)
+        closure = self.runtime.session.timeline.anchor
+        self.assertEqual(closure.event_id, "entry-close")
+        proof = closure.door_close_evidence
+        self.assertIsNotNone(proof)
+        self.assertLessEqual(report.effective_at, proof.candidate_at)
+        self.assertLessEqual(report.received_at, proof.confirmed_at)
+        self.assertLessEqual(proof.candidate_at, proof.confirmed_at)
+        self.assertLessEqual(proof.confirmed_at, closure.detected_at)
+        gang = self.runtime.session.timeline.active
+        self.assertIsNotNone(gang)
+        self.assertEqual(gang.recognition_kind, Kind.PRESENCE_CONFIRMED)
         await door("infusion", Kind.INFUSION)
+        self.assertEqual(len(self.runtime.session.timeline.active.infusion_events), 1)
         self.assertFalse(self.heater.is_on)
         await door("exit", Kind.DOOR_OPEN)
         await self.set_source("presence", "off")
         await door("ventilation", Kind.VENTILATION)
+        self.assertIsNone(self.runtime.session.timeline.active)
+        self.assertEqual([item.gang_id for item in self.runtime.session.timeline.completed],
+                         [gang.gang_id])
         self.assertEqual(self.heater.calls, [])
         self.assertEqual(self.light.calls, [])
         self.assertEqual(self.runtime.device.light_output.manual_brightness, 35)
@@ -1737,6 +1777,10 @@ class DevicePathTests(unittest.IsolatedAsyncioTestCase):
             await self.hass.async_block_till_done()
 
     async def test_additional_door_signal_updates_timeline_without_obsolete_cooling_wait(self):
+        # The existing temperature-only fixture exercises the thermal route.
+        # Unavailable RH is explicit; unchanged valid RH is still evidence.
+        for position in ("upper", "lower"):
+            await self.set_source(f"{position}_humidity", "unavailable")
         await self.runtime.set_operation(True)
         await self.hass.async_block_till_done()
         for second in range(70):
@@ -1744,7 +1788,6 @@ class DevicePathTests(unittest.IsolatedAsyncioTestCase):
             temperature=50 if second<20 else 50-.08*min(20,second-20)+max(0,second-40)*.03
             for position in ("upper","lower"):
                 await self.set_source(f"{position}_temperature",temperature)
-                await self.set_source(f"{position}_humidity",30)
             await self.runtime.tick()
             await self.hass.async_block_till_done()
         from custom_components.ha_sauna.core.timeline import Kind

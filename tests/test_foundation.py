@@ -509,15 +509,15 @@ class PackagingTests(unittest.TestCase):
                 translated_fields.update(group["data"])
             self.assertEqual(translated_fields, basic_fields | ({"name"} if scope == "config" else set()))
 
-    def test_ha_transport_is_confined_to_device_adapter(self):
+    def test_ha_transport_is_confined_to_transport_adapters(self):
         folder = ROOT / "custom_components/ha_sauna"
         for file in folder.rglob("*.py"):
             text = file.read_text()
             ast.parse(text)
             with self.subTest(file=file.name):
-                if file.name != "device.py":
+                if file.name not in {"device.py", "notifications.py", "notification_services.py"}:
                     self.assertNotIn("hass.services", text)
-                if file.name != "device.py":
+                if file.name not in {"device.py", "notifications.py"}:
                     self.assertNotIn("async_call(", text)
                 self.assertNotIn("SUPERVISOR_TOKEN", text)
 

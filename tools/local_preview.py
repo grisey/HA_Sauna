@@ -47,7 +47,7 @@ from custom_components.ha_sauna.core.parameters import (
 )
 from custom_components.ha_sauna.core.phases import project_session
 from custom_components.ha_sauna.core.presence import binary_presence
-from custom_components.ha_sauna.core.timeline import Event, Kind, active_gang_duration_seconds, project_door_cycles, project_gang_intervals
+from custom_components.ha_sauna.core.timeline import DoorCloseEvidence, Event, Kind, active_gang_duration_seconds, project_door_cycles, project_gang_intervals
 from custom_components.ha_sauna.history_humidity import project_absolute_humidity
 from custom_components.ha_sauna.presentation import (
     decision_message,
@@ -392,8 +392,13 @@ class Preview:
     def door(self, kind):
         if self.c.session is None:
             raise ValueError("Ohne laufende Sitzung wird kein Tür- oder Aufgussereignis zugeordnet.")
-        self.runtime._process_event(Event(f"demo:{kind}:{self.now.isoformat()}",
-            self.c.session.session_id, kind, self.now, self.now))
+        # The explicit demo action supplies its own instantaneous closing proof.
+        self.runtime._process_event(Event(
+            f"demo:{kind}:{self.now.isoformat()}",
+            self.c.session.session_id, kind, self.now, self.now,
+            door_close_evidence=(DoorCloseEvidence(self.now, self.now)
+                                 if kind == Kind.DOOR_CLOSE else None),
+        ))
         self.sample()
 
     def presence(self, value):

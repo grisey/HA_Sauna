@@ -158,6 +158,7 @@ class PanelSnapshotTests(unittest.TestCase):
         preview.reset("verlauf")
         phase = preview.c.session.after_run
         self.assertIsNotNone(phase)
+        self.assertEqual(phase.phase_id, preview.c.session.timeline.completed[-1].gang_id)
         # TimedPhase has derived wire fields owned solely by archive.plain.
         self.assertEqual(to_wire(phase), plain(phase))
         self.assertIn("required_seconds", to_wire(phase))
