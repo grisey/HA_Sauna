@@ -49,7 +49,8 @@ class PresentationTests(unittest.TestCase):
         del partial["configuration"]["bindings"]["upper_temperature"]
         self.assertIsNone(historical_measurement_context(partial))
         lower = deepcopy(session)
-        lower["configuration"]["bindings"]["upper_temperature"] = ""
+        del lower["configuration"]["bindings"]["upper_temperature"]
+        del lower["configuration"]["bindings"]["upper_humidity"]
         self.assertEqual(historical_measurement_context(lower)["regulation_position"], "lower")
 
     def test_public_measurement_proves_exact_saved_binding_without_source_identity(self):

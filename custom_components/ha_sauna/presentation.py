@@ -4,6 +4,7 @@ from hashlib import sha256
 from collections.abc import Mapping
 from math import isfinite
 
+from .bindings import Bindings
 from .core.parameters import BY_KEY, LIVE_TEMPERATURE_KEYS
 
 PHASES = {
@@ -212,10 +213,11 @@ def historical_measurement_context(session):
     parameters = configuration.get("parameters")
     if not isinstance(bindings, Mapping) or not isinstance(parameters, Mapping):
         return None
-    if not all(role in bindings for role in ("upper_temperature", "lower_temperature")):
-        return None
-    if any(bindings.get(role) is not None and not isinstance(bindings.get(role), str)
-           for role in HISTORY_MEASUREMENT_ROLES):
+    try:
+        # Optional sensor pairs are absent in the original serialized bindings.
+        # Reuse their owner to distinguish a valid single pair from partial data.
+        bindings = Bindings(bindings).values
+    except ValueError:
         return None
     ttl = parameters.get("sensor_timeout_seconds")
     if isinstance(ttl, bool) or not isinstance(ttl, (int, float)) or not isfinite(ttl) or ttl < 0:
