@@ -3138,13 +3138,29 @@ class OriginalCurveFollowupTests(unittest.TestCase):
     def test_same_stamp_temperature_edge_correction_waits_for_new_temperature_support(
         self,
     ):
+        self._closing_lifecycle_diagnostic_case = "same_stamp_temperature_edge_correction"
         detector, events, _ = self._bind("opening")
         events += self._ramp(detector, 4 * self.count, self.fall_step)
         lower_fall = tuple(
             change if role == "lower_temperature" else 0
             for role, change in zip(CLIMATE, self.fall_step, strict=True)
         )
-        events += self._ramp(detector, 3 * self.count, lower_fall)
+        def one_new_upper_block():
+            episode = detector.door_episode
+            fall = (episode or {}).get("original_temperature_falls", {}).get(Position.UPPER)
+            reference = fall.get("braking_window") if fall is not None else None
+            return reference is not None and sum(
+                stamp > reference.newest_at
+                for stamp, _ in self._originals(detector)["upper_temperature"]
+            ) == self.count
+
+        # Correct the first complete followup block before the second block
+        # can confirm the upper plateau. Waiting for the entire old tail
+        # already closes this door, as the staggered-plateau test requires.
+        events += self._ramp(
+            detector, 3 * self.count, lower_fall, stop_when=one_new_upper_block,
+        )
+        self.assertTrue(one_new_upper_block())
         self.assertTrue(detector.open)
         plateau = self._latest(detector)
         epochs = detector._original_context()

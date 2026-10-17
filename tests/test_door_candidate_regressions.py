@@ -74,6 +74,31 @@ class DoorCandidateRegressionTests(unittest.TestCase):
                 self.assertFalse(detector.open)
                 row = next(item for item in observed if item["at"] == closes[0].trace_at)
                 form = row["original_forms"]
+                proof = closes[0].door_close_evidence
+                print("NEGATIVE_BRAKING_NATIVE_ATTRIBUTION=" + json.dumps({
+                    "case": case,
+                    "declared_braking_at": braking_at,
+                    "effective_at": closes[0].effective_at,
+                    "detected_at": closes[0].detected_at,
+                    "trace_at": closes[0].trace_at,
+                    "channels": closes[0].channels,
+                    "native_evidence": {
+                        "candidate_at": proof.candidate_at,
+                        "confirmed_at": proof.confirmed_at,
+                    } if proof is not None else None,
+                    "position_selection": row.get("position_selection", {}).get("door_close"),
+                    "original_forms": {key: form.get(key) for key in (
+                        "candidate_received_at", "confirmation_received_at",
+                        "candidate_originals", "confirmation_originals",
+                        "new_original", "later_original_confirmation",
+                        "temperature_close_terms", "temperature_level_followup",
+                        "temperature_braking_witnesses", "followup",
+                    )},
+                    "consumed_close_proposals": [
+                        item for item in row["curve_proposals"].get("door_close", ())
+                        if item["status"] == "consumed"
+                    ],
+                }, default=str, sort_keys=True))
                 self.assertTrue(form["discrete_temperature_braking"]["result"])
                 witnesses = form["temperature_braking_witnesses"]
                 self.assertEqual(set(witnesses), set(closes[0].channels))

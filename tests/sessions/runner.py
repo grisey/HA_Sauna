@@ -781,6 +781,20 @@ class SessionRun:
                 self._verify_preserved_measurements(samples, stored, preservation_before)
         finally:
             failure = sys.exception()
+            evidence = os.environ.get("SAUNA_SESSION_EVIDENCE")
+            if failure is not None and evidence:
+                try:
+                    from infusion_failure_diagnostics import capture
+                    pending_update = capture(self.runtime)
+                    if pending_update is not None:
+                        folder = Path(evidence)
+                        folder.mkdir(parents=True, exist_ok=True)
+                        (folder / "infusion-update-failure.json").write_text(
+                            json.dumps(plain(pending_update), indent=2, sort_keys=True),
+                            encoding="utf-8",
+                        )
+                except Exception as diagnostic_error:
+                    failure.add_note(f"Infusion failure capture failed: {diagnostic_error!r}")
             self._complete_trace_step("fixture_end_before_teardown")
             self._trace_active = False
             # Preserve the state at failure/end before adapter teardown can
