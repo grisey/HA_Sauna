@@ -487,7 +487,9 @@ class OptionsFlowStandardsTests(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(self.entry.options["field_standards"][field], value)
                 self.assertEqual(self._suggested(form)[key], value)
                 price_marker = next(
-                    marker for marker in form["data_schema"].schema if str(marker) == key
+                    marker
+                    for marker in form["data_schema"].schema
+                    if str(marker) == key
                 )
                 self.assertIs(price_marker.default, type(price_marker)(key).default)
                 self._evidence(
