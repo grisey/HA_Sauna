@@ -355,6 +355,7 @@
           "curve_original_gap_humidity_upper_seconds": "Empirischer Originalabstand der Feuchte oben",
           "curve_original_gap_temperature_lower_seconds": "Empirischer Originalabstand der Temperatur unten",
           "curve_original_gap_humidity_lower_seconds": "Empirischer Originalabstand der Feuchte unten",
+          "curve_original_kink_factor": "Knicktoleranz der Originalfeuchte",
           "settings_action": "Aktion"
         },
         "data_description": {

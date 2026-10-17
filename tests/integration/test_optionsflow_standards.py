@@ -2,9 +2,12 @@
 
 import asyncio
 from copy import deepcopy
+from decimal import Decimal, InvalidOperation
 import json
 import unittest
 from unittest.mock import patch
+
+from homeassistant.helpers.selector import NumberSelector
 
 from custom_components.ha_sauna.core.parameters import BY_KEY
 from custom_components.ha_sauna.runtime import Configuration
@@ -40,11 +43,37 @@ class OptionsFlowStandardsTests(unittest.IsolatedAsyncioTestCase):
         await self.hass.async_block_till_done()
 
     async def _submit(self, form, values):
+        wire_values = dict(values)
+        optional_number_inputs = {}
+        if form.get("data_schema") is not None:
+            for marker, input_selector in form["data_schema"].schema.items():
+                key = str(marker)
+                definition = BY_KEY.get(key)
+                if (
+                    definition is not None
+                    and definition.optional
+                    and isinstance(input_selector, NumberSelector)
+                ):
+                    unset_default = type(marker)(marker.schema).default
+                    default_set = marker.default is not unset_default
+                    optional_number_inputs[key] = {
+                        "default_set": default_set,
+                        "default": marker.default() if default_set else None,
+                        "suggested": (marker.description or {}).get("suggested_value"),
+                    }
+                    if key in wire_values and wire_values[key] is None:
+                        # HA's native empty optional number input omits its key.
+                        # The options flow still captures that empty D as None.
+                        wire_values.pop(key)
         self.flow_inputs.append(
-            {"step": form["step_id"], "submitted": deepcopy(values)}
+            {
+                "step": form["step_id"],
+                "submitted": deepcopy(wire_values),
+                "optional_number_inputs": optional_number_inputs,
+            }
         )
         result = await self.hass.config_entries.options.async_configure(
-            form["flow_id"], values
+            form["flow_id"], wire_values
         )
         self.last_form = result
         return result
@@ -168,32 +197,43 @@ class OptionsFlowStandardsTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(rows), len(targets))
         for target in targets:
 
-            def rendered(value):
+            def cell_matches(text, value):
                 if value is None:
-                    return "—"
+                    return text == "—"
                 if isinstance(value, bool):
-                    return "✓" if value else "—"
-                return str(value) + (f" {target['unit']}" if target["unit"] else "")
+                    return text == ("✓" if value else "—")
+                if isinstance(value, (int, float)):
+                    suffix = f" {target['unit']}" if target["unit"] else ""
+                    if suffix and not text.endswith(suffix):
+                        return False
+                    number = text[: -len(suffix)] if suffix else text
+                    try:
+                        actual = Decimal(number)
+                        return actual.is_finite() and actual == Decimal(str(value))
+                    except InvalidOperation:
+                        return False
+                return text == str(value)
 
-            expected = [
-                rendered(target[key])
-                for key in (
-                    "factory",
-                    "standard",
-                    "target_standard",
-                    "active",
-                    "target",
-                )
-            ] + [
+            label = target["label"]
+            if target.get("bound"):
+                label = f"{label} ({target['bound']})"
+            status = (
                 ("✓" if target["has_standard"] else "—")
                 + " → "
                 + ("✓" if target["target_has_standard"] else "—")
-            ]
+            )
+            value_keys = ("factory", "standard", "target_standard", "active", "target")
             matched = next(
                 (
                     row
                     for row in rows
-                    if row[0].startswith(target["label"]) and row[1:] == expected
+                    if len(row) == 7
+                    and row[0] == label
+                    and row[-1] == status
+                    and all(
+                        cell_matches(text, target[key])
+                        for text, key in zip(row[1:6], value_keys, strict=True)
+                    )
                 ),
                 None,
             )
@@ -333,6 +373,12 @@ class OptionsFlowStandardsTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(form["step_id"], "parameters_heater_accounting")
         self.assertEqual(self._suggested(form)[key], draft)
         self.assertEqual(self._suggested(form)[sibling], values[sibling])
+        price = "electricity_price_eur_per_kwh"
+        price_marker = next(
+            marker for marker in form["data_schema"].schema if str(marker) == price
+        )
+        self.assertIs(price_marker.default, type(price_marker)(price).default)
+        self.assertIsNone(self._suggested(form)[price])
         self._assert_unchanged(before)
         self._evidence(
             "cancel_visible_draft",
@@ -343,7 +389,13 @@ class OptionsFlowStandardsTests(unittest.IsolatedAsyncioTestCase):
                 {"decision": "cancel"},
             ],
             preview,
-            guards={"options_runtime_archive_unchanged": True, "all_D_retained": True},
+            guards={
+                "options_runtime_archive_unchanged": True,
+                "all_D_retained": True,
+                "blank_price_default_set": price_marker.default
+                is not type(price_marker)(price).default,
+                "blank_price_D": self._suggested(form)[price],
+            },
         )
 
         form = await self._submit(form, navigation)
@@ -434,6 +486,10 @@ class OptionsFlowStandardsTests(unittest.IsolatedAsyncioTestCase):
                 self.assertIn(field, self.entry.options["field_standards"])
                 self.assertEqual(self.entry.options["field_standards"][field], value)
                 self.assertEqual(self._suggested(form)[key], value)
+                price_marker = next(
+                    marker for marker in form["data_schema"].schema if str(marker) == key
+                )
+                self.assertIs(price_marker.default, type(price_marker)(key).default)
                 self._evidence(
                     "optional_price_D_to_S",
                     [
@@ -444,7 +500,12 @@ class OptionsFlowStandardsTests(unittest.IsolatedAsyncioTestCase):
                     ],
                     preview,
                     targets,
-                    {"A_unchanged": True, "None_distinct_from_zero": True},
+                    {
+                        "A_unchanged": True,
+                        "None_distinct_from_zero": True,
+                        "price_default_set": price_marker.default
+                        is not type(price_marker)(key).default,
+                    },
                 )
                 save_input = {**self._suggested(form), "settings_action": "save"}
                 if value is None:
