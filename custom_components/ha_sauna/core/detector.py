@@ -403,22 +403,29 @@ class Detector:
                         "windows": ((position.value, fall["braking_window"]),)}
         return None
 
-    def _position_result(self, position, *, available, confirmed=False,
-                         pending=False, refuted=False, candidate=None, reason=None):
+    def _position_source_context(self, position):
         return {
-            "position": position,
-            "status": ("unavailable" if not available else "confirmed" if confirmed else
-                       "refuted" if refuted else "pending" if pending else "idle"),
-            "span": self._bound_position_span(candidate),
-            "bound_at": candidate.get("received_at") if candidate is not None else None,
             "context": self._curve_door_context,
-            "reason": reason,
             "sources": tuple(self._curve_series[position, quantity]["source"]
                              for quantity in (Quantity.TEMPERATURE, Quantity.HUMIDITY)),
             "epochs": tuple(self._curve_series[position, quantity]["epoch"]
                             for quantity in (Quantity.TEMPERATURE, Quantity.HUMIDITY)),
             "time_bases": tuple(self._curve_series[position, quantity]["time_basis"]
                                 for quantity in (Quantity.TEMPERATURE, Quantity.HUMIDITY)),
+        }
+
+    def _position_result(self, position, *, available, confirmed=False,
+                         pending=False, refuted=False, candidate=None, reason=None):
+        binding = (candidate.get("position_bindings", {}).get(position)
+                   if candidate is not None else None)
+        return {
+            "position": position,
+            "status": ("unavailable" if not available else "confirmed" if confirmed else
+                       "refuted" if refuted else "pending" if pending else "idle"),
+            "span": self._bound_position_span(candidate),
+            "bound_at": candidate.get("received_at") if candidate is not None else None,
+            "reason": reason,
+            **(binding if binding is not None else self._position_source_context(position)),
         }
 
     def _select_position(self, route, results, owner, trace):
@@ -749,6 +756,34 @@ class Detector:
         self._infusion_owner = position
         return True
 
+    @staticmethod
+    def _infusion_start_component(episode):
+        return (episode.get("original_start_component") or episode.get("original_component")
+                if episode is not None else None)
+
+    def _infusion_position_result(self, position, state, previous, form, *, available):
+        episode, candidate = state["infusion"], state["infusion_candidate"]
+        ready = bool(episode is not None and episode.get("confirmation_ready")
+                     and episode["confirmed_detection"] is None)
+        # Die Bestätigung gehört zum Veröffentlichungsbeginn. Ein späterer
+        # ungeprüfter Anstieg liefert weder dessen Bindung noch Anschlussstatus.
+        binding = self._infusion_start_component(episode) if ready else candidate or previous
+        own_context = binding.get("position_bindings", {}).get(position) if binding else None
+        confirmed = bool(
+            ready and binding is not None and binding.get("qualified")
+            and not binding.get("connection_unknown")
+            and own_context == self._position_source_context(position)
+        )
+        return self._position_result(
+            position, available=available, confirmed=confirmed,
+            pending=not ready and candidate is not None
+                    and (episode is None or episode["phase"] == "pending"),
+            refuted=not ready and previous is not None and form.get("terminal_negative", False),
+            candidate=binding,
+            reason="nonpositive_complete_water"
+                   if not ready and form.get("terminal_negative") else None,
+        )
+
     def _original_infusion_evidence(
         self, prefixes, channels, now, decision_at, floor, trace, onset_allowed, emit, allowed,
     ):
@@ -763,7 +798,6 @@ class Detector:
                     (prefix,), (position,), now, decision_at,
                     floor, local, onset_allowed, allowed, state,
                 )
-                candidate = state["infusion_candidate"]
                 episode = state["infusion"]
                 # Ein eigenes Ende benötigt nur RH; der Beginn weiterhin T/RH.
                 quantities = ((Quantity.HUMIDITY,) if episode is not None
@@ -771,15 +805,8 @@ class Detector:
                               (Quantity.TEMPERATURE, Quantity.HUMIDITY))
                 available = self._position_available(position, quantities, now)
                 form = local.get("original_infusion", {})
-                results[position] = self._position_result(
-                    position, available=available,
-                    confirmed=episode is not None and episode.get("confirmation_ready", False)
-                              and episode["confirmed_detection"] is None
-                              and not (candidate or {}).get("connection_unknown"),
-                    pending=candidate is not None and (episode is None or episode["phase"] == "pending"),
-                    refuted=previous is not None and form.get("terminal_negative", False),
-                    candidate=candidate or previous,
-                    reason="nonpositive_complete_water" if form.get("terminal_negative") else None,
+                results[position] = self._infusion_position_result(
+                    position, state, previous, form, available=available,
                 )
                 records[position] = local
             owner = (None if self._infusion_episode is not None
@@ -819,8 +846,8 @@ class Detector:
                     self._infusion_owner = None
                 continue
             episode = self._infusion_episode
-            if (episode.get("confirmation_ready") and episode["confirmed_detection"] is None
-                    and not (state["infusion_candidate"] or {}).get("connection_unknown")):
+            if (results[selected]["status"] == "confirmed"
+                    and episode["confirmed_detection"] is None):
                 ended = episode["phase"] == "ended"
                 self._original_confirm_infusion(
                     episode, now, decision_at, floor, onset_allowed, emit,
@@ -3970,7 +3997,7 @@ class Detector:
 
     def _original_confirm_infusion(self, episode, now, decision_at, floor, onset_allowed, emit):
         """Die einmalige Bestätigung am vorhandenen Callback buchen."""
-        component = episode["original_start_component"] or episode["original_component"]
+        component = self._infusion_start_component(episode)
         witnesses = component.get("onset_witnesses", {})
         self._remember_curve_proposal(
             "infusion", episode["positions"], (Quantity.HUMIDITY,), floor=floor,
@@ -4171,6 +4198,8 @@ class Detector:
                 )
                 component = {
                     "context": context, "positions": tuple(positions),
+                    "position_bindings": {position: self._position_source_context(position)
+                                          for position in positions},
                     "received_at": prefix.received_at,
                     "newest": self._original_newest(contrasts),
                     "binding_windows": contrasts.positions,
