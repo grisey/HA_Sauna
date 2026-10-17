@@ -286,6 +286,8 @@ class Detector:
         self._original_points_cache = {}
         self._original_kink_cache = {}
         self._original_time_support_cache = {}
+        self._original_temperature_background_memo = {}
+        self._original_humidity_connection_memo = {}
         self._original_infusion_candidate = None
 
     @property
@@ -333,6 +335,9 @@ class Detector:
                 self.door_episode.pop("original_ventilation_phase", None)
             if quantity == Quantity.TEMPERATURE:
                 self.door_episode.get("original_temperature_falls", {}).pop(position, None)
+                self.door_episode.get(
+                    "original_temperature_confirmation_after", {},
+                ).pop(position, None)
                 self.door_episode.pop("original_close", None)
         self._curve_recovery_evidence.pop((position, quantity), None)
         episode = self._infusion_episode
@@ -440,11 +445,28 @@ class Detector:
                 if not self.open:
                     self.door_episode.pop("original_ventilation_phase", None)
                 if quantity == Quantity.TEMPERATURE:
-                    # Auch eine korrigierte letzte Kante außerhalb der alten
-                    # Fall-/Bremsfenster entwertet den Rollenanschluss. Ein
-                    # fremdes neues Präfix darf den alten Zweiblockbeleg nicht
-                    # erneut bestätigen; diese Rolle braucht neue Stützblöcke.
-                    self.door_episode.get("original_temperature_falls", {}).pop(position, None)
+                    falls = self.door_episode.get("original_temperature_falls", {})
+                    fall = falls.get(position)
+                    references = tuple(
+                        window for key in ("window", "braking_window", "recovery_window")
+                        if fall is not None and (window := fall.get(key)) is not None
+                    )
+                    form = fall.get("braking_form") if fall is not None else None
+                    if any(
+                        stamp == point_at for window in references
+                        for stamp, _ in window.previous + window.current
+                    ) or (
+                        form is not None and any(
+                            stamp == point_at for stamp, _ in form.original_points
+                        )
+                    ):
+                        falls.pop(position, None)
+                    # Eine unberührte historische Form bleibt derselbe Beleg.
+                    # Ihr aktueller Anschluss braucht nach der Korrektur aber
+                    # wieder zwei eigene neue Originalblöcke dieser T-Rolle.
+                    self.door_episode.setdefault("original_temperature_confirmation_after", {})[
+                        position
+                    ] = point_at
                 self._reset_original_ventilation(self.door_episode, "original_corrected")
                 if quantity == Quantity.HUMIDITY:
                     # Das laufende Mittelminimum hat ohne seine korrigierte
@@ -734,6 +756,69 @@ class Detector:
             for form in followups.values()
         )
 
+    def _original_temperature_braking_form(self, episode, prefix, position, fall):
+        """Den ersten diskreten Bremsknick im bestehenden Fallbesitzer halten."""
+        if fall.get("braking_form") is not None:
+            return
+        floor = max(episode["started_at"], fall["window"].newest_at)
+        start = prefix.received_at - timedelta(seconds=self.p["curve_window_seconds"])
+        samples = next(temperature for role, temperature, _ in prefix.points if role == position)
+        points = tuple(point for point in samples if start <= point[0] <= prefix.received_at)
+        support = self._original_prefix_time_support(prefix, position, Quantity.TEMPERATURE)
+        if not points or support is None or not support.covers(points[0][0], points[-1][0]):
+            return
+        key = ("door_close", position, Quantity.TEMPERATURE)
+        source = self._curve_series[position, Quantity.TEMPERATURE]["source"]
+        candidate = self._curve_candidates.get(key)
+        status = self._curve_status.get(key, {})
+        originals = dict(points)
+        if (candidate is None or candidate.features.hinge_order != 1
+                or status.get("status") != "supported"
+                or status.get("source") != source
+                or not self._curve_supports(
+                    "door_close", candidate.features, floor, Quantity.TEMPERATURE,
+                )
+                or candidate.features.newest_at > prefix.received_at
+                or candidate.first_observed_at > prefix.received_at
+                or not all(originals.get(stamp) == value
+                           for stamp, value in candidate.original_points)):
+            fit_key = ("original_temperature_braking", self.curve_policy, points, floor)
+            if fit_key not in self._curve_fit_cache:
+                self._curve_fit_cache[fit_key] = curve_change(
+                    points, policy=self.curve_policy, direction=1, onset_not_before=floor,
+                )
+            features = self._curve_fit_cache[fit_key]
+            if not self._curve_supports("door_close", features, floor, Quantity.TEMPERATURE):
+                return
+            candidate = _CurveCandidate(
+                f"door_close:{position.value}:temperature:{source}:"
+                f"{fall['epoch']}:original_brake:{features.onset_at.isoformat()}:"
+                f"{prefix.received_at.isoformat()}",
+                features.onset_at, prefix.received_at, (fall["epoch"], floor), features,
+                points, features.newest_at,
+            )
+        fall["braking_form"] = candidate
+
+    @staticmethod
+    def _original_temperature_braking_forms(episode, positions):
+        falls = episode.get("original_temperature_falls", {})
+        return bool(positions) and all(
+            position in falls and falls[position].get("braking_form") is not None
+            for position in positions
+        )
+
+    @staticmethod
+    def _original_close_confirmation_fresh(episode, prefix, positions):
+        corrected = episode.get("original_temperature_confirmation_after", {})
+        windows = dict(prefix.temperatures)
+        return all(
+            position not in corrected or all(
+                stamp > corrected[position]
+                for stamp, _ in windows[position.value].previous + windows[position.value].current
+            )
+            for position in positions
+        )
+
     def _original_temperature_counterform(self, window, recovery):
         """Ein neuer vollständiger T-Block widerlegt die gehaltene Bremse."""
         form = original_followup(window, recovery)
@@ -757,13 +842,22 @@ class Detector:
                 # seine Originale inzwischen den Rollenring verlassen haben.
                 # Der Ereignisbesitzer prüft den fortgeschriebenen Anschluss.
                 support = window.time_support
-            result.append((name, original_kink_tolerance(
-                points[name], window,
-                factor=self.p["curve_original_significance"],
-                min_history_windows=self.p["curve_original_kink_history_windows"],
-                max_gap_seconds=self.p[f"curve_original_gap_temperature_{name}_seconds"],
-                time_support=support,
-            )))
+            factor = self.p["curve_original_significance"]
+            history = self.p["curve_original_kink_history_windows"]
+            gap = self.p[f"curve_original_gap_temperature_{name}_seconds"]
+            arguments = (points[name], window, factor, history, gap, support)
+            cached = self._original_temperature_background_memo.get(name)
+            # Das Ergebnis hält genau dieses Fensterobjekt. Gleiche Werte
+            # eines anderen Fensters rechtfertigen keine alte Objektbindung.
+            if (cached is None or cached[0][1] is not window
+                    or cached[0] != arguments):
+                cached = (arguments, original_kink_tolerance(
+                    points[name], window, factor=factor,
+                    min_history_windows=history, max_gap_seconds=gap,
+                    time_support=support,
+                ))
+                self._original_temperature_background_memo[name] = cached
+            result.append((name, cached[1]))
         return tuple(result)
 
     def _original_opening_infusion_guard(self, candidate, prefix, positions):
@@ -885,21 +979,30 @@ class Detector:
         # den fortgeschriebenen Kandidatenanschluss mit _original_contiguous.
         if time_support is None:
             return False
+        samples = tuple(samples)
+        gap = self.p[f"curve_original_gap_humidity_{name}_seconds"]
+        arguments = (samples, witness.onset_at, window, count, significance, gap, time_support)
+        cached = self._original_humidity_connection_memo.get(name)
+        if cached is not None and cached[0] == arguments:
+            return cached[1]
+        connected = True
         for end in range(2 * count, len(samples) + 1):
             block = samples[end - 2 * count:end]
             if block[count][0] <= witness.onset_at:
                 continue
             native = original_window(
                 block, count=count, scale=window.scale,
-                max_gap_seconds=self.p[f"curve_original_gap_humidity_{name}_seconds"],
-                at=block[-1][0], time_support=time_support,
+                max_gap_seconds=gap, at=block[-1][0], time_support=time_support,
             )
             if native is not None and native.v > significance * native.e:
-                return False
-        return True
+                connected = False
+                break
+        self._original_humidity_connection_memo[name] = (arguments, connected)
+        return connected
 
     def _original_opening_onset_witnesses(
         self, episode, prefix, windows, *, quantities=(Quantity.HUMIDITY,),
+        transitions=None,
     ):
         """RH-Beginne desselben fortlaufenden Quellenastes kausal zusammenführen."""
         points = {position: (temperature, humidity)
@@ -908,6 +1011,10 @@ class Detector:
         witnesses = []
         for name, pair in windows:
             position = Position(name)
+            if transitions is not None and name not in transitions:
+                continue
+            bounds = ((transitions[name].start_at, transitions[name].newest_at)
+                      if transitions is not None else None)
             for index, quantity in enumerate((Quantity.TEMPERATURE, Quantity.HUMIDITY)):
                 if quantity not in quantities:
                     continue
@@ -931,6 +1038,7 @@ class Detector:
                 if (candidate is None or status.get("status") != "supported"
                         or status.get("source") != source
                         or candidate.context != context
+                        or bounds is not None and not bounds[0] <= candidate.onset_at <= bounds[1]
                         or not all(originals.get(stamp) == value
                                    for stamp, value in candidate.original_points)):
                     # Das Raster kann bereits spätere Präfixe enthalten.
@@ -938,7 +1046,11 @@ class Detector:
                     start = prefix.received_at - timedelta(seconds=self.p["curve_window_seconds"])
                     support = tuple(point for point in points[position][index]
                                     if start <= point[0] <= prefix.received_at)
-                    features = self._fit_candidate_form("door_open", support, floor, quantity)
+                    features = (self._fit_candidate_form("door_open", support, floor, quantity)
+                                if bounds is None else curve_change(
+                                    support, policy=self.curve_policy, direction=-1,
+                                    onset_not_before=floor, onset_bounds=bounds,
+                                ))
                     if not self._curve_supports("door_open", features, floor, quantity):
                         continue
                     candidate = _CurveCandidate(
@@ -1017,6 +1129,10 @@ class Detector:
             name = position.value
             window = temperatures.get(name)
             fall = falls.get(position)
+            new_original = bool(
+                prefix.original and (fall is None or window is not None
+                                     and window.newest_at > fall["continuity_at"])
+            )
             reason = None
             valid = window is not None and self._original_prefix_valid(
                 prefix, (position,), (Quantity.TEMPERATURE,),
@@ -1048,7 +1164,7 @@ class Detector:
                 if renewed:
                     episode.pop("original_close", None)
                     fall.pop("recovery_received_at", None)
-                if renewed and prefix.original:
+                if renewed:
                     reason = "renewed_temperature_fall"
             if reason is not None:
                 falls.pop(position)
@@ -1073,7 +1189,10 @@ class Detector:
                         # Bremse; dessen echte Zeit begrenzt auch die Frische.
                         fall["window"] = window
                         fall["received_at"] = prefix.received_at
+                        fall.pop("braking_form", None)
                     fall["continuity_at"] = window.newest_at
+                if self.open and new_original and fall is not None:
+                    self._original_temperature_braking_form(episode, prefix, position, fall)
                 # Ein später schwächerer Fall allein ist kein Schlussknick.
                 # Die lokale native Bremse muss sich auch vom beobachteten
                 # Hintergrund abheben; jede Rolle bindet ihren eigenen Beginn.
@@ -1100,6 +1219,14 @@ class Detector:
                 "continuity_at": fall["continuity_at"] if fall is not None else None,
                 "epoch": fall["epoch"] if fall is not None else None,
                 "close_counterform": fall.get("close_counterform", False) if fall is not None else False,
+                "braking_form_onset_at": (
+                    fall["braking_form"].onset_at
+                    if fall is not None and fall.get("braking_form") else None
+                ),
+                "braking_form_received_at": (
+                    fall["braking_form"].first_observed_at
+                    if fall is not None and fall.get("braking_form") else None
+                ),
                 "reset_reason": reason,
             }
         trace["temperature_fall_support"] = records
@@ -1727,6 +1854,10 @@ class Detector:
                     self._reset_original_ventilation(episode, "opening_support_disconnected")
                     episode.pop("original_ventilation_phase", None)
                     continue
+                infusion_independent, infusion_guard = (
+                    self._original_opening_infusion_guard(candidate, prefix, positions)
+                    if candidate is not None else (False, None)
+                )
                 if candidate is not None and prefix.original:
                     candidate["continuity"] = tuple(
                         (name, quantity, form.window.newest_at)
@@ -1736,9 +1867,26 @@ class Detector:
                     # Ein später reagierender Ast nutzt seine aktuelle Stütze;
                     # der laufende Kandidat und seine Gegenformen bleiben eins.
                     bound = dict(candidate["onset_witnesses"])
+                    if (infusion_guard is not None
+                            and infusion_guard["reason"] == "new_local_temperature_fall"):
+                        candidate["local_fall_humidity_onsets"] = True
+                    transitions = (candidate["temperature_fall_witnesses"]
+                                   if candidate.get("local_fall_humidity_onsets") else None)
+                    if transitions is not None:
+                        # Ein Aufgussabklingen ist kein Beginn des späteren
+                        # Türfalls. Jede RH-Rolle braucht ihren eigenen Knick
+                        # in der Originalstütze des neuen lokalen T-Falls.
+                        bound = {
+                            key: witness for key, witness in bound.items()
+                            if key[1].value in transitions
+                            and transitions[key[1].value].start_at <= witness.onset_at
+                            <= transitions[key[1].value].newest_at
+                        }
+                        candidate["onset_witnesses"] = tuple(bound.items())
                     if len(bound) < len(positions):
                         for key, onset in self._original_opening_onset_witnesses(
                             episode, prefix, contrasts.positions,
+                            transitions=transitions,
                         ):
                             bound.setdefault(key, onset)
                         candidate["onset_witnesses"] = tuple(bound.items())
@@ -1899,14 +2047,32 @@ class Detector:
                     continue
                 if episode is None:
                     continue
-                infusion_independent, infusion_guard = (
-                    self._original_opening_infusion_guard(candidate, prefix, positions)
-                    if candidate is not None else (False, None)
-                )
                 forms["infusion_decay_guard"] = infusion_guard
+                # Ein gemischtes K-Fenster kann noch deutlich fallen,
+                # obwohl die jüngsten Originale bereits zurückkehren.
+                # Diese aufgelöste Endkante sperrt nur die Bestätigung;
+                # sie verwirft allein keinen gebundenen Kandidaten.
+                temperature_edges = {
+                    name: original_edge_change(form.window, form.reference)
+                    for (name, quantity), form in (followups or {}).items()
+                    if quantity == Quantity.TEMPERATURE
+                }
+                temperature_not_recovering = bool(temperature_edges) and all(
+                    edge is not None and edge.direction <= significance
+                    for edge in temperature_edges.values()
+                )
+                forms["current_temperature_recovery"] = {
+                    name: _gate(
+                        edge.direction > significance if edge is not None else None,
+                        value=edge.direction if edge is not None else None,
+                        operator=">", threshold=significance, unit="contrast",
+                    )
+                    for name, edge in temperature_edges.items()
+                }
                 opening = bool(
                     candidate is not None and prefix.original
                     and resolved_fall and humidity_onsets and infusion_independent
+                    and temperature_not_recovering
                 )
                 forms["confirmation_branch"] = (
                     "resolved_joint_original_fall" if opening else None
@@ -2050,9 +2216,12 @@ class Detector:
                     }
                     # Derselbe neue Block schützt auch den gemeinsamen
                     # Schlusskandidaten; die Endkante allein löst ihn nicht.
-                    counterform |= self._original_temperature_counterform(
+                    renewed = self._original_temperature_counterform(
                         form.window, supported,
                     )
+                    counterform |= renewed
+                    if renewed:
+                        episode.get("original_temperature_falls", {}).pop(Position(name), None)
                     if form.window.v > supported.v:
                         recovery[name] = form.window
                 if prefix.original:
@@ -2075,7 +2244,9 @@ class Detector:
             )
             bound_braking = (min(form.current_change for form in followups.values())
                              if followups else None)
+            discrete_braking = self._original_temperature_braking_forms(episode, closing_positions)
             closing_value = contrasts.closing if combined else thermal.closing
+            sustained_braking = None
             if bound_braking is not None:
                 branches = [min(bound_braking, thermal.warming_max), thermal.warming_min]
                 if combined:
@@ -2086,7 +2257,8 @@ class Detector:
                     else -significance
                     for form in followups.values()
                 )
-                branches.append(sustained_braking)
+                if discrete_braking:
+                    branches.append(sustained_braking)
                 closing_value = max(branches)
             # Jede Rolle bindet ihren lokalen Bremsknick am echten Fallast.
             # Zwei danach neue Blöcke bestätigen die zeitversetzten Bremsen,
@@ -2094,10 +2266,13 @@ class Detector:
             fall_followups = self._original_temperature_fall_followups(
                 episode, prefix, closing_positions,
             )
-            level_close = self._original_temperature_braking(fall_followups)
+            level_close = discrete_braking and self._original_temperature_braking(fall_followups)
             close_candidate = candidate is not None or level_close
+            correction_fresh = self._original_close_confirmation_fresh(
+                episode, prefix, closing_positions,
+            )
             closing = bool(
-                prefix.original and (
+                prefix.original and correction_fresh and (
                     candidate is not None and fresh_block and closing_value > significance
                     or level_close
                 )
@@ -2121,12 +2296,23 @@ class Detector:
                 ),
                 new_temperature_level=_gate(level_close),
                 sustained_temperature_braking=_gate(level_close),
+                discrete_temperature_braking=_gate(discrete_braking),
+                fresh_temperature_support_after_correction=_gate(correction_fresh),
                 temperature_level_followup=self._original_followup_trace(fall_followups),
                 candidate_received_at=candidate["received_at"] if candidate is not None else None,
                 candidate_originals=candidate["newest"] if candidate is not None else (),
                 later_original_confirmation=_gate(closing),
             )
             if closing:
+                if discrete_braking and (
+                    level_close or candidate is not None and fresh_block
+                    and sustained_braking is not None and sustained_braking > significance
+                ):
+                    episode["closing_onset_witnesses"] = tuple(
+                        (("door_close", position, Quantity.TEMPERATURE),
+                         episode["original_temperature_falls"][position]["braking_form"])
+                        for position in closing_positions
+                    )
                 forms["confirmation_received_at"] = prefix.received_at
                 forms["confirmation_originals"] = newest
                 candidate_at = (candidate["received_at"] if candidate is not None else max(
@@ -5041,7 +5227,8 @@ class Detector:
         self._curve_proposal_status[proposal_key] = {
             **status, "status": "consumed",
             "confirmed_at": decision_at, "consumed_onset_at": beginning,
-            "attribution_basis": ("original_open_binding" if bound_candidates is not None
+            "attribution_basis": (f"original_{'close' if route == 'door_close' else 'open'}_binding"
+                                  if bound_candidates is not None
                                   else "curve_proposal"),
             "consumed_candidate_ids": tuple(candidate.candidate_id for _, candidate in candidates),
         }
@@ -5828,6 +6015,7 @@ class Detector:
                     "ventilation_after_onset" if self._curve_ventilation_at is not None
                     else "outside_door_episode"
                 ),
+                bound_candidates=episode.get("closing_onset_witnesses"),
             )
             self.open = False
             self.closed_at = now

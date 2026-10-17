@@ -957,7 +957,7 @@ class DetectorTests(unittest.TestCase):
         detector = self._ventilation_detector()
         _, braking_at, _, falling = self._ventilation_curve(detector, water_tail="fall")
         count, step = detector.p["curve_original_samples"], detector.grid_seconds
-        humidity_plateau = braking_at + count * step
+        humidity_plateau = braking_at + 3 * count * step
         pending_at = humidity_plateau + (count - 1) * step
         braking_temperature = falling(braking_at)[0]
         significance = detector.p["curve_original_significance"]
@@ -981,15 +981,30 @@ class DetectorTests(unittest.TestCase):
                 humidity = falling(humidity_plateau)[1]
             return temperature, humidity
 
-        # Bind the close owner at a real brake, then retain the shallower fall
-        # until both T windows again support the pending RH flattening.
-        pending_at, pending_events = self._feed_pending_ventilation(detector, pending_at, values)
+        # Isolate same-prefix arbitration: declare no discrete pure-braking
+        # form, so the real shallower fall cannot close before the target prefix.
+        # Sources, owners, windows and freshness remain entirely measurement-driven.
+        with patch.object(detector, "_original_temperature_braking_forms", return_value=False):
+            found += self._feed_ventilation(detector, braking_at + count * step, values)
+            self.assertIn("original_close", detector.door_episode, detector.diagnostic)
+            closing = detector.door_episode["original_close"]
+            self.assertLessEqual(
+                max(stamp for _, stamp in closing["newest"]) + timedelta(seconds=2 * count * step),
+                T0 + timedelta(seconds=humidity_plateau),
+            )
+            # Two complete T blocks must follow the actual close binding before
+            # RH even starts flattening; waiting after RH binding could confirm it.
+            pending_at, pending_events = self._feed_pending_ventilation(detector, pending_at, values)
         found += pending_events
         self.assertIn("original_ventilation_rh", detector.door_episode)
-        closing = detector.door_episode["original_close"]
+        self.assertIs(detector.door_episode["original_close"], closing)
         self.assertGreater(closing["received_at"], opening["confirmation_received_at"])
         forms = detector.diagnostic["original_forms"]
-        self.assertTrue(forms["complete_fresh_original_block"]["result"])
+        self.assertTrue(forms["complete_fresh_original_block"]["result"], forms)
+        for position in detector.positions:
+            followup = forms["followup"][position.value][Quantity.TEMPERATURE.value]
+            self.assertEqual((followup["fresh_previous"], followup["fresh_current"]),
+                             (count, count), followup)
         self.assertGreater(forms["bound_temperature_braking"]["value"], significance)
         relative = detector.diagnostic["original_ventilation"]["relative_humidity"]
         self.assertTrue(relative["initial_form"])
@@ -1010,11 +1025,12 @@ class DetectorTests(unittest.TestCase):
                 warming_max=2 * significance,
             )
 
-        # Only the comparison establishing simultaneous closure is declared.
-        # The bound close owner, complete fresh T blocks and RH/T windows stay real.
-        # Earlier RH-only prefixes retain the real, still-falling T comparison.
-        with patch("custom_components.ha_sauna.core.detector.original_thermal_contrasts",
-                   side_effect=closing_form):
+        # With discrete pure braking still absent, declare only the thermal
+        # comparison establishing simultaneous closure. The bound owner and
+        # complete fresh T/RH windows stay real; RH-only prefixes still see cooling.
+        with (patch.object(detector, "_original_temperature_braking_forms", return_value=False),
+              patch("custom_components.ha_sauna.core.detector.original_thermal_contrasts",
+                    side_effect=closing_form)):
             for quantity, value in ((Quantity.HUMIDITY, values(second)[1]),
                                     (Quantity.TEMPERATURE, values(second)[0])):
                 for position in detector.positions:
@@ -4012,9 +4028,10 @@ class InfusionLifecycleTests(unittest.TestCase):
     def test_ols_opening_retains_bound_original_onset_without_backdating_confirmation(self):
         flank_seconds = self.p["curve_min_side_samples"] * self.step
         ready = self.begin + flank_seconds
-        # Two distinct originals after binding are the first evaluable
-        # suffix. Its actual T/RH loss is checked below, not inferred from K.
-        confirmed = ready + 2 * self.step
+        # Two originals first make the suffix mathematically evaluable.
+        # Public confirmation additionally requires a complete fresh K-block
+        # for every bound T/RH role; the retained onset remains independent.
+        confirmed = ready + self.side * self.step
         recognized_at = self._at(confirmed + 5 * self.step)
         end = max(self.begin + self.width, confirmed)
         fall_seconds = end - self.begin
@@ -4125,6 +4142,9 @@ class InfusionLifecycleTests(unittest.TestCase):
                     self.assertFalse(detector.open)
                     self.assertNotIn(Kind.DOOR_OPEN, [item.kind for item in found])
                     self.assertNotIn("lowering_witness", native)
+                    self.assertFalse(detector.diagnostic["original_forms"][
+                        "complete_fresh_original_block"
+                    ]["result"])
                     bound = dict(native["windows"])
                     backgrounds = dict(native["humidity_kinks"])
                     for name, pair in bound.items():
@@ -4134,14 +4154,28 @@ class InfusionLifecycleTests(unittest.TestCase):
                                               for second in range(0, confirmed + self.step, self.step))
                             reference = getattr(pair, quantity.value)
                             background = backgrounds[name] if quantity == Quantity.HUMIDITY else None
+                            first = reference.newest_at + timedelta(seconds=self.step)
+                            second = first + timedelta(seconds=self.step)
                             self.assertIsNone(original_decline_evidence(
-                                originals[:-1], reference, background=background,
+                                tuple(point for point in originals if point[0] <= first),
+                                reference, background=background,
                             ))
+                            first_evaluable = original_decline_evidence(
+                                tuple(point for point in originals if point[0] <= second),
+                                reference, background=background,
+                            )
+                            self.assertIsNotNone(first_evaluable)
+                            self.assertEqual(len(first_evaluable.points), 2)
+                            self.assertGreater(first_evaluable.level_loss,
+                                               self.p["curve_original_open_contrast"])
+                            if quantity == Quantity.TEMPERATURE:
+                                self.assertLess(first_evaluable.direction,
+                                                -self.p["curve_original_open_contrast"])
                             proof = original_decline_evidence(
                                 originals, reference, background=background,
                             )
                             self.assertIsNotNone(proof)
-                            self.assertEqual(len(proof.points), 2)
+                            self.assertEqual(len(proof.points), self.side)
                             self.assertGreater(proof.level_loss,
                                                self.p["curve_original_open_contrast"])
                             if quantity == Quantity.TEMPERATURE:
@@ -4168,8 +4202,12 @@ class InfusionLifecycleTests(unittest.TestCase):
                     self.assertEqual(native["lowering_witness"]["received_at"],
                                      self._at(confirmed))
                     for name, pair in native["confirmation_windows"]:
-                        self.assertGreater(pair.temperature.newest_at, bound[name].temperature.newest_at)
-                        self.assertGreater(pair.humidity.newest_at, bound[name].humidity.newest_at)
+                        self.assertGreater(pair.temperature.current[0][0],
+                                           bound[name].temperature.newest_at)
+                        self.assertGreater(pair.humidity.current[0][0],
+                                           bound[name].humidity.newest_at)
+                        self.assertEqual(len(pair.temperature.current), self.side)
+                        self.assertEqual(len(pair.humidity.current), self.side)
                         self.assertEqual(pair.temperature.newest_at, self._at(confirmed))
                         self.assertEqual(pair.humidity.newest_at, self._at(confirmed))
                         self.assertEqual(detector.door_episode["sources"][Position(name)],

@@ -79,10 +79,13 @@ erfordern eine erneute Prüfung der gebundenen Belege; entwertete Stützen
 liefern keine Bestätigung.
 
 Die bisherigen Kurvenkandidaten können weiterhin einen früheren Beginn
-belegen. Ihr Modellvergleich mit glatten Trends ist kein zusätzlicher
-Zulassungsfilter für die folgenden Originalformen. Der reine Heizweg besitzt
-seine eigene, unten beschriebene Bestätigung. Fensteranfang, Basisoriginal und
-beobachtete Spitze sind mathematische Stützen, keine gemessenen Zeitpunkte
+belegen. Ihr Modellvergleich mit glatten Trends ist für die folgenden
+Originalformen mit Ausnahme der reinen Temperaturbremswege kein zusätzlicher
+Zulassungsfilter. Diese benötigen neben ihren nativen Kontrasten eine eigene
+gehaltene lokale Steigungsänderungsform und die frischen Originalblöcke ihrer
+Bestätigung. Der reine Heizweg besitzt seine eigene, unten beschriebene
+Bestätigung. Fensteranfang, Basisoriginal und beobachtete Spitze sind
+mathematische Stützen, keine gemessenen Zeitpunkte
 einer mechanischen Türbewegung oder Wasserzugabe.
 
 Erst der vollständige Nachweis unter den folgenden fachlichen Bedingungen
@@ -236,7 +239,12 @@ Ein weiterer Feuchtefall nach der Bindung ist dafür nicht erforderlich.
 Die erste vollständig belegte gemeinsame Absenkung wird im Türvorgang
 gehalten. Eine zunehmende Messwertzahl oder längere Wartezeit bestätigt für
 sich kein Ereignis. Quellenwechsel, unterbrochener Anschluss und aufgelöste
-Gegenverläufe bleiben Ausschlussgründe.
+Gegenverläufe bleiben Ausschlussgründe. Eine positiv aufgelöste letzte
+Temperatursekante an einer beteiligten Position sperrt die Bestätigung im
+betreffenden Präfix, auch wenn der längere Originalfit noch fällt. Ihr
+Kontrast ist die letzte Temperaturdifferenz geteilt durch `2ε_Tp`; er muss
+für diese Sperre strikt größer als `s` sein. Die einzelne Endkante verwirft
+den gebundenen Kandidaten nicht.
 
 Der zugeordnete Beginn stammt ausschließlich aus den Feuchteknicken der
 gebundenen Messpositionen. Ein gültiger Beginnzeuge darf vor dem ersten
@@ -307,6 +315,13 @@ eine alte Aufgussbaseline muss dafür nicht dauerhaft im Originalring liegen.
 Die allgemeinen RH-Zeugen und die gemeinsame Absenkung bleiben in beiden
 Fällen erforderlich.
 
+Wird die Öffnung durch den neuen lokalen T-Fall zugelassen, benötigt jede
+RH-Rolle einen eigenen unterstützten Abwärtsknick in der Originalzeitstütze
+ihres gebundenen lokalen T-Knicks. Die Suche begrenzt die möglichen
+Knickpositionen, erhält aber den vollständigen bisherigen Originalkontext des
+Fits. Ein früherer Zeuge des Aufgussabklingens außerhalb dieser Stütze wird
+ersetzt. Die Temperaturzeit selbst wird nicht als RH-Beginn ausgegeben.
+
 Eine vollständige Messposition genügt; bei zwei beteiligten Positionen gelten
 die gemeinsamen Kontraste für beide. Das überträgt keinen empirischen
 Nachweis von vier Kanälen auf eine andere Sensoranordnung. Die Regeln gelten
@@ -353,7 +368,10 @@ C   = max {min(B_f, U), min(B_f, W_max), W_min, D_f}
 ```
 
 Für eine Rolle gilt die Formel für `D_fp` nur bei aufgelöst fallender
-gebundener Vorgängersteigung `b⁰_Tp < −s E⁰⁻_Tp`; andernfalls wird für diese
+gebundener Vorgängersteigung `b⁰_Tp < −s E⁰⁻_Tp`. Der reine Bremszweig
+`D_f` wird zusätzlich nur mit den unten beschriebenen gehaltenen lokalen
+Steigungsänderungsformen aller verwendeten T-Rollen zugelassen; andernfalls
+entfällt er. Bei nicht aufgelöst fallendem Vorlauf wird für die betreffende
 Rolle `D_fp = −s` eingesetzt. Der Feuchtezweig `min(B_f, U)`
 benötigt sämtliche ursprünglichen Positionen und ihre Quellenabschnitte;
 bei gestörter Feuchte entfällt er.
@@ -382,6 +400,24 @@ diesen Weg nicht erforderlich. Eine Feuchteerholung ist ebenfalls keine
 Bedingung. Ein Wechsel der verwendeten Temperaturpositionsmenge erfordert im
 gemeinsamen Kandidatenweg eine neue Bindung.
 
+Beide reinen Temperaturbremswege benötigen zusätzlich je Rolle eine
+unterstützte lokale Steigungsänderungsform des bestehenden Kurvenvergleichs
+mit `hinge_order = 1`: Der Vorlauf fällt, die Steigungsänderung ist positiv,
+und der Vergleich mit glatten Verläufen trägt die Änderung. Der Fallbesitzer
+hält die erste solche Form aus einem eigenen neuen T-Originalpräfix samt
+unveränderten Originalen, Quelle und Epoche. Ihr Beginn liegt frühestens am
+jüngsten Original der gehaltenen Fallreferenz. Sie darf vor der späteren nativen
+Bremsbindung derselben Rolle entstehen; ihr lückenloser Anschluss bleibt
+maßgeblich. Eine bis zur Bremsbindung verstärkte Fallreferenz verwirft diese
+Form. Die anschließend erforderlichen nativen Bremskontraste und zwei neuen
+Originalblöcke bleiben eigenständige Bedingungen. Eine negative Nachsteigung
+bleibt zulässig.
+
+Trägt ein solcher reiner Bremsweg die Schlussbestätigung, stammt der frühere
+Beginn aus genau diesen gehaltenen T-Formen. Die bestehende Prüfung des Tür-
+und Betriebskontexts bleibt erhalten. Ein anderer früherer Kurvenkandidat
+liefert für diesen Schluss keinen Beginn.
+
 ### Anhaltende Gegenform und Originalkorrektur
 
 Jede gebundene Bremse führt je T-Rolle das bisherige Fenster mit der höchsten
@@ -396,7 +432,9 @@ v_Tp/E_Tp < −s
 ```
 
 Eine solche Gegenform an einer Rolle verwirft den gemeinsamen
-Schließkandidaten und entwertet im Rollenfallweg deren alte Fall-/Bremsstütze.
+Schließkandidaten und entwertet deren alte Fall-/Bremsstütze samt gehaltener
+Steigungsänderungsform. Das gilt auch, wenn die Gegenform zuerst gegen die
+Erholungsreferenz des gemeinsamen Kandidaten belegt wird.
 Ein noch überlappender Vorgängerblock hält diesen neuen Gegenbeleg nicht bis
 über die mögliche Schlussbestätigung hinaus zurück.
 Eine einzelne negative Endsekante wird weiterhin diagnostiziert, verwirft
@@ -406,10 +444,14 @@ Rolle.
 
 Eine Lücke oder ein Quellenbruch entwertet die davon abhängigen Nachweise.
 Eine echte T-Korrektur bei gleichem Originalzeitpunkt entwertet auch dann den
-Schließkandidaten und die gehaltene Fall-/Bremsstütze dieser Rolle, wenn der
-korrigierte letzte Wert außerhalb ihrer früheren Referenzfenster liegt. Sie
-liefert keine neue Frische; eine Bestätigung benötigt erneut die eigenen
-neuen Stützblöcke.
+gemeinsamen Schließkandidaten, wenn der korrigierte letzte Wert außerhalb der
+früheren Referenzfenster liegt. Berührt die Korrektur ein Original des
+gehaltenen Fall-, Brems- oder Erholungsfensters oder der gehaltenen
+Steigungsänderungsform, entfällt die Fall-/Bremsstütze dieser Rolle.
+Unberührte historische Belege bleiben erhalten. Die Korrektur liefert keine
+neue Frische: Jeder Schlussweg benötigt an der korrigierten T-Rolle zwei
+vollständige neue Originalblöcke strikt nach dem korrigierten Zeitstempel.
+Neue Originale anderer Rollen ersetzen diese Stütze nicht.
 
 Diese Formkriterien bestimmen den erkannten Türzustand. Sie sichern keine
 exakte mechanische Kontaktzeit; eine veränderte Durchmischung bei noch offener

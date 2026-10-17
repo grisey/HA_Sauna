@@ -9,6 +9,7 @@ from collections.abc import Sequence
 from datetime import timedelta
 from types import SimpleNamespace
 import unittest
+from unittest.mock import patch
 
 from test_detector import T0, measurement, trace
 from test_original_curve_evidence import (
@@ -243,6 +244,31 @@ class OriginalTimeSupportTests(unittest.TestCase):
 
 
 class OriginalTimeAdapterTests(unittest.TestCase):
+    def _advance_with_original_prefix(self, detector, received_at):
+        """Observe genuine consumed inputs immediately before their evaluation.
+
+        accept() queues measurements. advance() calls _consume() at the first
+        due grid point, which creates the original prefixes; _sample() then
+        consumes them. The observer forwards that same call without changing
+        arguments, return values, prefix data or detector state.
+        """
+        prefixes = []
+        evaluate = detector._sample
+
+        def observe(*args, **kwargs):
+            prefixes.extend(detector._original_prefixes)
+            return evaluate(*args, **kwargs)
+
+        step = timedelta(seconds=detector.grid_seconds)
+        ticks, remainder = divmod(received_at - detector.origin, step)
+        flush_at = detector.origin + (ticks + bool(remainder)) * step
+        with patch.object(detector, "_sample", side_effect=observe):
+            detector.advance(flush_at, enabled=True)
+        self.assertFalse(detector.pending, "advance must consume the accepted batch")
+        self.assertTrue(prefixes, "the consumed originals must produce a real prefix")
+        self.assertEqual(prefixes[-1].received_at, received_at)
+        return prefixes[-1]
+
     def _evicted_reference(self):
         parameters = Parameters({})
         values = parameters.values
@@ -260,10 +286,10 @@ class OriginalTimeAdapterTests(unittest.TestCase):
             for quantity, value in zip(
                 (Quantity.TEMPERATURE, Quantity.HUMIDITY), trace(0), strict=True
             ):
-                detector.accept(measurement(
+                self.assertTrue(detector.accept(measurement(
                     Position.UPPER, quantity, value, (at - T0).total_seconds()
-                ))
-            prefix = detector._original_prefixes[-1]
+                )))
+            prefix = self._advance_with_original_prefix(detector, at)
             if index == 4 * count - 1:
                 reference = prefix
             if anchor is not None:
@@ -273,7 +299,6 @@ class OriginalTimeAdapterTests(unittest.TestCase):
                     ("upper", quantity, at)
                     for quantity in (Quantity.TEMPERATURE, Quantity.HUMIDITY)
                 )
-            detector.advance(at, enabled=True)
         return detector, reference, prefix
 
     def test_historical_temperature_background_keeps_its_bound_time_proof(self):
@@ -326,9 +351,10 @@ class OriginalTimeAdapterTests(unittest.TestCase):
                 for quantity, value in zip(
                     (Quantity.TEMPERATURE, Quantity.HUMIDITY), trace(0), strict=True
                 ):
-                    detector.accept(measurement(position, quantity, value, seconds))
-            prefix = detector._original_prefixes[-1]
-            detector.advance(at, enabled=True)
+                    self.assertTrue(detector.accept(
+                        measurement(position, quantity, value, seconds)
+                    ))
+            prefix = self._advance_with_original_prefix(detector, at)
         self.assertEqual(len(prefix.windows), len(detector.positions))
         self.assertTrue(detector._original_humidity_available(detector.positions, at))
         references = tuple(
@@ -345,11 +371,11 @@ class OriginalTimeAdapterTests(unittest.TestCase):
         ))
         # A new real source is a new epoch; its one report cannot borrow the
         # previously learned cadence or the old source's original windows.
-        detector.accept(measurement(
+        self.assertTrue(detector.accept(measurement(
             Position.UPPER, Quantity.HUMIDITY, trace(0)[1],
             (at + interval - T0).total_seconds(), source="sensor.changed_humidity",
-        ))
-        changed = detector._original_prefixes[-1]
+        )))
+        changed = self._advance_with_original_prefix(detector, at + interval)
         self.assertFalse(detector._original_contiguous(changed, references))
         self.assertFalse(detector._original_humidity_available(
             detector.positions, at + interval

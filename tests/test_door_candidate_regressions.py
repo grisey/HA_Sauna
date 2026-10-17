@@ -138,12 +138,60 @@ class DoorCandidateRegressionTests(unittest.TestCase):
             (fall, flow.temperature + gain),
         ]
         detector, events = Detector(flow.parameters, T0), []
+        observed = []
+
+        def observe(row):
+            forms = row.get("original_forms", {})
+            guard = forms.get("infusion_decay_guard") or {}
+            candidate = (detector.door_episode or {}).get("original_open") or {}
+            observed.append({
+                "at": row["at"],
+                "opening": {key: forms.get(key) for key in (
+                    "received_at", "candidate_received_at", "opening_candidate_reset_reason",
+                    "binding_humidity_fall_onset", "binding_humidity_fall_kink",
+                    "complete_fresh_original_block", "contiguous_candidate_support",
+                    "lower_level", "lowering_witness_received_at", "original_fall_evidence",
+                    "resolved_joint_fall", "bound_humidity_onsets", "binding_onsets",
+                    "humidity_branch_counterform", "humidity_fall_ended", "humidity_recovery",
+                    "temperature_fall_counterform", "current_temperature_recovery",
+                    "opening_confirmation",
+                )},
+                "bound_reference_levels": {
+                    f"{name}:{quantity}": {
+                        "start_at": window.start_at, "newest_at": window.newest_at,
+                        "previous_mean": window.mean_minus, "current_mean": window.mean,
+                        "previous_slope": window.b, "current_slope": window.v,
+                    }
+                    for name, pair in candidate.get("windows", ())
+                    for quantity, window in (
+                        ("temperature", pair.temperature), ("humidity", pair.humidity),
+                    )
+                },
+                "local_temperature_references": {
+                    name: {
+                        "start_at": window.start_at, "newest_at": window.newest_at,
+                        "previous": window.previous, "current": window.current,
+                        "previous_mean": window.mean_minus, "current_mean": window.mean,
+                        "previous_slope": window.b, "current_slope": window.v,
+                    }
+                    for name, window in candidate.get("temperature_fall_witnesses", {}).items()
+                },
+                "infusion_guard": {
+                    "result": guard.get("result"), "reason": guard.get("reason"),
+                    "local_fall": guard.get("new_local_temperature_fall"),
+                    "native_references": guard.get("native_infusion_references"),
+                },
+            })
+
+        detector.observer = observe
         flow._feed(detector, peak, points, events, temperatures=temperatures)
         self.assertIn(Kind.INFUSION, [event.kind for event in events])
         self.assertIsNotNone(detector.infusion_episode)
         flow._feed(detector, fall, points, events, temperatures=temperatures)
         opens = [event for event in events if event.kind == Kind.DOOR_OPEN]
-        self.assertEqual(len(opens), 1)
+        self.assertEqual(len(opens), 1, msg=json.dumps(
+            observed, default=str, sort_keys=True,
+        ))
         observed = flow._value(temperatures, (opens[0].trace_at - T0).total_seconds())
         self.assertGreater(observed, flow.temperature)
         self.assertGreaterEqual(opens[0].effective_at, flow._at(peak))

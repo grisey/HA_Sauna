@@ -26,6 +26,118 @@ from custom_components.ha_sauna.core.timeline import Kind
 
 
 class R04DoorRecoveryTests(unittest.TestCase):
+    def _assert_native_close_fallback(self, row, event, inputs, values, floor):
+        """No earlier attribution still requires the complete native close proof."""
+        self.assertEqual(event.kind, Kind.DOOR_CLOSE)
+        self.assertEqual(event.effective_at, event.trace_at)
+        self.assertEqual(event.detected_at, event.trace_at)
+        proposals = row["curve_proposals"].get("door_close", ())
+        self.assertFalse(any(
+            item["status"] == "consumed" and item["confirmed_at"] == event.trace_at
+            for item in proposals
+        ))
+        # A usable earlier T proposal must be consumed rather than silently
+        # replaced by the raster. Invalid/ambiguous or absent proposals cannot
+        # supply an earlier physical attribution.
+        self.assertFalse(any(
+            item["status"] in ("available", "bound")
+            and tuple(item["positions"]) == event.channels
+            and tuple(item["quantities"]) == ("temperature",)
+            and all(stamp >= floor for stamp in item["onsets"])
+            and item["onset_at"] < event.trace_at
+            for item in proposals
+        ))
+        self._assert_native_original_confirmation(row, event, inputs, values)
+
+    def _assert_native_original_confirmation(self, row, event, inputs, values):
+        """Native form freshness belongs to the event, not an optional onset fit."""
+        form = row["original_forms"]
+        self.assertTrue(form["new_original"])
+        self.assertTrue(form["later_original_confirmation"]["result"])
+        confirmed = form["confirmation_received_at"]
+        self.assertLessEqual(confirmed, event.trace_at)
+        if event.kind == Kind.DOOR_CLOSE:
+            proof = event.door_close_evidence
+            self.assertIsNotNone(proof)
+            self.assertLess(proof.candidate_at, proof.confirmed_at)
+            self.assertEqual(confirmed, proof.confirmed_at)
+            followups = (
+                form["temperature_level_followup"]
+                if form["sustained_temperature_braking"]["result"]
+                else form["followup"]
+            )
+            quantities = {"temperature"}
+        else:
+            self.assertEqual(event.kind, Kind.DOOR_OPEN)
+            self.assertLess(form["candidate_received_at"], confirmed)
+            # The first resolved lowering can be retained while later own RH
+            # witnesses arrive. Do not require a new fall on a lower plateau.
+            self.assertTrue(form["opening_confirmation"]["result"])
+            lowering_at = form["lowering_witness_received_at"]
+            self.assertIsNotNone(lowering_at)
+            self.assertLess(form["candidate_received_at"], lowering_at)
+            self.assertLessEqual(lowering_at, confirmed)
+            self.assertTrue(form["bound_humidity_onsets"]["result"])
+            followups = form["followup"]
+            quantities = {"temperature", "humidity"}
+        self.assertEqual(set(followups), set(event.channels))
+        for position, roles in followups.items():
+            self.assertEqual(set(roles), quantities)
+            for quantity, support in roles.items():
+                self.assertEqual(support["fresh_current"], values["curve_original_samples"])
+                if event.kind == Kind.DOOR_CLOSE:
+                    self.assertEqual(support["fresh_previous"], values["curve_original_samples"])
+                self.assertGreater(support["current_start_at"], support["reference_newest_at"])
+                self.assertLessEqual(support["newest_at"], confirmed)
+                originals = {
+                    item.received_at for item in inputs
+                    if item.position.value == position and item.quantity.value == quantity
+                }
+                for key in ("reference_newest_at", "current_start_at", "newest_at"):
+                    self.assertIn(support[key], originals)
+
+    def _assert_native_earlier_attribution(self, row, event, inputs, values, package):
+        """An earlier attribution has its own originals beside the native proof."""
+        self._assert_native_original_confirmation(row, event, inputs, values)
+        self.assertLess(event.effective_at, event.trace_at)
+        self.assertEqual(event.detected_at, event.trace_at)
+        self.assertEqual(package["status"], "consumed")
+        self.assertEqual(package["confirmed_at"], event.trace_at)
+        self.assertEqual(package["consumed_onset_at"], event.effective_at)
+        native_open = event.kind == Kind.DOOR_OPEN
+        native_close = package["attribution_basis"] == "original_close_binding"
+        if native_open:
+            self.assertEqual(package["attribution_basis"], "original_open_binding")
+        elif native_close:
+            self.assertTrue(row["original_forms"]["discrete_temperature_braking"]["result"])
+        else:
+            self.assertEqual(package["attribution_basis"], "curve_proposal")
+            # This optional historical proposal can be assembled on the same
+            # raster as the already independently confirmed native T form.
+            self.assertLessEqual(package["first_observed_at"], event.trace_at)
+        witnesses = package["witnesses"]
+        self.assertEqual({item["position"] for item in witnesses}, set(event.channels))
+        self.assertEqual(
+            {item["quantity"] for item in witnesses},
+            {"humidity"} if native_open else {"temperature"},
+        )
+        self.assertEqual(event.effective_at, min(item["onset_at"] for item in witnesses))
+        for witness in witnesses:
+            source = (
+                row["original_forms"]["bound_sources"][witness["position"]][1 if native_open else 0]
+                if native_open or native_close else witness["source"]
+            )
+            originals = {
+                item.received_at for item in inputs
+                if item.position.value == witness["position"]
+                and item.quantity.value == witness["quantity"] and item.source == source
+            }
+            self.assertLessEqual(witness["first_at"], witness["onset_at"])
+            self.assertLessEqual(witness["onset_at"], witness["newest_at"])
+            self.assertLessEqual(witness["newest_at"], event.trace_at)
+            for key in ("first_at", "onset_at", "newest_at"):
+                self.assertIn(witness[key], originals)
+
     def _assert_smooth_close_originals(
         self,
         row,
@@ -341,6 +453,16 @@ class R04DoorRecoveryTests(unittest.TestCase):
                         consumed,
                     )
                     continue
+                if event.kind == Kind.DOOR_CLOSE and event.effective_at == event.trace_at:
+                    floor = max(
+                        [opening_floor, *(item.effective_at for item in events
+                          if item.kind == Kind.VENTILATION
+                          and opening_floor <= item.trace_at <= event.trace_at)]
+                    )
+                    self._assert_native_close_fallback(
+                        row, event, inputs, parameters.values, floor,
+                    )
+                    continue
                 self.assertGreater(event.trace_at, event.effective_at)
                 self.assertEqual(len(consumed), 1)
                 package = consumed[0]
@@ -350,6 +472,12 @@ class R04DoorRecoveryTests(unittest.TestCase):
                         (witness["position"], witness["quantity"]): witness
                         for witness in package["witnesses"]
                     }
+                if (package.get("attribution_basis") == "original_open_binding"
+                        or event.door_close_evidence is not None):
+                    self._assert_native_earlier_attribution(
+                        row, event, inputs, parameters.values, package,
+                    )
+                    continue
                 self.assertEqual(package["consumed_onset_at"], event.effective_at)
                 self.assertLess(package["first_observed_at"], event.trace_at)
                 bound_at = package.get("evidence_bound_at")
@@ -1860,6 +1988,10 @@ class R04DoorRecoveryTests(unittest.TestCase):
                     if proposal["status"] == "consumed"
                 ]
                 self.assertEqual(len(opening_packages), 1, msg=diagnostic)
+                if opening_packages[0].get("attribution_basis") == "original_open_binding":
+                    self._assert_native_earlier_attribution(
+                        opening_row, opening, inputs, values, opening_packages[0],
+                    )
                 opening_witnesses = {
                     (witness["position"], witness["quantity"]): witness
                     for witness in opening_packages[0]["witnesses"]
@@ -1879,8 +2011,9 @@ class R04DoorRecoveryTests(unittest.TestCase):
                     row.get("door_close_confirmation", {}).get("confirmation_method")
                     == "smooth_recovery"
                 )
+                native_fallback = not smooth_selected and close.effective_at == close.trace_at
                 for event in doors:
-                    if event.kind == Kind.DOOR_CLOSE and smooth_selected:
+                    if event.kind == Kind.DOOR_CLOSE and (smooth_selected or native_fallback):
                         continue
                     self.assertGreater(
                         event.trace_at, event.effective_at, msg=diagnostic
@@ -1918,8 +2051,19 @@ class R04DoorRecoveryTests(unittest.TestCase):
                         consumed,
                     )
                     continue
+                if native_fallback:
+                    floor = max(
+                        [opening.effective_at, *(event.effective_at for event in events
+                          if event.kind == Kind.VENTILATION
+                          and opening.trace_at <= event.trace_at <= close.trace_at)]
+                    )
+                    self._assert_native_close_fallback(row, close, inputs, values, floor)
+                    continue
                 self.assertEqual(len(consumed), 1, msg=diagnostic)
                 package = consumed[0]
+                if close.door_close_evidence is not None:
+                    self._assert_native_earlier_attribution(row, close, inputs, values, package)
+                    continue
                 self.assertEqual(
                     package["consumed_onset_at"],
                     close.effective_at,

@@ -2653,10 +2653,11 @@ class OriginalCurveFollowupTests(unittest.TestCase):
                 detector, events, candidate = self._bind(route, fall_step=short_fall)
                 bound_at = self._at(detector.index)
                 if lower_plateau:
-                    # V3 requires a complete fresh common fall before a
-                    # lower plateau can supply the later independent proof.
-                    events += self._ramp(detector, self.count, self.fall_step)
+                    # The shared binding requires K fresh originals per role;
+                    # a second independent pair of T windows is not required.
+                    events += self._ramp(detector, self.count - 1, self.fall_step)
                     self.assertNotIn(Kind.DOOR_OPEN, [item.kind for item in events])
+                    events += self._ramp(detector, 1, self.fall_step)
                 events += self._ramp(detector, 4 * self.count, delta)
                 confirmations = [item for item in events if item.kind is kind]
                 self.assertEqual(len(confirmations), 1)
@@ -2696,12 +2697,32 @@ class OriginalCurveFollowupTests(unittest.TestCase):
             detector, (self.initial for _ in range(self.baseline_ticks))
         )
         # Reuse one K-section of the existing fixture's slow loss and reverse
-        # it immediately. The complete excursion returns to the old level;
-        # it supplies neither a long continued fall nor a lower stable step.
+        # it immediately. The longer fit can still fall while the latest
+        # temperature originals already resolve the physical return.
         events += self._ramp(detector, self.count, self.fall_step)
-        events += self._ramp(
-            detector, self.count, tuple(-step for step in self.fall_step)
-        )
+        self.assertFalse(detector.open)
+        candidate = detector.door_episode["original_open"]
+        returning = tuple(-step for step in self.fall_step)
+        events += self._ramp(detector, 2, returning)
+        for name in ("upper", "lower"):
+            originals = self._originals(detector)[f"{name}_temperature"]
+            window = original_window(
+                originals, at=self._at(detector.index),
+                **channel_arguments(self.values, name, "temperature"),
+            )
+            self.assertIsNotNone(window)
+            self.assertLess(
+                window.v,
+                -self.values["curve_original_open_contrast"] * window.e,
+            )
+            self.assertGreater(
+                originals[-1][1] - originals[-2][1],
+                2 * self.values[f"curve_original_noise_temperature_{name}"]
+                * self.values["curve_original_significance"],
+            )
+        self.assertNotIn(Kind.DOOR_OPEN, [item.kind for item in events])
+        self.assertIs(detector.door_episode["original_open"], candidate)
+        events += self._ramp(detector, self.count - 2, returning)
         events += self._feed(detector, (self.initial for _ in range(self.tail_ticks)))
         self.assertEqual(
             [
@@ -2784,13 +2805,13 @@ class OriginalCurveFollowupTests(unittest.TestCase):
                     for role, change in zip(CLIMATE, self.fall_step, strict=True)
                 )
                 if tail == "early_rh_plateau":
-                    events += self._ramp(detector, self.count, self.fall_step)
+                    events += self._ramp(detector, self.count - 1, self.fall_step)
                     self.assertFalse(detector.open)
                     self.assertNotIn(Kind.DOOR_OPEN, [item.kind for item in events])
                     self.assertNotIn(Kind.VENTILATION, [item.kind for item in events])
                     plateau_start = self._originals(detector)
-                    # RH ends its fall before opening has its two new T
-                    # sections. Public ventilation must still wait for OPEN.
+                    # RH stops falling before all roles have K new originals.
+                    # Later RH/AH stages still belong to the confirmed OPEN.
                     events += self._ramp(detector, 2 * self.count - 1, cooling_delta)
                     originals = self._originals(detector)
                     for role in CLIMATE:
@@ -2801,9 +2822,12 @@ class OriginalCurveFollowupTests(unittest.TestCase):
                             ),
                             2 * self.count - 1,
                         )
-                    self.assertFalse(detector.open)
-                    self.assertNotIn(Kind.DOOR_OPEN, [item.kind for item in events])
-                    self.assertNotIn(Kind.VENTILATION, [item.kind for item in events])
+                    opening = detector.door_episode["original_open"]
+                    bound = {name: (temperature, humidity)
+                             for name, temperature, humidity in opening["newest"]}
+                    for name, pair in opening["confirmation_windows"]:
+                        self.assertGreater(pair.temperature.current[0][0], bound[name][0])
+                        self.assertGreater(pair.humidity.current[0][0], bound[name][1])
                     events += self._ramp(detector, self.count, cooling_delta)
                 else:
                     events += self._ramp(detector, 4 * self.count, self.fall_step)
@@ -2867,17 +2891,43 @@ class OriginalCurveFollowupTests(unittest.TestCase):
                     self.assertEqual(
                         [item.kind for item in events].count(Kind.VENTILATION), 1
                     )
-                    self.assertNotIn(
-                        Kind.VENTILATION_COMPLETE, [item.kind for item in events]
+                    self.assertEqual(
+                        [item.kind for item in events].count(Kind.VENTILATION_COMPLETE), 1
                     )
                     self.assertEqual(
                         [
                             item.kind
                             for item in events
-                            if item.kind in (Kind.DOOR_OPEN, Kind.VENTILATION)
+                            if item.kind in (
+                                Kind.DOOR_OPEN, Kind.VENTILATION, Kind.VENTILATION_COMPLETE,
+                            )
                         ],
-                        [Kind.DOOR_OPEN, Kind.VENTILATION],
+                        [Kind.DOOR_OPEN, Kind.VENTILATION, Kind.VENTILATION_COMPLETE],
                     )
+                    # AH need not be horizontal: the leading contract requires
+                    # a resolved slowdown while T continues without braking.
+                    complete = detector.door_episode["original_ventilation_complete"]
+                    self.assertTrue(complete["published"])
+                    temperatures = dict(complete["temperature_windows"])
+                    significance = self.values["curve_original_significance"]
+                    for position, humidity in complete["windows"]:
+                        temperature = temperatures[position]
+                        self.assertGreater(-humidity.b, significance * humidity.e_minus)
+                        self.assertLessEqual(humidity.v, significance * humidity.e)
+                        self.assertGreater(
+                            humidity.v - humidity.b,
+                            significance * (humidity.e + humidity.e_minus),
+                        )
+                        self.assertGreater(-temperature.v, significance * temperature.e)
+                        self.assertLessEqual(
+                            temperature.v - temperature.b,
+                            significance * (temperature.e + temperature.e_minus),
+                        )
+                    initial = {name: (temperature, humidity) for name, temperature, humidity
+                               in complete["candidate_originals"]}
+                    for name, temperature, humidity in complete["confirmation_originals"]:
+                        self.assertGreater(temperature, initial[name][0])
+                        self.assertGreater(humidity, initial[name][1])
                 else:
                     self.assertEqual(doors, [Kind.DOOR_OPEN, Kind.DOOR_CLOSE])
                     self.assertFalse(detector.open)
@@ -2935,8 +2985,7 @@ class OriginalCurveFollowupTests(unittest.TestCase):
                         detector.door_episode
                         and detector.door_episode.get("original_open")
                     )
-                    events += self._ramp(detector, self.count, self.fall_step)
-                    events += self._ramp(detector, 2 * self.count - 1, cooling_delta)
+                    events += self._ramp(detector, self.count - 1, self.fall_step)
                     self.assertFalse(detector.open)
                     self.assertEqual(
                         [item.kind for item in events].count(Kind.DOOR_OPEN), 1
@@ -2944,7 +2993,7 @@ class OriginalCurveFollowupTests(unittest.TestCase):
                     self.assertEqual(
                         [item.kind for item in events].count(Kind.VENTILATION), 1
                     )
-                    events += self._ramp(detector, 2 * self.count, cooling_delta)
+                    events += self._ramp(detector, 4 * self.count - 1, cooling_delta)
                     self.assertTrue(
                         detector.open,
                         msg=json.dumps(
