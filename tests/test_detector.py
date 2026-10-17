@@ -3352,6 +3352,40 @@ class InfusionLifecycleTests(unittest.TestCase):
         self.assertIsNone(pending.confirmed_detection)
         self.assertIsNone(pending.confirmed_at)
 
+    def test_pending_continuation_keeps_first_original_beginning_until_publication(self):
+        points, shapes, rise_two, fall_two = self._scenario(merged=True)
+        detector = Detector(self.parameters, T0)
+        events, first = [], []
+
+        def defer_publication(episode, *_args):
+            # Isolate the pending-owner transition. R14 supplies the independent
+            # real-data case; this fixture does not prescribe confirmation math.
+            if not first:
+                first.append(episode["original_component"])
+
+        with self._patch_math(shapes, forms=original_contrasts):
+            with patch.object(detector, "_original_confirm_infusion",
+                              side_effect=defer_publication):
+                self._feed(detector, rise_two + self.width, points, events)
+            self.assertEqual(len(first), 1)
+            pending = detector.infusion_episode
+            self.assertEqual(pending.phase, "pending")
+            self.assertEqual(self._infusions(events), [])
+            tail = detector._infusion_episode["original_component"]
+            self.assertIsNot(tail, first[0])
+            self.assertTrue(tail["qualified"])
+            self.assertTrue(tail["continuing"])
+            expected = min(witness.onset_at
+                           for witness in first[0]["onset_witnesses"].values())
+            self.assertLess(expected, min(tail["onsets"].values()))
+            self._feed(detector, fall_two, points, events)
+        infusions = self._infusions(events)
+        self.assertEqual(len(infusions), 1)
+        self.assertEqual(infusions[0].effective_at, expected)
+        self.assertGreater(infusions[0].detected_at, pending.bound_at)
+        self.assertIs(detector.infusion_episode.confirmed_detection, infusions[0])
+        self.assertIsNone(detector._infusion_episode["original_start_component"])
+
     def test_qualified_continuation_accepts_late_historical_witness_and_keeps_delayed_fall(self):
         points, shapes, rise_two, _ = self._scenario(merged=True)
         historical_onset = rise_two
