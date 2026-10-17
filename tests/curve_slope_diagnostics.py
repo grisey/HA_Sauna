@@ -30,8 +30,8 @@ class SlopeTransitionDiagnostics:
         self.control = None
         original = detector._original_door_position_evidence
 
-        def observe_position(prefixes, channels, now, decision_at, trace, state):
-            result = original(prefixes, channels, now, decision_at, trace, state)
+        def observe_position(prefixes, channels, now, decision_at, trace, state, **kwargs):
+            result = original(prefixes, channels, now, decision_at, trace, state, **kwargs)
             episode = state["door"]
             if episode is not None:
                 for fall in episode.get("original_temperature_falls", {}).values():

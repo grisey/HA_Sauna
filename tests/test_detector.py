@@ -1068,41 +1068,91 @@ class DetectorTests(unittest.TestCase):
 
         second = pending_at + step
         confirmation_at = T0 + timedelta(seconds=second)
+        before_context = detector._original_context()
+        target_values = dict(zip(
+            (Quantity.TEMPERATURE, Quantity.HUMIDITY), values(second), strict=True,
+        ))
+        # One measured precondition serves four publication contracts. The
+        # thermal comparison is declared only to isolate arbitration; the
+        # source history, windows, owners and public callbacks remain real.
+        variants = (
+            ("rh_then_t", (Quantity.HUMIDITY, Quantity.TEMPERATURE), False, True,
+             [Kind.DOOR_CLOSE]),
+            ("t_then_rh", (Quantity.TEMPERATURE, Quantity.HUMIDITY), False, True,
+             [Kind.DOOR_CLOSE]),
+            ("different_original_times", (Quantity.HUMIDITY, Quantity.TEMPERATURE), True, True,
+             [Kind.VENTILATION, Kind.DOOR_CLOSE]),
+            ("ventilation_without_close", (Quantity.HUMIDITY, Quantity.TEMPERATURE), False, False,
+             [Kind.VENTILATION]),
+        )
+        for name, quantities, distinct_originals, force_close, expected in variants:
+            with self.subTest(name=name):
+                case = deepcopy(detector)
+                bound_close = case.door_episode["original_close"]
+                callbacks, published = [], []
 
-        def closing_form(temperatures, **kwargs):
-            form = original_thermal_contrasts(temperatures, **kwargs)
-            if form is None or any(window.newest_at < confirmation_at
-                                   for window in temperatures.values()):
-                return form
-            return replace(
-                form, braking=2 * significance, warming_min=2 * significance,
-                warming_max=2 * significance,
-            )
+                def closing_form(temperatures, **kwargs):
+                    form = original_thermal_contrasts(temperatures, **kwargs)
+                    if not force_close or form is None or any(
+                        window.newest_at < confirmation_at for window in temperatures.values()
+                    ):
+                        return form
+                    return replace(
+                        form, braking=2 * significance, warming_min=2 * significance,
+                        warming_max=2 * significance,
+                    )
 
-        # With discrete pure braking still absent, declare only the thermal
-        # comparison establishing simultaneous closure. The bound owner and
-        # complete fresh T/RH windows stay real; RH-only prefixes still see cooling.
-        with (patch.object(detector, "_original_temperature_braking_forms", return_value=False),
-              patch("custom_components.ha_sauna.core.detector.original_thermal_contrasts",
-                    side_effect=closing_form)):
-            for quantity, value in ((Quantity.HUMIDITY, values(second)[1]),
-                                    (Quantity.TEMPERATURE, values(second)[0])):
-                for position in detector.positions:
-                    detector.accept(measurement(
-                        position, quantity, value, second,
-                        measured=T0 + timedelta(seconds=second),
-                    ))
-            found += detector.advance(T0 + timedelta(seconds=second), enabled=True)
-        self.assertEqual(closing["confirmation_received_at"], T0 + timedelta(seconds=second))
-        ventilation = detector.diagnostic["original_ventilation"]
-        self.assertTrue(ventilation["close_same_prefix"])
-        self.assertTrue(ventilation["relative_humidity"]["confirmable"])
-        self.assertFalse(ventilation["relative_humidity"]["proven"])
-        self.assertEqual([item.kind for item in found].count(Kind.DOOR_CLOSE), 1)
-        self.assertNotIn(Kind.VENTILATION, [item.kind for item in found])
-        self.assertNotIn(Kind.VENTILATION_COMPLETE, [item.kind for item in found])
-        self.assertFalse(detector.open)
-        self.assertIsNone(detector.door_episode)
+                def delivered(item):
+                    callbacks.append(item)
+                    if item.kind == Kind.VENTILATION:
+                        completed = case.door_episode["original_ventilation_rh_confirmed"]
+                        published.append((completed["published"], completed["confirmation_originals"]))
+
+                with (patch.object(case, "_original_temperature_braking_forms", return_value=False),
+                      patch("custom_components.ha_sauna.core.detector.original_thermal_contrasts",
+                            side_effect=closing_form)):
+                    for quantity in quantities:
+                        original_at = confirmation_at
+                        if distinct_originals and quantity == Quantity.HUMIDITY:
+                            original_at -= timedelta(seconds=step / 2)
+                        for position in case.positions:
+                            case.accept(measurement(
+                                position, quantity, target_values[quantity], second,
+                                measured=original_at,
+                            ))
+                    batch = case.advance(confirmation_at, enabled=True, on_detection=delivered)
+                # Signals already delivered to a consumer cannot be repaired by
+                # changing the returned list or final diagnostic afterwards.
+                self.assertEqual(callbacks, batch)
+                self.assertEqual([item.kind for item in batch if item.kind in (
+                    Kind.DOOR_CLOSE, Kind.VENTILATION, Kind.VENTILATION_COMPLETE,
+                )], expected)
+                self.assertEqual(case._original_context(), before_context)
+                self.assertEqual(len(published), expected.count(Kind.VENTILATION))
+                for was_published, originals in published:
+                    self.assertTrue(was_published)
+                    for _, temperature_at, humidity_at in originals:
+                        self.assertEqual(humidity_at, confirmation_at - timedelta(
+                            seconds=step / 2 if distinct_originals else 0,
+                        ))
+                        if distinct_originals:
+                            self.assertLess(temperature_at, confirmation_at)
+                        else:
+                            self.assertEqual(temperature_at, confirmation_at)
+                if force_close:
+                    self.assertEqual(bound_close["confirmation_received_at"], confirmation_at)
+                    ventilation = case.diagnostic["original_ventilation"]
+                    self.assertTrue(ventilation["close_same_prefix"])
+                    self.assertEqual(ventilation["relative_humidity"]["proven"], distinct_originals)
+                    if name == "rh_then_t":
+                        self.assertTrue(ventilation["relative_humidity"]["confirmable"])
+                    self.assertFalse(case.open)
+                    self.assertIsNone(case.door_episode)
+                else:
+                    self.assertTrue(case.open)
+                    completed = case.door_episode["original_ventilation_rh_confirmed"]
+                    self.assertTrue(completed["published"])
+                    self.assertEqual(completed["confirmation_received_at"], confirmation_at)
 
 
     def test_carrier_gap_pauses_completion_and_same_source_can_resume_it(self):
@@ -1800,7 +1850,12 @@ class DetectorTests(unittest.TestCase):
                     # A valid current sensor remains available even when its
                     # original window is too old to supply a fresh confirmation.
                     at = T0 + timedelta(seconds=stale_at)
-                    self.assertTrue(detector._original_humidity_available(detector.positions, at))
+                    self.assertTrue(detector._position_available(
+                        Position.UPPER, (Quantity.TEMPERATURE, Quantity.HUMIDITY), at,
+                    ))
+                    # The independent thermal fallback asks for usable RH
+                    # original forms, not for permission to replace this sensor.
+                    self.assertFalse(detector._original_humidity_available(detector.positions, at))
                     support = detector._original_time_support_cache[
                         Position.UPPER, Quantity.HUMIDITY
                     ][2]

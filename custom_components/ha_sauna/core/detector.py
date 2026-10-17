@@ -129,6 +129,7 @@ class _OriginalPrefix:
     humidities: tuple = ()
     time_supports: tuple = ()
     changed_position: Position | None = None
+    input_time: tuple | None = None
 
 
 def robust_slope(values, step=BY_KEY["grid_seconds"].default):
@@ -506,10 +507,22 @@ class Detector:
             episode["event_identity"] = owner["event_identity"]
             episode["started_at"] = effective_at
 
+    @staticmethod
+    def _original_input_group_end(prefixes, index):
+        """Nur bereits eingelesene gleiche Empfangs- und Originalzeiten bündeln."""
+        current = prefixes[index]
+        return (
+            index + 1 == len(prefixes)
+            or current.input_time is None
+            or current.received_at != prefixes[index + 1].received_at
+            or current.input_time != prefixes[index + 1].input_time
+        )
+
     def _original_door_evidence(self, prefixes, channels, now, decision_at, trace, emit):
         result = (False, False, False, ())
         route = "door_close" if self.open else "door_open"
         for index, prefix in enumerate(prefixes):
+            stage_confirmation_allowed = self._original_input_group_end(prefixes, index)
             result = (False, False, False, ())
             outcomes, records, local_results, previous_stages = {}, {}, {}, {}
             for position in self.positions:
@@ -523,6 +536,7 @@ class Detector:
                 local = self._position_trace(trace)
                 local_results[position] = self._original_door_position_evidence(
                     (prefix,), (position,), now, decision_at, local, state,
+                    stage_confirmation_allowed=stage_confirmation_allowed,
                 )
                 episode = state["door"]
                 candidate = (self._close_position_binding(episode) if self.open else
@@ -568,7 +582,7 @@ class Detector:
             if result[0] or result[2]:
                 self._original_prefixes.extend(prefixes[index + 1:])
                 break
-            if not self.open:
+            if not self.open or not stage_confirmation_allowed:
                 continue
             for stage, key, kind in (
                 ("ventilation", "original_ventilation_rh_confirmed", Kind.VENTILATION),
@@ -1153,7 +1167,10 @@ class Detector:
             self._correct_curve_proposals(position, quantity, point_at, measurement.value)
             self._correct_infusion_tail(position, quantity, point_at, measurement.value)
             self._clear_curve_series(position, quantity)
-            self._record_original_prefix(measurement.received_at, original=False, changed_position=position)
+            self._record_original_prefix(
+                measurement.received_at, original=False, changed_position=position,
+                input_time=(time_basis, point_at),
+            )
             return
         if series["points"] and (
             series["source"] != measurement.source
@@ -1167,7 +1184,10 @@ class Detector:
             # Alter allein erzeugt keinen neuen Stützpunkt. Eine echte
             # Korrektur derselben gespeicherten Probe durchläuft dagegen
             # die bestehenden Entwertungen auch nach dem Sensortimeout.
-            self._record_original_prefix(measurement.received_at, original=False, changed_position=position)
+            self._record_original_prefix(
+                measurement.received_at, original=False, changed_position=position,
+                input_time=(time_basis, point_at),
+            )
             return
         if corrected:
             # Eine Korrektur derselben Originalprobe ersetzt ihren Wert. Sie
@@ -1238,7 +1258,10 @@ class Detector:
         else:
             series["last_original_version"] = series["version"]
             series["last_original_received_at"] = measurement.received_at
-        self._record_original_prefix(measurement.received_at, original=not corrected, changed_position=position)
+        self._record_original_prefix(
+            measurement.received_at, original=not corrected, changed_position=position,
+            input_time=(time_basis, point_at),
+        )
 
     def _original_context(self):
         return tuple((position, tuple(
@@ -1273,7 +1296,9 @@ class Detector:
         return next((support for name, role, support in prefix.time_supports
                      if name == position.value and role == quantity), None)
 
-    def _record_original_prefix(self, received_at, *, original, changed_position=None):
+    def _record_original_prefix(
+        self, received_at, *, original, changed_position=None, input_time=None,
+    ):
         """Jedes angenommene Präfix erhalten; ein Raster ist kein neues Original."""
         points, windows, temperatures, humidity_kinks, humidities = [], [], [], [], []
         time_supports = []
@@ -1337,7 +1362,8 @@ class Detector:
             )
         self._original_prefixes.append(_OriginalPrefix(
             received_at, original, self._original_context(), tuple(points), tuple(windows),
-            tuple(temperatures), tuple(humidity_kinks), tuple(humidities), tuple(time_supports), changed_position,
+            tuple(temperatures), tuple(humidity_kinks), tuple(humidities), tuple(time_supports),
+            changed_position, input_time,
         ))
 
     @staticmethod
@@ -2227,9 +2253,17 @@ class Detector:
         )
 
     def _original_humidity_available(self, positions, now):
-        """Fehlende RH-Formen allein eröffnen keinen anderen Messweg."""
+        """Gültige RH-Originalfenster begrenzen den vorhandenen Heiz-Sonderweg."""
         return bool(positions) and all(
-            self._value(position, Quantity.HUMIDITY, now) is not None for position in positions
+            self._value(position, Quantity.HUMIDITY, now) is not None
+            and (cached := self._original_window_cache.get((position, Quantity.HUMIDITY))) is not None
+            and cached[0] == self._curve_series[position, Quantity.HUMIDITY]["version"]
+            and cached[1] is not None
+            and (support := self._original_time_support(
+                position, Quantity.HUMIDITY,
+                self._original_points_cache[position, Quantity.HUMIDITY][1], now,
+            )) is not None and support.fresh(now)
+            for position in positions
         )
 
     @staticmethod
@@ -2425,6 +2459,7 @@ class Detector:
 
     def _original_ventilation_evidence(
         self, prefix, channels, now, decision_at, trace, episode, *, closing, close_value=None,
+        stage_confirmation_allowed=True,
     ):
         """RH-Lüften und danach vollständiges AH-Lüften in derselben Tür."""
         candidate = episode.get("original_open") if episode is not None else None
@@ -2438,7 +2473,8 @@ class Detector:
             "positions": tuple(position.value for position in positions),
             "candidate_at": None, "water_status": "unknown",
             "close_same_prefix": closing, "close_contrast": close_value,
-            "publication_allowed": self.open,
+            "publication_allowed": self.open and stage_confirmation_allowed,
+            "input_group_complete": stage_confirmation_allowed,
         }
         for name, key in (("relative_humidity", "original_ventilation_rh"),
                           ("absolute_humidity", "original_ventilation")):
@@ -2675,13 +2711,14 @@ class Detector:
                             for position, temperature, humidity in newest)
                 confirmed = maintained and fresh
                 gates["later_originals_for_all_roles"] = _gate(fresh)
-            evidence_confirmed = confirmed and not closing
+            evidence_confirmed = confirmed and not closing and stage_confirmation_allowed
             completed_key = ("original_ventilation_complete" if paired
                              else "original_ventilation_rh_confirmed")
             completed_stage = episode.get(completed_key)
             retained = (completed_stage is not None and not completed_stage.get("published", True)
                         and not completed_stage.get("connection_unknown"))
-            proven = self.open and not closing and (evidence_confirmed or retained)
+            proven = (self.open and not closing and stage_confirmation_allowed
+                      and (evidence_confirmed or retained))
             stage = {
                 "evaluated": True, "counterform": counterform,
                 "initial_form": initial, "maintained_form": maintained,
@@ -2697,6 +2734,7 @@ class Detector:
             gates.update(
                 bound_initial_transition=_gate(candidate is not None),
                 same_prefix_close_has_priority=_gate(not closing),
+                input_group_complete=_gate(stage_confirmation_allowed),
                 confirmed_door_open=_gate(self.open),
             )
             if evidence_confirmed:
@@ -2784,7 +2822,9 @@ class Detector:
                 "published": False,
             }
 
-    def _original_door_position_evidence(self, prefixes, channels, now, decision_at, trace, state):
+    def _original_door_position_evidence(
+        self, prefixes, channels, now, decision_at, trace, state, *, stage_confirmation_allowed=True,
+    ):
         """Türformen und Lüftung kausal im einzigen Türbestand fortschreiben."""
         opening = closing = close_candidate = False
         level_close = False
@@ -2813,6 +2853,7 @@ class Detector:
                 ):
                     self._original_ventilation_evidence(
                         prefix, channels, now, decision_at, trace, episode, closing=False,
+                        stage_confirmation_allowed=stage_confirmation_allowed,
                     )
                     continue
             elif not complete_prefix:
@@ -3372,6 +3413,7 @@ class Detector:
                 if witness is not None:
                     self._original_ventilation_evidence(
                         prefix, channels, now, decision_at, trace, episode, closing=False,
+                        stage_confirmation_allowed=stage_confirmation_allowed,
                     )
                 if opening:
                     episode["original_humidity_minima"] = {
@@ -3410,6 +3452,7 @@ class Detector:
                 closing_value = None
                 self._original_ventilation_evidence(
                     prefix, channels, now, decision_at, trace, episode, closing=False,
+                    stage_confirmation_allowed=stage_confirmation_allowed,
                 )
                 continue
             if minima is None and same_opening_sources and contrasts is not None:
@@ -3464,6 +3507,7 @@ class Detector:
                 else:
                     self._original_ventilation_evidence(
                         prefix, channels, now, decision_at, trace, episode, closing=False,
+                        stage_confirmation_allowed=stage_confirmation_allowed,
                     )
                     continue
             if candidate is not None and tuple(name for name, _ in candidate["newest"]) != tuple(
@@ -3666,7 +3710,7 @@ class Detector:
                     candidate["confirmation_received_at"] = prefix.received_at
             self._original_ventilation_evidence(
                 prefix, channels, now, decision_at, trace, episode, closing=closing,
-                close_value=closing_value,
+                close_value=closing_value, stage_confirmation_allowed=stage_confirmation_allowed,
             )
             if closing:
                 break

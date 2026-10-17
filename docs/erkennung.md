@@ -929,10 +929,18 @@ fünf historischen Lüftungsparameter bleiben für ältere Archive und
 Referenzadapter im [Parameterkatalog](../custom_components/ha_sauna/defaults.json); sie bestimmen
 den aktuellen Nachweis nicht.
 
-Die Auswertung folgt der Reihenfolge der empfangenen Originale. Eine bereits
-bestätigbare Schließung hat am selben Eingangspräfix Vorrang vor dem
-Lüftungsnachweis. Ein an einem früheren Präfix bestätigtes Durchlüften und ein
-späterer Türschluss bleiben auch innerhalb desselben Rasters zwei Ereignisse.
+Die Auswertung folgt der Reihenfolge der empfangenen Originale. Benachbarte,
+bereits vorliegende Meldungen mit derselben Empfangszeit und derselben
+Originalzeit samt Zeitbasis bilden eine gemeinsame Ausgabeentscheidung.
+Ihre Formen werden weiterhin je Eingangspräfix ausgewertet. Eine neue
+Lüftungsstufe wird erst am Ende dieser Gruppe bestätigt und ausgegeben;
+ein darin bereits bestätigbarer Türschluss hat Vorrang. Es wird weder auf
+künftige Meldungen gewartet noch ein späterer Messwert vorweggenommen.
+
+Verschiedene Empfangs- oder Originalzeiten bleiben getrennt. Ein zuvor
+bestätigtes Durchlüften und ein späterer Türschluss bleiben daher auch innerhalb
+desselben Rasters zwei Ereignisse. Späteres Wissen nimmt bereits ausgegebene
+Ereignisse nicht zurück.
 Für Unterbrechungen und Korrekturen gelten die
 [Regeln bei Messlücken](#erkennungen-bei-messlücken-prüfen).
 

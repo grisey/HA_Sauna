@@ -172,35 +172,28 @@ class CurveCandidateTests(unittest.TestCase):
         proposal = consumed[0]
         self.assertEqual(opening.effective_at, proposal["consumed_onset_at"])
         self.assertEqual(opening.effective_at, min(proposal["onsets"]))
-        self.assertLess(proposal["first_observed_at"], opening.detected_at)
         self.assertEqual(proposal["confirmed_at"], opening.detected_at)
-        confirmations = {
-            item["candidate_id"]: item for item in proposal["confirmation"]
-        }
-        for witness in proposal["witnesses"]:
-            self.assertLessEqual(
-                witness["first_observed_at"], proposal["first_observed_at"]
-            )
-            self.assertLessEqual(witness["newest_at"], proposal["first_observed_at"])
-            self.assertIn(witness["onset_at"], {at(second) for second in range(90)})
-            confirmation = confirmations[witness["candidate_id"]]
-            self.assertTrue(confirmation["supported"])
-            self.assertGreater(
-                confirmation["fresh_newest_at"], witness["first_newest_at"]
-            )
-            self.assertLessEqual(confirmation["newest_at"], opening.trace_at)
-            history = [
-                previous
-                for row in observed
-                for previous in row["curve_candidates"]
-                .get("door_open", {})
-                .get("upper", {})
-                .values()
-                if previous.get("candidate_id") == witness["candidate_id"]
-            ]
-            self.assertEqual(
-                {previous["onset_at"] for previous in history}, {witness["onset_at"]}
-            )
+        self.assertEqual(proposal["attribution_basis"], "original_open_binding")
+        native = detector._position_state(Position.UPPER)["door"]["original_open"]
+        self.assertLess(native["received_at"], opening.trace_at)
+        self.assertEqual(native["confirmation_received_at"], opening.trace_at)
+        self.assertEqual(tuple(name for name, _ in native["windows"]), ("upper",))
+        self.assertTrue(proposal["consumed_candidate_ids"])
+        self.assertIn(opening.effective_at, {at(second) for second in range(90)})
+        row = next(row for row in observed if row["at"] == opening.trace_at)
+        self.assertTrue(row["original_forms"]["complete_fresh_original_block"]["result"])
+        references = dict(native["windows"])
+        for name, confirmation in native["confirmation_windows"]:
+            self.assertEqual(name, Position.UPPER.value)
+            for quantity in (Quantity.TEMPERATURE, Quantity.HUMIDITY):
+                first = getattr(references[name], quantity.value)
+                fresh = getattr(confirmation, quantity.value)
+                self.assertEqual(len(fresh.current), detector.p["curve_original_samples"])
+                self.assertGreater(fresh.current[0][0], first.newest_at)
+                self.assertLessEqual(fresh.newest_at, opening.trace_at)
+                for stamp, value in fresh.previous + fresh.current:
+                    second = (stamp - T0).total_seconds()
+                    self.assertEqual(value, trace(second)[0 if quantity == Quantity.TEMPERATURE else 1])
 
     def test_ticks_repeated_reports_and_a_correction_do_not_add_original_evidence(self):
         detector = self._detector()
@@ -283,16 +276,16 @@ class CurveCandidateTests(unittest.TestCase):
                     detector.positions,
                     quantities,
                     floor=T0,
-                    context=(
-                        detector._curve_door_context,
-                        detector.door_episode["started_at"],
-                        T0,
-                    ),
+                    # This explicitly assembled optional shape package is
+                    # not a native door candidate or a claimed door opening.
+                    context=(detector._curve_door_context, "isolated_shape_package", T0),
                     observed_at=at(last),
                 )
                 self.assertEqual(
                     detector._curve_proposal_status[key]["status"], "available"
                 )
+                self.assertFalse(detector.open)
+                self.assertIsNone(detector.door_episode)
                 reset = last + detector.grid_seconds
                 if boundary == "gap":
                     reset += detector.p["sensor_timeout_seconds"]

@@ -1039,6 +1039,7 @@ class DeviceFeedbackTests(unittest.TestCase):
 
     def test_fifo_native_relay_off_preserves_earlier_thermal_detection(self):
         from custom_components.ha_sauna.device import HADevice
+        from test_detector import DetectorTests
 
         async def exercise(path):
             roles = {key: value for key, value in BINDINGS.values.items()
@@ -1068,17 +1069,25 @@ class DeviceFeedbackTests(unittest.TestCase):
                                                   else None)),
                 })
 
+            # Reuse the core catch-up fixture's warm baseline, own falling
+            # hinge and sparse RH originals. A decline from the very first
+            # sample has no observed onset and is not an opening oracle.
+            fixture = DetectorTests(methodName="runTest")
+            baseline = fixture._settling_time(runtime.detector)
+            cadence = fixture._thermal_humidity_cadence(runtime.detector)
+            off_second = baseline + 80
             pending = []
             await runtime._lock.acquire()
-            for second in range(1, 61):
+            for second in range(off_second + 21):
                 clock[0] = T0 + timedelta(seconds=second)
-                for role, value in (
-                    ("upper_temperature", 50 - .06 * second),
-                    ("upper_humidity", 30),
-                ):
+                fall = max(0, second - baseline + 1)
+                values = [("upper_temperature", 50 - .03 * fall)]
+                if second % cadence == 0:
+                    values.append(("upper_humidity", 30))
+                for role, value in values:
                     pending.append(asyncio.create_task(runtime.device_input(edge(role, value))))
                     await asyncio.sleep(0)
-                if second == 40:
+                if second == off_second:
                     pending.append(asyncio.create_task(runtime.device_input(edge("heater", "off"))))
                     await asyncio.sleep(0)
             runtime._lock.release()
@@ -1087,19 +1096,24 @@ class DeviceFeedbackTests(unittest.TestCase):
             await runtime.archive.flush()
             stored = await asyncio.to_thread(runtime.archive.read, "fifo")
             await runtime.archive.close()
-            return runtime, stored
+            return runtime, stored, T0 + timedelta(seconds=off_second)
 
         clock = [T0]
         with TemporaryDirectory() as directory:
-            runtime, stored = asyncio.run(exercise(Path(directory) / "sessions.sqlite"))
+            runtime, stored, off_at = asyncio.run(exercise(Path(directory) / "sessions.sqlite"))
         self.assertEqual(runtime.session.heating.intervals[0].ended_at,
-                         T0 + timedelta(seconds=40))
-        self.assertIn(Kind.DOOR_OPEN,
-                      [event.kind for event in runtime.session.timeline.processed])
+                         off_at)
+        openings = [event for event in runtime.session.timeline.processed
+                    if event.kind == Kind.DOOR_OPEN]
+        self.assertEqual(len(openings), 1)
+        self.assertLess(openings[0].trace_at, off_at)
+        self.assertGreaterEqual(openings[0].detected_at, off_at)
         detections = [record["payload"] for record in stored["records"]
                       if record["kind"] == "detection"]
         opening = next(payload for payload in detections
                        if payload["event"]["kind"] == Kind.DOOR_OPEN.value)
+        self.assertEqual(opening["channels"], ["upper"])
+        self.assertEqual(opening["trace_at"], openings[0].trace_at.isoformat())
         traces = [record["payload"] for record in stored["records"]
                   if record["kind"] == "detector_trace"]
         self.assertTrue(any(trace["at"] == opening["trace_at"]

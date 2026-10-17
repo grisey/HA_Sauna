@@ -86,14 +86,14 @@ class SingleSensorClosingTests(unittest.TestCase):
             original_local = detector._original_door_position_evidence
             original_select = detector._select_position
 
-            def observe_local(prefixes, channels, now, decision_at, trace, state):
+            def observe_local(prefixes, channels, now, decision_at, trace, state, **kwargs):
                 position = channels[0]
                 before = detector._close_position_binding(state["door"])
                 bound_before = before.get("received_at") if before is not None else None
                 original_before = (state["door"] or {}).get("original_close")
                 original_bound_before = original_before.get("received_at") if original_before is not None else None
                 result = original_local(
-                    prefixes, channels, now, decision_at, trace, state,
+                    prefixes, channels, now, decision_at, trace, state, **kwargs,
                 )
                 forms = trace.get("original_forms", {})
                 prefix = prefixes[-1]
