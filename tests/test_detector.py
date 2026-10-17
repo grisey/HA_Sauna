@@ -4198,6 +4198,8 @@ class InfusionLifecycleTests(unittest.TestCase):
                                      tuple(witness.candidate_id for _, witness in bound_onsets))
 
     def test_door_context_assigns_a_new_infusion_to_the_next_real_gang(self):
+        from json import dumps
+
         first_peak = self.begin + self.width
         first_fall = first_peak + self.width
         door_start = first_fall + max(1, self.side - 2) * self.step
@@ -4244,9 +4246,41 @@ class InfusionLifecycleTests(unittest.TestCase):
         for quantity in (Quantity.TEMPERATURE, Quantity.HUMIDITY):
             shapes.extend((self._shape("open", door_start, door_bottom, quantity),
                            self._shape("close", close_start, close_end, quantity)))
-        episodes_at_opening, opening_proofs = [], []
+        episodes_at_opening, opening_proofs, event_evidence = [], [], []
+
+        def water_witness(witness):
+            if witness is None:
+                return None
+            return {
+                "humidity": witness.humidity_sample,
+                "temperature_before": witness.temperature_before,
+                "temperature_after": witness.temperature_after,
+                "lower_density": witness.lower_density,
+                "upper_density": witness.upper_density,
+                "available_at": witness.available_at,
+            }
 
         def observe(row):
+            if any(kind in row["signals"] for kind in (
+                Kind.INFUSION, Kind.DOOR_OPEN, Kind.DOOR_CLOSE,
+                Kind.VENTILATION, Kind.VENTILATION_COMPLETE,
+            )):
+                native = row.get("original_infusion", {})
+                owner = detector._infusion_episode
+                component = owner.get("original_component") if owner is not None else None
+                event_evidence.append({
+                    "at": row["at"], "signals": row["signals"],
+                    "episode": row.get("infusion_episode"),
+                    "native": {key: native.get(key) for key in (
+                        "binding_received_at", "binding_support", "native_onset_intervals",
+                        "assignment", "strong", "water_positive", "water_change",
+                        "water_support_end", "confirmation_basis",
+                    )},
+                    "water": {position.value: {
+                        key: water_witness(state[key]) for key in ("base", "maximum")
+                    } for position, state in component["water_state"].items()}
+                    if component is not None else {},
+                })
             if Kind.DOOR_OPEN in row["signals"]:
                 episodes_at_opening.append(detector.infusion_episode)
                 opening_proofs.append(row["original_forms"]["original_fall_evidence"])
@@ -4268,7 +4302,28 @@ class InfusionLifecycleTests(unittest.TestCase):
             first_episode = detector.infusion_episode
             self._feed(detector, next_fall, points, events,
                        temperatures=temperatures, controller=controller)
-        self.assertEqual(len(self._infusions(events)), 2)
+        boundaries = {
+            "first_rise": self.begin, "first_peak": first_peak, "first_fall": first_fall,
+            "door_start": door_start, "door_bottom": door_bottom,
+            "water_plateau": water_plateau, "close_start": close_start,
+            "close_end": close_end, "next_rise": next_rise,
+            "next_peak": next_peak, "next_fall": next_fall,
+        }
+        diagnostic = dumps({
+            "inputs": {name: {
+                "second": second,
+                "temperature": self._value(temperatures, second),
+                "humidity": self._value(points, second),
+                "water": absolute_humidity(self._value(temperatures, second),
+                                           self._value(points, second)),
+            } for name, second in boundaries.items()},
+            "events": [{"kind": item.kind, "effective_at": item.effective_at,
+                        "trace_at": item.trace_at, "detected_at": item.detected_at}
+                       for item in events],
+            "evidence": event_evidence,
+        }, default=lambda value: (value - T0).total_seconds(), sort_keys=True)
+        self.assertEqual(len(self._infusions(events)), 2,
+                         msg="DOOR_CONTEXT_INFUSION_EVIDENCE=" + diagnostic)
         self.assertEqual(episodes_at_opening, [None])
         self.assertEqual(len(opening_proofs), 1)
         for position in detector.positions:
