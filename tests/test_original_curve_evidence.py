@@ -2175,6 +2175,28 @@ class OriginalFollowupArithmeticTests(unittest.TestCase):
                     (form.fresh_previous, form.fresh_current), (previous, current)
                 )
 
+                # Fixed previous mean is 10; every current mean is 6.
+                # Their retained level loss is (10-6)/(2*1)=2, even
+                # when both moving sections have become the same plateau.
+                self.assertEqual(form.reference_level_loss, 2)
+                self.assertEqual(original_followup(window, reference), form)
+                if length in (6, 9, 12):
+                    # OLS over three originals at 0,2,4 has e=1/2.
+                    # The fixed previous reference falls at b=-1.
+                    self.assertEqual(form.current_direction, 0)
+                    self.assertEqual(form.current_change, 1)
+                    self.assertEqual(form.previous_direction, -2 if length == 6 else 0)
+                    self.assertEqual(form.previous_change, 0 if length == 6 else 1)
+                    # The reference's current slope is zero, unlike its
+                    # previous slope -1; both denominators here equal 1.
+                    self.assertEqual(form.current_change_from_reference_current, 0)
+                    self.assertEqual(
+                        form.previous_change_from_reference_current,
+                        -1 if length == 6 else 0,
+                    )
+                    self.assertEqual(form.level_change, -2 if length == 6 else 0)
+                    self.assertEqual(form.residual, 0)
+
     def test_settled_decline_accepts_nonzero_tail_but_rejects_rise_and_continued_curvature(self):
         for time_factor, value_factor, offset in ((1, 1, 0), (5, 10, 100)):
             transform = dict(time_factor=time_factor, value_factor=value_factor, offset=offset)
@@ -2197,27 +2219,6 @@ class OriginalFollowupArithmeticTests(unittest.TestCase):
                         self.assertLess(form.current_direction, -1)
                         self.assertEqual(form.fresh_current, len(window.current))
             self.assertFalse(original_followup(reference, reference).settled_after_decline(1, 2))
-                # Fixed previous mean is 10; every current mean is 6.
-                # Their retained level loss is (10-6)/(2*1)=2, even
-                # when both moving sections have become the same plateau.
-                self.assertEqual(form.reference_level_loss, 2)
-                self.assertEqual(original_followup(window, reference), form)
-                if length in (6, 9, 12):
-                    # OLS over three originals at 0,2,4 has e=1/2.
-                    # The fixed previous reference falls at b=-1.
-                    self.assertEqual(form.current_direction, 0)
-                    self.assertEqual(form.current_change, 1)
-                    self.assertEqual(form.previous_direction, -2 if length == 6 else 0)
-                    self.assertEqual(form.previous_change, 0 if length == 6 else 1)
-                    # The reference's current slope is zero, unlike its
-                    # previous slope -1; both denominators here equal 1.
-                    self.assertEqual(form.current_change_from_reference_current, 0)
-                    self.assertEqual(
-                        form.previous_change_from_reference_current,
-                        -1 if length == 6 else 0,
-                    )
-                    self.assertEqual(form.level_change, -2 if length == 6 else 0)
-                    self.assertEqual(form.residual, 0)
 
     def test_new_original_fall_matches_rational_slope_without_full_window_wait(self):
         for time_factor, value_factor, offset in ((1, 1, 0), (3, 4, 100)):
