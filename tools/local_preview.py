@@ -603,15 +603,20 @@ class Preview:
             self.c.finish_session_gap(body["token"], self.now)
         elif path.endswith("/heater"):
             previous_id = self.c.session.session_id if self.c.session else None
+            previous_selection = self.c.last_heater_selection
             decision = asyncio.run(self.runtime.set_heater_override(body["value"]))
             selection = self.c.last_heater_selection
-            self.record("manual_heater", {
-                "value": body["value"], "decision": decision,
-                "selection_id": selection.selection_id if selection else None,
-                "selection": selection,
-            }, session_id=selection.session_id if selection else (
-                self.c.session.session_id if self.c.session else previous_id
-            ))
+            # The runtime deliberately ignores a repeated boolean choice that
+            # is already effective. Only its new original selection proves an
+            # accepted boolean input; explicit returns still use the owner path.
+            if body["value"] is None or selection is not previous_selection:
+                self.record("manual_heater", {
+                    "value": body["value"], "decision": decision,
+                    "selection_id": selection.selection_id if selection else None,
+                    "selection": selection,
+                }, session_id=selection.session_id if selection else (
+                    self.c.session.session_id if self.c.session else previous_id
+                ))
         elif path.endswith("/light"):
             value = body["value"]
             actual = self.observed_light()

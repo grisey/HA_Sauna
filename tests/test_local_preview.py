@@ -64,13 +64,19 @@ class LocalPreviewTests(unittest.TestCase):
     def test_manual_heater_transport_retains_original_choice_ends(self):
         self.preview.reset("manuell")
         self.preview.action("/preview/heater", {"value": False})
+        self.assertFalse(any(row["kind"] == "manual_heater" for row in self.preview.records), "the initial OFF baseline is not a newly accepted choice")
+        self.preview.action("/preview/heater", {"value": True})
         start = next(row for row in reversed(self.preview.records) if row["kind"] == "manual_heater" and not row["payload"].get("ends_previous_only"))
-        self.preview.action("/preview/heater", {"value": None})
+        self.assertIsNotNone(start["payload"]["selection_id"])
+        self.preview.step(60)
+        self.preview.action("/preview/heater", {"value": False})
         end = next(row for row in reversed(self.preview.records) if row["kind"] == "manual_heater" and row["payload"].get("ends_previous_only"))
         self.assertEqual(start["payload"]["selection_id"], end["payload"]["selection_id"])
         self.assertEqual(start["session_id"], end["session_id"])
         self.assertEqual(end["received_at"], end["payload"]["change"]["at"])
         self.assertEqual(end["payload"]["change"]["started_at"], start["payload"]["selection"]["at"])
+        self.assertEqual(end["payload"]["change"]["reason"], "selection_replaced")
+        self.assertEqual(end["received_at"], self.preview.now.isoformat())
 
     def test_user_state_removes_diagnostics_and_retains_control_permissions(self):
         self.preview.action("/simulate", {"action":"role", "value":"user"})
