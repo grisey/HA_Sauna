@@ -149,11 +149,26 @@ Der Datenumfang des Sitzungsarchivs bleibt unverändert.
 
 ## Werkseinstellungen
 
-**Daten und Wartung → Werkseinstellungen wiederherstellen** setzt Betriebsparameter,
-Programmbibliothek, Betriebsart, aktuelle Temperaturwahl, Tastervorgabe,
-Temperaturschnellwahl und Protokollstufe zurück.
+Ein Feldstandard ist eine eigene gespeicherte Vorgabe für ein dauerhaftes Feld.
+Ohne eigenen Standard gilt dessen Werkseinstellung aus dem Katalog.
+Die **Standardtemperatur** behält ihre besondere Funktion bei der Temperaturwahl;
+sie ist keine allgemeine Rücksetzung.
 
-Erhalten bleiben Gerätezuordnungen, Erkennungsverfahren, Taster-/Schalterart samt
-Ereignistyp sowie Darstellung und Archiv. Die Darstellung einschließlich ihrer
-Aktualisierungs- und Bedienvorgaben hat eine eigene Rücksetzung unter **Darstellung**.
-Alle Rücksetzungen der Betriebsparameter sind erst nach Sitzungsende möglich.
+| Aktion | Wirkung nach Vorschau und Bestätigung |
+| --- | --- |
+| **Standard überschreiben** | Speichert den gültigen Entwurf genau eines Feldes als dessen Standard. Der aktive Wert und weitere Entwürfe bleiben erhalten. |
+| **Standard wiederherstellen** | Übernimmt gespeicherte Standards, ersatzweise Werkseinstellungen, in die aktiven Werte und betroffenen Entwürfe. |
+| **Werkseinstellung** | Übernimmt Katalogwerte in die aktiven Werte und betroffenen Entwürfe; entfernt eigene Standards im gewählten Umfang. |
+| Speichern / **Änderungen verwerfen** | Speichern übernimmt gültige Entwürfe als aktive Werte. Verwerfen lädt aktive Werte als Entwurf. Gespeicherte Standards werden dabei nicht geändert. |
+
+Feldmenüs **⋯** gelten für genau ein Feld. **Standards für diesen Bereich** und
+**Daten und Wartung → Standards für alle Bereiche** umfassen auch derzeit
+ausgeblendete gespeicherte Felder. Die Vorschau zeigt diesen vollständigen Umfang.
+Programmbibliothek und Gerätezuordnung sind ausgenommen. Kataloggebundene interne
+Vorgaben haben weder Feldstandard noch zusätzliche Eingabe.
+
+Änderungen der Betriebsparameter setzen vollständiges Sitzungsende voraus.
+Unvereinbare Kombinationen und veraltete Bestätigungen werden vor der Anwendung
+abgewiesen; es wird kein Teil der Vorschau angewendet. Andere Entwürfe bleiben
+erhalten. Der optionale Strompreis gehört zum Feld-, Bereichs- und Gesamtumfang;
+leer und der gültige Zahlenwert 0 bleiben dabei verschieden.

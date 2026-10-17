@@ -51,6 +51,7 @@ from custom_components.ha_sauna.core.timeline import Event, Kind, project_door_c
 from custom_components.ha_sauna.history_humidity import project_absolute_humidity
 from custom_components.ha_sauna.presentation import (
     decision_message,
+    historical_measurement_context,
     public_measurement,
     public_phase_projection,
     public_session,
@@ -59,6 +60,11 @@ from custom_components.ha_sauna.presentation import (
 )
 from custom_components.ha_sauna.runtime import Configuration, SaunaRuntime
 from custom_components.ha_sauna.settings import (
+    ConfigurationLocked,
+    StaleFieldStandardPreview,
+    async_apply_field_standard_action,
+    async_get_field_standards,
+    async_preview_field_standard_action,
     async_set_appearance,
     async_set_button_gesture,
     async_set_button_program,
@@ -66,10 +72,12 @@ from custom_components.ha_sauna.settings import (
     async_set_parameters,
     async_set_program,
     async_set_temperature_steps,
+    field_standard_action_arguments,
 )
 
 
 PREVIEW_DEFAULTS_PATH = ROOT / "tools" / "preview" / "defaults.json"
+_CURRENT_SESSION = object()
 
 
 def load_preview_defaults(path=PREVIEW_DEFAULTS_PATH):
@@ -118,7 +126,7 @@ class Preview:
         self.now = datetime.fromisoformat(initial["origin"])
         self.records = []
         self.sessions = {}
-        self.decision_cursor = self.consumer_cursor = 0
+        self.decision_cursor = self.consumer_cursor = self.heater_end_cursor = 0
         self.light = initial["light_percent"]
         self.sun_elevation = initial["sun_elevation_degrees"]
         self.humidity = initial["humidity_percent"]
@@ -187,14 +195,15 @@ class Preview:
         entry.options = options
         return changed
 
-    def record(self, kind, payload):
+    def record(self, kind, payload, *, session_id=_CURRENT_SESSION, received_at=None):
         payload = plain(payload)
-        session_id = payload.get("session_id") or (
-            self.c.session.session_id if self.c.session else None
-        )
+        if session_id is _CURRENT_SESSION:
+            session_id = payload.get("session_id") or (
+                self.c.session.session_id if self.c.session else None
+            )
         self.records.append({"id": len(self.records)+1, "kind": kind,
                              "session_id": session_id,
-                             "received_at": self.now.isoformat(), "payload": payload})
+                             "received_at": (received_at or self.now).isoformat(), "payload": payload})
 
     def save_sessions(self):
         for session in self.c.completed_sessions:
@@ -235,6 +244,8 @@ class Preview:
         if stored is None:
             return None
         session = dict(stored["session"])
+        configuration = session.get("configuration")
+        session["measurement_context"] = historical_measurement_context(session)
         energy_delta = energy_interval_delta(stored.get("energy"), after=energy_after)
         if energy_delta is not None:
             session["energy"] = {**session["energy"], "interval_delta": energy_delta}
@@ -261,7 +272,8 @@ class Preview:
             session = public_session(session)
             projection = public_phase_projection(projection)
             records = [
-                {**r, "payload": public_measurement(r["payload"])}
+                {**r, "payload": public_measurement(r["payload"], configuration=configuration)}
+                if r["kind"] in ("measurement", "source_snapshot") else r
                 for r in records if r["kind"] in ("measurement", "source_snapshot", "phase")
             ]
         return {"session": session, "phase_projection": projection, "measurement_window": window,
@@ -274,6 +286,7 @@ class Preview:
             self.c.report_heating(demand, self.now)
         self.sample_light()
         self.runtime.persist()
+        self.record_heater_ends()
         for d in self.c.decisions[self.decision_cursor:]:
             self.record("decision", d)
         self.decision_cursor = len(self.c.decisions)
@@ -286,6 +299,47 @@ class Preview:
                 "source":self.runtime.configuration.bindings.values[f"upper_{quantity}"],
                 "measured_at":self.now, "available":True})
         self.save_sessions()
+
+    def record_heater_ends(self):
+        for end in self.c.manual_heater_ends[self.heater_end_cursor:]:
+            self.record("manual_heater", {
+                "ends_previous_only": True,
+                "selection_id": end.selection_id, "change": end,
+            }, session_id=end.session_id, received_at=end.at)
+        self.heater_end_cursor = len(self.c.manual_heater_ends)
+
+    def standards(self):
+        if not self.admin:
+            raise ValueError("Administratorrechte erforderlich")
+        return asyncio.run(async_get_field_standards(self.entry))
+
+    def standard_action(self, body):
+        if not self.admin:
+            raise ValueError("Administratorrechte erforderlich")
+        arguments = field_standard_action_arguments(body)
+        if "confirmation" not in body:
+            return asyncio.run(async_preview_field_standard_action(
+                self.entry, body["action"], **arguments,
+            ))
+        result = asyncio.run(async_apply_field_standard_action(
+            self.hass, self.entry, body["action"],
+            confirmation=body["confirmation"], **arguments,
+        ))
+        if self.runtime.reconfiguring:
+            # HA's options listener replaces the runtime for parameter changes.
+            # The same replacement is simulated only after the owner accepted
+            # an idle, atomic write; saved archives keep their original context.
+            asyncio.run(self.runtime.close())
+            self.record_heater_ends()
+            self.runtime = PreviewRuntime(
+                Configuration.from_options(self.entry.options), clock=lambda: self.now,
+            )
+            self.entry.runtime_data = self.runtime
+            self.c = self.runtime.controller
+            self.decision_cursor = self.consumer_cursor = self.heater_end_cursor = 0
+            self.light_output = LightOutput(self.c.parameters)
+            self.light_quantizer = LightQuantizer()
+        return result
 
     def step(self, seconds, temperature=None):
         # Refresh synthetic samples along the simulated time axis.
@@ -548,7 +602,16 @@ class Preview:
         elif path.endswith("/finish-session"):
             self.c.finish_session_gap(body["token"], self.now)
         elif path.endswith("/heater"):
-            asyncio.run(self.runtime.set_heater_override(body["value"]))
+            previous_id = self.c.session.session_id if self.c.session else None
+            decision = asyncio.run(self.runtime.set_heater_override(body["value"]))
+            selection = self.c.last_heater_selection
+            self.record("manual_heater", {
+                "value": body["value"], "decision": decision,
+                "selection_id": selection.selection_id if selection else None,
+                "selection": selection,
+            }, session_id=selection.session_id if selection else (
+                self.c.session.session_id if self.c.session else previous_id
+            ))
         elif path.endswith("/light"):
             value = body["value"]
             actual = self.observed_light()
@@ -574,6 +637,8 @@ class Preview:
         elif path.endswith("/appearance"):
             appearance = asyncio.run(async_set_appearance(self.hass, self.entry, body))
             return {"appearance": appearance}
+        elif path.endswith("/standards"):
+            return self.standard_action(body)
         elif path.endswith("/parameters"):
             if not self.admin:
                 raise ValueError("Administratorrechte erforderlich")
@@ -626,9 +691,9 @@ class Handler(BaseHTTPRequestHandler):
     def log_message(self, *_args):
         pass
 
-    def send(self, payload, content_type="application/json"):
+    def send(self, payload, content_type="application/json", *, status_code=200):
         data = json.dumps(plain(payload), ensure_ascii=False).encode() if content_type=="application/json" else payload
-        self.send_response(200)
+        self.send_response(status_code)
         self.send_header("Content-Type",content_type)
         self.send_header("Cache-Control","no-store")
         self.end_headers()
@@ -667,6 +732,13 @@ class Handler(BaseHTTPRequestHandler):
                 self.send_error(404)
                 return
             self.send(result)
+        elif path.endswith("/standards"):
+            try:
+                self.send(preview.standards())
+            except ConfigurationLocked as error:
+                self.send({"error": str(error)}, status_code=409)
+            except ValueError as error:
+                self.send({"error": str(error)}, status_code=400)
         else:
             self.send_error(404)
 
@@ -680,6 +752,10 @@ class Handler(BaseHTTPRequestHandler):
         try:
             body = json.loads(self.rfile.read(int(self.headers.get("Content-Length",0))))
             self.send(preview.action(urlparse(self.path).path,body))
+        except StaleFieldStandardPreview as error:
+            self.send({"error": str(error), "preview": error.preview}, status_code=409)
+        except ConfigurationLocked as error:
+            self.send({"error": str(error)}, status_code=409)
         except (ValueError, KeyError, TypeError) as error:
             self.send_response(400)
             self.send_header("Content-Type","application/json")

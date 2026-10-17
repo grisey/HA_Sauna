@@ -890,12 +890,26 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
         editor = self.panel.locator("#appearance-settings")
         for name, value in selected.items():
             await expect(editor.locator(f'[data-appearance-instrument="{name}"]')).to_have_value(value)
-        await editor.locator('[data-action="appearance-default"]').click()
+        await editor.get_by_role("button", name="Standards für Darstellung und Bedienung", exact=True).click()
+        dialog = self.panel.locator("#standards-dialog")
+        await dialog.get_by_role("button", name="Werkseinstellung", exact=True).click()
+        await expect(dialog.get_by_text("Neuer aktiver Wert", exact=True)).to_be_visible()
+        # A concurrent genuine owner write makes the reviewed proposal stale.
+        from custom_components.ha_sauna.settings import async_set_appearance
+        changed = dict(self.entry.runtime_data.configuration.appearance["instruments"])
+        changed["default"] = definitions["default"]["default"]
+        await async_set_appearance(self.hass, self.entry, {"instruments": changed})
+        async with self.page.expect_response(lambda response: response.url.endswith("/standards") and response.status == 409):
+            await dialog.get_by_role("button", name="Vorschau bestätigen", exact=True).click()
+        await expect(dialog).to_contain_text("haben sich geändert")
+        await dialog.get_by_role("button", name="Vorschau bestätigen", exact=True).click()
+        await expect(dialog).to_contain_text("Werte wiederhergestellt")
+        await dialog.get_by_role("button", name="Schließen", exact=True).click()
         for name, definition in definitions.items():
             await expect(editor.locator(f'[data-appearance-instrument="{name}"]')).to_have_value(definition["default"])
         await editor.locator('[data-action="appearance-discard"]').click()
-        for name, value in selected.items():
-            await expect(editor.locator(f'[data-appearance-instrument="{name}"]')).to_have_value(value)
+        for name, definition in definitions.items():
+            await expect(editor.locator(f'[data-appearance-instrument="{name}"]')).to_have_value(definition["default"])
         self.assertEqual(self.errors, [])
 
     async def test_appearance_preview_validation_persistence_and_display_scales(self):
@@ -979,9 +993,12 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
         await editor.locator("summary").filter(has_text="Messungen und Ereignisse").click()
         await expect(editor.locator('[data-appearance-color="series_temperature"]')).to_have_value("#19A6C8")
         await expect(editor.locator('[data-appearance-scale="temperature.minimum"]')).to_have_value("50")
-        await editor.locator('[data-action="appearance-default"]').click()
-        await expect(editor.locator('[data-appearance-scale="temperature.minimum"]')).to_have_value(str(scale_defaults["temperature"]["default"]["minimum"]))
-        await editor.locator('[data-action="appearance-discard"]').click()
+        await editor.get_by_role("button", name="Temperatur Minimum: Standards", exact=True).click()
+        dialog = self.panel.locator("#standards-dialog")
+        await dialog.get_by_role("button", name="Werkseinstellung", exact=True).click()
+        await expect(dialog).to_contain_text("Neuer aktiver Wert")
+        await expect(editor.locator('[data-appearance-scale="temperature.minimum"]')).to_have_value("50")
+        await dialog.get_by_role("button", name="Schließen", exact=True).click()
         await expect(editor.locator('[data-appearance-scale="temperature.minimum"]')).to_have_value("50")
         self.assertEqual(self.entry.runtime_data.session.session_id, session_id)
         await self.panel.locator('.main-tabs [data-action="overview"]').click()

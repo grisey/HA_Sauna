@@ -90,6 +90,12 @@ Energie stammt aus gültigen Leistungsmessungen, ersatzweise aus belegter Heizze
 mal konfigurierter Ofenleistung. Gemessene, berechnete und unbekannte Anteile werden
 unterschieden. Kühlung und Heizzeitrücksetzung löschen keinen Sitzungsverbrauch.
 
+Für einen ausgewählten Aufheizabschnitt zeigt der Verlauf den Temperaturgewinn
+je Energie in °C/kWh. Temperaturgrenzen und Energie beziehen sich auf denselben
+Zeitraum; Messlücken, unbekannte Energieanteile oder fehlender Temperaturgewinn
+lassen den Wert offen. Er beschreibt den beobachteten Abschnitt und keinen
+Wirkungsgrad. [Zeitraumwerte im Archiv](speicherung.md#messungen-und-verlauf-nachvollziehen)
+
 ## Fehlender Temperaturanstieg
 
 Bei bestätigtem Schütz-EIN unterhalb des Sollwerts wird jeder Heizabschnitt

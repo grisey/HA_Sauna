@@ -568,13 +568,20 @@ const appearanceTickValues = (bounds, target, maximum, tolerance, precision) => 
 
 // User-facing history joins available observations across reporting gaps.
 // Original missing/stale observations remain available to hover and exports.
-const historyMeasurementTtlSeconds = (panel, session) =>
-  Number(
+const historyMeasurementTtlSeconds = (panel, session) => {
+  if (session && "measurement_context" in session) {
+    const value = session.measurement_context?.sensor_timeout_seconds;
+    return typeof value === "number" && Number.isFinite(value) && value >= 0
+      ? value
+      : NaN;
+  }
+  return Number(
     session?.measurement_ttl_seconds ??
       session?.configuration?.parameters?.sensor_timeout_seconds ??
       panel.state?.measurement_ttl_seconds ??
       panel.state?.configuration?.parameters?.sensor_timeout_seconds,
   );
+};
 const historySegments = (values) => {
   const available = values.filter((point) => point.value != null);
   return available.length ? [available] : [];
@@ -3114,6 +3121,255 @@ class SaunaPanel extends HTMLElement {
     }
     if (this.historyChart) this.historyChart.curves.styles = this.historyCurveStyles();
   }
+  standardMenuButton(scope, label = "Standards") {
+    const [kind, value] = Object.entries(scope)[0];
+    return `<button type="button" class="field-standard-menu" data-action="standards-open:${kind}:${esc(encodeURIComponent(value))}" aria-label="${esc(label)}">${scope.field ? "⋯" : esc(label)}</button>`;
+  }
+  standardFieldValue(state, id) {
+    return (
+      id.split(".").reduce((value, key) => value?.[key], state?.configuration) ?? null
+    );
+  }
+  standardDraftValue(row, validate = false) {
+    const parts = row.id.split(".");
+    let raw;
+    if (parts[0] === "parameters") {
+      const input = this.$(`#parameters input[name="${parts[1]}"]`);
+      if (!input) return row.active;
+      raw = input.value;
+    } else {
+      const [, category, key, bound] = parts;
+      if (category === "colors")
+        raw = this.appearanceRaw?.[key] ?? this.appearanceValue().colors?.[key] ?? null;
+      else if (category === "scales")
+        raw =
+          this.appearanceRaw?.[`${key}.${bound}`] ??
+          this.appearanceValue().scales?.[key]?.[bound];
+      else if (category === "preferences")
+        raw =
+          this.appearanceRaw?.[`preference.${key}`] ??
+          this.appearanceValue().preferences?.[key];
+      else raw = this.appearanceValue()[category]?.[key];
+      if (["colors", "instruments"].includes(category)) return raw || null;
+    }
+    if (raw == null) return row.active;
+    if (String(raw).trim() === "") {
+      const optional = this.state.parameters?.find(
+        (item) => item.key === parts[1],
+      )?.optional;
+      if (parts[0] === "parameters" && optional) return null;
+      if (validate) throw Error(`${row.label}: Bitte einen Wert eingeben.`);
+      return "(leer)";
+    }
+    const value = Number(raw);
+    if (!Number.isFinite(value)) {
+      if (validate) throw Error(`${row.label}: Bitte eine endliche Zahl eingeben.`);
+      return raw;
+    }
+    return value;
+  }
+  drawStandardDialog() {
+    const context = this.standardContext,
+      dialog = this.$("#standards-dialog");
+    if (!context || !dialog) return;
+    const preview = context.preview,
+      rows = preview?.fields || context.fields || [],
+      active = this.shadowRoot.activeElement,
+      restoreFocus = dialog.contains(active),
+      focusedAction = active?.dataset?.action;
+    const labels = {
+      overwrite_standard: "Standard überschreiben",
+      restore_standard: "Standard wiederherstellen",
+      restore_factory: "Werkseinstellung wiederherstellen",
+    };
+    const value = (row, item) =>
+      item == null
+        ? "—"
+        : `${typeof item === "number" ? String(item).replace(".", ",") : row.id.startsWith("appearance.instruments.") ? { round: "Rund", linear: "Gerade", inherit: "Gemeinsame Vorgabe" }[item] || item : String(item)}${row.unit ? ` ${row.unit}` : ""}`;
+    const scopeLabel = context.scope.field
+      ? "Feldstandard"
+      : context.scope.group
+        ? "Standards für diesen Bereich"
+        : "Standards für alle Bereiche";
+    dialog.innerHTML = `<h2 id="standards-title">${esc(preview ? labels[preview.action] : scopeLabel)}</h2><p>${preview?.action === "overwrite_standard" ? "Der geprüfte Entwurf wird als Standard gespeichert. Der aktive Wert und weitere Entwürfe bleiben erhalten." : "Wiederherstellen übernimmt die Vorschau unmittelbar in die aktiven Werte und die betroffenen Entwürfe. Werkseinstellung entfernt außerdem die betroffenen gespeicherten Standards."}</p><p>Bereiche und Gesamtumfang schließen ausgeblendete Felder ein. Programmbibliothek und Gerätezuordnung haben eigene Einstellungen.</p><div class="standard-values"><table><thead><tr><th>Feld</th><th>Werkseinstellung</th><th>Gespeicherter Standard</th><th>Aktiv</th><th>Entwurf</th>${preview ? `<th>${preview.action === "overwrite_standard" ? "Neuer Standard" : "Neuer aktiver Wert"}</th>` : ""}</tr></thead><tbody>${rows.map((row) => `<tr><th>${esc(row.id.startsWith("appearance.scales.") ? { temperature: "Temperatur", humidity: "Luftfeuchte" }[row.id.split(".")[2]] || row.label : row.label)}${row.bound ? ` · ${row.bound === "minimum" ? "Minimum" : "Maximum"}` : ""}${row.applicable === false ? "<small>Derzeit ausgeblendet</small>" : ""}</th><td>${esc(value(row, row.factory))}</td><td>${esc(value(row, row.standard))}${row.has_standard ? "" : "<small>Werkseinstellung</small>"}</td><td>${esc(value(row, row.active))}</td><td>${esc(value(row, this.standardDraftValue(row)))}</td>${preview ? `<td>${esc(value(row, preview.action === "overwrite_standard" ? row.target_standard : row.target))}</td>` : ""}</tr>`).join("")}</tbody></table></div><p role="status">${esc(context.message || preview?.validation_error || (context.busy ? "Wird geladen …" : ""))}</p><div class="row">${preview ? `<button type="button" class="confirm" data-action="standards-confirm" ${context.busy || !preview.confirmation ? "disabled" : ""}>Vorschau bestätigen</button><button type="button" data-action="standards-back" ${context.busy ? "disabled" : ""}>Zurück</button>` : `${context.scope.field ? `<button type="button" data-action="standards-preview:overwrite_standard" ${context.busy || !rows.length ? "disabled" : ""}>Standard überschreiben</button>` : ""}<button type="button" data-action="standards-preview:restore_standard" ${context.busy || !rows.length ? "disabled" : ""}>Standard wiederherstellen</button><button type="button" data-action="standards-preview:restore_factory" ${context.busy || !rows.length ? "disabled" : ""}>Werkseinstellung</button>`}<button type="button" data-action="standards-close" ${context.busy ? "disabled" : ""}>Schließen</button></div>`;
+    if (restoreFocus) {
+      const previous =
+        focusedAction &&
+        [...dialog.querySelectorAll("button:not(:disabled)")].find(
+          (button) => button.dataset.action === focusedAction,
+        );
+      (previous || dialog.querySelector("button:not(:disabled)") || dialog).focus({
+        preventScroll: true,
+      });
+    }
+  }
+  async openStandardMenu(scope) {
+    if (!this.state?.permissions?.admin || this.standardContext?.busy) return;
+    const dialog = this.$("#standards-dialog");
+    if (!dialog) return;
+    const context = {
+      scope,
+      entry: this.entry,
+      generation: this.generation,
+      busy: true,
+    };
+    this.standardContext = context;
+    this.drawStandardDialog();
+    dialog.showModal();
+    try {
+      const result = await this.api(`/${context.entry}/standards`);
+      if (!this.currentStandardContext(context)) return;
+      context.fields = result.fields.filter((row) =>
+        scope.field
+          ? row.id === scope.field
+          : scope.group
+            ? row.group === scope.group
+            : true,
+      );
+    } catch (error) {
+      if (this.currentStandardContext(context)) context.message = errorText(error);
+    } finally {
+      if (this.currentStandardContext(context)) {
+        context.busy = false;
+        this.drawStandardDialog();
+      }
+    }
+  }
+  currentStandardContext(context) {
+    return (
+      this.standardContext === context &&
+      this.entry === context.entry &&
+      this.generation === context.generation &&
+      !!this.state?.permissions?.admin
+    );
+  }
+  closeStandardMenu() {
+    if (this.standardContext?.busy) return;
+    this.standardContext = null;
+    this.$("#standards-dialog")?.close();
+  }
+  async previewStandardAction(action) {
+    const context = this.standardContext;
+    if (!context || context.busy || !this.currentStandardContext(context)) return;
+    context.message = null;
+    try {
+      const body = { action, ...context.scope };
+      if (action === "overwrite_standard")
+        body.value = this.standardDraftValue(context.fields[0], true);
+      context.busy = true;
+      this.drawStandardDialog();
+      const preview = await this.api(`/${context.entry}/standards`, "POST", body);
+      if (!this.currentStandardContext(context)) return;
+      context.body = body;
+      context.preview = preview;
+    } catch (error) {
+      if (this.currentStandardContext(context)) context.message = errorText(error);
+    } finally {
+      if (this.currentStandardContext(context)) {
+        context.busy = false;
+        this.drawStandardDialog();
+      }
+    }
+  }
+  acceptStandardDrafts(rows) {
+    // Update only the confirmed fields. Foreign raw/invalid drafts remain owned
+    // by their existing editor; program drafts are outside this inventory.
+    for (const row of rows) {
+      const [owner, category, key, bound] = row.id.split(".");
+      if (owner === "parameters") {
+        const input = this.$(`#parameters input[name="${category}"]`);
+        if (input) {
+          input.value = row.target ?? "";
+          delete input.dataset.edited;
+        }
+      } else {
+        if (this.appearanceDraft) {
+          this.appearanceDraft[category] ||= {};
+          if (bound) {
+            this.appearanceDraft[category][key] ||= {};
+            this.appearanceDraft[category][key][bound] = row.target;
+          } else if (row.target == null) delete this.appearanceDraft[category][key];
+          else this.appearanceDraft[category][key] = row.target;
+        }
+        const rawKey =
+          category === "colors"
+            ? key
+            : category === "preferences"
+              ? `preference.${key}`
+              : `${key}.${bound}`;
+        delete this.appearanceRaw?.[rawKey];
+        const selector = {
+          colors: `color="${key}"`,
+          instruments: `instrument="${key}"`,
+          preferences: `preference="${key}"`,
+          scales: `scale="${key}.${bound}"`,
+        }[category];
+        const input = this.$(`[data-appearance-${selector}]`);
+        if (input) input.value = row.target ?? "";
+        if (category === "colors") {
+          const picker = this.$(`[data-appearance-picker="${key}"]`);
+          if (picker) picker.value = row.target || this.appearancePickerColor(key);
+        }
+        if (input) this.selectMenu?.syncAttributes(input);
+      }
+    }
+    this.appearanceRevision = (this.appearanceRevision || 0) + 1;
+  }
+  async confirmStandardAction() {
+    const context = this.standardContext;
+    if (
+      !context?.preview?.confirmation ||
+      context.busy ||
+      !this.currentStandardContext(context)
+    )
+      return;
+    context.busy = true;
+    context.message = "Wird übernommen …";
+    this.drawStandardDialog();
+    try {
+      const result = await this.api(`/${context.entry}/standards`, "POST", {
+        ...context.body,
+        confirmation: context.preview.confirmation,
+      });
+      if (!this.currentStandardContext(context)) return;
+      if (result.action !== "overwrite_standard") {
+        await this.waitForConfiguration(context.entry, null, null, (state) =>
+          result.fields.every(
+            (row) => this.standardFieldValue(state, row.id) === row.target,
+          ),
+        );
+        if (!this.currentStandardContext(context)) return;
+        this.acceptStandardDrafts(result.fields);
+      }
+      await this.refresh();
+      if (!this.currentStandardContext(context)) return;
+      context.preview = null;
+      context.fields = result.fields.map((row) => ({
+        ...row,
+        active: row.target,
+        standard: row.target_standard,
+        has_standard: row.target_has_standard,
+      }));
+      context.message =
+        result.action === "overwrite_standard"
+          ? "Standard gespeichert."
+          : "Werte wiederhergestellt.";
+      this.applyAppearance();
+      this.drawCurrent();
+      this.scheduleHistoryRender("appearance");
+    } catch (error) {
+      if (!this.currentStandardContext(context)) return;
+      const preview = error.preview || error.body?.preview;
+      if (preview) context.preview = preview;
+      else context.preview = null;
+      context.message = errorText(error);
+    } finally {
+      if (this.currentStandardContext(context)) {
+        context.busy = false;
+        this.drawStandardDialog();
+      }
+    }
+  }
   appearanceSettingsMarkup() {
     const catalog = this.appearanceCatalog();
     const colors = (catalog.colors || []).filter((item) => !item.hidden);
@@ -3132,7 +3388,7 @@ class SaunaPanel extends HTMLElement {
             this.appearanceValue().colors?.[item.id] ??
             item.default ??
             "";
-          return `<div class="appearance-color-row"><label for="appearance-${esc(item.id)}">${esc(item.label)}</label><input type="color" data-appearance-picker="${esc(item.id)}" aria-label="${esc(item.label)} wählen" value="${esc(value)}"><input id="appearance-${esc(item.id)}" data-appearance-color="${esc(item.id)}" aria-label="${esc(item.label)} als Hexwert" inputmode="text" maxlength="7" placeholder="HA-Standard" value="${esc(shown)}"><button type="button" data-action="appearance-role-default:${esc(item.id)}" aria-label="${esc(item.label)} auf Standard setzen">Standard</button></div>`;
+          return `<div class="appearance-color-row"><label for="appearance-${esc(item.id)}">${esc(item.label)}</label><input type="color" data-appearance-picker="${esc(item.id)}" aria-label="${esc(item.label)} wählen" value="${esc(value)}"><input id="appearance-${esc(item.id)}" data-appearance-color="${esc(item.id)}" aria-label="${esc(item.label)} als Hexwert" inputmode="text" maxlength="7" placeholder="HA-Standard" value="${esc(shown)}">${this.standardMenuButton({ field: `appearance.colors.${item.id}` }, `${item.label}: Standards`)}</div>`;
         })
         .join("");
     const scaleFields = ["temperature", "humidity"]
@@ -3141,13 +3397,13 @@ class SaunaPanel extends HTMLElement {
           unit = name === "temperature" ? "°C" : "%";
         const scale =
           this.appearanceScale(name) || catalog.scales?.[name]?.default || {};
-        return `<fieldset class="appearance-scale"><legend>${label}</legend>${["minimum", "maximum"].map((end) => `<label>${end === "minimum" ? "Minimum" : "Maximum"}${unitInput(`<input type="number" aria-label="${label} ${end === "minimum" ? "Minimum" : "Maximum"} (${unit})" step="any" data-appearance-scale="${name}.${end}" value="${esc(this.appearanceRaw?.[`${name}.${end}`] ?? scale[end] ?? "")}">`, unit)}</label>`).join("")}</fieldset>`;
+        return `<fieldset class="appearance-scale"><legend>${label}</legend>${["minimum", "maximum"].map((end) => `<label>${end === "minimum" ? "Minimum" : "Maximum"}${unitInput(`<input type="number" aria-label="${label} ${end === "minimum" ? "Minimum" : "Maximum"} (${unit})" step="any" data-appearance-scale="${name}.${end}" value="${esc(this.appearanceRaw?.[`${name}.${end}`] ?? scale[end] ?? "")}">`, unit)}${this.standardMenuButton({ field: `appearance.scales.${name}.${end}` }, `${label} ${end === "minimum" ? "Minimum" : "Maximum"}: Standards`)}</label>`).join("")}</fieldset>`;
       })
       .join("");
     const instrumentFields = Object.entries(catalog.instruments || {})
       .map(
         ([name, definition]) =>
-          `<label>${esc(definition.label)}<select data-appearance-instrument="${esc(name)}">${definition.options.map((option) => `<option value="${esc(option)}" ${this.instrumentSelection(name) === option ? "selected" : ""}>${{ round: "Rund", linear: "Gerade", inherit: "Gemeinsame Vorgabe" }[option]}</option>`).join("")}</select></label>`,
+          `<label>${esc(definition.label)}<select data-appearance-instrument="${esc(name)}">${definition.options.map((option) => `<option value="${esc(option)}" ${this.instrumentSelection(name) === option ? "selected" : ""}>${{ round: "Rund", linear: "Gerade", inherit: "Gemeinsame Vorgabe" }[option]}</option>`).join("")}</select>${this.standardMenuButton({ field: `appearance.instruments.${name}` }, `${definition.label}: Standards`)}</label>`,
       )
       .join("");
     const preferenceGroups = [
@@ -3170,12 +3426,12 @@ class SaunaPanel extends HTMLElement {
             )
             .map(
               ([key, definition]) =>
-                `<label>${esc(definition.label)}${unitInput(`<input type="number" data-appearance-preference="${esc(key)}" aria-label="${esc(definition.label)}" min="${definition.minimum}" max="${definition.maximum}" step="${definition.step}" value="${esc(this.appearanceRaw?.[`preference.${key}`] ?? this.preference(key))}">`, definition.unit)}<small>${esc(definition.description)}</small></label>`,
+                `<label>${esc(definition.label)}${unitInput(`<input type="number" data-appearance-preference="${esc(key)}" aria-label="${esc(definition.label)}" min="${definition.minimum}" max="${definition.maximum}" step="${definition.step}" value="${esc(this.appearanceRaw?.[`preference.${key}`] ?? this.preference(key))}">`, definition.unit)}${this.standardMenuButton({ field: `appearance.preferences.${key}` }, `${definition.label}: Standards`)}<small>${esc(definition.description)}</small></label>`,
             )
             .join("")}</div></details>`,
       )
       .join("");
-    return `<div class="card appearance-settings" id="appearance-settings"><h2>Darstellung und Bedienung</h2><div class="appearance-instruments">${instrumentFields}</div><h3>Messgrößen</h3><div class="appearance-colors">${rows(true)}</div><h3>Anzeigeskalen</h3><div class="appearance-scales">${scaleFields}</div><details class="settings-group appearance-advanced"><summary>Erweiterte Farben</summary>${groups.map((group) => `<details class="expert-group"><summary>${esc(group)}</summary><div class="appearance-colors">${rows(false, group)}</div></details>`).join("")}</details>${preferences}<div class="row"><button type="button" class="confirm" data-action="appearance-save">Darstellung speichern</button><button type="button" data-action="appearance-discard">Änderungen verwerfen</button><button type="button" data-action="appearance-default">Standarddarstellung wiederherstellen</button></div><p id="appearance-status" role="status" class="muted"></p></div>`;
+    return `<div class="card appearance-settings" id="appearance-settings"><h2>Darstellung und Bedienung</h2><div class="appearance-instruments">${instrumentFields}</div><h3>Messgrößen</h3><div class="appearance-colors">${rows(true)}</div><h3>Anzeigeskalen</h3><div class="appearance-scales">${scaleFields}</div><details class="settings-group appearance-advanced"><summary>Erweiterte Farben</summary>${groups.map((group) => `<details class="expert-group"><summary>${esc(group)}</summary><div class="appearance-colors">${rows(false, group)}</div></details>`).join("")}</details>${preferences}<div class="row"><button type="button" class="confirm" data-action="appearance-save">Darstellung speichern</button><button type="button" data-action="appearance-discard">Änderungen verwerfen</button>${this.standardMenuButton({ group: "appearance" }, "Standards für Darstellung und Bedienung")}</div><p id="appearance-status" role="status" class="muted"></p></div>`;
   }
   updateAppearanceField(input) {
     if (!this.state?.permissions?.admin || this.appearanceRequest) return;
@@ -3414,25 +3670,12 @@ class SaunaPanel extends HTMLElement {
       }
     }
   }
-  resetAppearanceDraft(defaults = false) {
+  resetAppearanceDraft() {
     if (!this.state?.permissions?.admin || this.appearanceRequest) return;
-    this.appearanceDraft = defaults
-      ? {
-          colors: {},
-          preferences: this.preferenceDefaults(),
-          instruments: this.instrumentDefaults(),
-          scales: Object.fromEntries(
-            Object.entries(this.appearanceCatalog().scales || {}).map(
-              ([name, spec]) => [name, { ...spec.default }],
-            ),
-          ),
-        }
-      : null;
+    this.appearanceDraft = null;
     this.appearanceRaw = null;
-    this.appearanceStatus = defaults
-      ? "Standarddarstellung als Vorschau – noch nicht gespeichert"
-      : "Änderungen verworfen";
-    this.appearanceStatusKind = defaults ? "pending" : "info";
+    this.appearanceStatus = "Änderungen verworfen";
+    this.appearanceStatusKind = "info";
     this.applyAppearance();
     const node = this.$("#appearance-settings");
     if (node) {
@@ -4478,6 +4721,13 @@ class SaunaPanel extends HTMLElement {
       .parameter-section h3 { margin: 0 0 ${this.preference("layout_space_24_px")}px; }
       .settings-parameters-card .field > .number-input { margin-top: auto; }
       .settings-parameters-card > button { margin-top: var(--sauna-surface-gap); }
+      .field-standard-menu { font-size: inherit; align-self: start; margin-top: ${this.preference("layout_space_09_px")}px; }
+      #standards-dialog { color: inherit; background: var(--sauna-surface-card, var(--card-background-color)); border: 1px solid var(--sauna-color-border); border-radius: ${this.preference("control_radius_px")}px; padding: var(--sauna-surface-gap); width: min(90vw, 70rem); max-width: 90vw; max-height: 85dvh; overflow: auto; }
+      #standards-dialog::backdrop { background: #0008; }
+      .standard-values { overflow-x: auto; margin-block: var(--sauna-surface-gap); }
+      .standard-values table { border-collapse: collapse; width: 100%; }
+      .standard-values th, .standard-values td { padding: ${this.preference("layout_space_13_px")}px; text-align: left; border-bottom: 1px solid var(--sauna-color-border); }
+      .standard-values small { display: block; font-weight: normal; }
       .settings-layout {
         display: grid;
         --settings-navigation-width: ${this.preference("size_210_0_px")}px;
@@ -4876,20 +5126,21 @@ class SaunaPanel extends HTMLElement {
         width: 100%;
         text-align: left;
       }
-      .program-choice-summary,
-      .program-choice-details { grid-area: choice; align-self: center; }
-      .program-choice-summary { display: flex; align-items: baseline; justify-content: space-between; gap: ${this.preference("layout_space_16_px")}px; }
+      .program-choice-summary { grid-area: choice; align-self: center; }
+      .program-choice-summary { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: ${this.preference("layout_space_16_px")}px; }
       .program-choice-summary > span { font-weight: ${this.preference("font_weight_650_0_ratio")}; }
       .program-choice-summary small { white-space: nowrap; font-weight: ${this.preference("font_weight_400_0_ratio")}; }
-      .program-choice-details { opacity: 0; font-weight: ${this.preference("font_weight_400_0_ratio")}; white-space: normal; line-height: ${this.preference("line_height_1_4_ratio")}; }
-      .program-named-choice:not(.program-feedback):is(:hover, :focus-visible) .program-choice-summary { opacity: 0; }
-      .program-named-choice:not(.program-feedback):is(:hover, :focus-visible) .program-choice-details { opacity: 1; }
+      .program-sequence { display: inline-grid; grid-template-columns: auto minmax(0, 0fr) auto; align-items: baseline; transition: grid-template-columns .2s; font-weight: ${this.preference("font_weight_400_0_ratio")}; }
+      .program-sequence-middle { overflow: hidden; min-width: 0; }
+      .program-sequence-middle > span { display: block; }
+      .program-named-choice:is(:hover, :focus-visible) .program-sequence { grid-template-columns: auto minmax(0, 1fr) auto; }
+      @media (prefers-reduced-motion: reduce) { .program-sequence { transition: none; } }
       .program-types button,
       .program-named-choice {
         position: relative;
         font-weight: ${this.preference("font_weight_700_0_ratio")};
       }
-      .program-feedback > .program-choice-content {
+      .program-feedback > .program-choice-content:not(.program-choice-persistent) {
         visibility: hidden;
       }
       .program-save-label {
@@ -4905,6 +5156,8 @@ class SaunaPanel extends HTMLElement {
         text-align: center;
         pointer-events: none;
       }
+      .program-named-choice.program-feedback { display: block; }
+      .program-named-choice .program-save-label { position: static; display: block; text-align: right; }
       .program-named-choice > .program-choice-content {
         display: grid;
         grid-template-areas: "choice";
@@ -5425,6 +5678,8 @@ class SaunaPanel extends HTMLElement {
         this.historyNavigationCache = null;
         this.clearHistoryDisplay();
         this.invalidateHistoryIndex();
+        this.standardContext = null;
+        this.$("#standards-dialog")?.close();
         this.settingsEntry = null;
         this.programSelectionDraft = null;
         this.programChoiceOpen = false;
@@ -6234,8 +6489,16 @@ class SaunaPanel extends HTMLElement {
       this.historyTimelineSignature = null;
     }
     const cache = id ? this.historyCache(id) : null,
-      live = this.selected === "live" && this.state?.session,
-      session = live || cache?.session;
+      live = this.selected === "live" && this.state?.session;
+    let session = live || cache?.session;
+    if (live && cache?.session?.timeline?.session_id === live.timeline?.session_id) {
+      const metadata = Object.fromEntries(
+        ["configuration", "measurement_ttl_seconds", "measurement_context"]
+          .filter((key) => !(key in live) && key in cache.session)
+          .map((key) => [key, cache.session[key]]),
+      );
+      if (Object.keys(metadata).length) session = { ...live, ...metadata };
+    }
     this.shown = session
       ? {
           session,
@@ -6678,8 +6941,8 @@ class SaunaPanel extends HTMLElement {
           ? "Wird übernommen …"
           : "✓ Übernommen"
         : "";
-    const choiceContent = (content, feedback) =>
-      `<span class="program-choice-content" ${feedback ? 'aria-hidden="true"' : ""}>${content}</span>${feedback ? `<span class="program-save-label" role="status">${feedback}</span>` : ""}`;
+    const choiceContent = (content, feedback, persistent = false) =>
+      `<span class="program-choice-content${persistent ? " program-choice-persistent" : ""}" ${feedback && !persistent ? 'aria-hidden="true"' : ""}>${content}</span>${feedback ? `<span class="program-save-label" role="status">${feedback}</span>` : ""}`;
     const programTypes = `<div class="program-types" role="group" aria-label="Temperaturprogramm auswählen">${[
       ["program", "Programm"],
       ["individual", "Individuell"],
@@ -6695,7 +6958,7 @@ class SaunaPanel extends HTMLElement {
         ? `<div class="program-named-list">${programs
             .map((program) => {
               const feedback = programFeedback({ mode: "program", id: program.id });
-              return `<button type="button" class="program-named-choice ${feedback ? `program-feedback program-${this.programSaveState}` : ""}" data-action="program-select:${esc(program.id)}" aria-pressed="${program.id === programChoice.id}" aria-label="${esc(program.name)}${feedback ? `: ${feedback}` : ""}" ${programChoiceAvailable ? "" : "disabled"}>${choiceContent(`<span class="program-choice-summary"><span>${esc(program.name)}</span><small>${this.num(program.start_c, 0)} → ${this.num(program.end_c, 0)} °C</small></span><small class="program-choice-details">${esc(this.programSteps(program))}</small>`, feedback)}</button>`;
+              return `<button type="button" class="program-named-choice ${feedback ? `program-feedback program-${this.programSaveState}` : ""}" data-action="program-select:${esc(program.id)}" aria-pressed="${program.id === programChoice.id}" aria-label="${esc(program.name)}${feedback ? `: ${feedback}` : ""}" ${programChoiceAvailable ? "" : "disabled"}>${choiceContent(`<span class="program-choice-summary"><span>${esc(program.name)}</span>${this.programSequenceMarkup(program)}</span>`, feedback, true)}</button>`;
             })
             .join("")}</div>`
         : "";
@@ -7380,6 +7643,18 @@ class SaunaPanel extends HTMLElement {
     )
       throw Error("Solltemperatur innerhalb der zulässigen Grenzen eingeben");
     return rounded;
+  }
+  programSequenceMarkup(program) {
+    const values = Array.isArray(program.temperature_steps)
+      ? program.temperature_steps
+      : this.distributedSteps(
+          program.start_c,
+          program.end_c,
+          program.distribution_gangs,
+        );
+    if (!values.length) return "";
+    const text = (value) => esc(this.num(value, this.preference("value_precision")));
+    return `<small class="program-sequence"><span>${text(values[0])}${values.length > 1 ? " → " : ""}</span><span class="program-sequence-middle"><span>${values.slice(1, -1).map(text).join(" → ")}${values.length > 2 ? " → " : ""}</span></span><span>${values.length > 1 ? text(values.at(-1)) : ""} °C</span></small>`;
   }
   programSteps(program) {
     if (Array.isArray(program?.temperature_steps))
@@ -8351,7 +8626,7 @@ class SaunaPanel extends HTMLElement {
     if (start) await this.api(`/${entry}/control`, "POST", { enabled: true });
     await this.refresh();
   }
-  async waitForConfiguration(entry, parameters, configuration) {
+  async waitForConfiguration(entry, parameters, configuration, matches) {
     // A saved parameter is loaded by HA's single options listener. Do not start
     // against the previous runtime while reload is still in progress.
     let loaded = false;
@@ -8364,11 +8639,16 @@ class SaunaPanel extends HTMLElement {
         const state = await this.api(this.stateRequestPath(entry, false));
         const current = state.configuration;
         if (
-          Object.keys(current.parameters).length === Object.keys(parameters).length &&
-          Object.entries(parameters).every(([k, v]) => current.parameters[k] === v) &&
-          Object.entries(configuration || {}).every(
-            ([key, value]) => key === "parameters" || current[key] === value,
-          )
+          matches
+            ? matches(state)
+            : Object.keys(current.parameters).length ===
+                Object.keys(parameters).length &&
+              Object.entries(parameters).every(
+                ([k, v]) => current.parameters[k] === v,
+              ) &&
+              Object.entries(configuration || {}).every(
+                ([key, value]) => key === "parameters" || current[key] === value,
+              )
         ) {
           loaded = true;
           break;
@@ -8869,6 +9149,15 @@ class SaunaPanel extends HTMLElement {
         explicit: "Explizite Rückgabe",
         timeout: "Fristablauf",
         phase_change: "Phasenwechsel",
+        return: "Rückgabe an Automatik",
+        selection_replaced: "Neue Auswahl",
+        control_mode: "Betriebsart gewechselt",
+        operation_off: "Betrieb ausgeschaltet",
+        automatic_change: "Automatische Vorgabe",
+        session_end: "Sitzung beendet",
+        integration_unloaded: "Integration beendet",
+        upper_temperature_unavailable: "Gültiger Regeltemperaturwert fehlt",
+        temperature_unavailable: "Gültiger Regeltemperaturwert fehlt",
       },
       chosen = (value) =>
         value === null
@@ -8895,7 +9184,9 @@ class SaunaPanel extends HTMLElement {
           at: stamp(
             record.kind === "decision"
               ? record.payload?.at
-              : record.payload?.change?.at || record.received_at,
+              : record.payload?.change?.at ||
+                  record.payload?.selection?.at ||
+                  record.received_at,
           ),
         }))
         .filter(
@@ -8904,16 +9195,35 @@ class SaunaPanel extends HTMLElement {
             ["manual_light", "manual_heater", "decision"].includes(record.kind),
         )
         .sort((left, right) => left.at - right.at || left.index - right.index);
+    const heaterEnds = new Map(),
+      heaterKey = (id, sessionId) => JSON.stringify([id, sessionId]);
+    for (const { record, at } of ordered) {
+      const payload = record.payload || {},
+        change = payload.change;
+      if (
+        record.kind !== "manual_heater" ||
+        payload.ends_previous_only !== true ||
+        typeof payload.selection_id !== "string" ||
+        !payload.selection_id ||
+        change?.selection_id !== payload.selection_id ||
+        !Object.hasOwn(change, "session_id") ||
+        !Object.hasOwn(record, "session_id") ||
+        change.session_id !== record.session_id
+      )
+        continue;
+      const key = heaterKey(payload.selection_id, change.session_id),
+        ends = heaterEnds.get(key) || [];
+      ends.push({ at, change });
+      heaterEnds.set(key, ends);
+    }
     for (const { record, at } of ordered) {
       const payload = record.payload || {},
         kind = record.kind;
-      if (kind === "decision") {
-        // Only an original manual_override decision identifies the automatic
-        // heater override. Thermostat changes in manual mode do not end a choice.
-        if (active.manual_heater?.override && payload.reason !== "manual_override")
-          close("manual_heater", at, `Regelentscheidung: ${payload.reason}`);
+      if (
+        kind === "decision" ||
+        (kind === "manual_heater" && payload.ends_previous_only === true)
+      )
         continue;
-      }
       const change = kind === "manual_light" ? payload.change : null,
         reason = change?.reason,
         value = change ? change.value : payload.value,
@@ -8948,7 +9258,37 @@ class SaunaPanel extends HTMLElement {
         }
         item.plannedEndsAt = change.ends_at;
       } else if (kind === "manual_heater") {
-        close(kind, at, value === null ? "Explizite Rückgabe" : "Neue Auswahl");
+        const selection = payload.selection;
+        if (
+          typeof payload.selection_id === "string" &&
+          payload.selection_id &&
+          selection?.selection_id === payload.selection_id &&
+          Object.hasOwn(selection, "session_id") &&
+          Object.hasOwn(record, "session_id") &&
+          selection.session_id === record.session_id &&
+          selection.value === value
+        ) {
+          const ends =
+              heaterEnds.get(heaterKey(payload.selection_id, selection.session_id)) ||
+              [],
+            matching = ends.filter(
+              (end) =>
+                end.at >= item.at &&
+                end.change.previous_value === value &&
+                stamp(end.change.started_at) === stamp(selection.at) &&
+                end.change.control_mode === selection.control_mode,
+            ),
+            unique = new Map(
+              matching.map((end) => [JSON.stringify([end.at, end.change.reason]), end]),
+            );
+          if (unique.size === 1 && matching.length === ends.length) {
+            const end = [...unique.values()][0];
+            item.endedAt = end.at;
+            item.endReason = reasons[end.change.reason] || end.change.reason;
+          } else if (ends.length)
+            item.endEvidenceReason =
+              "widersprüchliche Endbelege · Gültigkeitsende offen";
+        }
       } else {
         // Legacy light records contain the input, not the owner's end. A
         // later input cannot repair a missing implicit handover retroactively.
@@ -8958,14 +9298,12 @@ class SaunaPanel extends HTMLElement {
         item.note = "Automatik gewählt";
         continue;
       }
-      item.override =
-        kind === "manual_heater" && payload.decision?.reason === "manual_override";
-      active[kind] = item;
+      if (kind === "manual_light") active[kind] = item;
     }
     for (const item of projected.values()) {
       item.detail =
         item.note ||
-        `${chosen(item.value)} · Beginn ${this.clock(item.at)} · ${Number.isFinite(item.endedAt) ? `Ende ${this.clock(item.endedAt)}: ${item.endReason}` : "kein Gültigkeitsende belegt"}${item.plannedEndsAt ? ` · Planfrist ${this.clock(item.plannedEndsAt)}` : ""}${item.adjustments.map((change) => ` · ${this.clock(change.at)}: ${change.text}`).join("")}`;
+        `${chosen(item.value)} · Beginn ${this.clock(item.at)} · ${Number.isFinite(item.endedAt) ? `Ende ${this.clock(item.endedAt)}: ${item.endReason}` : item.endEvidenceReason || "kein Gültigkeitsende belegt"}${item.plannedEndsAt ? ` · Planfrist ${this.clock(item.plannedEndsAt)}` : ""}${item.adjustments.map((change) => ` · ${this.clock(change.at)}: ${change.text}`).join("")}`;
       if (
         !item.endsPreviousOnly &&
         item.change?.reason === "selection" &&
@@ -9013,6 +9351,8 @@ class SaunaPanel extends HTMLElement {
       const definition = definitions[record.kind];
       if (!definition) return [];
       const payload = record.payload || {};
+      if (record.kind === "manual_heater" && payload.ends_previous_only === true)
+        return [];
       if (
         record.kind === "consumer_event" &&
         payload.kind === "occupancy" &&
@@ -9775,6 +10115,233 @@ class SaunaPanel extends HTMLElement {
       ];
     });
   }
+  historySectionStatistics(start, end, position) {
+    const session = this.shown?.session,
+      index = this.historyIndex(this.shown?.records || []),
+      hasMeasurementContext = !!session && "measurement_context" in session,
+      ttlSeconds = hasMeasurementContext
+        ? session.measurement_context?.sensor_timeout_seconds
+        : session?.configuration?.parameters?.sensor_timeout_seconds,
+      ttl =
+        typeof ttlSeconds === "number" && Number.isFinite(ttlSeconds) && ttlSeconds >= 0
+          ? ttlSeconds * 1000
+          : null,
+      targets = session?.target_history || [],
+      key = JSON.stringify([
+        this.historyValueIdentity(),
+        start,
+        end,
+        position,
+        ttl,
+        !!this.historyLoad,
+        [...index.seriesState].map(([name, state]) => [name, state.revision]),
+        targets,
+        session?.configuration?.bindings,
+        hasMeasurementContext,
+        session?.measurement_context,
+      ]);
+    if (this.historySectionStatisticsCache?.key === key)
+      return this.historySectionStatisticsCache.value;
+    const unavailable = (reason) => ({ reason }),
+      empty = {
+        temperature: unavailable("Kein belegter Zeitraum"),
+        difference: unavailable("Kein belegter Zeitraum"),
+        target: unavailable("Kein belegter Zeitraum"),
+        humidityLoss: unavailable("Kein belegter Zeitraum"),
+      };
+    if (hasMeasurementContext && session.measurement_context === null)
+      return Object.fromEntries(
+        Object.keys(empty).map((name) => [
+          name,
+          unavailable("Historischer Messkontext nicht belegt"),
+        ]),
+      );
+    if (!(Number.isFinite(start) && Number.isFinite(end) && end > start)) return empty;
+    if (this.historyLoad)
+      return Object.fromEntries(
+        Object.keys(empty).map((name) => [
+          name,
+          unavailable("Aufzeichnung wird geladen"),
+        ]),
+      );
+    // These are read projections of original observations. Curve indexes omit
+    // nulls and cannot prove coverage, source continuity or causal boundaries.
+    const original = (role, quantity) => {
+      const values = this.series(role, quantity),
+        absolute = quantity === "absolute_humidity",
+        first = this.historyMeasurementAt(role, quantity, start, true, true),
+        last = this.historyMeasurementAt(role, quantity, end, true, true),
+        valid = (point) =>
+          point?.value != null &&
+          Number.isFinite(point.value) &&
+          point.source?.available !== false,
+        identity = first?.source?.source,
+        sourceRole = `${role}_${quantity}`,
+        expectedSource = session?.configuration?.bindings?.[sourceRole],
+        publicProof = session?.measurement_context?.roles?.includes(sourceRole),
+        sourceMatches = (point) =>
+          (!hasMeasurementContext || publicProof) &&
+          (typeof expectedSource === "string" && expectedSource
+            ? point?.source?.source === expectedSource
+            : publicProof && point?.source?.source_matches_binding === true);
+      if (!absolute && ttl === null)
+        return unavailable("Historische Gültigkeitsfrist fehlt");
+      if (!valid(first)) return unavailable("Gültiger Originalwert am Beginn fehlt");
+      if (!absolute && !sourceMatches(first))
+        return unavailable("Messquelle entspricht nicht der archivierten Zuordnung");
+      const spans = [];
+      let current = first,
+        from = start,
+        offset = upperBoundHistory(values, start);
+      const append = (to) => {
+        if (!valid(current)) return unavailable("Messlücke im Zeitraum");
+        if (
+          !absolute &&
+          (!sourceMatches(current) || (identity && current.source?.source !== identity))
+        )
+          return unavailable("Messquelle wechselt im Zeitraum");
+        const until = absolute ? current.validUntil : current.time + ttl;
+        if (!Number.isFinite(until) || until < to)
+          return unavailable("Gültigkeitslücke im Zeitraum");
+        if (to > from) spans.push({ start: from, end: to, value: current.value });
+        from = to;
+        return null;
+      };
+      while (offset < values.length && values[offset].time < end) {
+        const time = values[offset].time;
+        const failure = append(time);
+        if (failure) return failure;
+        let next = values[offset++];
+        while (offset < values.length && values[offset].time === time) {
+          if (values[offset].serial > next.serial) next = values[offset];
+          offset++;
+        }
+        current = next;
+      }
+      const failure = append(end);
+      if (failure) return failure;
+      const endpointReason = !valid(last)
+        ? "Gültiger Originalwert am Ende fehlt"
+        : !absolute &&
+            (!sourceMatches(last) || (identity && last.source?.source !== identity))
+          ? "Messquelle wechselt am Ende"
+          : null;
+      return { first, last, spans, endpointReason };
+    };
+    const combine = (left, right) => {
+      if (left.reason || right.reason) return unavailable(left.reason || right.reason);
+      let a = 0,
+        b = 0,
+        total = 0,
+        signed = 0,
+        absolute = 0,
+        minimum = Infinity,
+        maximum = -Infinity;
+      while (a < left.spans.length && b < right.spans.length) {
+        const x = left.spans[a],
+          y = right.spans[b],
+          from = Math.max(x.start, y.start),
+          to = Math.min(x.end, y.end),
+          delta = x.value - y.value;
+        if (to > from) {
+          total += to - from;
+          signed += delta * (to - from);
+          absolute += Math.abs(delta) * (to - from);
+          minimum = Math.min(minimum, delta);
+          maximum = Math.max(maximum, delta);
+        }
+        if (x.end <= y.end) a++;
+        if (y.end <= x.end) b++;
+      }
+      return total === end - start
+        ? { mean: signed / total, meanAbsolute: absolute / total, minimum, maximum }
+        : unavailable("Gemeinsamer Zeitraum nicht vollständig belegt");
+    };
+    const temperature = original(position, "temperature"),
+      upper = position === "upper" ? temperature : original("upper", "temperature"),
+      lower = position === "lower" ? temperature : original("lower", "temperature"),
+      humidity = original(position, "humidity"),
+      absolute = original(position, "absolute_humidity"),
+      endpointFailure = (...runs) =>
+        runs.find((run) => run.reason || run.endpointReason),
+      temperatureFailure = endpointFailure(temperature),
+      humidityFailure = endpointFailure(temperature, humidity, absolute),
+      result = { ...empty, difference: combine(upper, lower) };
+    result.temperature = temperatureFailure
+      ? unavailable(temperatureFailure.reason || temperatureFailure.endpointReason)
+      : {
+          change: temperature.last.value - temperature.first.value,
+          perMinute:
+            (temperature.last.value - temperature.first.value) /
+            ((end - start) / 60000),
+          first: temperature.first,
+          last: temperature.last,
+        };
+    if (humidityFailure)
+      result.humidityLoss = unavailable(
+        humidityFailure.reason || humidityFailure.endpointReason,
+      );
+    else {
+      const loss = temperature.first.value - temperature.last.value,
+        humidityLoss = absolute.first.value - absolute.last.value;
+      result.humidityLoss =
+        loss > 0 && humidityLoss > 0
+          ? {
+              value: humidityLoss / loss,
+              temperatureLoss: loss,
+              absoluteLoss: humidityLoss,
+            }
+          : unavailable(
+              "Keine gemeinsame Nettoabnahme von Temperatur und absoluter Feuchte",
+            );
+    }
+    const bindings = session?.configuration?.bindings,
+      regulationRole = hasMeasurementContext
+        ? session.measurement_context?.regulation_position
+        : bindings?.upper_temperature
+          ? "upper"
+          : bindings?.lower_temperature
+            ? "lower"
+            : null,
+      regulation =
+        regulationRole === "upper" ? upper : regulationRole === "lower" ? lower : null;
+    if (!regulation || regulation.reason) {
+      result.target = unavailable(
+        "Historische Regeltemperaturquelle nicht durchgehend belegt",
+      );
+    } else {
+      const marks = targets
+          .map((mark, serial) => ({
+            time: stamp(mark.at),
+            value: mark.target_c,
+            serial,
+          }))
+          .filter((mark) => Number.isFinite(mark.time))
+          .sort((a, b) => a.time - b.time || a.serial - b.serial),
+        spans = [];
+      let at = upperBoundHistory(marks, start),
+        mark = marks[at - 1],
+        from = start,
+        reason = null;
+      const append = (to) => {
+        if (typeof mark?.value !== "number" || !Number.isFinite(mark.value))
+          reason = "Gebuchter Sollwert im Zeitraum nicht belegt";
+        else if (to > from) spans.push({ start: from, end: to, value: mark.value });
+        from = to;
+      };
+      while (at < marks.length && marks[at].time < end) {
+        append(marks[at].time);
+        const time = marks[at].time;
+        do {
+          mark = marks[at++];
+        } while (at < marks.length && marks[at].time === time);
+      }
+      append(end);
+      result.target = reason ? unavailable(reason) : combine(regulation, { spans });
+    }
+    this.historySectionStatisticsCache = { key, value: result };
+    return result;
+  }
   historyInformationContent(selection = null, phase = null) {
     const session = this.shown?.session;
     if (!session) return null;
@@ -9817,6 +10384,15 @@ class SaunaPanel extends HTMLElement {
       measurements: this.historyMeasurementContent(selection, true),
       energy,
       measuredPower: measuredEnergy?.measured_power || null,
+      sectionStatistics:
+        !selection || range
+          ? this.historySectionStatistics(
+              start,
+              end,
+              this.historyPrimaryPosition(session),
+            )
+          : null,
+      sectionPhase: phase?.phase || null,
     };
   }
   historyInformationHeading(
@@ -9895,12 +10471,36 @@ class SaunaPanel extends HTMLElement {
         powerDetails = measuredPower
           ? `<p>Gemessene Leistung · ${this.clock(content.start)} – ${powerEnd ? this.clock(powerEnd) : "Ende nicht aufgezeichnet"}${measuredPower.complete ? "" : " · Nur gemessene Abschnitte"}</p><div class="history-information-values">${valueRow("power-mean", "Mittlere gemessene Leistung", measuredPower.mean_w, "W")}${valueRow("power-peak", "Höchste gemessene Leistung", measuredPower.peak_w, "W")}</div>`
           : '<p class="muted">Gemessene Leistung: Nicht verfügbar</p>';
+      const statistics = content.sectionStatistics,
+        temperature = statistics?.temperature,
+        energyKnown =
+          energy &&
+          Number.isFinite(energy.measured_kwh) &&
+          Number.isFinite(energy.estimated_kwh) &&
+          energy.unknown_seconds === 0,
+        heatingRatio =
+          content.sectionPhase === "aufheizen" &&
+          !temperature?.reason &&
+          temperature?.change > 0 &&
+          energyKnown &&
+          energyValue > 0
+            ? temperature.change / energyValue
+            : null,
+        metricRow = (key, label, value, unit, reason) =>
+          valueRow(`section-${key}`, label, value, unit, "", reason || "Nicht belegt"),
+        mainSectionRows =
+          !statistics || !range
+            ? ""
+            : `${metricRow("change", "Temperaturänderung", temperature?.change, "°C", temperature?.reason)}${metricRow("rate", "Temperaturänderung je Minute", temperature?.perMinute, "°C/min", temperature?.reason)}${content.sectionPhase === "aufheizen" ? metricRow("gain-energy", "Temperaturgewinn je Energie", heatingRatio, "°C/kWh", temperature?.reason || "Temperaturgewinn und lückenlose Abschnittsenergie erforderlich") : ""}${Number.isFinite(statistics.humidityLoss?.value) || ["nachlauf", "zwangskühlung"].includes(content.sectionPhase) ? metricRow("humidity-loss", "Feuchteabnahme je °C", statistics.humidityLoss?.value, "(g/m³)/°C", statistics.humidityLoss?.reason) : ""}`,
+        sectionDetails = !statistics
+          ? ""
+          : `<p>Ausgewertete Messposition: ${this.historyPrimaryPosition(content.session) === "upper" ? "oben" : "unten"}. Zeitraum ${this.clock(content.start)} – ${this.clock(content.end)}.</p><div class="history-information-values">${metricRow("difference", "Mittlere Temperaturdifferenz oben − unten", statistics.difference?.mean, "°C", statistics.difference?.reason)}${metricRow("target-mean", "Mittlere absolute Sollabweichung", statistics.target?.meanAbsolute, "°C", statistics.target?.reason)}${metricRow("target-over", "Größte Sollüberschreitung", statistics.target?.reason ? null : Math.max(0, statistics.target.maximum), "°C", statistics.target?.reason)}${metricRow("target-under", "Größte Sollunterschreitung", statistics.target?.reason ? null : Math.max(0, -statistics.target.minimum), "°C", statistics.target?.reason)}</div>`;
       const selectedGang = singleGang
         ? `<div data-history-selected-gang data-gang-id="${esc(rows[0].gang.gang_id)}" data-start="${esc(rows[0].gang.started_at)}"><p>${esc(rows[0].label)} · <strong>${esc(rows[0].confirmationText)}</strong></p><p>Beginn · <time datetime="${esc(rows[0].gang.started_at)}" title="${esc(this.tooltipWhen(rows[0].originalStarted))}">${this.clock(rows[0].originalStarted)}</time></p></div>`
         : "";
       this.updateMarkup(
         "[data-history-session-summary]",
-        `<div class="history-information-values">${overview ? `<div data-key="history-information-gang-count"><span data-history-label>Saunagänge</span><span class="history-tooltip-value"><span class="history-tooltip-number">${gangCount}</span><span class="history-tooltip-unit"></span></span></div>` : ""}${maximumRows}${valueRow("energy", "Energieverbrauch", energyValue, "kWh", energyReference, energy ? "Nicht verfügbar" : this.historyLoad ? "Nachladend" : "Für diesen Zeitraum nicht belegt")}</div><details id="history-information-details"><summary>Weitere Daten · ${overview ? "Sitzung" : "Ausgewählter Zeitraum"}</summary><p class="muted">${this.clock(content.start)} – ${this.clock(content.end)}${overview && energy?.accounted_at ? ` · Energie bis ${this.clock(energy.accounted_at)}` : ""}</p>${selectedGang}${powerDetails}</details>`,
+        `<div class="history-information-values">${overview ? `<div data-key="history-information-gang-count"><span data-history-label>Saunagänge</span><span class="history-tooltip-value"><span class="history-tooltip-number">${gangCount}</span><span class="history-tooltip-unit"></span></span></div>` : ""}${maximumRows}${valueRow("energy", "Energieverbrauch", energyValue, "kWh", energyReference, energy ? "Nicht verfügbar" : this.historyLoad ? "Nachladend" : "Für diesen Zeitraum nicht belegt")}${mainSectionRows}</div><details id="history-information-details"><summary>Weitere Daten · ${overview ? "Sitzung" : "Ausgewählter Zeitraum"}</summary><p class="muted">${this.clock(content.start)} – ${this.clock(content.end)}${overview && energy?.accounted_at ? ` · Energie bis ${this.clock(energy.accounted_at)}` : ""}</p>${selectedGang}${powerDetails}${sectionDetails}</details>`,
       );
     }
     this.updateMarkup(
@@ -14172,11 +14772,16 @@ class SaunaPanel extends HTMLElement {
     const source = state.configuration_model?.presence?.source;
     const subgroups = state.frontend_defaults.settings_subgroups || [];
     const entries = state.parameters
-      .filter((d) => d.settings_group === id && d.applicable)
+      .filter(
+        (d) =>
+          d.settings_group === id &&
+          d.applicable &&
+          d.configuration_surface !== "catalog",
+      )
       .sort((a, b) => a.order - b.order);
     if (!entries.length) return "";
     const field = (d) =>
-      `<div class="field"><span><label for="parameter-${esc(d.key)}">${esc(d.label)}</label> ${this.infoButton(`parameter:${d.key}`, `${d.label} erklären`, d.description, `help-${d.key}`)}</span>${unitInput(`<input id="parameter-${esc(d.key)}" form="settings-parameters" type="number" aria-label="${esc(d.label)} (${esc(d.unit)})" name="${esc(d.key)}" aria-describedby="help-${esc(d.key)}" step="${d.step}" min="${d.minimum ?? ""}" max="${d.maximum ?? ""}" value="${esc(state.configuration.parameters[d.key] ?? "")}" ${d.optional ? "" : "required"}>`, d.unit)}</div>`;
+      `<div class="field"><span><label for="parameter-${esc(d.key)}">${esc(d.label)}</label> ${this.infoButton(`parameter:${d.key}`, `${d.label} erklären`, d.description, `help-${d.key}`)}</span>${unitInput(`<input id="parameter-${esc(d.key)}" form="settings-parameters" type="number" aria-label="${esc(d.label)} (${esc(d.unit)})" name="${esc(d.key)}" aria-describedby="help-${esc(d.key)}" step="${d.step}" min="${d.minimum ?? ""}" max="${d.maximum ?? ""}" value="${esc(state.configuration.parameters[d.key] ?? "")}" ${d.optional ? "" : "required"}>`, d.unit)}${this.standardMenuButton({ field: `parameters.${d.key}` }, `${d.label}: Standards`)}</div>`;
     const groupFields = (members) => {
       const grouped = subgroups
         .map((group) => {
@@ -14197,7 +14802,7 @@ class SaunaPanel extends HTMLElement {
           : "")
       );
     };
-    return `<div class="card settings-parameters-card">${groupFields(entries)}<button type="submit" form="settings-parameters" class="confirm">Einstellungen speichern</button></div>`;
+    return `<div class="card settings-parameters-card">${groupFields(entries)}<button type="submit" form="settings-parameters" class="confirm">Einstellungen speichern</button>${this.standardMenuButton({ group: id }, "Standards für diesen Bereich")}</div>`;
   }
   drawSettings() {
     if (!this.state) {
@@ -14215,11 +14820,16 @@ class SaunaPanel extends HTMLElement {
       const contents = {
         programs: `<div class="card settings-programs"><h2>Programme</h2><div id="program-library"></div></div><div class="card"><h2>Start über Taster oder Betriebsschalter</h2><div id="button-settings"></div></div>`,
         appearance: admin ? this.appearanceSettingsMarkup() : "",
-        maintenance: `<div class="card"><h2>Sitzungsarchiv ${this.infoButton("archive-retention", "Gespeicherte Sitzungen", "Nur Sitzungen mit bestätigtem Saunagang bleiben im Archiv.")}</h2><button class="confirm" data-action="export">Archiv als ZIP herunterladen</button><div id="archive-management"></div></div><div class="card"><h2>Protokollierung ${this.infoButton("logging", "Protokollumfang", "Home-Assistant-Protokoll, unabhängig vom Sitzungsarchiv. Betriebsereignisse enthalten auch Fehler und Warnungen; Diagnose ergänzt Messwerte und Erkennungsprüfungen.")}</h2><div class="row"><label for="log-level">Umfang</label><select id="log-level"><option value="ERROR">Fehler</option><option value="INFO">Betriebsereignisse</option><option value="DEBUG">Detaillierte Diagnose</option></select><button data-action="logging" class="confirm">Übernehmen</button></div><a href="/config/logs">Home-Assistant-Protokoll öffnen</a></div><div class="card"><h2>Werkseinstellungen ${this.infoButton("reset-scope", "Umfang des Zurücksetzens", "Setzt Anlagenwerte, Programme, Startvorgaben und Protokollierung zurück. Gerätezuordnung, Erkennungsverfahren, Farben, Instrumente und Archiv bleiben erhalten.")}</h2><button class="stop" data-action="reset-settings">Werkseinstellungen wiederherstellen</button><p id="settings-reset-status" class="muted" role="status"></p></div>`,
+        maintenance: `<div class="card"><h2>Sitzungsarchiv ${this.infoButton("archive-retention", "Gespeicherte Sitzungen", "Nur Sitzungen mit bestätigtem Saunagang bleiben im Archiv.")}</h2><button class="confirm" data-action="export">Archiv als ZIP herunterladen</button><div id="archive-management"></div></div><div class="card"><h2>Protokollierung ${this.infoButton("logging", "Protokollumfang", "Home-Assistant-Protokoll, unabhängig vom Sitzungsarchiv. Betriebsereignisse enthalten auch Fehler und Warnungen; Diagnose ergänzt Messwerte und Erkennungsprüfungen.")}</h2><div class="row"><label for="log-level">Umfang</label><select id="log-level"><option value="ERROR">Fehler</option><option value="INFO">Betriebsereignisse</option><option value="DEBUG">Detaillierte Diagnose</option></select><button data-action="logging" class="confirm">Übernehmen</button></div><a href="/config/logs">Home-Assistant-Protokoll öffnen</a></div><div class="card"><h2>Standards und Werkseinstellungen</h2><p>Vorschau für alle gespeicherten Felder einschließlich ausgeblendeter Einstellungen. Programmbibliothek und Gerätezuordnung werden in ihren eigenen Bereichen verwaltet.</p>${this.standardMenuButton({ all: true }, "Standards für alle Bereiche")}</div>`,
         personal: `<div class="card"><h2>Persönliche Startseite ${this.infoButton("start-page", "Gültigkeit der Startseite", "Gilt nur für das aktuelle Home-Assistant-Profil.")}</h2><button data-action="default-page" class="confirm">Als Startseite festlegen</button><p id="start-page-status" class="muted" role="status"></p></div>`,
       };
       this.$("#settings").innerHTML =
-        `<div class="settings-layout"><button type="button" class="settings-menu-toggle" data-action="settings-menu" aria-label="Einstellungsbereiche öffnen" aria-expanded="false" aria-controls="settings-navigation"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h16M4 12h16M4 18h16"/></svg><span data-settings-current></span></button><button type="button" class="settings-menu-backdrop" data-action="settings-menu-close" tabindex="-1" aria-label="Einstellungsbereiche schließen"></button><nav id="settings-navigation" class="settings-navigation" aria-label="Einstellungsbereiche">${groups.map(({ id, label }) => `<button type="button" data-action="settings-section:${esc(id)}" aria-controls="settings-${esc(id)}">${esc(label)}</button>`).join("")}${admin ? '<a class="settings-configuration-link" href="/config/integrations/integration/ha_sauna">Sauna konfigurieren <span aria-hidden="true">↗</span></a>' : ""}</nav><div class="settings-content" ${admin ? 'id="parameters"' : ""}>${admin ? '<form id="settings-parameters"></form>' : ""}${groups.map((group) => `<section id="settings-${esc(group.id)}" data-settings-section="${esc(group.id)}" aria-label="${esc(group.label)}">${group.id === "appearance" ? parameterGroup(group) + (contents[group.id] || "") : (contents[group.id] || "") + parameterGroup(group)}</section>`).join("")}</div></div>`;
+        `<div class="settings-layout"><button type="button" class="settings-menu-toggle" data-action="settings-menu" aria-label="Einstellungsbereiche öffnen" aria-expanded="false" aria-controls="settings-navigation"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h16M4 12h16M4 18h16"/></svg><span data-settings-current></span></button><button type="button" class="settings-menu-backdrop" data-action="settings-menu-close" tabindex="-1" aria-label="Einstellungsbereiche schließen"></button><nav id="settings-navigation" class="settings-navigation" aria-label="Einstellungsbereiche">${groups.map(({ id, label }) => `<button type="button" data-action="settings-section:${esc(id)}" aria-controls="settings-${esc(id)}">${esc(label)}</button>`).join("")}${admin ? '<a class="settings-configuration-link" href="/config/integrations/integration/ha_sauna">Sauna konfigurieren <span aria-hidden="true">↗</span></a>' : ""}</nav><div class="settings-content" ${admin ? 'id="parameters"' : ""}>${admin ? '<form id="settings-parameters"></form>' : ""}${groups.map((group) => `<section id="settings-${esc(group.id)}" data-settings-section="${esc(group.id)}" aria-label="${esc(group.label)}">${group.id === "appearance" ? parameterGroup(group) + (contents[group.id] || "") : (contents[group.id] || "") + parameterGroup(group)}</section>`).join("")}</div></div><dialog id="standards-dialog" tabindex="-1" aria-labelledby="standards-title"></dialog>`;
+      this.$("#standards-dialog").addEventListener("cancel", (event) => {
+        if (this.standardContext?.busy) event.preventDefault();
+        else this.standardContext = null;
+      });
+      this.standardContext = null;
       if (admin) this.$("#log-level").value = state.configuration.log_level;
       this.settingsEntry = this.entry;
       this.settingsAdmin = admin;
@@ -14245,8 +14855,8 @@ class SaunaPanel extends HTMLElement {
       button.disabled = !admin || state.configuration_locked;
     if (admin) {
       this.drawAppearanceStatus();
+      this.syncAppearanceEditor();
       this.drawArchiveManagement();
-      this.$('[data-action="reset-settings"]').disabled = state.configuration_locked;
     }
     this.renderProgramLibrary();
     this.drawButtonProgram();
@@ -14819,38 +15429,6 @@ class SaunaPanel extends HTMLElement {
     }
     await this.updateParameters(values, false, false, "PATCH");
   }
-  async resetSettings() {
-    if (!this.state) return;
-    const entry = this.entry,
-      generation = this.generation,
-      editRevision = this.settingsEditRevision || 0,
-      progressionDraft = this.progressionDraft,
-      request = (this.settingsRequestSerial = (this.settingsRequestSerial || 0) + 1);
-    const saved = await this.api(`/${entry}/parameters/reset`, "POST");
-    await this.waitForConfiguration(entry, saved.parameters, saved.configuration);
-    if (
-      this.entry !== entry ||
-      this.generation !== generation ||
-      this.settingsRequestSerial !== request
-    )
-      return;
-    if ((this.settingsEditRevision || 0) === editRevision) {
-      this.settingsEntry = null;
-      this.shadowRoot
-        .querySelectorAll("#parameters input[data-edited]")
-        .forEach((input) => delete input.dataset.edited);
-    }
-    if (this.progressionDraft === progressionDraft) this.progressionDraft = null;
-    await this.refresh();
-    if (
-      this.entry !== entry ||
-      this.generation !== generation ||
-      this.settingsRequestSerial !== request
-    )
-      return;
-    const status = this.shadowRoot.querySelector("#settings-reset-status");
-    if (status) status.textContent = "Werkseinstellungen wurden wiederhergestellt.";
-  }
   isPanelFullscreen() {
     const document = this.ownerDocument;
     return (
@@ -15380,8 +15958,7 @@ class SaunaPanel extends HTMLElement {
         (!permissions.control || !this.state.control_mode_change_allowed)) ||
       (action.startsWith("end-phase:") &&
         (!permissions.control || !action.startsWith("end-phase:after_run:"))) ||
-      (action === "reset-settings" &&
-        (!permissions.admin || this.state.configuration_locked)) ||
+      (action.startsWith("standards-") && !permissions.admin) ||
       (action.startsWith("appearance-") && !permissions.admin) ||
       ((action === "details" ||
         action === "detail" ||
@@ -15395,31 +15972,28 @@ class SaunaPanel extends HTMLElement {
     if (action === "manual-entry") return this.action("control-mode:manual");
     if (action === "default-page") return this.setDefaultPage();
     if (action === "configure") return this.action("settings");
-    if (action === "reset-settings") return this.resetSettings();
-    if (action === "appearance-save") return this.saveAppearance();
-    if (action === "appearance-discard") return this.resetAppearanceDraft();
-    if (action === "appearance-default") return this.resetAppearanceDraft(true);
-    if (action.startsWith("appearance-role-default:")) {
-      const role = action.slice("appearance-role-default:".length);
-      if (!this.appearanceCatalog().colors?.some((item) => item.id === role)) return;
-      if (!this.appearanceDraft)
-        this.updateAppearanceField(this.$(`[data-appearance-color="${role}"]`));
-      delete this.appearanceDraft.colors[role];
-      delete this.appearanceRaw?.[role];
-      this.appearanceStatus = "Vorschau – noch nicht gespeichert";
-      this.applyAppearance();
-      this.drawCurrent();
-      this.drawAppearanceStatus();
-      this.scheduleHistoryRender("appearance");
-      const input = this.$(`[data-appearance-color="${role}"]`);
-      if (input)
-        input.value =
-          this.appearanceCatalog().colors.find((item) => item.id === role)?.default ||
-          "";
-      const picker = this.$(`[data-appearance-picker="${role}"]`);
-      if (picker) picker.value = this.appearancePickerColor(role);
+    if (action.startsWith("standards-open:")) {
+      const [, kind, encoded] = action.split(":");
+      if (!["field", "group", "all"].includes(kind)) return;
+      return this.openStandardMenu({
+        [kind]: kind === "all" ? true : decodeURIComponent(encoded),
+      });
+    }
+    if (action.startsWith("standards-preview:"))
+      return this.previewStandardAction(action.slice("standards-preview:".length));
+    if (action === "standards-confirm") return this.confirmStandardAction();
+    if (action === "standards-close") return this.closeStandardMenu();
+    if (action === "standards-back") {
+      if (this.standardContext && !this.standardContext.busy) {
+        this.standardContext.preview = null;
+        this.standardContext.message = null;
+        this.drawStandardDialog();
+      }
       return;
     }
+    if (action === "appearance-save") return this.saveAppearance();
+    if (action === "appearance-discard") return this.resetAppearanceDraft();
+
     if (action === "program-toggle") {
       if (this.programDirty() || this.programRequest) return;
       this.programChoiceOpen = !this.programChoiceOpen;

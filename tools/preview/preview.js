@@ -59,7 +59,11 @@ panel.api = async (path, method = "GET", body) => {
       signal: request.signal,
     });
     const result = await response.json();
-    if (!response.ok) throw Error(result.error || response.statusText);
+    if (!response.ok)
+      throw Object.assign(Error(result.error || response.statusText), {
+        status_code: response.status,
+        body: result,
+      });
     return result;
   } catch (error) {
     if (generation === previewGeneration) showPreviewError(error);

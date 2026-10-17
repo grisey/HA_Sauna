@@ -13,6 +13,65 @@ class LocalPreviewTests(unittest.TestCase):
     def setUp(self):
         self.preview = Preview()
 
+    def test_standard_preview_apply_stale_and_idle_reload_use_the_settings_owner(self):
+        from custom_components.ha_sauna.settings import StaleFieldStandardPreview
+
+        field = "appearance.instruments.default"
+        original = deepcopy(self.preview.entry.options)
+        body = {"action": "overwrite_standard", "field": field, "value": "linear"}
+        preview = self.preview.action("/preview/standards", body)
+        self.assertEqual(self.preview.entry.options, original)
+        self.preview.action("/preview/standards", {**body, "confirmation": preview["confirmation"]})
+        row = next(row for row in self.preview.standards()["fields"] if row["id"] == field)
+        self.assertEqual((row["active"], row["standard"]), ("round", "linear"))
+        restore = {"action": "restore_standard", "field": field}
+        old = self.preview.action("/preview/standards", restore)
+        newer = {**body, "value": "round"}
+        next_preview = self.preview.action("/preview/standards", newer)
+        self.preview.action("/preview/standards", {**newer, "confirmation": next_preview["confirmation"]})
+        with self.assertRaises(StaleFieldStandardPreview) as stale:
+            self.preview.action("/preview/standards", {**restore, "confirmation": old["confirmation"]})
+        self.assertEqual(stale.exception.preview["fields"][0]["target"], "round")
+        self.preview.reset("archiv")
+        saved = deepcopy(self.preview.sessions)
+        parameter = {"action": "overwrite_standard", "field": "parameters.preset_step_c", "value": 7}
+        proposal = self.preview.action("/preview/standards", parameter)
+        self.preview.action("/preview/standards", {**parameter, "confirmation": proposal["confirmation"]})
+        restore = {"action": "restore_standard", "field": parameter["field"]}
+        proposal = self.preview.action("/preview/standards", restore)
+        previous_runtime = self.preview.runtime
+        self.preview.action("/preview/standards", {**restore, "confirmation": proposal["confirmation"]})
+        self.assertIsNot(self.preview.runtime, previous_runtime)
+        self.assertEqual(self.preview.c.parameters.values["preset_step_c"], 7)
+        self.assertEqual(self.preview.sessions, saved)
+
+    def test_public_archive_context_uses_saved_binding_and_preserves_phase_payload(self):
+        session_id = self.preview.c.session.session_id
+        saved = self.preview.archive(session_id)
+        original_source = saved["session"]["configuration"]["bindings"]["upper_temperature"]
+        self.preview.record("phase", {"phase": "bereit", "at": self.preview.now})
+        self.preview.record("measurement", {"position": "upper", "quantity": "temperature", "value": 80, "received_at": self.preview.now, "source": "sensor.foreign"})
+        self.preview.admin = False
+        public = self.preview.archive(session_id)
+        self.assertEqual(public["session"]["measurement_context"]["sensor_timeout_seconds"], saved["session"]["configuration"]["parameters"]["sensor_timeout_seconds"])
+        measurements = [row["payload"] for row in public["records"] if row["kind"] == "measurement"]
+        self.assertTrue(any(row["source_matches_binding"] for row in measurements))
+        self.assertFalse(measurements[-1]["source_matches_binding"])
+        self.assertTrue(all("source" not in row for row in measurements))
+        self.assertNotIn(original_source, str(public))
+        self.assertEqual(next(row["payload"] for row in public["records"] if row["kind"] == "phase"), {"phase": "bereit", "at": self.preview.now.isoformat()})
+
+    def test_manual_heater_transport_retains_original_choice_ends(self):
+        self.preview.reset("manuell")
+        self.preview.action("/preview/heater", {"value": False})
+        start = next(row for row in reversed(self.preview.records) if row["kind"] == "manual_heater" and not row["payload"].get("ends_previous_only"))
+        self.preview.action("/preview/heater", {"value": None})
+        end = next(row for row in reversed(self.preview.records) if row["kind"] == "manual_heater" and row["payload"].get("ends_previous_only"))
+        self.assertEqual(start["payload"]["selection_id"], end["payload"]["selection_id"])
+        self.assertEqual(start["session_id"], end["session_id"])
+        self.assertEqual(end["received_at"], end["payload"]["change"]["at"])
+        self.assertEqual(end["payload"]["change"]["started_at"], start["payload"]["selection"]["at"])
+
     def test_user_state_removes_diagnostics_and_retains_control_permissions(self):
         self.preview.action("/simulate", {"action":"role", "value":"user"})
         state = self.preview.state()

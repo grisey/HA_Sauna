@@ -137,13 +137,23 @@ er benötigt ausdrückliches Einschalten. Die unterbrochene Sitzung bleibt im
 | Änderung | Besonderheit |
 | --- | --- |
 | Programmbibliothek | **Fertig** ändert nur den Entwurf; erst **Programme speichern** übernimmt den gesamten Katalog. Nach Sitzungsende auch ohne Administratorrechte. |
-| Darstellung | Auch die Rücksetzung ändert nur den Entwurf; Speichern wirkt für alle Benutzer der Sauna. |
+| Darstellung | Eingaben erscheinen als Vorschau. **Darstellung speichern** übernimmt sie für alle Benutzer der Sauna; **Änderungen verwerfen** lädt die aktiven Werte. |
 | Anlagenwerte und Gerätezuordnungen in der Integrationskonfiguration | Administratorrechte und vollständiges Sitzungsende erforderlich. Die aktuelle Temperaturwahl bleibt erhalten. |
 
 Die gemeinsame Instrumentenform kann für Temperatur, Luftfeuchte und Licht
 einzeln überschrieben werden. Die konstanten Temperaturen der Schnellwahl werden
 ebenfalls unter **Darstellung** eingestellt.
+Bei gespeicherten Programmen bleiben Name sowie Anfangs- und Endtemperatur
+sichtbar. Die Zwischenstufen entfalten sich beim Darüberfahren oder Fokussieren;
+bei reduzierter Bewegung entfällt die Animation.
 
 Offene oder nach Speicherfehlern verbliebene Entwürfe werden durch Sitzungsende
 nicht übernommen. Protokollstufe und Darstellung bleiben während der Sitzung
 änderbar. [Umfang der Rücksetzungen](parameter.md#werkseinstellungen)
+
+Das Feldmenü **⋯** zeigt Werkseinstellung, gespeicherten Standard, aktiven Wert
+und Entwurf. **Standard überschreiben** speichert den geprüften Entwurf eines
+Feldes als Standard. **Standard wiederherstellen** und **Werkseinstellung**
+übernehmen die bestätigte Vorschau sofort in die betroffenen aktiven Werte und
+Entwürfe. Bei inzwischen geänderten Einstellungen ist die neue Vorschau erneut
+zu bestätigen. [Feldstandards und Umfang](parameter.md#werkseinstellungen)

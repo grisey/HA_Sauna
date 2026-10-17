@@ -64,6 +64,20 @@ einen Zeitpunkt markiert dessen Messwerte, ein zweiter einen Zeitraum. Ein
 weiterer Klick oder **Auswahl aufheben** stellt die Sitzungsübersicht wieder her.
 Für einen ausgewählten Saunagang enthält **Weitere Daten** den ursprünglichen
 Beginn und den Bestätigungsstand **Vorläufig** oder **Bestätigt**.
+Für Zeiträume stehen Temperaturänderung und Änderung je Minute an der ausgewerteten
+Messposition zur Verfügung. **Weitere Daten** enthält die zeitgewichtete
+Temperaturdifferenz oben minus unten, die mittlere absolute Abweichung vom
+damals gebuchten Sollwert sowie größte Über- und Unterschreitung. Dabei zählt
+jeder Wert für seine ursprüngliche Gültigkeitsdauer; der Endpunkt gehört nur
+zur Nettoänderung. Fehlende Werte, Quellenwechsel und Gültigkeitslücken liefern
+einen konkreten Fehlhinweis statt eines Teilmittelwerts für den ganzen Zeitraum.
+
+Die Feuchteabnahme je °C verwendet die serverseitig aus archivierten
+Originalmessungen projizierte absolute Feuchte und setzt
+eine gemeinsame Nettoabnahme von Temperatur und Feuchte voraus. Ein Türschluss
+oder bestätigtes Durchlüften allein belegt kein physikalisches Feuchteplateau;
+ein durch eine Türöffnung begrenzter Aufguss belegt allein kein natürliches
+Abklingende. Daraus werden keine zusätzlichen Erholungszeiten abgeleitet.
 Phasen und Ereignisse wählen ihre belegten Zeitgrenzen aus. Die Markierung in
 der Zeitachse wechselt zwischen dem gewählten Ausschnitt und der gesamten Sitzung;
 ihre Griffe ändern die Zeitgrenzen.
@@ -126,6 +140,10 @@ Nachträgliche Gangbestätigungen und Korrekturen ergänzen den Verlauf.
 Frühere Zustände und die tatsächlichen Schalterrückmeldungen bleiben erhalten.
 Jede Sitzungsrevision enthält den damaligen Konfigurationsstand. Ein späterer
 Gerätewechsel schreibt die Herkunft alter Messungen nicht um.
+Manuelle Ofenwahlen erhalten ihr Ende nur aus einem eigenen Endbeleg derselben
+Auswahl und ursprünglichen Sitzung. Eine spätere Heizentscheidung ersetzt diesen
+Beleg nicht. Nachgeladene Endbelege ergänzen die Anzeige; fehlende oder
+widersprüchliche Belege lassen das Gültigkeitsende offen.
 
 Verlaufskurven verbinden vorhandene Messwerte auch über Messlücken hinweg.
 Die Zeichnung wird an die Bildschirmauflösung angepasst; Wertanzeige und

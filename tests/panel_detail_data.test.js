@@ -30,6 +30,80 @@ const light = (id, brightness, extra = {}) =>
     ...extra,
   });
 
+test("manual heater ends bind original selection and session, including a later page", () => {
+  const p = panel(),
+    selection = {
+      selection_id: "choice-1",
+      session_id: "original",
+      at: iso(1),
+      value: false,
+      control_mode: "manual",
+    },
+    start = {
+      ...record(1, "manual_heater", {
+        value: false,
+        selection_id: selection.selection_id,
+        selection,
+      }),
+      session_id: "original",
+    },
+    end = {
+      ...record(12, "manual_heater", {
+        ends_previous_only: true,
+        selection_id: selection.selection_id,
+        change: {
+          selection_id: selection.selection_id,
+          session_id: "original",
+          started_at: iso(1),
+          at: iso(8),
+          previous_value: false,
+          control_mode: "manual",
+          reason: "selection_replaced",
+        },
+      }),
+      session_id: "original",
+    };
+  const records = [
+    start,
+    record(3, "decision", { at: iso(3), heat: true, reason: "operation_off" }),
+  ];
+  assert.match(
+    p.historyManualActivity(records).get(start).detail,
+    /kein Gültigkeitsende belegt/,
+  );
+  records.push(end);
+  let item = p.historyManualActivity(records).get(start);
+  assert.equal(
+    item.endedAt,
+    Date.parse(iso(8)),
+    "original end time wins over archive receipt",
+  );
+  assert.equal(item.endReason, "Neue Auswahl");
+  assert.equal(
+    p.historyAdditionalActivity(records).filter((item) => item.label === "Ofenwahl")
+      .length,
+    1,
+    "end-only is no second intervention",
+  );
+  const foreign = structuredClone(end);
+  foreign.session_id = foreign.payload.change.session_id = "other-session";
+  assert.equal(p.historyManualActivity([start, foreign]).get(start).endedAt, undefined);
+  const contradiction = structuredClone(end);
+  contradiction.payload.change.started_at = iso(0);
+  item = p.historyManualActivity([start, end, contradiction]).get(start);
+  assert.equal(item.endedAt, undefined);
+  assert.match(item.detail, /widersprüchliche Endbelege/);
+  const outside = structuredClone(start),
+    outsideEnd = structuredClone(end);
+  outside.session_id = outside.payload.selection.session_id = null;
+  outsideEnd.session_id = outsideEnd.payload.change.session_id = null;
+  assert.equal(
+    p.historyManualActivity([outside, outsideEnd]).get(outside).endedAt,
+    Date.parse(iso(8)),
+    "genuine absent session is retained",
+  );
+});
+
 test("diagnostic snapshots count incident starts, retain status changes and partial clearances", () => {
   const records = [
     record(1, "diagnostic", { faults: {}, messages: [] }),
