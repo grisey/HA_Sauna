@@ -9,7 +9,7 @@ aus Temperatur und Feuchte.
 | Türöffnung und Türschluss | Gemeinsame Erkennung aus den Messpaaren | Dieselbe Erkennung aus den Messpaaren |
 | Anwesenheit | Personensignale; zunächst vorläufiger Gang | Belegungszustand der zugeordneten Entität |
 | Aufguss | Bestätigt den Gang; weitere Aufgüsse werden erfasst | Erfassung im bereits bestätigten Gang |
-| Durchlüften | Nach Austrittsöffnung Nachweis für das Gangende | Gemeinsam mit zugehöriger Abwesenheit Nachweis für das Gangende |
+| Durchlüften | Bestandteil der vorherigen Austrittsöffnung; Nachweis für das Gangende | Bestandteil derselben Austrittsöffnung; zusammen mit deren Abwesenheitsnachweis Beleg für das Gangende |
 
 **Sensoren und Erkennung** in der Integrationskonfiguration trennt
 Messwertaufbereitung, Türerkennung, Personenerkennung und Aufgüsse. Personenschwellen und
@@ -558,6 +558,8 @@ führt, ersetzen Personensignale ihn nicht.
 Die absolute Feuchte wird aus frischen, gültigen Temperatur-/Feuchtepaaren
 berechnet und als Diagnosewert je Messposition bereitgestellt.
 
+Durchlüften setzt eine vorherige Türöffnung voraus und bleibt Teil dieses
+Türvorgangs. Ohne zugehörige Öffnung entsteht kein Lüftungsereignis.
 Die beiden Lüftungsstufen werden bei allen erkannten Türvorgängen gleich
 ausgewertet, unabhängig von einem laufenden Gang und der Präsenzquelle. Sie
 benötigen im selben Türvorgang einen vorherigen Feuchtefall und dessen belegte

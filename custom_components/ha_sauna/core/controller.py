@@ -1749,7 +1749,8 @@ class Controller:
     def _reconcile_direct_presence(self, at, *, entry_event=None):
         """Observe entry independently of its temperature admission.
 
-        A qualified entry can wait for the minimum while presence persists.
+        Presence at closure establishes a stay until another door opening;
+        its qualified entry can wait for the minimum temperature.
         A running gang instead uses absence and ventilation of its exit opening;
         neither temperature nor a heater phase can prevent that completion.
         """

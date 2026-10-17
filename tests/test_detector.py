@@ -20,6 +20,7 @@ from custom_components.ha_sauna.core.curve_change import (
     CurveTrendFeatures,
     OriginalPositionWindows,
     original_contrasts,
+    original_decline_evidence,
     original_followup,
     original_thermal_contrasts,
     original_water_pair,
@@ -2359,9 +2360,22 @@ class InfusionLifecycleTests(unittest.TestCase):
                         self.assertGreater(candidate["received_at"], self._at(onset))
                         self.assertTrue(all(kink.factor == 0
                                             for _, kink in candidate["humidity_kinks"]))
+                    if control and not rising:
+                        # Removing the kink tolerance admits a candidate, not
+                        # a door event. The small suffix still fails the bound
+                        # historical level-loss comparison at both positions.
+                        for name, pair in candidate["windows"]:
+                            proof = original_decline_evidence(
+                                tuple((self._at(second), humidity)
+                                      for second, _, humidity in rows),
+                                pair.humidity,
+                                background=dict(candidate["humidity_kinks"])[name],
+                            )
+                            self.assertIsNotNone(proof)
+                            self.assertLessEqual(proof.level_loss,
+                                                 self.p["curve_original_open_contrast"])
                     self.assertEqual([item.kind for item in events
-                                      if item.kind in (Kind.DOOR_OPEN, Kind.INFUSION)],
-                                     [Kind.DOOR_OPEN] if control and not rising else [])
+                                      if item.kind in (Kind.DOOR_OPEN, Kind.INFUSION)], [])
 
         for rising in (False, True):
             for small_position in Position:
@@ -2400,7 +2414,12 @@ class InfusionLifecycleTests(unittest.TestCase):
         # consumption by the owner; default suitability needs the real replay.
         for rising in (False, True):
             with self.subTest(rising=rising):
-                onset, end, rows = self._kink_originals(rising=rising, large=True)
+                # Retain the same amplitude and background. The falling
+                # input supplies one further K-block so its accumulated loss
+                # can exceed the actual historical level-change scale.
+                onset, end, rows = self._kink_originals(
+                    rising=rising, large=True, extra=0 if rising else self.side,
+                )
                 detector, events = Detector(self.parameters, T0), []
                 shapes = [] if rising else [self._shape("open", onset, end)]
                 with self._patch_math(shapes, forms=original_contrasts):
@@ -2428,7 +2447,19 @@ class InfusionLifecycleTests(unittest.TestCase):
                     self.assertEqual(detector._infusion_episode["confirmation_basis"], "early_rise")
                 else:
                     self.assertTrue(detector.open)
-                    self.assertGreater(candidate["confirmation_received_at"], candidate["received_at"])
+                    confirmed_at = candidate["confirmation_received_at"]
+                    self.assertGreater(confirmed_at, candidate["received_at"])
+                    for name, pair in candidate["windows"]:
+                        proof = original_decline_evidence(
+                            tuple((self._at(second), humidity)
+                                  for second, _, humidity in rows
+                                  if self._at(second) <= confirmed_at),
+                            pair.humidity,
+                            background=dict(candidate["humidity_kinks"])[name],
+                        )
+                        self.assertIsNotNone(proof)
+                        self.assertGreater(proof.level_loss,
+                                           self.p["curve_original_open_contrast"])
 
     def test_bound_original_kink_background_is_frozen_while_new_originals_arrive(self):
         for rising in (False, True):
@@ -2466,7 +2497,9 @@ class InfusionLifecycleTests(unittest.TestCase):
         for rising in (False, True):
             for dense in (False, True):
                 with self.subTest(rising=rising, several_originals_per_tick=dense):
-                    onset, _, rows = self._kink_originals(rising=rising, large=True)
+                    onset, _, rows = self._kink_originals(
+                        rising=rising, large=True, extra=0 if rising else self.side,
+                    )
                     if dense:
                         # Several distinct T/RH prefixes share one raster cell;
                         # each must keep the background available on its receipt.
@@ -3979,8 +4012,9 @@ class InfusionLifecycleTests(unittest.TestCase):
     def test_ols_opening_retains_bound_original_onset_without_backdating_confirmation(self):
         flank_seconds = self.p["curve_min_side_samples"] * self.step
         ready = self.begin + flank_seconds
-        lowering_at = ready + self.side * self.step
-        confirmed = lowering_at + 2 * self.side * self.step
+        # Two distinct originals after binding are the first evaluable
+        # suffix. Its actual T/RH loss is checked below, not inferred from K.
+        confirmed = ready + 2 * self.step
         recognized_at = self._at(confirmed + 5 * self.step)
         end = max(self.begin + self.width, confirmed)
         fall_seconds = end - self.begin
@@ -3991,8 +4025,8 @@ class InfusionLifecycleTests(unittest.TestCase):
                         (end, self.temperature
                          + (falling_t - initial_t) * fall_seconds / flank_seconds)]
         # Consume the RH noise scales and this fixture's exact time geometry.
-        # The chosen rate first resolves the RH kink at ready. K new roles
-        # bind its lowering witness; two further K-blocks of T confirm it.
+        # The chosen rate first resolves the RH kink at ready. The following
+        # original suffix must independently prove the shared T/RH loss.
         unit_fall = tuple((self._at(second), -max(0, second - self.begin))
                           for second in range(0, ready + self.step, self.step))
         rate_boundaries = {}
@@ -4023,6 +4057,7 @@ class InfusionLifecycleTests(unittest.TestCase):
         positions = prepared.positions
         quantities = (Quantity.TEMPERATURE, Quantity.HUMIDITY)
         mixed_key = ("door_open", positions, quantities)
+        humidity_key = ("door_open", positions, (Quantity.HUMIDITY,))
         thermal_key = ("door_open_heating", positions, (Quantity.TEMPERATURE,))
         events = []
         # The declared local models supply onset attribution only. OLS sees
@@ -4036,7 +4071,7 @@ class InfusionLifecycleTests(unittest.TestCase):
             self.assertGreater(native["humidity_fall_onset"], self.p["curve_original_significance"])
             bound_onsets = native["onset_witnesses"]
             self.assertEqual({key[1:] for key, _ in bound_onsets},
-                             {(position, quantity) for position in positions for quantity in quantities})
+                             {(position, Quantity.HUMIDITY) for position in positions})
             self.assertEqual({witness.onset_at for _, witness in bound_onsets},
                              {self._at(self.begin)})
             self.assertIn(thermal_key, prepared._curve_proposals)
@@ -4085,15 +4120,33 @@ class InfusionLifecycleTests(unittest.TestCase):
                         detector._curve_proposals.pop(thermal_key)
                     found = []
                     native = detector.door_episode["original_open"]
-                    self._feed(detector, lowering_at, humidities, found, temperatures=temperatures)
-                    self.assertFalse(detector.open)
-                    self.assertNotIn(Kind.DOOR_OPEN, [item.kind for item in found])
-                    lowering = native["lowering_witness"]
-                    self.assertEqual(lowering["received_at"], self._at(lowering_at))
                     self._feed(detector, confirmed - self.step, humidities, found,
                                temperatures=temperatures)
                     self.assertFalse(detector.open)
                     self.assertNotIn(Kind.DOOR_OPEN, [item.kind for item in found])
+                    self.assertNotIn("lowering_witness", native)
+                    bound = dict(native["windows"])
+                    backgrounds = dict(native["humidity_kinks"])
+                    for name, pair in bound.items():
+                        for quantity, values in ((Quantity.TEMPERATURE, temperatures),
+                                                 (Quantity.HUMIDITY, humidities)):
+                            originals = tuple((self._at(second), self._value(values, second))
+                                              for second in range(0, confirmed + self.step, self.step))
+                            reference = getattr(pair, quantity.value)
+                            background = backgrounds[name] if quantity == Quantity.HUMIDITY else None
+                            self.assertIsNone(original_decline_evidence(
+                                originals[:-1], reference, background=background,
+                            ))
+                            proof = original_decline_evidence(
+                                originals, reference, background=background,
+                            )
+                            self.assertIsNotNone(proof)
+                            self.assertEqual(len(proof.points), 2)
+                            self.assertGreater(proof.level_loss,
+                                               self.p["curve_original_open_contrast"])
+                            if quantity == Quantity.TEMPERATURE:
+                                self.assertLess(proof.direction,
+                                                -self.p["curve_original_open_contrast"])
                     self._send(
                         detector, confirmed, self._value(humidities, confirmed), found,
                         temperature=self._value(temperatures, confirmed),
@@ -4112,29 +4165,23 @@ class InfusionLifecycleTests(unittest.TestCase):
                     self.assertIs(detector.door_episode["original_open"], native)
                     self.assertEqual(native["onset_witnesses"], bound_onsets)
                     self.assertEqual(native["confirmation_received_at"], self._at(confirmed))
-                    bound = dict(native["windows"])
+                    self.assertEqual(native["lowering_witness"]["received_at"],
+                                     self._at(confirmed))
                     for name, pair in native["confirmation_windows"]:
                         self.assertGreater(pair.temperature.newest_at, bound[name].temperature.newest_at)
                         self.assertGreater(pair.humidity.newest_at, bound[name].humidity.newest_at)
-                        followup = original_followup(pair.temperature,
-                                                     dict(lowering["windows"])[name].temperature)
-                        self.assertIsNotNone(followup)
-                        self.assertEqual(followup.fresh_previous, self.side)
-                        self.assertEqual(followup.fresh_current, self.side)
-                        self.assertLess(followup.previous_direction, -self.p["curve_original_open_contrast"])
-                        self.assertLess(followup.current_direction, -self.p["curve_original_open_contrast"])
+                        self.assertEqual(pair.temperature.newest_at, self._at(confirmed))
+                        self.assertEqual(pair.humidity.newest_at, self._at(confirmed))
                         self.assertEqual(detector.door_episode["sources"][Position(name)],
                                          (f"sensor.{name}_temperature", f"sensor.{name}_humidity"))
                     self.assertEqual(detector.opened_at, effective_at)
                     self.assertEqual(detector.door_episode["started_at"], effective_at)
                     diagnostic = detector.diagnostic
                     self.assertTrue(diagnostic["decisions"]["door_open"]["result"])
-                    self.assertEqual(diagnostic["decisions"]["door_open_heating"]["result"],
-                                     case != "incomplete_thermal")
                     self.assertEqual(diagnostic["door_open_onset_attribution"], {
                         "confirmation_basis": "original_ols",
                         "route": "door_open",
-                        "quantities": ("temperature", "humidity"),
+                        "quantities": ("humidity",),
                         "thermal_fallback": False,
                         "attribution_basis": "original_open_binding",
                         "bound_original_onsets": tuple(
@@ -4144,7 +4191,7 @@ class InfusionLifecycleTests(unittest.TestCase):
                         "used_proposal": True,
                         "effective_at": effective_at,
                     })
-                    proposal = detector._curve_proposal_status[mixed_key]
+                    proposal = detector._curve_proposal_status[humidity_key]
                     self.assertEqual(proposal["confirmed_at"], recognized_at)
                     self.assertEqual(proposal["consumed_onset_at"], self._at(self.begin))
                     self.assertEqual(proposal["consumed_candidate_ids"],
@@ -4197,11 +4244,12 @@ class InfusionLifecycleTests(unittest.TestCase):
         for quantity in (Quantity.TEMPERATURE, Quantity.HUMIDITY):
             shapes.extend((self._shape("open", door_start, door_bottom, quantity),
                            self._shape("close", close_start, close_end, quantity)))
-        episodes_at_opening = []
+        episodes_at_opening, opening_proofs = [], []
 
         def observe(row):
             if Kind.DOOR_OPEN in row["signals"]:
                 episodes_at_opening.append(detector.infusion_episode)
+                opening_proofs.append(row["original_forms"]["original_fall_evidence"])
 
         detector = Detector(self.parameters, T0, observer=observe)
         controller = Controller(self.parameters)
@@ -4210,7 +4258,9 @@ class InfusionLifecycleTests(unittest.TestCase):
         controller.process(event("initial-open", Kind.DOOR_OPEN, 0))
         controller.process(event("initial-close", Kind.DOOR_CLOSE, 0))
         events = []
-        with self._patch_math(shapes):
+        # The same immutable raw windows feed kink history and decline
+        # evidence. Declared OLS replacements would break their identity.
+        with self._patch_math(shapes, forms=original_contrasts):
             self._feed(detector, door_start - self.step, points, events,
                        temperatures=temperatures, controller=controller)
             self.assertEqual(detector._infusion_episode["phase"], "active")
@@ -4220,6 +4270,14 @@ class InfusionLifecycleTests(unittest.TestCase):
                        temperatures=temperatures, controller=controller)
         self.assertEqual(len(self._infusions(events)), 2)
         self.assertEqual(episodes_at_opening, [None])
+        self.assertEqual(len(opening_proofs), 1)
+        for position in detector.positions:
+            for quantity in (Quantity.TEMPERATURE, Quantity.HUMIDITY):
+                proof = opening_proofs[0][f"{position.value}:{quantity.value}"]
+                self.assertTrue(proof["available"])
+                self.assertTrue(proof["level_loss"]["result"])
+                if quantity == Quantity.TEMPERATURE:
+                    self.assertTrue(proof["direction"]["result"])
         self.assertEqual(first_episode.phase, "active")
         self.assertIsNone(first_episode.level_end_at)
         next_episode = detector.infusion_episode
@@ -4322,13 +4380,17 @@ class InfusionLifecycleTests(unittest.TestCase):
             self.assertNotEqual(detector.infusion_episode.bound_at, ended_episode.bound_at)
             self.assertIsNone(detector.infusion_episode.confirmed_detection)
             self.assertEqual(self._infusions(events), [original])
-            # Its native support proves a separate event without replacing
-            # the invalid old witness with another optional onset model.
+            # The first native RH edge belongs to this pulse. It supplies
+            # the beginning even though the older optional witness is invalid.
+            interval = component["onset_intervals"][Position.UPPER]
+            self.assertEqual(interval.previous[0], self._at(next_rise))
+            self.assertEqual(interval.current[0], self._at(next_rise + self.step))
             self._feed(detector, next_fall, points, events)
         infusions = self._infusions(events)
         self.assertEqual(len(infusions), 2)
         self.assertGreater(infusions[1].effective_at, ended_episode.level_end_at)
-        self.assertEqual(infusions[1].effective_at, infusions[1].trace_at)
+        self.assertEqual(infusions[1].effective_at, self._at(next_rise))
+        self.assertLess(infusions[1].effective_at, infusions[1].trace_at)
         self.assertNotEqual(detector.infusion_episode.bound_at, ended_episode.bound_at)
         self.assertIs(detector.infusion_episode.confirmed_detection, infusions[1])
         self.assertEqual(ended_episode.phase, "ended")

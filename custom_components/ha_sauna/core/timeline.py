@@ -319,9 +319,9 @@ def project_gang_intervals(timeline: Timeline | Mapping, *, door_cycles=None) ->
     """Gangzeiten vom zugeordneten Eintritt bis zum bestätigten Abschluss.
 
     Der zugeordnete Eintritt mit erfüllten Startbedingungen liefert den Beginn.
-    Die Austrittsöffnung allein beendet
-    den Gang nicht: Erst ihr zugeordneter Lüftungs- beziehungsweise
-    Präsenzabschluss liefert das gebuchte Ende. Betrieb-AUS und fehlende
+    Die Austrittsöffnung allein beendet den Gang nicht. Ihr bestätigtes
+    Durchlüften liefert den Abschluss, bei direkter Präsenz zusammen mit
+    dem zugehörigen Abwesenheitsnachweis. Betrieb-AUS und fehlende
     Altarchivquellen erzeugen keinen Lüftungsnachweis. Alle Türbezüge behalten
     die Mehrdeutigkeitsprüfung der gemeinsamen Türzyklusprojektion.
     """

@@ -98,7 +98,7 @@ Tür beendet den bestätigten Aufenthalt nicht.
 | Eintritt mit Anwesenheit und erreichter Mindesttemperatur | Bestätigter Gang, ohne Wartefrist oder erforderlichen Aufguss |
 | Öffnen zum Verlassen mit zugehöriger Abwesenheit und bestätigtem Lüften | Gangende beim vollständigen Nachweis, auch nach dem anschließenden Türschluss |
 | Einzelne Präsenzmeldung, Türschluss ohne Öffnung oder bloßer Zeitablauf | Kein Übergang |
-| Lüften ohne zugehörige Abwesenheit | Kein Gangende |
+| Durchlüften der Austrittsöffnung ohne zugehörige Abwesenheit | Kein Gangende |
 | Betrieb-AUS | Ende des offenen Gangs |
 
 Aufgüsse werden dem Gang zugeordnet, bestätigen ihn aber nicht erneut.
