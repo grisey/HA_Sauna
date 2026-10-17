@@ -923,26 +923,37 @@ fs.mkdirSync(output, { recursive: true });
     await settleSelection();
   }
   assert.deepEqual(await selectedValues(), range);
+  const scrollViewport = selectionPage.viewportSize();
+  await selectionPage.setViewportSize({
+    width: scrollViewport.width,
+    height: settings.browser.viewports.mobile.height,
+  });
+  await settleSelection();
+  const scrollRoom = await selectionPage.evaluate(() => {
+    const history = f.panel.$("#history");
+    return history.scrollHeight - history.clientHeight;
+  });
+  assert.ok(scrollRoom > 0, "the shorter viewport provides real internal history overflow");
   await readout.hover();
   const scrollBefore = await selectionPage.evaluate(() => {
-      const readout = f.panel.$(".history-readout"),
-        history = f.panel.$("#history"),
-        outer = f.outer.querySelector("#scroll"),
-        target = [readout, history, outer].find(
-          (node) =>
-            /^(auto|scroll|overlay)$/.test(getComputedStyle(node).overflowY) &&
-            node.scrollHeight > node.clientHeight,
-        );
-      if (!target) throw Error("selection fixture has no actual scroll path");
-      const up = target.scrollTop,
-        down = target.scrollHeight - target.clientHeight - target.scrollTop;
-      return {
-        readout: readout.scrollTop,
-        history: history.scrollTop,
-        outer: outer.scrollTop,
-        wheel: down >= up ? down : -up,
-      };
-    });
+    const readout = f.panel.$(".history-readout"),
+      history = f.panel.$("#history"),
+      outer = f.outer.querySelector("#scroll"),
+      target = [readout, history, outer].find(
+        (node) =>
+          /^(auto|scroll|overlay)$/.test(getComputedStyle(node).overflowY) &&
+          node.scrollHeight > node.clientHeight,
+      );
+    if (!target) throw Error("selection fixture has no actual scroll path");
+    const up = target.scrollTop,
+      down = target.scrollHeight - target.clientHeight - target.scrollTop;
+    return {
+      readout: readout.scrollTop,
+      history: history.scrollTop,
+      outer: outer.scrollTop,
+      wheel: down >= up ? down : -up,
+    };
+  });
   await selectionPage.mouse.wheel(0, scrollBefore.wheel);
   try {
     await selectionPage.waitForFunction(
@@ -955,7 +966,11 @@ fs.mkdirSync(output, { recursive: true });
     );
   } catch (error) {
     const geometry = await selectionPage.evaluate(() =>
-      [f.panel.$(".history-readout"), f.panel.$("#history"), f.outer.querySelector("#scroll")].map((node) => ({
+      [
+        f.panel.$(".history-readout"),
+        f.panel.$("#history"),
+        f.outer.querySelector("#scroll"),
+      ].map((node) => ({
         selector: node.id || node.className,
         overflowY: getComputedStyle(node).overflowY,
         top: node.scrollTop,
@@ -964,8 +979,14 @@ fs.mkdirSync(output, { recursive: true });
         bounds: node.getBoundingClientRect().toJSON(),
       })),
     );
-    fs.writeFileSync(path.join(output, `${engine}-selection-scroll-failure.json`), JSON.stringify({scrollBefore, geometry}, null, 2));
-    await selectionPage.screenshot({path: path.join(output, `${engine}-selection-scroll-failure.png`), fullPage: true});
+    fs.writeFileSync(
+      path.join(output, `${engine}-selection-scroll-failure.json`),
+      JSON.stringify({ scrollBefore, geometry }, null, 2),
+    );
+    await selectionPage.screenshot({
+      path: path.join(output, `${engine}-selection-scroll-failure.png`),
+      fullPage: true,
+    });
     throw error;
   }
   await selectionPage.waitForFunction(
@@ -1003,6 +1024,9 @@ fs.mkdirSync(output, { recursive: true });
     "scrolling pinned values keeps both endpoints",
   );
 
+  await selectionPage.setViewportSize(scrollViewport);
+  await settleSelection();
+  assert.deepEqual(await selectedValues(), range);
   const selectionZoom = selectionSurface;
   const rangeGuidesBeforeZoom = await selectionGuides();
   await selectionZoom.press("+");
