@@ -1127,9 +1127,11 @@ class PanelAPITests(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(intervals[0]["started_at"],
                                  archived["session"]["door_cycles"][0]["ended_at"])
                 self.assertEqual(intervals[0]["ended_at"],
-                                 archived["session"]["door_cycles"][1]["started_at"])
+                                 archived["session"]["door_cycles"][1]["ventilation_at"])
+                self.assertEqual(intervals[0]["ended_at"],
+                                 (start + timedelta(milliseconds=55)).isoformat())
                 self.assertTrue(intervals[0]["complete"])
-                self.assertNotEqual(intervals[0]["ended_at"], completed["ended_at"])
+                self.assertEqual(intervals[0]["ended_at"], completed["ended_at"])
                 self.assertEqual({item["source_id"] for item in archived["phase_projection"]["intervals"]
                                   if item["source_id"]}, {active["gang_id"]})
             async with admin.get(url + "/archive", params={"session_id": session_id}) as response:
