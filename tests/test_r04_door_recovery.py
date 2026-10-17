@@ -408,11 +408,13 @@ class R04DoorRecoveryTests(unittest.TestCase):
         ]
         # These are assessment intervals from the loss/recovery in the original
         # traces. They are not the old detector's second-exact trigger times.
+        # Confirmation is checked below against later original support. These
+        # intervals bound physical onset, not a fixed reporting deadline.
         intervals = (
-            (Kind.DOOR_OPEN, at(12, 58, 20), at(12, 58, 50), at(12, 59)),
-            (Kind.DOOR_CLOSE, at(12, 58, 45), at(12, 59, 45), at(13, 0)),
-            (Kind.DOOR_OPEN, at(13, 5, 30), at(13, 6, 10), at(13, 7)),
-            (Kind.DOOR_CLOSE, at(13, 7, 35), at(13, 8, 25), end),
+            (Kind.DOOR_OPEN, at(12, 58, 20), at(12, 58, 50)),
+            (Kind.DOOR_CLOSE, at(12, 58, 45), at(12, 59, 45)),
+            (Kind.DOOR_OPEN, at(13, 5, 30), at(13, 6, 10)),
+            (Kind.DOOR_CLOSE, at(13, 7, 35), at(13, 8, 25)),
         )
         diagnostics = {
             "events": [
@@ -447,14 +449,13 @@ class R04DoorRecoveryTests(unittest.TestCase):
         )
         opening_witnesses = {}
         opening_floor = None
-        for event, (_, earliest, latest, confirmation_limit) in zip(
+        for event, (_, earliest, latest) in zip(
             door_events, intervals
         ):
             with self.subTest(kind=event.kind, onset=event.effective_at):
                 with self.subTest(assessment="physical_event_onset"):
                     self.assertGreaterEqual(event.effective_at, earliest)
                     self.assertLessEqual(event.effective_at, latest)
-                self.assertLessEqual(event.trace_at, confirmation_limit)
                 self.assertEqual(event.detected_at, event.trace_at)
 
                 row = next(item for item in observed if item["at"] == event.trace_at)

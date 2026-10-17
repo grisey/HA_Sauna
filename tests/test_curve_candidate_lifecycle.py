@@ -11,6 +11,8 @@ import unittest
 from unittest.mock import patch
 from zoneinfo import ZoneInfo
 
+import test_r04_door_recovery as r04_recovery
+
 from test_curve_candidates import at, original_sample, supported_opening
 from test_detector import detection_parameters, measurement, trace
 from test_foundation import T0
@@ -1277,47 +1279,62 @@ class CurveCandidateLifecycleTests(unittest.TestCase):
         ]
         self.assertEqual(len(consumed), 1)
         package = consumed[0]
-        self.assertEqual(package["positions"], ("upper", "lower"))
-        self.assertEqual(package["quantities"], ("temperature", "humidity"))
-        self.assertEqual(len(package["witnesses"]), 4)
-        self.assertLess(package["first_observed_at"], close.detected_at)
-        self.assertEqual(package["confirmed_at"], close.detected_at)
-        self.assertEqual(package["consumed_onset_at"], close.effective_at)
-        before = [
-            proposal
-            for row in observed
-            if row["at"] < close.trace_at
-            for proposal in row["curve_proposals"].get("door_close", ())
-            if proposal["proposal_id"] == package["proposal_id"]
-            and proposal["status"] == "available"
-        ]
-        self.assertTrue(before)
-        self.assertEqual(before[0]["first_observed_at"], package["first_observed_at"])
-        confirmations = {item["candidate_id"]: item for item in package["confirmation"]}
-        for witness in package["witnesses"]:
-            key = (witness["position"], witness["quantity"])
-            self.assertLessEqual(
-                abs((witness["onset_at"] - reference).total_seconds()),
-                10,
+        if close.door_close_evidence is not None:
+            # Reuse the native R04 contract without inheriting or discovering
+            # its test methods. The old curve-package route remains below.
+            recovery = r04_recovery.R04DoorRecoveryTests()
+            row = next(item for item in observed if item["at"] == close.trace_at)
+            self.assertEqual(close.channels, ("upper", "lower"))
+            recovery._assert_native_earlier_attribution(
+                row, close, inputs, values, package,
             )
-            self.assertLessEqual(
-                witness["first_observed_at"], package["first_observed_at"]
-            )
-            self.assertLessEqual(witness["newest_at"], package["first_observed_at"])
-            self.assertLessEqual(witness["point_count"], values["curve_max_points"])
-            fresh = confirmations[witness["candidate_id"]]
-            self.assertTrue(fresh["supported"])
-            self.assertGreater(fresh["fresh_newest_at"], witness["first_newest_at"])
-            self.assertLessEqual(fresh["newest_at"], close.trace_at)
-            self.assertTrue(
-                any(
-                    item.position.value == key[0]
-                    and item.quantity.value == key[1]
-                    and item.source == witness["source"]
-                    and item.received_at == witness["onset_at"]
-                    for item in inputs
+            for witness in package["witnesses"]:
+                self.assertLessEqual(
+                    abs((witness["onset_at"] - reference).total_seconds()),
+                    10,
                 )
-            )
+        else:
+            self.assertEqual(package["positions"], ("upper", "lower"))
+            self.assertEqual(package["quantities"], ("temperature", "humidity"))
+            self.assertEqual(len(package["witnesses"]), 4)
+            self.assertLess(package["first_observed_at"], close.detected_at)
+            self.assertEqual(package["confirmed_at"], close.detected_at)
+            self.assertEqual(package["consumed_onset_at"], close.effective_at)
+            before = [
+                proposal
+                for row in observed
+                if row["at"] < close.trace_at
+                for proposal in row["curve_proposals"].get("door_close", ())
+                if proposal["proposal_id"] == package["proposal_id"]
+                and proposal["status"] == "available"
+            ]
+            self.assertTrue(before)
+            self.assertEqual(before[0]["first_observed_at"], package["first_observed_at"])
+            confirmations = {item["candidate_id"]: item for item in package["confirmation"]}
+            for witness in package["witnesses"]:
+                key = (witness["position"], witness["quantity"])
+                self.assertLessEqual(
+                    abs((witness["onset_at"] - reference).total_seconds()),
+                    10,
+                )
+                self.assertLessEqual(
+                    witness["first_observed_at"], package["first_observed_at"]
+                )
+                self.assertLessEqual(witness["newest_at"], package["first_observed_at"])
+                self.assertLessEqual(witness["point_count"], values["curve_max_points"])
+                fresh = confirmations[witness["candidate_id"]]
+                self.assertTrue(fresh["supported"])
+                self.assertGreater(fresh["fresh_newest_at"], witness["first_newest_at"])
+                self.assertLessEqual(fresh["newest_at"], close.trace_at)
+                self.assertTrue(
+                    any(
+                        item.position.value == key[0]
+                        and item.quantity.value == key[1]
+                        and item.source == witness["source"]
+                        and item.received_at == witness["onset_at"]
+                        for item in inputs
+                    )
+                )
         print(
             f"R04 lifecycle slice: samples={cursor} ticks={len(observed)} wall_seconds={perf_counter() - started:.6f}"
         )

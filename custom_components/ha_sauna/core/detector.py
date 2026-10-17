@@ -1002,9 +1002,30 @@ class Detector:
         self._original_humidity_connection_memo[name] = (arguments, connected)
         return connected
 
+    def _original_local_fall_intervals(self, prefix, windows):
+        """Den ersten Originalschritt eines eigenen belegten RH-Knicks halten."""
+        result = {}
+        significance = self.p["curve_original_significance"]
+        kinks = dict(prefix.humidity_kinks)
+        for name, pair in windows:
+            kink = kinks.get(name)
+            if (kink is None or kink.window is not pair.humidity
+                    or kink.effective_change >= 0):
+                continue
+            changes = original_window_changes(pair.humidity, tolerance=kink.tolerance)
+            for change in changes or ():
+                if max(change.direction, change.change) >= -significance:
+                    continue
+                result[name] = {
+                    "interval": change, "window": pair.humidity, "kink": kink,
+                    "received_at": prefix.received_at,
+                }
+                break
+        return result
+
     def _original_opening_onset_witnesses(
         self, episode, prefix, windows, *, quantities=(Quantity.HUMIDITY,),
-        transitions=None,
+        transitions=None, onset_intervals=None,
     ):
         """RH-Beginne desselben fortlaufenden Quellenastes kausal zusammenführen."""
         points = {position: (temperature, humidity)
@@ -1013,6 +1034,10 @@ class Detector:
         witnesses = []
         for name, pair in windows:
             position = Position(name)
+            interval = (onset_intervals.get(name)
+                        if onset_intervals is not None else None)
+            if transitions is not None and interval is None:
+                continue
             if transitions is not None and name not in transitions:
                 continue
             bounds = ((transitions[name].start_at, transitions[name].newest_at)
@@ -1037,22 +1062,69 @@ class Detector:
                 )
                 window = getattr(pair, quantity.value)
                 originals = dict(points[position][index])
-                if (candidate is None or status.get("status") != "supported"
-                        or status.get("source") != source
-                        or candidate.context != context
-                        or bounds is not None and not bounds[0] <= candidate.onset_at <= bounds[1]
-                        or not all(originals.get(stamp) == value
-                                   for stamp, value in candidate.original_points)):
+                current_candidate = bool(
+                    candidate is not None and status.get("status") == "supported"
+                    and status.get("source") == source and candidate.context == context
+                    and all(originals.get(stamp) == value
+                            for stamp, value in candidate.original_points)
+                )
+                native = interval
+                if (native is not None and transitions is None and current_candidate
+                        and not native["window"].previous[-1][0] <= candidate.onset_at
+                        <= native["window"].newest_at):
+                    # Nur die wirklich aufgelösten Sekanten lokalisieren
+                    # diesen Knick. Frühere eigene RH-Formbelege bleiben frei.
+                    native = None
+                native_onset = native["interval"].previous[0] if native is not None else None
+                if native is not None and not all(
+                    originals.get(stamp) == value
+                    for stamp, value in native["window"].previous + native["window"].current
+                ):
+                    continue
+                if (not current_candidate
+                        or native_onset is not None and (
+                            candidate.onset_at != native_onset
+                            or candidate.features.onset_at != native_onset
+                        )
+                        or bounds is not None and not bounds[0] <= candidate.onset_at <= bounds[1]):
                     # Das Raster kann bereits spätere Präfixe enthalten.
                     # Sein Fit ist dann kein Zeuge dieser ersten Bindung.
                     start = prefix.received_at - timedelta(seconds=self.p["curve_window_seconds"])
                     support = tuple(point for point in points[position][index]
                                     if start <= point[0] <= prefix.received_at)
-                    features = (self._fit_candidate_form("door_open", support, floor, quantity)
-                                if bounds is None else curve_change(
-                                    support, policy=self.curve_policy, direction=-1,
-                                    onset_not_before=floor, onset_bounds=bounds,
-                                ))
+                    fit_context = position, quantity, source, series["time_basis"], context
+                    features = None
+                    if native_onset is not None and transitions is None:
+                        previous_form = self._fit_candidate_form(
+                            "door_open", support, floor, quantity, fit_context=fit_context,
+                        )
+                        if (self._curve_supports("door_open", previous_form, floor, quantity)
+                                and not native["window"].previous[-1][0] <= previous_form.onset_at
+                                <= native["window"].newest_at):
+                            features = previous_form
+                            native_onset = None
+                    if native_onset is not None:
+                        hinge_order = candidate.features.hinge_order if candidate is not None else 1
+                        fit_key = (
+                            "original_opening_change", fit_context, self.curve_policy,
+                            support, native_onset, -1, floor, bounds, hinge_order,
+                        )
+                        if fit_key not in self._curve_fit_cache:
+                            self._curve_fit_cache[fit_key] = curve_change(
+                                support, policy=self.curve_policy, direction=-1,
+                                onset_at=native_onset, onset_not_before=floor,
+                                onset_bounds=bounds, hinge_order=hinge_order,
+                            )
+                        features = self._curve_fit_cache[fit_key]
+                    elif features is None and bounds is None:
+                        features = self._fit_candidate_form(
+                            "door_open", support, floor, quantity, fit_context=fit_context,
+                        )
+                    elif features is None:
+                        features = curve_change(
+                            support, policy=self.curve_policy, direction=-1,
+                            onset_not_before=floor, onset_bounds=bounds,
+                        )
                     if not self._curve_supports("door_open", features, floor, quantity):
                         continue
                     candidate = _CurveCandidate(
@@ -1090,6 +1162,11 @@ class Detector:
                 localized.append((key, witness))
                 continue
             bounds = (witness.original_points[0][0], witness.features.newest_at)
+            native = next((intervals[key[1].value] for intervals in (
+                opening.get("local_humidity_onset_intervals", {}),
+                opening["humidity_onset_intervals"],
+            ) if key[1].value in intervals
+                and intervals[key[1].value]["interval"].previous[0] == witness.onset_at), None)
             features = curve_change(
                 witness.original_points, policy=self.curve_policy, direction=-1,
                 onset_not_before=witness.context[2], onset_at=witness.onset_at,
@@ -1114,7 +1191,20 @@ class Detector:
                 "newest_original_at": witness.original_points[-1][0],
                 "original_count": len(witness.original_points),
                 "supported": supported,
-                "reason": "own_original_humidity_transition" if supported else "retained_original_witness",
+                "native_interval": ({
+                    "previous": native["interval"].previous,
+                    "current": native["interval"].current,
+                    "direction": native["interval"].direction,
+                    "change": native["interval"].change,
+                    "received_at": native["received_at"],
+                    "window_start_at": native["window"].start_at,
+                    "window_newest_at": native["window"].newest_at,
+                    "background_tolerance": native["kink"].tolerance,
+                    "background_effective_change": native["kink"].effective_change,
+                } if native is not None else None),
+                "reason": ("own_native_original_humidity_transition" if supported and native is not None
+                           else "own_original_humidity_transition" if supported
+                           else "retained_original_witness"),
             }
             localized.append((key, selected))
         trace["door_open_localization"] = diagnostics
@@ -1796,6 +1886,9 @@ class Detector:
                     self._original_temperature_fall_evidence(episode, prefix, trace)
                 candidate = episode.get("original_open") if episode is not None else None
                 if candidate is None and binding:
+                    onset_intervals = self._original_local_fall_intervals(
+                        prefix, contrasts.positions,
+                    )
                     candidate = {
                         "received_at": prefix.received_at,
                         "newest": self._original_newest(contrasts),
@@ -1808,12 +1901,15 @@ class Detector:
                         ),
                         "humidity_fall_onset": contrasts.humidity_fall_onset,
                         "humidity_kinks": humidity_kinks,
+                        "humidity_onset_intervals": onset_intervals,
+                        "humidity_fall_transition_intervals": dict(onset_intervals),
                         "temperature_backgrounds": self._original_temperature_backgrounds(
                             prefix, tuple((name, pair.temperature)
                                           for name, pair in contrasts.positions),
                         ),
                         "onset_witnesses": self._original_opening_onset_witnesses(
                             episode, prefix, contrasts.positions,
+                            onset_intervals=onset_intervals,
                         ),
                         "falling_temperatures": {
                             name for name, pair in contrasts.positions
@@ -1869,31 +1965,61 @@ class Detector:
                     # Ein später reagierender Ast nutzt seine aktuelle Stütze;
                     # der laufende Kandidat und seine Gegenformen bleiben eins.
                     bound = dict(candidate["onset_witnesses"])
-                    if (infusion_guard is not None
-                            and infusion_guard["reason"] == "new_local_temperature_fall"):
-                        candidate["local_fall_humidity_onsets"] = True
-                    transitions = (candidate["temperature_fall_witnesses"]
-                                   if candidate.get("local_fall_humidity_onsets") else None)
-                    if transitions is not None:
-                        # Ein Aufgussabklingen ist kein Beginn des späteren
-                        # Türfalls. Jede RH-Rolle braucht ihren eigenen Knick
-                        # in der Originalstütze des neuen lokalen T-Falls.
-                        bound = {
-                            key: witness for key, witness in bound.items()
-                            if key[1].value in transitions
-                            and transitions[key[1].value].start_at <= witness.onset_at
-                            <= transitions[key[1].value].newest_at
-                        }
-                        candidate["onset_witnesses"] = tuple(bound.items())
+                    onset_intervals = candidate["humidity_onset_intervals"]
+                    current_intervals = self._original_local_fall_intervals(prefix, contrasts.positions)
+                    active_intervals = candidate["humidity_fall_transition_intervals"]
+                    current_kinks = dict(humidity_kinks)
+                    for name, pair in contrasts.positions:
+                        kink = current_kinks.get(name)
+                        if (kink is not None and kink.window is pair.humidity
+                                and kink.effective_change >= 0):
+                            active_intervals.pop(name, None)
+                        elif name in current_intervals:
+                            # Der erste eigene RH-Schritt bleibt auch bei
+                            # fehlender T-Zuordnung derselbe. Unbekannte
+                            # Knickstützen eröffnen keine neue Transition.
+                            active_intervals.setdefault(name, current_intervals[name])
+                    for name, interval in active_intervals.items():
+                        onset_intervals.setdefault(name, interval)
+                    changed = False
                     if len(bound) < len(positions):
                         for key, onset in self._original_opening_onset_witnesses(
-                            episode, prefix, contrasts.positions,
-                            transitions=transitions,
+                            episode, prefix, tuple(
+                                (name, pair) for name, pair in contrasts.positions
+                                if ("door_open", Position(name), Quantity.HUMIDITY) not in bound
+                            ),
+                            onset_intervals=onset_intervals,
                         ):
-                            bound.setdefault(key, onset)
-                        candidate["onset_witnesses"] = tuple(bound.items())
-                        if bound:
-                            candidate["onset_witness_received_at"] = prefix.received_at
+                            if key not in bound:
+                                bound[key] = onset
+                                changed = True
+                    transitions = candidate.get("temperature_fall_witnesses", {})
+                    local_intervals = candidate.setdefault("local_humidity_onset_intervals", {})
+                    for name, interval in active_intervals.items():
+                        if (name in transitions and transitions[name].start_at
+                                <= interval["interval"].previous[0] <= transitions[name].newest_at):
+                            local_intervals[name] = interval
+                    if infusion_guard["new_local_temperature_fall"]["result"]:
+                        # T regt nur die Zuordnung an. Ersetzen darf allein
+                        # ein eigener späterer RH-Knick mit seinem festen
+                        # Originalanker und erneut gestützter eigener Form.
+                        for key, onset in self._original_opening_onset_witnesses(
+                            episode, prefix, tuple(
+                                (name, pair) for name, pair in contrasts.positions
+                                if name in local_intervals and (
+                                    ("door_open", Position(name), Quantity.HUMIDITY) not in bound
+                                    or local_intervals[name]["interval"].previous[0]
+                                    > bound["door_open", Position(name), Quantity.HUMIDITY].onset_at
+                                )
+                            ),
+                            transitions=transitions, onset_intervals=local_intervals,
+                        ):
+                            if key not in bound or onset.onset_at > bound[key].onset_at:
+                                bound[key] = onset
+                                changed = True
+                    candidate["onset_witnesses"] = tuple(bound.items())
+                    if changed:
+                        candidate["onset_witness_received_at"] = prefix.received_at
                 points = {position.value: (temperature, humidity)
                           for position, temperature, humidity in prefix.points}
                 evidence = {}
@@ -1991,6 +2117,25 @@ class Detector:
                     },
                     resolved_joint_fall=_gate(resolved_fall),
                     bound_humidity_onsets=_gate(humidity_onsets),
+                    native_humidity_onset_intervals={
+                        group: {
+                            name: {
+                                "previous": native["interval"].previous,
+                                "current": native["interval"].current,
+                                "received_at": native["received_at"],
+                                "window_start_at": native["window"].start_at,
+                                "window_newest_at": native["window"].newest_at,
+                                "direction": native["interval"].direction,
+                                "change": native["interval"].change,
+                                "background_tolerance": native["kink"].tolerance,
+                                "background_effective_change": native["kink"].effective_change,
+                            } for name, native in intervals.items()
+                        } for group, intervals in (
+                            ("binding", candidate["humidity_onset_intervals"]),
+                            ("transition", candidate["humidity_fall_transition_intervals"]),
+                            ("local", candidate.get("local_humidity_onset_intervals", {})),
+                        )
+                    } if candidate is not None else {},
                 )
                 fall_ends = {
                     name: original_flattening(pair.humidity, pair.temperature,
@@ -2065,18 +2210,59 @@ class Detector:
                     continue
                 forms["infusion_decay_guard"] = infusion_guard
                 # Ein gemischtes K-Fenster kann noch deutlich fallen,
-                # obwohl die jüngsten Originale bereits zurückkehren.
-                # Diese aufgelöste Endkante sperrt nur die Bestätigung;
-                # sie verwirft allein keinen gebundenen Kandidaten.
+                # obwohl die jüngsten Originale bereits zurückkehren. Ein
+                # zuvor vollständig frisch belegter T-Fall gehört weiterhin
+                # derselben Öffnung; deren komplette Gegenformen wurden oben
+                # unabhängig von diesem Rollenbeleg geprüft.
                 temperature_edges = {
                     name: original_edge_change(form.window, form.reference)
                     for (name, quantity), form in (followups or {}).items()
                     if quantity == Quantity.TEMPERATURE
                 }
-                temperature_not_recovering = bool(temperature_edges) and all(
-                    edge is not None and edge.direction <= significance
-                    for edge in temperature_edges.values()
+                temperature_falls = (candidate.setdefault("proven_temperature_falls", {})
+                                     if candidate is not None else {})
+                if prefix.original:
+                    for name, edge in temperature_edges.items():
+                        form = followups[name, Quantity.TEMPERATURE]
+                        proof = evidence.get((name, Quantity.TEMPERATURE))
+                        retained = temperature_falls.get(name)
+                        if (retained is not None and proof is not None
+                                and (retained["evidence"].reference is not proof.reference
+                                     or retained["evidence"].reference_current != proof.reference_current)):
+                            temperature_falls.pop(name)
+                        if (name not in temperature_falls
+                                and form.fresh_current == self.p["curve_original_samples"]
+                                and proof is not None
+                                and len(proof.points) >= self.p["curve_original_samples"]
+                                and proof.direction < -self.p["curve_original_open_contrast"]
+                                and proof.level_loss > self.p["curve_original_open_contrast"]
+                                and edge is not None and edge.direction <= significance):
+                            temperature_falls[name] = {
+                                "received_at": prefix.received_at,
+                                "window": form.window, "evidence": proof, "edge": edge,
+                            }
+                retained_temperature_fall = set(temperature_falls) == set(expected)
+                temperature_not_recovering = retained_temperature_fall or (
+                    bool(temperature_edges) and all(
+                        edge is not None and edge.direction <= significance
+                        for edge in temperature_edges.values()
+                    )
                 )
+                forms["retained_temperature_fall"] = {
+                    "result": retained_temperature_fall,
+                    "positions": {
+                        name: {
+                            "received_at": retained["received_at"],
+                            "start_at": retained["window"].start_at,
+                            "newest_at": retained["window"].newest_at,
+                            "reference_start_at": retained["evidence"].reference.start_at,
+                            "reference_newest_at": retained["evidence"].reference.newest_at,
+                            "direction": retained["evidence"].direction,
+                            "level_loss": retained["evidence"].level_loss,
+                            "edge_direction": retained["edge"].direction,
+                        } for name, retained in temperature_falls.items()
+                    },
+                }
                 forms["current_temperature_recovery"] = {
                     name: _gate(
                         edge.direction > significance if edge is not None else None,
@@ -2263,10 +2449,18 @@ class Detector:
             discrete_braking = self._original_temperature_braking_forms(episode, closing_positions)
             closing_value = contrasts.closing if combined else thermal.closing
             sustained_braking = None
+            warming_close = humidity_braking_close = False
             if bound_braking is not None:
                 branches = [min(bound_braking, thermal.warming_max), thermal.warming_min]
-                if combined:
-                    branches.append(min(bound_braking, contrasts.humidity_recovery))
+                warming_close = max(branches) > significance
+                # RH kann sich auch in der weiter offenen, abkühlenden Kabine
+                # vom lokalen Minimum erholen. Dieser Zweig benötigt deshalb
+                # denselben lokalen T-Formbeleg wie die reine Bremse; eine
+                # weiterhin negative T-Steigung bleibt dabei zulässig.
+                if combined and discrete_braking:
+                    humidity_braking = min(bound_braking, contrasts.humidity_recovery)
+                    branches.append(humidity_braking)
+                    humidity_braking_close = humidity_braking > significance
                 sustained_braking = min(
                     min(form.current_change, form.previous_change)
                     if form.reference.b < -significance * form.reference.e_minus
@@ -2297,7 +2491,7 @@ class Detector:
                 thermal_evaluable=True,
                 local_temperature_braking=_gate(local_braking),
                 closing=closing_value, closing_positions=tuple(p.value for p in closing_positions),
-                humidity_recovery_used=combined,
+                humidity_recovery_used=combined and discrete_braking and bound_braking is not None,
                 closing_confirmation=_gate(
                     closing_value > significance, value=closing_value,
                     operator=">", threshold=significance, unit="contrast",
@@ -2318,6 +2512,8 @@ class Detector:
                     "warming_max": thermal.warming_max,
                     "bound_braking": bound_braking,
                     "humidity_recovery": contrasts.humidity_recovery if combined else None,
+                    "warming_close": warming_close,
+                    "humidity_braking_close": humidity_braking_close,
                     "sustained_braking": sustained_braking,
                     "discrete_braking": discrete_braking,
                 },
@@ -2346,7 +2542,10 @@ class Detector:
             if closing:
                 if discrete_braking and (
                     level_close or candidate is not None and fresh_block
-                    and sustained_braking is not None and sustained_braking > significance
+                    and (
+                        sustained_braking is not None and sustained_braking > significance
+                        or humidity_braking_close and not warming_close
+                    )
                 ):
                     episode["closing_onset_witnesses"] = tuple(
                         (("door_close", position, Quantity.TEMPERATURE),

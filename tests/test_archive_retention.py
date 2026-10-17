@@ -166,7 +166,18 @@ class ArchiveRetentionTests(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(saved["session"]["ended_at"], deadline.due_at.isoformat())
                 self.assertEqual(len(saved["session"]["timeline"]["completed"]), 1)
                 commands = [r for r in saved["records"] if r["kind"] == "manual_heater"]
-                self.assertEqual([r["payload"]["value"] for r in commands], [True, False])
+                choices = [r for r in commands if not r["payload"].get("ends_previous_only")]
+                ends = [r for r in commands if r["payload"].get("ends_previous_only")]
+                self.assertEqual([r["payload"]["value"] for r in choices], [True, False])
+                # The separate end is evidence for the original ON choice,
+                # not a third accepted command with an invented value.
+                self.assertEqual(len(ends), 1)
+                self.assertEqual(ends[0]["payload"]["selection_id"], choices[0]["payload"]["selection_id"])
+                self.assertEqual(ends[0]["received_at"], stopped_at.isoformat())
+                self.assertEqual(ends[0]["payload"]["change"]["at"], stopped_at.isoformat())
+                self.assertIs(ends[0]["payload"]["change"]["previous_value"], True)
+                self.assertEqual(ends[0]["payload"]["change"]["reason"], "selection_replaced")
+                self.assertNotIn("value", ends[0]["payload"])
                 self.assertEqual({r["session_id"] for r in commands}, {identity})
 
     async def test_physical_start_keeps_manual_archive_revisions_in_the_same_recording(self):

@@ -242,12 +242,21 @@ Ein weiterer Feuchtefall nach der Bindung ist dafür nicht erforderlich.
 Die erste vollständig belegte gemeinsame Absenkung wird im Türvorgang
 gehalten. Eine zunehmende Messwertzahl oder längere Wartezeit bestätigt für
 sich kein Ereignis. Quellenwechsel, unterbrochener Anschluss und aufgelöste
-Gegenverläufe bleiben Ausschlussgründe. Eine positiv aufgelöste letzte
-Temperatursekante an einer beteiligten Position sperrt die Bestätigung im
-betreffenden Präfix, auch wenn der längere Originalfit noch fällt. Ihr
-Kontrast ist die letzte Temperaturdifferenz geteilt durch `2ε_Tp`; er muss
-für diese Sperre strikt größer als `s` sein. Die einzelne Endkante verwirft
-den gebundenen Kandidaten nicht.
+Gegenverläufe bleiben Ausschlussgründe. Je T-Rolle wird zusätzlich der erste
+eigene Fallbeleg mit vollständiger neuer `K`-Stütze, mindestens `K` Originalen
+im Fallfit, `a_Tp < −γO Eᵃ_Tp` und `D_Tp > γO` gehalten. Sein Erwerb verlangt
+außerdem eine auswertbare, noch nicht positiv aufgelöste letzte
+Temperatursekante. Deren Kontrast ist die letzte Temperaturdifferenz geteilt
+durch `2ε_Tp`; beim Erwerb darf er höchstens `s` sein. Der Beleg gilt nur für
+dasselbe Referenzobjekt und dieselbe Wahl zwischen dessen Vorgänger- und
+aktuellem Niveau (`reference_current`). Ein Wechsel entwertet ihn. Ohne einen
+solchen erhaltenen Beleg für jede T-Rolle sperrt eine letzte Temperatursekante mit
+Kontrast strikt über `s` die Bestätigung im betreffenden Präfix, auch wenn
+der längere Originalfit noch fällt. Der vollständige gehaltene T-Satz
+überwindet allein diese spätere Endkantensperre; der aktuelle gemeinsame
+RH-/T-Absenkungsbeleg, die eigenen RH-Beginne und die zusätzliche
+Aufgussprüfung bleiben erforderlich. Die
+einzelne Endkante verwirft den gebundenen Kandidaten nicht.
 
 Der zugeordnete Beginn stammt ausschließlich aus den Feuchteknicken der
 gebundenen Messpositionen. Ein gültiger Beginnzeuge darf vor dem ersten
@@ -255,6 +264,28 @@ Bindungsfenster liegen oder erst danach hinzukommen. Sein eigener
 unterstützter Originalfit, Quelle, Epoche und Türkontext bleiben maßgeblich;
 sein jüngstes verwendetes Original liegt spätestens im aktuellen Präfix.
 Der Originalanschluss muss erhalten sein.
+
+Ein aufgelöstes natives Fallintervall kann den bereits beobachteten eigenen
+RH-Abwärtsknick genauer lokalisieren. Die geprüften Intervalle reichen vom
+letzten Vorgängeroriginal durch die aktuellen Originale des eigenen
+RH-Fensters. Für die Sekantensteigung `u_Hpi` zwischen zwei Originalen im
+Abstand `Δt_i` und ihre Grenze `Eⁱ_Hpi = 2ε_Hp/Δt_i` gelten beide Vergleiche:
+
+```text
+u_Hpi/Eⁱ_Hpi < −s
+(u_Hpi − b_Hp)/max(Eⁱ_Hpi + E⁻_Hp, κ_p) < −s
+```
+
+Das erste passende Intervall, sein RH-Fenster und sein Knickhintergrund werden
+gehalten. Bei einem Formbeginn innerhalb dieser Sekantenstütze verlangt die
+Übernahme des linken Originalpunkts als Beginn einen eigenen vollständigen
+Formbeleg an genau diesem Punkt mit seinen unveränderten Originalen.
+Die Sekante allein bestätigt kein Ereignis. Ohne ein aufgelöstes
+Einzelintervall bleibt der eigene aggregierte Originalfit
+verfügbar. Ein unterstützter eigener Formbeginn außerhalb der Sekantenstütze
+vom letzten Vorgängeroriginal bis zum jüngsten Original wird nicht auf das
+Intervall verschoben; das gilt auch bei einem erneuten Fit im aktuellen
+Originalpräfix.
 
 Vor der Aufnahme eines Zeugen und erneut vor der gemeinsamen Bestätigung
 wird geprüft, ob nach seinem Beginn eine vollständig gestützte RH-Erholung
@@ -335,14 +366,30 @@ Positionen. Ohne gebundenen nativen Aufgussbesitzer entfällt diese zusätzliche
 Prüfung. Der fortgeschriebene Anschluss des Türbesitzers bleibt maßgeblich;
 eine alte Aufgussbaseline muss dafür nicht dauerhaft im Originalring liegen.
 Die allgemeinen RH-Zeugen und die gemeinsame Absenkung bleiben in beiden
-Fällen erforderlich.
+Fällen erforderlich. Das reale Abklingen nach einem Aufguss begründet keine
+zusätzliche Sperre oder Mindestwartezeit. Ein Abschluss- oder Abklingstatus
+ist kein Veto; eine belegte Türöffnung kann einen noch aktiven Aufguss beenden.
 
-Wird die Öffnung durch den neuen lokalen T-Fall zugelassen, benötigt jede
-RH-Rolle einen eigenen unterstützten Abwärtsknick in der Originalzeitstütze
-ihres gebundenen lokalen T-Knicks. Die Suche begrenzt die möglichen
-Knickpositionen, erhält aber den vollständigen bisherigen Originalkontext des
-Fits. Ein früherer Zeuge des Aufgussabklingens außerhalb dieser Stütze wird
-ersetzt. Die Temperaturzeit selbst wird nicht als RH-Beginn ausgegeben.
+Ein tatsächlich unterstützter neuer lokaler T-Fall löst die Prüfung eines
+späteren eigenen RH-Abwärtsknicks unabhängig vom priorisierten Diagnosegrund
+der zusätzlichen Aufgussprüfung aus. Sein erstes signifikantes natives
+RH-Intervall wird mit denselben Vergleichen lokalisiert und festgehalten.
+Der erste eigene RH-Schritt wird bereits vor der T-Zuordnung gehalten, auch
+wenn keine passende T-Stütze vorliegt. Erst ein gültiges aktuelles eigenes
+RH-Fenster mit `δ_eff,p ≥ 0` beendet die aktive lokale Transition und ermöglicht
+einen neuen Knickanker; fehlende oder unbekannte Knickstützen eröffnen keine
+neue Transition. Ein bereits zuordenbarer Intervallvorschlag bleibt für
+später eintreffende T-Belege erhalten; ein eigener neuer zulässiger RH-Knick
+kann ihn ablösen. Das bestätigt für sich kein Ereignis.
+Nur der linke Intervallpunkt muss in der Originalzeitstütze des gebundenen
+lokalen T-Knicks liegen; der rechte darf später folgen. Maßgeblich bleibt das
+erste signifikante RH-Intervall vor dieser Zeitprüfung; ein späterer Schritt
+desselben Knicks ersetzt es nicht. Ein neuer eigener vollständiger
+RH-Formbeleg am festen linken Originalpunkt kann einen älteren
+Zeugen des Aufgussrücklaufs ersetzen. Die vollständige eigene Originalstütze
+des Fits bleibt erhalten. Der T-Beleg allein löscht keine legitime frühe
+oder asynchrone RH-Zuordnung; die Temperaturzeit wird nicht als RH-Beginn
+ausgegeben.
 
 Eine vollständige Messposition genügt; bei zwei beteiligten Positionen gelten
 die gemeinsamen Kontraste für beide. Das überträgt keinen empirischen
@@ -395,8 +442,11 @@ gebundener Vorgängersteigung `b⁰_Tp < −s E⁰⁻_Tp`. Der reine Bremszweig
 Steigungsänderungsformen aller verwendeten T-Rollen zugelassen; andernfalls
 entfällt er. Bei nicht aufgelöst fallendem Vorlauf wird für die betreffende
 Rolle `D_fp = −s` eingesetzt. Der Feuchtezweig `min(B_f, U)`
-benötigt sämtliche ursprünglichen Positionen und ihre Quellenabschnitte;
-bei gestörter Feuchte entfällt er.
+benötigt sämtliche ursprünglichen Positionen und ihre Quellenabschnitte
+sowie dieselben gehaltenen lokalen Steigungsänderungsformen aller verwendeten
+T-Rollen. Bei gestörter Feuchte oder fehlender T-Form entfällt er. Ein Anstieg
+der relativen Feuchte über ihr lokales Minimum kann auch bei weiter offener,
+abkühlender Kabine auftreten und trägt deshalb allein keinen Schluss.
 
 Die Bestätigung verlangt an jeder verwendeten Temperaturposition zwei
 vollständig neue disjunkte `K`-Blöcke nach der gemeinsamen Bindung sowie
@@ -422,7 +472,7 @@ diesen Weg nicht erforderlich. Eine Feuchteerholung ist ebenfalls keine
 Bedingung. Ein Wechsel der verwendeten Temperaturpositionsmenge erfordert im
 gemeinsamen Kandidatenweg eine neue Bindung.
 
-Beide reinen Temperaturbremswege benötigen zusätzlich je Rolle eine
+Beide reinen Temperaturbremswege und der Feuchte-Erholungszweig benötigen je Rolle eine
 unterstützte lokale Steigungsänderungsform des bestehenden Kurvenvergleichs
 mit `hinge_order = 1`: Der Vorlauf fällt, die Steigungsänderung ist positiv,
 und der Vergleich mit glatten Verläufen trägt die Änderung. Der Fallbesitzer
@@ -436,8 +486,10 @@ Originalblöcke bleiben eigenständige Bedingungen. Eine negative Nachsteigung
 bleibt zulässig.
 
 Trägt ein solcher reiner Bremsweg die Schlussbestätigung, stammt der frühere
-Beginn aus genau diesen gehaltenen T-Formen. Die bestehende Prüfung des Tür-
-und Betriebskontexts bleibt erhalten. Ein anderer früherer Kurvenkandidat
+Beginn aus genau diesen gehaltenen T-Formen. Das gilt auch, wenn der
+Feuchte-Erholungszweig trägt und die Erwärmungszweige keinen Schluss belegen.
+Die bestehende Prüfung des Tür- und Betriebskontexts bleibt erhalten.
+Ein anderer früherer Kurvenkandidat
 liefert für diesen Schluss keinen Beginn.
 
 ### Anhaltende Gegenform und Originalkorrektur
@@ -869,9 +921,14 @@ den historischen Vergleichswert und die verwendete Streuung getrennt fest.
 Der gemeinsame Originalfallnachweis (`original_fall_evidence`) weist davon
 getrennt das gewählte Referenzniveau, seine Fensterzuordnung sowie die darauf
 bezogene beobachtete und normierte Absenkung aus.
-Die Feuchtebeginnzeugen jeder Position, ihre fortlaufende Astprüfung und die
-zusätzlichen Aufgussreferenz- beziehungsweise lokalen T-Fallprüfungen bleiben
-sichtbar. Die vollständigen neuen Stützblöcke gehören zu den jeweiligen
+Die Feuchtebeginnzeugen jeder Position, gegebenenfalls ihre nativen
+Beginnintervalle mit eigenem RH-Fenster und Knickhintergrund, ihre fortlaufende
+Astprüfung und die zusätzlichen Aufgussreferenz- beziehungsweise lokalen
+T-Fallprüfungen bleiben
+sichtbar. Der gehaltene T-Fall (`retained_temperature_fall`) weist je Rolle
+Empfangs-, Original- und Referenzbezug sowie Richtung, Niveau und damalige
+Endkante aus; die aktuelle Endkante bleibt getrennt sichtbar. Die
+vollständigen neuen Stützblöcke gehören zu den jeweiligen
 Bestätigungsbedingungen. Beim Türschluss werden die lokale Temperaturbremse,
 die gespeicherten Rollenfall- und Bremsfenster, ihre Folgeblöcke und die
 anhaltenden Gegenbelege getrennt geführt. Der jüngste Originalschritt bleibt
