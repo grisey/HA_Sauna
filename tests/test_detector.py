@@ -2253,6 +2253,11 @@ class InfusionLifecycleTests(unittest.TestCase):
         ]
         return points, shapes, rise_two, fall_two
 
+    def _declared_flat_end(self, fall):
+        # The last changing value is at fall. K identical current originals
+        # first bind at fall + K - 1; K later originals establish the end.
+        return fall + (2 * self.side - 1) * self.step
+
     def _kink_originals(self, *, rising, large, extra=0):
         """A curved background, disjoint flat support and a declared linear turn."""
         centered = tuple((index - (self.side - 1) / 2) * self.step
@@ -2318,11 +2323,14 @@ class InfusionLifecycleTests(unittest.TestCase):
         for rising in (False, True):
             for control in (False, True):
                 with self.subTest(rising=rising, factor_zero=control):
-                    onset, _, rows = self._kink_originals(rising=rising, large=False)
+                    onset, end, rows = self._kink_originals(rising=rising, large=False)
                     traces, events = [], []
                     p = detection_parameters(curve_original_kink_factor=0) if control else self.parameters
                     detector = Detector(p, T0, observer=traces.append)
-                    with self._patch_math([], forms=original_contrasts):
+                    # Door confirmation consumes a bound RH onset as well as
+                    # the native fall. Declare only that existing fixture knee.
+                    shapes = [] if rising else [self._shape("open", onset, end)]
+                    with self._patch_math(shapes, forms=original_contrasts):
                         self._feed_kink_originals(detector, rows, events)
                     records = [row["original_infusion" if rising else "original_forms"]
                                for row in traces if row["at"] > self._at(onset)
@@ -2390,9 +2398,10 @@ class InfusionLifecycleTests(unittest.TestCase):
         # consumption by the owner; default suitability needs the real replay.
         for rising in (False, True):
             with self.subTest(rising=rising):
-                onset, _, rows = self._kink_originals(rising=rising, large=True)
+                onset, end, rows = self._kink_originals(rising=rising, large=True)
                 detector, events = Detector(self.parameters, T0), []
-                with self._patch_math([], forms=original_contrasts):
+                shapes = [] if rising else [self._shape("open", onset, end)]
+                with self._patch_math(shapes, forms=original_contrasts):
                     self._feed_kink_originals(detector, rows, events)
                 kind = Kind.INFUSION if rising else Kind.DOOR_OPEN
                 detected = [item for item in events if item.kind == kind]
@@ -2455,17 +2464,19 @@ class InfusionLifecycleTests(unittest.TestCase):
         for rising in (False, True):
             for dense in (False, True):
                 with self.subTest(rising=rising, several_originals_per_tick=dense):
-                    _, _, rows = self._kink_originals(rising=rising, large=True)
+                    onset, _, rows = self._kink_originals(rising=rising, large=True)
                     if dense:
                         # Several distinct T/RH prefixes share one raster cell;
                         # each must keep the background available on its receipt.
+                        onset /= self.side + 2
                         rows = [(second / (self.side + 2), temperature, humidity)
                                 for second, temperature, humidity in rows]
                     end = ceil(rows[-1][0] / self.step) * self.step
+                    shapes = [] if rising else [self._shape("open", onset, end)]
                     results = []
                     for batch in (False, True):
                         detector, events = Detector(self.parameters, T0), []
-                        with self._patch_math([], forms=original_contrasts):
+                        with self._patch_math(shapes, forms=original_contrasts):
                             self._feed_kink_originals(
                                 detector, rows, events, batch=batch, detected_at=self._at(end),
                             )
@@ -3284,9 +3295,15 @@ class InfusionLifecycleTests(unittest.TestCase):
         # Optional onset models are absent. R, Q and every water pair remain
         # native; this isolates the stored original-evidence correction API.
         with self._patch_math([], forms=original_contrasts):
-            self._feed(detector, self.begin + self.side * self.step, points, events)
+            peak = self.begin + self.width
+            self._feed(detector, self.begin, points, events)
+            for second in range(self.begin + self.step, peak + self.step, self.step):
+                self._send(detector, second, self._value(points, second), events)
+                if self._infusions(events):
+                    break
             self.assertEqual(len(self._infusions(events)), 1)
             infusion = self._infusions(events)[0]
+            self.assertLess(infusion.trace_at, self._at(peak))
             episode = detector._infusion_episode
             self.assertEqual(episode["confirmation_basis"], "early_rise")
             component = episode["original_component"]
@@ -3407,10 +3424,11 @@ class InfusionLifecycleTests(unittest.TestCase):
             self.assertEqual(active.onset_at, original.effective_at)
             self.assertEqual(active.confirmed_at, original.detected_at)
             self.assertIsNone(active.level_end_at)
-            self._feed(
-                detector, fall_two + (self.side + 1) * self.step,
-                points, events,
-            )
+            level_end = self._declared_flat_end(fall_two)
+            self._feed(detector, level_end - self.step, points, events)
+            self.assertEqual(detector.infusion_episode.phase, "active")
+            self.assertIsNone(detector.infusion_episode.level_end_at)
+            self._feed(detector, level_end, points, events)
         self.assertEqual(len(self._infusions(events)), 1)
         self.assertEqual(detector._infusion_episode["phase"], "ended")
         self.assertEqual(detector._infusion_episode["end_basis"], "original_background")
@@ -3419,7 +3437,7 @@ class InfusionLifecycleTests(unittest.TestCase):
         self.assertEqual(ended.bound_at, pending.bound_at)
         self.assertIs(ended.confirmed_detection, original)
         self.assertEqual(ended.level_end_at,
-                         self._at(fall_two + self.side * self.step))
+                         self._at(level_end))
         self.assertEqual(ended.end_basis, "original_background")
         self.assertEqual(ended.last_rise_at,
                          tuple((position, self._at(rise_two)) for position in detector.positions))
@@ -3554,7 +3572,7 @@ class InfusionLifecycleTests(unittest.TestCase):
             self.assertTrue(component["fall_confirmed"])
             for _, pair in component["fall_windows"]:
                 self.assertGreater(pair.humidity.current[0][0], self._at(second_peak))
-            self._feed(detector, second_fall + (self.side + 1) * self.step, points, events)
+            self._feed(detector, self._declared_flat_end(second_fall), points, events)
         ended = detector.infusion_episode
         self.assertEqual(ended.phase, "ended")
         self.assertEqual(ended.end_basis, "original_background")
@@ -3571,7 +3589,7 @@ class InfusionLifecycleTests(unittest.TestCase):
         upper_rise = first_fall + max(1, self.side - 2) * self.step
         upper_peak = upper_rise + self.width
         upper_fall = upper_peak + self.width
-        settled = upper_fall + (self.side + 1) * self.step
+        settled = self._declared_flat_end(upper_fall)
         next_rise = settled + (self.side + 3) * self.step
         next_peak = next_rise + self.width
         next_fall = next_peak + self.width
@@ -3655,6 +3673,9 @@ class InfusionLifecycleTests(unittest.TestCase):
                                           if item.kind == "infusion"]), 1)
                     # The upper tail must also settle; a fresh shared original
                     # background is required before the episode can end.
+                    self._feed(detector, settled - self.step, points, events, controller=controller)
+                    self.assertEqual(detector.infusion_episode.phase, "active")
+                    self.assertIsNone(detector.infusion_episode.level_end_at)
                     self._feed(detector, settled, points, events, controller=controller)
                     episode = detector._infusion_episode
                     self.assertEqual(episode["phase"], "ended")
@@ -3728,7 +3749,7 @@ class InfusionLifecycleTests(unittest.TestCase):
         for separated in (True, False):
             with self.subTest(binding_support_after_level_end=separated):
                 points, native_shapes, next_rise, next_fall = self._scenario(merged=False)
-                ended = self.begin + 2 * self.width + self.side * self.step
+                ended = self._declared_flat_end(self.begin + 2 * self.width)
                 if not separated:
                     next_rise = ended + self.step
                     next_peak = next_rise + self.width
@@ -3862,7 +3883,14 @@ class InfusionLifecycleTests(unittest.TestCase):
             self._send(detector, first + 4 * self.step, self.level, events)
             self.assertEqual(detector._infusion_episode["phase"], "active")
             self.assertIsNone(detector._infusion_episode["level_end_at"])
-            self._send(detector, first + 5 * self.step, self.level, events)
+            rebound = first + 4 * self.step
+            self.assertEqual(detector._infusion_episode["original_background"],
+                             (("upper", self._at(rebound)),))
+            for index in range(1, self.side):
+                self._send(detector, rebound + index * self.step, self.level, events)
+                self.assertEqual(detector.infusion_episode.phase, "active")
+                self.assertIsNone(detector.infusion_episode.level_end_at)
+            self._send(detector, rebound + self.side * self.step, self.level, events)
         self.assertEqual(detector._infusion_episode["phase"], "ended")
         self.assertEqual(len(self._infusions(events)), 1)
 
@@ -3870,7 +3898,10 @@ class InfusionLifecycleTests(unittest.TestCase):
         first_peak = self.begin + self.width
         gap = first_peak + (self.side + 2) * self.step
         recovered = gap + self.step
-        next_rise = recovered + self.p["infusion_window_seconds"] + (self.side + 3) * self.step
+        # Source replacement starts an empty original history: 2K values
+        # supply the first complete pair of windows, then K fresh RH values.
+        settled = recovered + (3 * self.side - 1) * self.step
+        next_rise = settled + self.p["infusion_window_seconds"] + self.step
         next_peak = next_rise + self.width
         next_fall = next_peak + self.width
         points = [
@@ -3890,7 +3921,11 @@ class InfusionLifecycleTests(unittest.TestCase):
             self._send(detector, gap, None, events)
             self.assertEqual(detector._infusion_episode["phase"], "active")
             self.assertTrue(detector._infusion_episode["interrupted"])
-            self._feed(detector, next_rise - self.step, points, events,
+            self._feed(detector, settled - self.step, points, events,
+                       humidity_source="sensor.recovered_humidity")
+            self.assertEqual(detector.infusion_episode.phase, "active")
+            self.assertIsNone(detector.infusion_episode.level_end_at)
+            self._feed(detector, settled, points, events,
                        humidity_source="sensor.recovered_humidity")
             self.assertEqual(detector._infusion_episode["phase"], "ended")
             self.assertEqual(detector._infusion_episode["end_basis"], "original_background")
@@ -4172,7 +4207,7 @@ class InfusionLifecycleTests(unittest.TestCase):
 
     def test_corrected_ended_tail_keeps_the_next_peak_in_the_same_infusion(self):
         points, shapes, _, _ = self._scenario(merged=False)
-        ended = self.begin + 2 * self.width + self.side * self.step
+        ended = self._declared_flat_end(self.begin + 2 * self.width)
         next_rise = ended + 3 * self.step
         next_peak = next_rise + self.width
         shapes = shapes[:2] + [self._shape("rise", next_rise, next_peak)]
@@ -4214,7 +4249,7 @@ class InfusionLifecycleTests(unittest.TestCase):
         first_peak = self.begin + self.width
         confirmed = first_peak + (self.side + 1) * self.step
         received_at = self._at(confirmed + self.step)
-        ended = self.begin + 2 * self.width + self.side * self.step
+        ended = self._declared_flat_end(self.begin + 2 * self.width)
         late_onset = ended - self.step
         second_peak = native_shapes[2]["until"]
         legacy_shapes = native_shapes[:2]
