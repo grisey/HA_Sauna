@@ -530,9 +530,12 @@ Eine Lücke oder ein Quellenbruch entwertet die davon abhängigen Nachweise.
 Eine echte T-Korrektur bei gleichem Originalzeitpunkt entwertet auch dann den
 gemeinsamen Schließkandidaten, wenn der korrigierte letzte Wert außerhalb der
 früheren Referenzfenster liegt. Berührt die Korrektur ein Original des
-gehaltenen Fall-, Brems- oder Erholungsfensters oder der gehaltenen
-Steigungsänderungsform, entfällt die Fall-/Bremsstütze dieser Rolle.
-Unberührte historische Belege bleiben erhalten. Die Korrektur liefert keine
+gehaltenen Fall-, Brems- oder Erholungsfensters, entfällt die davon abhängige
+Fall-/Bremsstütze dieser Rolle. Betrifft sie ausschließlich einen späteren
+Stützpunkt der gehaltenen Steigungsänderungsform, wird dessen Wert an der
+unveränderten Originalzeit berichtigt. Formbeginn und unberührte
+Referenzfenster bleiben erhalten; die Form muss mit späteren eigenen
+Originalen erneut bestätigt werden. Die Korrektur liefert keine
 neue Frische: Jeder Schlussweg benötigt an der korrigierten T-Rolle zwei
 vollständige neue Originalblöcke strikt nach dem korrigierten Zeitstempel.
 Neue Originale anderer Rollen ersetzen diese Stütze nicht.

@@ -455,12 +455,23 @@ class Detector:
                     if any(
                         stamp == point_at for window in references
                         for stamp, _ in window.previous + window.current
-                    ) or (
-                        form is not None and any(
-                            stamp == point_at for stamp, _ in form.original_points
-                        )
                     ):
                         falls.pop(position, None)
+                    elif form is not None and any(
+                        stamp == point_at for stamp, _ in form.original_points
+                    ):
+                        # Nur die tatsächlich berührte Formstütze berichtigen.
+                        # Ihre spätere Fortsetzung muss erneut tragen; die
+                        # unberührten Fall-/Bremsfenster bleiben dieselben.
+                        fall["braking_form"] = replace(
+                            form,
+                            original_points=tuple(
+                                (stamp, measurement.value if stamp == point_at else value)
+                                for stamp, value in form.original_points
+                            ),
+                            fresh_newest_at=None,
+                            fresh_observed_at=None,
+                        )
                     # Eine unberührte historische Form bleibt derselbe Beleg.
                     # Ihr aktueller Anschluss braucht nach der Korrektur aber
                     # wieder zwei eigene neue Originalblöcke dieser T-Rolle.

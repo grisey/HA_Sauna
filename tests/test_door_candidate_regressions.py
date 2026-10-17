@@ -115,6 +115,8 @@ class DoorCandidateRegressionTests(unittest.TestCase):
         local_fall_calls = []
         pending_local_calls = []
         infusion_guard_calls = []
+        native_onset_calls = []
+        native_call_sequence = 0
         access_sequence = 0
         native_local_fall_intervals = detector._original_local_fall_intervals
         native_infusion_guard = detector._original_opening_infusion_guard
@@ -156,6 +158,324 @@ class DoorCandidateRegressionTests(unittest.TestCase):
                     "onset_at": witness.onset_at, "candidate_id": witness.candidate_id,
                 } for key, witness in candidate.get("onset_witnesses", ())),
             }
+
+        def points_diagnostic(points):
+            # Do not consume an iterator supplied by another scoped observer.
+            if not isinstance(points, (tuple, list)):
+                return {"sequence_type": type(points).__name__}
+            return {
+                "count": len(points), "first": points[0] if points else None,
+                "newest": points[-1] if points else None,
+            }
+
+        def input_comparison(expected, originals):
+            # A read-only input snapshot comparison, not an observed native gate.
+            present = dict(originals)
+            mismatch_count, first_mismatch = 0, None
+            for stamp, value in expected:
+                if present.get(stamp) != value:
+                    mismatch_count += 1
+                    if first_mismatch is None:
+                        first_mismatch = {
+                            "at": stamp, "expected": value, "prefix": present.get(stamp),
+                            "present": stamp in present,
+                        }
+            return {
+                "compared_count": len(expected), "mismatch_count": mismatch_count,
+                "matches": not mismatch_count, "first_mismatch": first_mismatch,
+            }
+
+        def compact_window(window):
+            return {
+                "start_at": window.start_at, "newest_at": window.newest_at,
+                "previous": points_diagnostic(window.previous),
+                "current": points_diagnostic(window.current),
+            }
+
+        def native_interval_diagnostic(native):
+            return ({
+                "received_at": native["received_at"],
+                "interval": {key: getattr(native["interval"], key) for key in (
+                    "previous", "current", "direction", "change",
+                )},
+                "window": compact_window(native["window"]),
+            } if native is not None else None)
+
+        def feature_diagnostic(features):
+            if features is None:
+                return None
+            result = {
+                key: getattr(features, key) for key in (
+                    "evidence", "onset_at", "newest_at", "score_gain", "hinge_order",
+                    "slope_before", "slope_after", "slope_change", "curvature_change",
+                    "before_count", "after_count", "noise_scale", "smooth_score",
+                    "change_score", "smooth_model",
+                ) if hasattr(features, key)
+            }
+            trend = getattr(features, "after_trend", None)
+            result["after_trend"] = ({
+                key: getattr(trend, key) for key in (
+                    "direction", "slope", "noise_scale", "score_gain",
+                    "level_score", "trend_score", "exact_constant", "exact_linear",
+                )
+            } if trend is not None else None)
+            return result
+
+        def witness_diagnostic(witness):
+            return ({
+                "candidate_id": witness.candidate_id, "onset_at": witness.onset_at,
+                "first_observed_at": witness.first_observed_at,
+                "context": witness.context,
+                "originals": points_diagnostic(witness.original_points),
+                "features": feature_diagnostic(witness.features),
+            } if witness is not None else None)
+
+        def fit_context_diagnostic(context):
+            if context is None:
+                return None
+            if (len(context) not in (5, 6) or not isinstance(context[0], Position)
+                    or not isinstance(context[1], Quantity)):
+                return {"context": context}
+            return {
+                "position": context[0].value, "quantity": context[1].value,
+                "source": context[2], "time_basis": context[3],
+            } | ({"candidate_context": context[4]} if len(context) == 5 else {
+                "epochs": context[4], "series_version": context[5],
+            })
+
+        def time_support_diagnostic(support):
+            return ({
+                key: getattr(support, key) for key in (
+                    "start_at", "newest_at", "count", "next_gap_seconds",
+                )
+            } | {"spans": points_diagnostic(support.spans)} if support is not None else None)
+
+        def argument(args, kwargs, index, name, default=None):
+            return args[index] if len(args) > index else kwargs.get(name, default)
+
+        def next_native_call_id():
+            nonlocal native_call_sequence
+            native_call_sequence += 1
+            return native_call_sequence
+
+        native_onset_witnesses = detector._original_opening_onset_witnesses
+
+        def observe_onset_witnesses(*args, **kwargs):
+            episode = argument(args, kwargs, 0, "episode")
+            prefix = argument(args, kwargs, 1, "prefix")
+            windows = argument(args, kwargs, 2, "windows")
+            quantities = kwargs.get("quantities", (Quantity.HUMIDITY,))
+            transitions = kwargs.get("transitions")
+            onset_intervals = kwargs.get("onset_intervals")
+            # Bind the current chain at each real helper entry. All inner
+            # patches restore that chain even when a native call raises.
+            native_fit = detector._fit_candidate_form
+            native_change = detector_core.curve_change
+            native_supports = detector._curve_supports
+            native_connected = detector._original_opening_humidity_connected
+            native_contiguous = detector._original_contiguous
+            entry_cache = dict(detector._curve_fit_cache)
+            call_id = next_native_call_id()
+            stages, feature_results = [], []
+            stack = [call_id]
+            points = {position: (temperature, humidity)
+                      for position, temperature, humidity in prefix.points}
+            epochs = dict(prefix.context)
+            opening = episode.get("original_open") or {}
+
+            def role_diagnostic(name, pair, index, quantity):
+                position = Position(name)
+                key = ("door_open", position, quantity)
+                candidate = detector._curve_candidates.get(key)
+                native = onset_intervals.get(name) if onset_intervals is not None else None
+                originals = points[position][index]
+                return {
+                    "window": compact_window(getattr(pair, quantity.value)),
+                    "originals": points_diagnostic(originals),
+                    "expected_source": episode["sources"][position][index],
+                    "prefix_epoch": epochs[position][index],
+                    "series": {key: detector._curve_series[position, quantity][key]
+                               for key in ("source", "epoch", "time_basis", "started_at")},
+                    "status": {name: detector._curve_status.get(key, {}).get(name)
+                               for name in ("status", "source")},
+                    "current_candidate": witness_diagnostic(candidate),
+                    "candidate_input_comparison": (input_comparison(
+                        candidate.original_points, originals,
+                    ) if candidate is not None else None),
+                    "native_input_comparison": (input_comparison(
+                        native["window"].previous + native["window"].current, originals,
+                    ) if native is not None else None),
+                }
+
+            call = {
+                "call_id": call_id, "received_at": prefix.received_at,
+                "access_sequence": access_sequence, "original": prefix.original,
+                "quantities": tuple(quantity.value for quantity in quantities),
+                "transitions_supplied": transitions is not None,
+                "onset_intervals_supplied": onset_intervals is not None,
+                "door_context": detector._curve_door_context,
+                "closed_since": detector._curve_closed_since,
+                "opening_candidate_received_at": opening.get("received_at"),
+                "held_onsets": tuple({
+                    "position": key[1].value, "quantity": key[2].value,
+                    "candidate_id": witness.candidate_id, "onset_at": witness.onset_at,
+                } for key, witness in opening.get("onset_witnesses", ())),
+                "positions": {
+                    name: {
+                        "native_interval": native_interval_diagnostic(
+                            onset_intervals.get(name) if onset_intervals is not None else None,
+                        ),
+                        "transition": (compact_window(transitions[name])
+                                       if transitions is not None and name in transitions else None),
+                        "roles": {
+                            quantity.value: role_diagnostic(name, pair, index, quantity)
+                            for index, quantity in enumerate((Quantity.TEMPERATURE, Quantity.HUMIDITY))
+                            if quantity in quantities
+                        },
+                    } for name, pair in windows
+                },
+                "stages": stages,
+            }
+            native_onset_calls.append(call)
+
+            def native_request_matches(key, floor, quantity):
+                if (not isinstance(key[1], tuple) or len(key[1]) != 5
+                        or not isinstance(key[1][0], Position)):
+                    return False
+                position, role, source, time_basis, context = key[1]
+                if role != quantity or position.value not in call["positions"]:
+                    return False
+                index = 0 if quantity == Quantity.TEMPERATURE else 1
+                expected_context = (
+                    (detector._curve_door_context, detector._curve_closed_since),
+                    (epochs[position][index],), floor, None,
+                )
+                if (source != episode["sources"][position][index]
+                        or time_basis != detector._curve_series[position, quantity]["time_basis"]
+                        or context != expected_context or key[5] != -1 or key[6] != floor):
+                    return False
+                start = prefix.received_at - timedelta(seconds=detector.p["curve_window_seconds"])
+                if key[3] != tuple(point for point in points[position][index]
+                                   if start <= point[0] <= prefix.received_at):
+                    return False
+                if key[0] == "curve_change":
+                    return key[4] is None and key[-1] == 1
+                native = (onset_intervals.get(position.value)
+                          if onset_intervals is not None else None)
+                bounds = ((transitions[position.value].start_at,
+                           transitions[position.value].newest_at)
+                          if transitions is not None and position.value in transitions else None)
+                candidate = detector._curve_candidates.get(("door_open", position, quantity))
+                hinge = candidate.features.hinge_order if candidate is not None else 1
+                return bool(native is not None and key[4] == native["interval"].previous[0]
+                            and key[7] == bounds and key[-1] == hinge)
+
+            def matching_cache_snapshots(features, floor, quantity):
+                # Matching entries do not observe a cache-key read. None has
+                # no fit identity, so scope its snapshots to native request inputs.
+                return tuple({
+                    "kind": key[0], "fit_context": fit_context_diagnostic(key[1]),
+                    "originals": points_diagnostic(key[3]), "onset_at": key[4],
+                    "direction": key[5], "floor": key[6],
+                    "bounds": key[7] if key[0] == "original_opening_change" else None,
+                    "hinge_order": key[-1],
+                    "key_present_at_entry": key in entry_cache,
+                    "same_feature_at_entry": (entry_cache.get(key) is features
+                                              if features is not None else None),
+                    "match_basis": ("identical_feature_object" if features is not None else
+                                    "same_null_result_for_native_request_inputs"),
+                } for key, value in detector._curve_fit_cache.items()
+                    if key[0] in ("curve_change", "original_opening_change") and value is features
+                    and (features is not None or native_request_matches(key, floor, quantity)))
+
+            def run_observed(method, native, arguments, options, inputs, *, feature_result=False):
+                stage = {
+                    "call_id": next_native_call_id(), "parent_call_id": stack[-1],
+                    "method": method, **inputs,
+                }
+                stages.append(stage)
+                stack.append(stage["call_id"])
+                try:
+                    result = native(*arguments, **options)
+                finally:
+                    stack.pop()
+                stage["result"] = feature_diagnostic(result) if feature_result else result
+                if feature_result:
+                    feature_results.append((result, stage["call_id"]))
+                return result
+
+            def observe_fit(*arguments, **options):
+                return run_observed("_fit_candidate_form", native_fit, arguments, options, {
+                    "route": argument(arguments, options, 0, "route"),
+                    "originals": points_diagnostic(argument(arguments, options, 1, "points")),
+                    "floor": argument(arguments, options, 2, "floor"),
+                    "quantity": argument(arguments, options, 3, "quantity").value,
+                    "candidate": witness_diagnostic(options.get("candidate")),
+                    "fit_context": fit_context_diagnostic(options.get("fit_context")),
+                }, feature_result=True)
+
+            def observe_change(*arguments, **options):
+                return run_observed("curve_change", native_change, arguments, options, {
+                    "originals": points_diagnostic(argument(arguments, options, 0, "samples")),
+                    "options": {key: options.get(key, 1 if key == "hinge_order" else None)
+                                for key in ("onset_at", "direction", "onset_not_before",
+                                            "onset_bounds", "hinge_order")},
+                }, feature_result=True)
+
+            def observe_supports(*arguments, **options):
+                features = argument(arguments, options, 1, "features")
+                quantity = argument(arguments, options, 3, "quantity")
+                floor = argument(arguments, options, 2, "floor")
+                return run_observed("_curve_supports", native_supports, arguments, options, {
+                    "route": argument(arguments, options, 0, "route"),
+                    "features": feature_diagnostic(features),
+                    "floor": floor,
+                    "quantity": quantity.value if quantity is not None else None,
+                    "feature_result_call_ids": tuple(
+                        stage_id for result, stage_id in feature_results
+                        if features is not None and result is features
+                    ),
+                    "matching_cache_snapshots": matching_cache_snapshots(features, floor, quantity),
+                })
+
+            def observe_connected(*arguments, **options):
+                return run_observed(
+                    "_original_opening_humidity_connected", native_connected, arguments, options, {
+                        "originals": points_diagnostic(argument(arguments, options, 0, "samples")),
+                        "witness": witness_diagnostic(argument(arguments, options, 1, "witness")),
+                        "window": compact_window(argument(arguments, options, 2, "window")),
+                        "position": argument(arguments, options, 3, "name"),
+                        "time_support": time_support_diagnostic(
+                            argument(arguments, options, 4, "time_support"),
+                        ),
+                    },
+                )
+
+            def observe_contiguous(*arguments, **options):
+                actual_prefix = argument(arguments, options, 0, "prefix")
+                references = argument(arguments, options, 1, "references")
+                return run_observed("_original_contiguous", native_contiguous, arguments, options, {
+                    "received_at": actual_prefix.received_at,
+                    "references": (tuple({
+                        "position": name, "quantity": quantity.value, "newest_at": stamp,
+                    } for name, quantity, stamp in references)
+                        if isinstance(references, (tuple, list)) else
+                        {"sequence_type": type(references).__name__}),
+                })
+
+            with (
+                patch.object(detector, "_fit_candidate_form", observe_fit),
+                patch.object(detector_core, "curve_change", observe_change),
+                patch.object(detector, "_curve_supports", observe_supports),
+                patch.object(detector, "_original_opening_humidity_connected", observe_connected),
+                patch.object(detector, "_original_contiguous", observe_contiguous),
+            ):
+                result = native_onset_witnesses(*args, **kwargs)
+            call["returned_witnesses"] = tuple({
+                "position": key[1].value, "quantity": key[2].value,
+                "witness": witness_diagnostic(witness),
+            } for key, witness in result)
+            return result
 
         def finish_local_calls(phase, received_at, current_candidate=None):
             current_candidate = (current_candidate if current_candidate is not None else
@@ -251,6 +571,9 @@ class DoorCandidateRegressionTests(unittest.TestCase):
         guard_patch = patch.object(detector, "_original_opening_infusion_guard", observe_infusion_guard)
         guard_patch.start()
         self.addCleanup(guard_patch.stop)
+        onset_patch = patch.object(detector, "_original_opening_onset_witnesses", observe_onset_witnesses)
+        onset_patch.start()
+        self.addCleanup(onset_patch.stop)
 
         def observe(row):
             nonlocal access_sequence
@@ -267,7 +590,8 @@ class DoorCandidateRegressionTests(unittest.TestCase):
                     "native_humidity_onset_intervals", "binding_onsets", "binding_support",
                     "onset_witness_received_at", "complete_fresh_original_block",
                     "contiguous_candidate_support", "lower_level", "lowering_witness_received_at",
-                    "resolved_joint_fall", "bound_humidity_onsets", "infusion_decay_guard",
+                    "resolved_joint_fall", "bound_humidity_onsets", "original_fall_evidence",
+                    "infusion_decay_guard",
                     "humidity_branch_counterform", "humidity_fall_ended", "humidity_recovery",
                     "temperature_fall_counterform", "temperature_recovery_counterform",
                     "temperature_fall_ended", "opening_confirmation", "confirmation_support",
@@ -367,6 +691,11 @@ class DoorCandidateRegressionTests(unittest.TestCase):
             "openings": [{"effective_at": event.effective_at, "trace_at": event.trace_at}
                          for event in opens],
             "confirmed_rows": confirmed_rows,
+        }, default=str, sort_keys=True))
+        print("Recorded exit native onset execution: " + json.dumps({
+            "cache_observation": "Matching snapshots only; cache-key reads are not observed.",
+            "calls": [call for call in native_onset_calls
+                      if min(exit_start, context_start) <= call["received_at"] <= trace_end],
         }, default=str, sort_keys=True))
         self.assertEqual(len(opens), 1)
         self.assertGreaterEqual(opens[0].effective_at, exit_at, msg=json.dumps(

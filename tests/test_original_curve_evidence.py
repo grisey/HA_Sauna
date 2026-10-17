@@ -3117,11 +3117,14 @@ class OriginalCurveFollowupTests(unittest.TestCase):
         self.assertTrue(
             all(
                 stamp != corrected_at
-                for window in (fall["window"], fall.get("recovery_window"))
+                for window in (
+                    fall["window"], fall.get("braking_window"), fall.get("recovery_window"),
+                )
                 if window is not None
                 for stamp, _ in window.previous + window.current
             )
         )
+        form_before = fall.get("braking_form")
         received = self._at(detector.index + 1)
         value = (
             original.value - 2.6 * self.values["curve_original_noise_temperature_upper"]
@@ -3143,6 +3146,17 @@ class OriginalCurveFollowupTests(unittest.TestCase):
         )
         self.assertEqual(after[:-1], before[:-1])
         self.assertEqual(after[-1], (corrected_at, value))
+        retained = detector.door_episode["original_temperature_falls"][Position.UPPER]
+        self.assertIs(retained["window"], fall["window"])
+        if form_before is not None and any(
+            stamp == corrected_at for stamp, _ in form_before.original_points
+        ):
+            corrected = retained["braking_form"]
+            self.assertEqual(corrected.candidate_id, form_before.candidate_id)
+            self.assertEqual(corrected.onset_at, form_before.onset_at)
+            self.assertEqual(dict(corrected.original_points)[corrected_at], value)
+            self.assertIsNone(corrected.fresh_newest_at)
+            self.assertIsNone(corrected.fresh_observed_at)
         thermal = original_window(
             after,
             at=received,
