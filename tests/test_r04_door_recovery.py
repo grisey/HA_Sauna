@@ -26,6 +26,34 @@ from custom_components.ha_sauna.core.timeline import Kind
 
 
 class R04DoorRecoveryTests(unittest.TestCase):
+    def _print_native_closures(self, observed, case):
+        """Report executed close gates; do not fit or reassess any input."""
+        for row in observed:
+            if Kind.DOOR_CLOSE not in row["signals"]:
+                continue
+            form = row.get("original_forms", {})
+            print("R04 executed native close diagnosis: " + json.dumps({
+                "case": case,
+                "at": row["at"],
+                "original_forms": {
+                    key: form.get(key) for key in (
+                        "received_at", "candidate_received_at", "confirmation_received_at",
+                        "candidate_originals", "confirmation_originals",
+                        "temperature_close_terms", "temperature_braking_witnesses",
+                        "discrete_temperature_braking", "sustained_temperature_braking",
+                        "complete_fresh_original_block", "temperature_counterform",
+                        "followup", "temperature_level_followup",
+                    )
+                },
+                "fall_support": row.get("temperature_fall_support"),
+                "attribution": [{
+                    key: item.get(key) for key in (
+                        "status", "onset_at", "confirmed_at", "attribution_basis",
+                        "consumed_candidate_ids", "witnesses",
+                    )
+                } for item in row["curve_proposals"].get("door_close", ())],
+            }, default=str, sort_keys=True))
+
     def _assert_native_close_fallback(self, row, event, inputs, values, floor):
         """No earlier attribution still requires the complete native close proof."""
         self.assertEqual(event.kind, Kind.DOOR_CLOSE)
@@ -123,10 +151,22 @@ class R04DoorRecoveryTests(unittest.TestCase):
         )
         self.assertEqual(event.effective_at, min(item["onset_at"] for item in witnesses))
         for witness in witnesses:
-            source = (
-                row["original_forms"]["bound_sources"][witness["position"]][1 if native_open else 0]
-                if native_open or native_close else witness["source"]
-            )
+            if native_open:
+                source = row["original_forms"]["bound_sources"][witness["position"]][1]
+            elif native_close:
+                # Native close attribution names original support, while only
+                # opening diagnostics expose bound_sources. These recordings
+                # must have one actual source throughout each close witness.
+                sources = {
+                    item.source for item in inputs
+                    if item.position.value == witness["position"]
+                    and item.quantity.value == witness["quantity"]
+                    and witness["first_at"] <= item.received_at <= witness["newest_at"]
+                }
+                self.assertEqual(len(sources), 1)
+                source = next(iter(sources))
+            else:
+                source = witness["source"]
             originals = {
                 item.received_at for item in inputs
                 if item.position.value == witness["position"]
@@ -395,6 +435,7 @@ class R04DoorRecoveryTests(unittest.TestCase):
                 in (at(12, 59, 45), at(12, 59, 55), at(13, 8, 20), at(13, 8, 30))
             ],
         }
+        self._print_native_closures(observed, "first_two_doors")
         print(
             f"R04 two-door slice: samples={cursor} ticks={len(observed)} "
             f"wall_seconds={perf_counter() - started:.6f} events={diagnostics['events']!r}",
@@ -1739,6 +1780,7 @@ class R04DoorRecoveryTests(unittest.TestCase):
                     ],
                 }
                 diagnostic = repr(diagnostics)
+                self._print_native_closures(observed, name)
                 print(
                     f"R04 {name}: samples={cursor} ticks={len(observed)} "
                     f"wall_seconds={perf_counter() - started:.6f} "

@@ -1,5 +1,6 @@
 """Synthetische Zeitreihen prüfen Kausalität, Ausfall und Quellenwechsel."""
 import asyncio
+import json
 import unittest
 from collections import Counter
 from contextlib import contextmanager
@@ -78,6 +79,23 @@ def trace(second):
     if second < 280:
         return 68.25, 44
     return 68.25 - .05 * (second - 280), 44 - .06 * (second - 280)
+
+
+def opening_diagnostic(detector, row):
+    """Freeze native references at their actual observation for failure reports."""
+    candidate = (detector.door_episode or {}).get("original_open") or {}
+    return deepcopy({
+        "at": row["at"], "signals": row.get("signals", ()),
+        "original_forms": row.get("original_forms"),
+        "opening_proposals": row.get("curve_proposals", {}).get("door_open"),
+        "onset_witnesses": candidate.get("onset_witnesses", ()),
+        "local_temperature_references": {
+            name: {"previous": window.previous, "current": window.current,
+                   "previous_mean": window.mean_minus, "current_mean": window.mean,
+                   "newest_at": window.newest_at}
+            for name, window in candidate.get("temperature_fall_witnesses", {}).items()
+        },
+    })
 
 
 class DetectorTests(unittest.TestCase):
@@ -420,7 +438,8 @@ class DetectorTests(unittest.TestCase):
 
             outputs = []
             runtime.device = Device()
-            await runtime.start_archive(path, "outlier-entry")
+            # This diagnostic robustness case explicitly records full traces.
+            await runtime.start_archive(path, "outlier-entry", trace_profile="analysis")
             runtime.controller.begin_session("outlier", T0)
             runtime._sync_detector()
             for second in range(18):
@@ -814,6 +833,8 @@ class DetectorTests(unittest.TestCase):
         temperature_loss, humidity_loss = (initial_t - fallen_t) / 4, (initial_h - fallen_h) / 4
         # A real short RH-led opening retains the already positive long weak
         # window; it must not create a new moisture onset after closure.
+        observed = []
+        detector.observer = lambda row: observed.append(opening_diagnostic(detector, row))
         cold, dry = 80 - temperature_loss, humidity - humidity_loss
         events += self._segment(detector, width, (80, humidity), (cold, dry), heating=True)
         recovered_humidity = dry + .02 * width
@@ -822,7 +843,8 @@ class DetectorTests(unittest.TestCase):
         events += self._segment(detector, duration, (80, recovered_humidity),
                                 (80, recovered_humidity + .02 * duration), heating=True)
         doors = [item for item in events if item.kind in (Kind.DOOR_OPEN, Kind.DOOR_CLOSE)]
-        self.assertEqual([item.kind for item in doors], [Kind.DOOR_OPEN, Kind.DOOR_CLOSE])
+        self.assertEqual([item.kind for item in doors], [Kind.DOOR_OPEN, Kind.DOOR_CLOSE],
+                         msg=json.dumps(observed, default=str, sort_keys=True))
         self.assertLess(moisture_onset, doors[0].effective_at)
         self.assertEqual(detector.moisture_states["weak"]["onset_at"], moisture_onset)
         self.assertNotIn(Kind.PERSON_WEAK, [item.kind for item in events])

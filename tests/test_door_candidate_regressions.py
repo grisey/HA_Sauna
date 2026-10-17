@@ -95,6 +95,13 @@ class DoorCandidateRegressionTests(unittest.TestCase):
         self.assertEqual(hashlib.sha256(payload).hexdigest(), manifest["source_curves_sha256"])
         curves = json.loads(payload)["curves"]
         detector, events = fixture._detector(), []
+        observed_openings = []
+
+        def observe(row):
+            if Kind.DOOR_OPEN in row.get("signals", ()):
+                observed_openings.append(detector_fixtures.opening_diagnostic(detector, row))
+
+        detector.observer = observe
         elapsed = 0
         exit_at = None
         for name in ("occupied_infusion", "exit"):
@@ -119,7 +126,9 @@ class DoorCandidateRegressionTests(unittest.TestCase):
                 exit_at = ORIGIN + timedelta(seconds=elapsed)
         opens = [event for event in events if event.kind == Kind.DOOR_OPEN]
         self.assertEqual(len(opens), 1)
-        self.assertGreaterEqual(opens[0].effective_at, exit_at)
+        self.assertGreaterEqual(opens[0].effective_at, exit_at, msg=json.dumps(
+            observed_openings, default=str, sort_keys=True,
+        ))
         self.assertLessEqual(opens[0].effective_at, opens[0].trace_at)
 
     def test_real_door_fall_after_infusion_may_remain_above_preinfusion_temperature(self):

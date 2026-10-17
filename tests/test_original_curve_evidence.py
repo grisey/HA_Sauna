@@ -2228,6 +2228,67 @@ class OriginalFollowupArithmeticTests(unittest.TestCase):
                     original_decline_evidence(points + points[-1:], reference)
                 )
 
+    def test_decline_current_reference_keeps_fixed_support_and_default(self):
+        reference_values = (12, 10, 8, 6, 6, 6)
+        reference = self._window(reference_values)
+        self.assertIsNotNone(reference)
+        unchanged_reference = replace(reference)
+        support = tuple(
+            (ORIGIN + timedelta(seconds=2 * index), value)
+            for index, value in enumerate(reference_values)
+        )
+        points = tuple(
+            (ORIGIN + timedelta(seconds=second), value)
+            for second, value in ((12, 5), (14, 1))
+        )
+        samples = support + points
+        default = original_decline_evidence(samples, reference)
+        previous = original_decline_evidence(
+            samples, reference, reference_current=False
+        )
+        current = original_decline_evidence(
+            samples, reference, reference_current=True
+        )
+        self.assertEqual(default, previous)
+        # Means are (12+10+8)/3=10, (6+6+6)/3=6 and (5+1)/2=3.
+        # With level scale 2, the losses are (10-3)/2=3.5 and (6-3)/2=1.5.
+        # The same suffix has slope (1-5)/(14-12)=-2 and error 2*1/2=1.
+        self.assertEqual(reference.mean_minus, 10)
+        self.assertEqual(reference.mean, 6)
+        for proof, selected, expected_level, expected_loss in (
+            (default, False, 10, 3.5),
+            (previous, False, 10, 3.5),
+            (current, True, 6, 1.5),
+        ):
+            with self.subTest(reference_current=selected):
+                self.assertIsNotNone(proof)
+                self.assertIs(proof.reference, reference)
+                self.assertEqual(proof.points, points)
+                self.assertEqual(proof.mean, 3)
+                self.assertIs(proof.reference_current, selected)
+                self.assertEqual(proof.reference_level, expected_level)
+                self.assertEqual(proof.level_loss, expected_loss)
+                self.assertEqual(proof.direction, -2)
+                self.assertEqual(proof.slope, -2)
+                self.assertEqual(proof.slope_error, 1)
+                self.assertEqual(proof.level_center, 0)
+                self.assertEqual(proof.level_scale, 2)
+        self.assertEqual(
+            current, replace(default, level_loss=1.5, reference_current=True)
+        )
+        for invalid in (None, 0, 1, "current"):
+            with self.subTest(invalid_reference_current=invalid):
+                self.assertIsNone(
+                    original_decline_evidence(
+                        samples, reference, reference_current=invalid
+                    )
+                )
+        self.assertEqual(original_decline_evidence(samples, reference), default)
+        self.assertEqual(reference, unchanged_reference)
+        self.assertEqual(
+            (reference.previous, reference.current), (support[:3], support[3:])
+        )
+
     def test_both_humidity_forms_accept_resolved_slowing_without_plateau(self):
         values = Parameters({}).values
         temperature = self._window((30, 26, 22, 18, 14, 10))

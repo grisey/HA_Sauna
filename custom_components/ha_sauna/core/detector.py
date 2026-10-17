@@ -904,6 +904,7 @@ class Detector:
         # dauerhaft im Ring gespeicherten Zeitanker.
         contiguous = self._original_contiguous(prefix, candidate["continuity"])
         temperature_witnesses = candidate.setdefault("temperature_fall_witnesses", {})
+        temperature_backgrounds = candidate.setdefault("temperature_fall_backgrounds", {})
         current_backgrounds = dict(self._original_temperature_backgrounds(
             prefix, tuple((name, window) for name, window in prefix.temperatures
                           if Position(name) in positions),
@@ -917,6 +918,7 @@ class Detector:
                     and background is not None and background.effective_change < 0
                     and window.v < -significance * window.e):
                 temperature_witnesses[name] = window
+                temperature_backgrounds[name] = background
             reference = temperature_witnesses.get(name)
             form = original_followup(window, reference) if window and reference else None
             supported = bool(
@@ -1898,12 +1900,24 @@ class Detector:
                 if candidate is not None and followups:
                     backgrounds = dict(candidate["humidity_kinks"])
                     temperature_backgrounds = dict(candidate["temperature_backgrounds"])
+                    local_falls = infusion_guard["new_local_temperature_fall"]["positions"]
                     for name, pair in candidate["windows"]:
                         for index, quantity in enumerate((Quantity.TEMPERATURE, Quantity.HUMIDITY)):
+                            local_temperature = bool(
+                                quantity == Quantity.TEMPERATURE
+                                and local_falls.get(name, {}).get("supported", False)
+                            )
+                            reference = (candidate["temperature_fall_witnesses"][name]
+                                         if local_temperature else getattr(pair, quantity.value))
+                            background = (backgrounds[name] if quantity == Quantity.HUMIDITY
+                                          else candidate["temperature_fall_backgrounds"][name]
+                                          if local_temperature else temperature_backgrounds[name])
+                            # Der eigene lokale T-Knick hält sein aktuelles
+                            # K-Niveau. Sein früherer Vorlauf kann noch zum
+                            # Aufgussanstieg gehören und liegt dann zu niedrig.
                             evidence[name, quantity] = original_decline_evidence(
-                                points[name][index], getattr(pair, quantity.value),
-                                background=(backgrounds[name] if quantity == Quantity.HUMIDITY
-                                            else temperature_backgrounds[name]),
+                                points[name][index], reference, background=background,
+                                reference_current=local_temperature,
                             )
                 resolved_fall = fresh_block and bool(evidence) and all(
                     proof is not None
@@ -1955,9 +1969,11 @@ class Detector:
                             "newest_at": proof.points[-1][0] if proof else None,
                             "original_count": len(proof.points) if proof else 0,
                             "direction_required": quantity == Quantity.TEMPERATURE,
+                            "reference_level": proof.reference_level if proof else None,
+                            "reference_current": proof.reference_current if proof else None,
                             "level_background_center": proof.level_center if proof else None,
                             "level_difference_scale": proof.level_scale if proof else None,
-                            "observed_level_loss": (proof.reference.mean_minus - proof.mean
+                            "observed_level_loss": (proof.reference_level - proof.mean
                                                     if proof else None),
                             "direction": _gate(
                                 proof.direction < -self.p["curve_original_open_contrast"]
@@ -2297,6 +2313,30 @@ class Detector:
                 new_temperature_level=_gate(level_close),
                 sustained_temperature_braking=_gate(level_close),
                 discrete_temperature_braking=_gate(discrete_braking),
+                temperature_close_terms={
+                    "warming_min": thermal.warming_min,
+                    "warming_max": thermal.warming_max,
+                    "bound_braking": bound_braking,
+                    "humidity_recovery": contrasts.humidity_recovery if combined else None,
+                    "sustained_braking": sustained_braking,
+                    "discrete_braking": discrete_braking,
+                },
+                temperature_braking_witnesses={
+                    position.value: {
+                        "candidate_id": witness.candidate_id,
+                        "onset_at": witness.onset_at,
+                        "first_observed_at": witness.first_observed_at,
+                        "newest_at": witness.features.newest_at,
+                        "hinge_order": witness.features.hinge_order,
+                        "slope_before": witness.features.slope_before,
+                        "slope_after": witness.features.slope_after,
+                        "score_gain": witness.features.score_gain,
+                    }
+                    for position in closing_positions
+                    if (witness := episode.get("original_temperature_falls", {}).get(
+                        position, {},
+                    ).get("braking_form")) is not None
+                },
                 fresh_temperature_support_after_correction=_gate(correction_fresh),
                 temperature_level_followup=self._original_followup_trace(fall_followups),
                 candidate_received_at=candidate["received_at"] if candidate is not None else None,

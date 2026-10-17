@@ -202,9 +202,12 @@ L_Xp = (X̄⁰⁻_p − X̄_p)/(2ε_Xp)
 L    = min_p min(L_Tp, L_Hp)
 ```
 
-Der Bestätigungsnachweis verwendet je Rolle sämtliche verfügbaren Originale
-strikt nach dem jüngsten Original ihrer Bindungsreferenz. Auf dieser mit
-neuen Werten wachsenden Stützmenge werden die Steigung `a_Xp`, ihre Grenze
+Im allgemeinen Originalfall verwendet der Bestätigungsnachweis je Rolle
+sämtliche verfügbaren Originale strikt nach dem jüngsten Original ihrer
+Bindungsreferenz und deren festes Vorgängermittel `X̄⁰⁻_p`. Die unten
+beschriebene aktuell unterstützte lokale T-Fallreferenz bildet die Ausnahme
+für die jeweilige T-Rolle. Auf der mit neuen Werten wachsenden Stützmenge
+werden die Steigung `a_Xp`, ihre Grenze
 `Eᵃ_Xp` und der Mittelwert `X̄ᵃ_p` mit den beschriebenen OLS-Regeln bestimmt.
 Zwei verschiedene Zeitpunkte sind das mathematische Minimum für diese
 Gerade; zusätzlich gilt die vollständige neue `K`-Stütze jeder Rolle.
@@ -306,6 +309,25 @@ v_Tp/E_Tp  < −γO
 (b_Tp − bᵈ_Tp)/(E⁻_Tp + Eᵈ⁻_Tp) < −s
 (v_Tp − bᵈ_Tp)/(E_Tp + Eᵈ⁻_Tp)  < −s
 ```
+
+Mit erhaltenem Originalanschluss, den beiden vollständig neuen Blöcken und
+allen vier erfüllten Vergleichen ist der lokale T-Fall der jeweiligen Rolle
+im aktuellen Präfix unterstützt. Genau dann verwendet der gemeinsame
+T-Absenkungsbeweis für diese Rolle den Mittelwert `T̄ᵈ_p` des aktuellen
+`K`-Fensters der gehaltenen T-Knickreferenz und den genau bei deren Bindung
+gespeicherten Hintergrund:
+
+```text
+D_Tp = (T̄ᵈ_p − T̄ᵃ_p − mᵈ_Tp)/Sᵈ_Tp
+```
+
+`mᵈ_Tp` und `Sᵈ_Tp` folgen derselben Hintergrundnormierung wie oben. Der
+ausgewertete Originalsuffix beginnt strikt nach dem jüngsten Original dieser
+T-Knickreferenz; Richtung und Schwellen bleiben unverändert. Die Auswahl gilt
+je Rolle auch dann, wenn die zusätzliche Prüfung insgesamt über die
+Aufgussreferenzen erfüllt wird. Ohne aktuell unterstützten lokalen T-Fall
+bleibt das Vorgängermittel der ursprünglichen Bindungsreferenz maßgeblich;
+die RH-Referenz und die bisherigen Frischebedingungen ändern sich nicht.
 
 Die Prüfung verlangt somit entweder die unabhängigen Niveauverluste gegen
 alle gebundenen Aufgussreferenzen oder den neuen lokalen T-Fall an allen
@@ -844,6 +866,9 @@ seit der Bindung hinzugekommenen Originale mit ihrem ersten und letzten
 Zeitpunkt, ihrer Anzahl sowie den Richtungs- und Niveaukontrasten getrennt
 ausgewiesen. Temperatur und Feuchte halten die beobachtete Absenkung,
 den historischen Vergleichswert und die verwendete Streuung getrennt fest.
+Der gemeinsame Originalfallnachweis (`original_fall_evidence`) weist davon
+getrennt das gewählte Referenzniveau, seine Fensterzuordnung sowie die darauf
+bezogene beobachtete und normierte Absenkung aus.
 Die Feuchtebeginnzeugen jeder Position, ihre fortlaufende Astprüfung und die
 zusätzlichen Aufgussreferenz- beziehungsweise lokalen T-Fallprüfungen bleiben
 sichtbar. Die vollständigen neuen Stützblöcke gehören zu den jeweiligen

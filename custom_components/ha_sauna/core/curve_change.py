@@ -316,7 +316,7 @@ class OriginalEdgeChange:
 
 @dataclass(frozen=True)
 class OriginalDeclineEvidence:
-    """Fall and level loss on the available originals after a fixed binding."""
+    """Fall and level loss after a fixed binding at its selected observed mean."""
 
     points: tuple[tuple[datetime, float], ...]
     reference: OriginalWindowFeatures
@@ -327,6 +327,14 @@ class OriginalDeclineEvidence:
     level_loss: float
     level_center: float
     level_scale: float
+    reference_current: bool = False
+
+    @property
+    def reference_level(self) -> float:
+        """The fixed observed mean actually used for the level loss."""
+        return (
+            self.reference.mean if self.reference_current else self.reference.mean_minus
+        )
 
 
 @dataclass(frozen=True)
@@ -990,12 +998,16 @@ def original_decline_evidence(
     reference: OriginalWindowFeatures,
     *,
     background: OriginalKinkTolerance | None = None,
+    reference_current: bool = False,
 ) -> OriginalDeclineEvidence | None:
     """Assess the growing original suffix, without waiting for full K blocks.
 
     At least two distinct times are required to determine a slope. The slope
     bound follows from the supplied value-deviation scale and actual time
-    support; elapsed time and sample count alone never confirm a fall. The
+    support; elapsed time and sample count alone never confirm a fall.
+    The fixed level is the reference's previous mean by default; explicitly
+    selecting reference_current uses its current mean without changing its
+    originals, time support or the suffix strictly after reference.newest_at.
     The optional bound background supplies ordinary absolute changes between
     adjacent K-original means. Their median is subtracted from the observed
     loss; their normal-consistent MAD enlarges the catalogue difference scale.
@@ -1005,7 +1017,9 @@ def original_decline_evidence(
     caller.
     """
     try:
-        if not _original_window_valid(reference):
+        if not isinstance(reference_current, bool) or not _original_window_valid(
+            reference
+        ):
             return None
         points = tuple(
             (stamp, value) for stamp, value in samples if stamp > reference.newest_at
@@ -1044,7 +1058,8 @@ def original_decline_evidence(
                 )
             elif background.status != "insufficient":
                 return None
-        level_loss = (reference.mean_minus - mean - level_center) / level_scale
+        reference_level = reference.mean if reference_current else reference.mean_minus
+        level_loss = (reference_level - mean - level_center) / level_scale
         if not all(_profile_number(value) for value in (direction, level_loss)):
             return None
         return OriginalDeclineEvidence(
@@ -1057,6 +1072,7 @@ def original_decline_evidence(
             level_loss,
             level_center,
             level_scale,
+            reference_current,
         )
     except (AttributeError, IndexError, OverflowError, TypeError, ValueError):
         return None
