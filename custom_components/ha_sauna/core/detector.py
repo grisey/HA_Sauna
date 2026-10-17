@@ -1133,6 +1133,13 @@ class Detector:
                     for stamp, value in native["window"].previous + native["window"].current
                 ):
                     continue
+                current_native_branch = bool(
+                    current_candidate and transitions is not None and native is not None
+                    and bounds[0] <= candidate.onset_at <= bounds[1]
+                    and native["window"].previous[-1][0] <= candidate.onset_at
+                    <= native["window"].newest_at
+                    and candidate.features.onset_at == candidate.onset_at
+                )
                 if (not current_candidate
                         or native_onset is not None and (
                             candidate.onset_at != native_onset
@@ -1177,14 +1184,17 @@ class Detector:
                             support, policy=self.curve_policy, direction=-1,
                             onset_not_before=floor, onset_bounds=bounds,
                         )
-                    if not self._curve_supports("door_open", features, floor, quantity):
+                    if self._curve_supports("door_open", features, floor, quantity):
+                        candidate = _CurveCandidate(
+                            f"door_open:{position.value}:{quantity.value}:{source}:"
+                            f"{context[1]}:{features.onset_at.isoformat()}:{prefix.received_at.isoformat()}",
+                            features.onset_at, prefix.received_at, context, features,
+                            support, features.newest_at,
+                        )
+                    elif not current_native_branch:
                         continue
-                    candidate = _CurveCandidate(
-                        f"door_open:{position.value}:{quantity.value}:{source}:"
-                        f"{context[1]}:{features.onset_at.isoformat()}:{prefix.received_at.isoformat()}",
-                        features.onset_at, prefix.received_at, context, features,
-                        support, features.newest_at,
-                    )
+                    # Eine abgelehnte Sekantenlokalisierung widerlegt keine
+                    # aktuelle eigene Form innerhalb desselben belegten Astes.
                 # Die erste gemeinsame Bindung ist kein Zeitfenster für den
                 # physischen RH-Beginn jeder Rolle. Der eigene unterstützte
                 # Originalfit darf früher oder erst später einsetzen; Quelle,

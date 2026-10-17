@@ -281,7 +281,8 @@ Knicktoleranz unabhängig vom effektiven Gesamtknick.
 Das erste passende Intervall, sein RH-Fenster und sein Knickhintergrund werden
 gehalten. Bei einem Formbeginn innerhalb dieser Sekantenstütze verlangt die
 Übernahme des linken Originalpunkts als Beginn einen eigenen vollständigen
-Formbeleg an genau diesem Punkt mit seinen unveränderten Originalen.
+Formbeleg an genau diesem Punkt mit seinen unveränderten Originalen. Dieser
+Fit bleibt bei der späteren Zuordnung zu einem lokalen T-Fall die erste Wahl.
 Die Sekante allein bestätigt kein Ereignis. Ohne ein aufgelöstes
 Einzelintervall bleibt der eigene aggregierte Originalfit
 verfügbar. Ein unterstützter eigener Formbeginn außerhalb der Sekantenstütze
@@ -388,10 +389,22 @@ Nur der linke Intervallpunkt muss in der Originalzeitstütze des gebundenen
 lokalen T-Knicks liegen; der rechte darf später folgen. Maßgeblich bleibt das
 erste signifikante RH-Intervall vor dieser Zeitprüfung; ein späterer Schritt
 desselben Knicks ersetzt es nicht. Ein neuer eigener vollständiger
-RH-Formbeleg am festen linken Originalpunkt kann einen älteren
-Zeugen des Aufgussrücklaufs ersetzen. Die vollständige eigene Originalstütze
-des Fits bleibt erhalten. Der T-Beleg allein löscht keine legitime frühe
-oder asynchrone RH-Zuordnung; die Temperaturzeit wird nicht als RH-Beginn
+RH-Formbeleg am festen linken Originalpunkt hat bei dieser späteren
+Zuordnung Vorrang. Ist allein dieser Formfit mathematisch nicht unterstützt,
+kann innerhalb desselben unabhängigen lokalen T-Fallasts ein bereits
+aktueller unterstützter eigener RH-Formbeleg mit seinem unveränderten Beginn
+und seinen unveränderten Formmerkmalen übernommen werden. Quelle, Epoche,
+Türkontext und sämtliche eigenen Originale müssen zum aktuellen Präfix passen. Der
+gehaltene Beginn und der Beginn des Formfits müssen übereinstimmen und sowohl
+in der Originalzeitstütze des gebundenen lokalen T-Knicks als auch in der
+nativen RH-Stütze vom letzten Vorgängeroriginal bis zum jüngsten Original
+liegen. Frische, fortlaufender Originalanschluss und der Ausschluss einer
+vollständig gestützten RH-Erholung bleiben erforderlich. Die spätere
+Zuordnung ersetzt einen älteren Zeugen des Aufgussrücklaufs nur durch einen
+eigenen späteren RH-Beginn. Die vollständige eigene Originalstütze des Fits
+bleibt erhalten. Ein Formbeleg mit anderem Beginn rechtfertigt keine Ausgabe
+des linken Intervallpunkts als Beginn. Der T-Beleg allein löscht keine legitime
+frühe oder asynchrone RH-Zuordnung; die Temperaturzeit wird nicht als RH-Beginn
 ausgegeben.
 
 Eine vollständige Messposition genügt; bei zwei beteiligten Positionen gelten

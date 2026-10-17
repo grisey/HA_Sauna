@@ -1269,17 +1269,6 @@ class CurveCandidateLifecycleTests(unittest.TestCase):
         self.assertLess(close.detected_at, confirmation)
         self.assertEqual(close.trace_at, close.detected_at)
         self.assertLess(openings[0].trace_at, close.trace_at)
-        row = next(item for item in observed if item["at"] == close.trace_at)
-        print("R04 lifecycle physical attribution diagnosis: " + json.dumps({
-            "reference": reference, "effective_at": close.effective_at,
-            "confirmed_at": close.trace_at,
-            "reference_difference_seconds": (close.effective_at - reference).total_seconds(),
-            "original_forms": {key: row.get("original_forms", {}).get(key) for key in (
-                "candidate_received_at", "confirmation_received_at", "temperature_close_terms",
-                "temperature_braking_witnesses", "temperature_level_followup",
-            )},
-            "attribution": row["curve_proposals"].get("door_close", ()),
-        }, default=str, sort_keys=True))
         self.assertLessEqual(abs((close.effective_at - reference).total_seconds()), 10)
         consumed = [
             proposal
