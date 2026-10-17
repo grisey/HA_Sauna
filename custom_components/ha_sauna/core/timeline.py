@@ -333,7 +333,7 @@ def project_gang_intervals(timeline: Timeline | Mapping, *, door_cycles=None) ->
     retracted = {get(gang, "gang_id") for gang in get(timeline, "retracted", ()) or ()}
     active = get(timeline, "active")
     result = []
-    for gang in (*get(timeline, "completed", ()), *([active] if active else [])):
+    for gang in (*(get(timeline, "completed", ()) or ()), *([active] if active else [])):
         identity = get(gang, "gang_id")
         if not identity or identity in retracted:
             continue
@@ -354,6 +354,32 @@ def project_gang_intervals(timeline: Timeline | Mapping, *, door_cycles=None) ->
             "complete": start is not None and end is not None,
         })
     return result
+
+
+def active_gang_duration_seconds(timeline, now, *, intervals=None) -> float | None:
+    """Anzeigedauer des aktiven Gangs ab seinem belegten Türschluss.
+
+    Die bereits projizierten Intervalle können vom Verbraucher mitgegeben
+    werden. Ohne zugeordneten Beginn bleibt die Dauer unbekannt; die
+    Steuerungsdauer im Gangobjekt wird dadurch nicht geändert.
+    """
+    active = _projection_value(timeline, "active")
+    if active is None:
+        return None
+    at = _projection_time(now)
+    detected = _projection_time(_projection_value(active, "detected_at"))
+    if at is None or detected is None or at < detected:
+        return None
+    projected = project_gang_intervals(timeline) if intervals is None else intervals
+    identity = _projection_value(active, "gang_id")
+    span = next((item for item in projected if item["gang_id"] == identity), None)
+    if span is None:
+        return None
+    start, end = _projection_time(span["started_at"]), _projection_time(span["ended_at"])
+    if start is None:
+        return None
+    end = min(at, end) if end is not None else at
+    return (end - start).total_seconds() if end >= start else None
 
 
 def project_door_cycles(timeline: Timeline | Mapping) -> list[dict]:

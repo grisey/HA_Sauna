@@ -78,6 +78,29 @@ class LocalPreviewTests(unittest.TestCase):
         self.assertEqual(end["payload"]["change"]["reason"], "selection_replaced")
         self.assertEqual(end["received_at"], self.preview.now.isoformat())
 
+    def test_active_gang_duration_consumes_the_same_physical_entry_as_the_archive(self):
+        from custom_components.ha_sauna.core.timeline import Event, Kind
+
+        self.preview.reset("bereit")
+        start = self.preview.now
+        session_id = self.preview.c.session.session_id
+        for name, kind, effective, detected in (
+            ("entry", Kind.DOOR_OPEN, 1, 1),
+            ("entry-close", Kind.DOOR_CLOSE, 2, 3),
+            ("infusion", Kind.INFUSION, 4, 4),
+        ):
+            self.preview.c.process(Event(
+                name, session_id, kind, start + timedelta(seconds=effective),
+                start + timedelta(seconds=detected),
+            ))
+        self.preview.now = start + timedelta(seconds=7)
+        state = self.preview.state()
+        self.assertEqual(state["gang_duration_seconds"], 5)
+        span = state["session"]["gang_intervals"][0]
+        self.assertEqual(span["started_at"], (start + timedelta(seconds=2)).isoformat())
+        self.assertIsNone(span["ended_at"])
+        self.assertFalse(span["complete"])
+
     def test_user_state_removes_diagnostics_and_retains_control_permissions(self):
         self.preview.action("/simulate", {"action":"role", "value":"user"})
         state = self.preview.state()

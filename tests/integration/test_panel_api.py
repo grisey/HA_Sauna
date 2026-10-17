@@ -1015,6 +1015,7 @@ class PanelAPITests(unittest.IsolatedAsyncioTestCase):
         await door("entry-open", Kind.DOOR_OPEN, 10)
         await presence("on", 20)
         await door("entry-close", Kind.DOOR_CLOSE, 30)
+        clock[0] = start + timedelta(milliseconds=35)
 
         def expected_cycles(gang_id, *, completed=False):
             pairs = [("entry", 10, 30)] + ([("exit", 40, 60)] if completed else [])
@@ -1052,6 +1053,12 @@ class PanelAPITests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(active["recognition_event_id"], recognition["event_id"])
             self.assertEqual(active["session_id"], session_id)
             self.assertEqual(state["session"]["door_cycles"], expected_cycles(active["gang_id"]))
+            self.assertAlmostEqual(state["gang_duration_seconds"], 0.005)
+            from custom_components.ha_sauna.sensor import SaunaPhase
+            self.assertEqual(
+                SaunaPhase(self.entry).extra_state_attributes["gang_duration_seconds"],
+                state["gang_duration_seconds"],
+            )
             async with admin.get(url + "/state") as response:
                 administrative = await response.json()
             snapshot = PanelSnapshot.from_result(administrative)

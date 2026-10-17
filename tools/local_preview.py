@@ -47,7 +47,7 @@ from custom_components.ha_sauna.core.parameters import (
 )
 from custom_components.ha_sauna.core.phases import project_session
 from custom_components.ha_sauna.core.presence import binary_presence
-from custom_components.ha_sauna.core.timeline import Event, Kind, project_door_cycles, project_gang_intervals
+from custom_components.ha_sauna.core.timeline import Event, Kind, active_gang_duration_seconds, project_door_cycles, project_gang_intervals
 from custom_components.ha_sauna.history_humidity import project_absolute_humidity
 from custom_components.ha_sauna.presentation import (
     decision_message,
@@ -507,7 +507,6 @@ class Preview:
             "regulation_temperature_position":"upper", "measurement_positions":["upper"],
             "gang_count":session.timeline.gang_count if session else 0,
             "gang_confirmation":active.confirmation if active else None,
-            "gang_duration_seconds":active.elapsed_seconds(self.now) if active else None,
             "decision":c.last_decision, "measurements":measurements, "faults":{}, "protection":[],
             "inhibits":[], "detection_channels":[], "detector_trace":None,
             "manual_controls":{"heater":{"manual":c.heater_override,
@@ -545,6 +544,9 @@ class Preview:
                 )
                 if energy_delta is not None:
                     serialized_session["energy"]["interval_delta"] = energy_delta
+        result["gang_duration_seconds"] = active_gang_duration_seconds(
+            session.timeline, self.now, intervals=result["session"]["gang_intervals"],
+        ) if session else None
         result["permissions"]["admin"] = self.admin
         result = result if self.admin else public_state(result)
         result["preview_feedback"] = {"following": self.follow_feedback, "on": c.contactor}

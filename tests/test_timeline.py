@@ -15,7 +15,7 @@ from custom_components.ha_sauna.archive import Archive, plain
 from custom_components.ha_sauna.core.presence import binary_presence
 from custom_components.ha_sauna.core.timeline import (
     Confirmation, Door, Event, Kind, Timeline, UnresolvedTransition, apply,
-    project_door_cycles, project_gang_intervals,
+    active_gang_duration_seconds, project_door_cycles, project_gang_intervals,
 )
 
 
@@ -487,6 +487,23 @@ class TimelineTests(unittest.TestCase):
 
 
 class DoorCycleProjectionTests(unittest.IsolatedAsyncioTestCase):
+    async def test_active_duration_uses_physical_entry_and_keeps_unknown_source_unknown(self):
+        c = controller()
+        for source in (
+            event("entry", Kind.DOOR_OPEN, 1),
+            Event("entry-close", "s", Kind.DOOR_CLOSE, at(2), at(3), at(3), at(3)),
+            event("infusion", Kind.INFUSION, 4),
+        ):
+            c.process(source)
+        before = plain(c.session.timeline)
+        spans = project_gang_intervals(c.session.timeline)
+        self.assertEqual(active_gang_duration_seconds(c.session.timeline, at(7)), 5)
+        self.assertEqual(active_gang_duration_seconds(before, at(7), intervals=spans), 5)
+        self.assertIsNone(active_gang_duration_seconds(before, at(1)))
+        self.assertIsNone(active_gang_duration_seconds({**before, "processed": []}, at(7)))
+        self.assertIsNone(active_gang_duration_seconds({**before, "active": None}, at(7)))
+        self.assertEqual(plain(c.session.timeline), before)
+
     async def test_statistical_gang_bounds_use_owned_door_times_without_retiming_control(self):
         from custom_components.ha_sauna.core.phases import project_session
 

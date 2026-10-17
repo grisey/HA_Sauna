@@ -53,6 +53,9 @@ Heizung und Ofenkühlung verwenden weiterhin den damals bekannten Zustand.
 Fehlende Türquellen oder Betrieb-AUS belegen keinen physischen Austrittszeitpunkt.
 Bei unvollständigen Altarchiven bleibt der bisher aufgezeichnete Abschnitt
 als unvollständige Zeitzuordnung erhalten.
+Die angezeigte Dauer eines aktiven Gangs verwendet denselben belegten
+Eintritt. Fehlt dessen Türschluss, bleibt die Dauer unbekannt. API,
+Vorschau und Zustandsentität verwenden dafür dieselbe Ableitung.
 
 ## Gang durch qualifizierte Belegungszustände bestätigen
 
