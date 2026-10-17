@@ -17,7 +17,7 @@ from .notification_options import CONF_NOTIFICATION_ASSIGNMENTS
 from .core.display import phase_timer, start_availability
 from .core.parameters import EDITABLE_DEFINITIONS, LIVE_TEMPERATURE_KEYS, ParameterError
 from .core.power import watts
-from .core.timeline import project_door_cycles, project_gang_intervals
+from .core.timeline import active_gang_duration_seconds, project_door_cycles, project_gang_intervals
 from .environment import environment_snapshot
 from .log import LEVELS
 from .runtime import Configuration
@@ -279,9 +279,6 @@ class StateView(HomeAssistantView):
                         "measurement_positions": configuration_model.measurement_positions,
                         "gang_count": session.timeline.gang_count if session else 0,
                         "gang_confirmation": active.confirmation if active else None,
-                        "gang_duration_seconds": active.elapsed_seconds(now)
-                        if active
-                        else None,
                         "decision": controller.last_decision,
                         "measurements": list(device.measurements.values())
                         if device
@@ -335,6 +332,9 @@ class StateView(HomeAssistantView):
                     )
                     if energy_delta is not None:
                         serialized_session["energy"]["interval_delta"] = energy_delta
+            result["gang_duration_seconds"] = active_gang_duration_seconds(
+                session.timeline, now, intervals=result["session"]["gang_intervals"],
+            ) if session else None
             if not request["hass_user"].is_admin:
                 result = public_state(result)
             return self.json(result)

@@ -9,6 +9,7 @@ from homeassistant.helpers.entity import EntityCategory
 
 from .core.models import Position
 from .core.moisture import current_absolute_humidity
+from .core.timeline import active_gang_duration_seconds
 from .entity import SaunaEntity
 
 async def async_setup_entry(hass, entry, async_add_entities):
@@ -150,7 +151,8 @@ class SaunaPhase(SaunaEntity, SensorEntity):
             ]
             if self.runtime.detector
             else [],
-            "gang_duration_seconds": active.elapsed_seconds(self.runtime._clock())
-            if active
+            "gang_duration_seconds": active_gang_duration_seconds(
+                session.timeline, self.runtime._clock(),
+            ) if session
             else None,
         }
