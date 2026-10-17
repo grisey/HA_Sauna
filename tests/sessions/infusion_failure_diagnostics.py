@@ -17,7 +17,8 @@ def capture(runtime):
     def window(item):
         return {
             name: getattr(item, name)
-            for name in ("start_at", "newest_at", "b", "v", "e_minus", "e")
+            for name in ("start_at", "newest_at", "b", "v", "e_minus", "e",
+                         "scale", "r_minus", "r")
         }
 
     def component(item):
@@ -27,10 +28,31 @@ def capture(runtime):
             "received_at", "newest", "context", "continuity", "onsets",
             "assignment", "continuing", "strong", "qualified", "fall_confirmed",
             "rise_ended", "fall_ready", "branch_floors", "connection_unknown",
+            "rise_score", "threshold", "humidity_rise_onset", "support_end", "water_end",
         )}
         result["binding_windows"] = {
             name: {"temperature": window(pair.temperature), "humidity": window(pair.humidity)}
             for name, pair in item.get("binding_windows", ())
+        }
+        result["humidity_kinks"] = {
+            name: {key: getattr(kink, key) for key in (
+                "status", "factor", "history_count", "history_start", "history_end",
+                "history_scale", "catalog_scale", "used_scale", "tolerance", "delta",
+                "effective_change",
+            )} if kink is not None else None
+            for name, kink in item.get("humidity_kinks", ())
+        }
+        result["decision_windows"] = {
+            key: {name: {"temperature": window(pair.temperature),
+                         "humidity": window(pair.humidity)} for name, pair in item.get(key, ())}
+            for key in ("rise_windows", "fall_windows", "early_confirmation_windows")
+        }
+        result["water"] = {
+            str(position): {key: value.get(key) for key in ("change", "complete", "support_overflow")}
+            for position, value in item.get("water", {}).items()
+        }
+        result["peak_times"] = {
+            str(position): point[0] for position, point in item.get("peaks", {}).items()
         }
         result["onset_witnesses"] = {
             str(position): {
