@@ -164,73 +164,129 @@ an den damaligen Beleg gebunden.
 
 Ein neues Original mit einem Fallbeginn gemäß
 [RH-Beginn und Knicktoleranz](#rh-beginn-und-knicktoleranz) bindet einen
-gemeinsamen Öffnungskandidaten. Ein Knick der Temperatur ist dafür nicht
-erforderlich. Die Bestätigung vergleicht die aktuellen Temperatur- und
-Feuchteniveaus mit dem gebundenen Vorlauf. Für jede Messgröße `X` aus
-Temperatur `T` und relativer Feuchte `H` ist `X̄⁰⁻_p` der Mittelwert des
-Vorgängerfensters bei der Bindung und `X̄_p` der Mittelwert des aktuellen
-Fensters:
+gemeinsamen Öffnungskandidaten. Diese erste Bindung verlangt weiterhin den
+Fallbeginn an allen beteiligten RH-Positionen im selben Präfix. Ein Knick der
+Temperatur ist dafür nicht erforderlich. Die damaligen Originalfenster
+bleiben die Referenz. Je Temperatur- und Feuchterolle muss das aktuelle
+`K`-Fenster bei der Bestätigung vollständig aus Originalen strikt nach dem
+jüngsten Original ihrer Bindungsreferenz bestehen.
+
+Für jede Messgröße `X` aus Temperatur `T` und relativer Feuchte `H` bezeichnet
+`X̄⁰⁻_p` den festgehaltenen Mittelwert des Vorgängerfensters bei der Bindung.
+Der unmittelbare Niveauvergleich mit dem aktuellen Fenstermittel lautet:
 
 ```text
 L_Xp = (X̄⁰⁻_p − X̄_p)/(2ε_Xp)
 L    = min_p min(L_Tp, L_Hp)
 ```
 
-Der beobachtete Vorlaufmittelwert bleibt fest. Die Bestätigung verwendet je
-Rolle die verfügbaren Originale strikt nach deren jüngstem Original bei der
-RH-Knickbindung. Auf dieser mit neuen Werten wachsenden Stützmenge werden
-Steigung `a_Xp`, Steigungsgrenze `Eᵃ_Xp` und Mittel `X̄ᵃ_p` bestimmt. Die
-Formeln für OLS und die aus der Wertskala abgeleitete Steigungsgrenze bleiben
-dieselben. Zwei verschiedene Zeitpunkte sind das mathematische Minimum für
-eine Steigung; eine feste Zahl neuer Fenster ist keine Bestätigungsbedingung.
+Der Bestätigungsnachweis verwendet je Rolle sämtliche verfügbaren Originale
+strikt nach dem jüngsten Original ihrer Bindungsreferenz. Auf dieser mit
+neuen Werten wachsenden Stützmenge werden die Steigung `a_Xp`, ihre Grenze
+`Eᵃ_Xp` und der Mittelwert `X̄ᵃ_p` mit den beschriebenen OLS-Regeln bestimmt.
+Zwei verschiedene Zeitpunkte sind das mathematische Minimum für diese
+Gerade; zusätzlich gilt die vollständige neue `K`-Stütze jeder Rolle.
+
+Für Temperatur und Feuchte wird der Niveauverlust gegen den bei der Bindung
+beobachteten lokalen Hintergrund verglichen. Die historischen `2K`-Stützen
+liefern die Beträge der Änderungen zwischen ihren beiden Fenstermitteln
+`d_Xpj`. Mit der MAD-Umrechnung gilt:
+
+```text
+m_Xp = Median_j(d_Xpj)
+S_Xp = max(2ε_Xp, 1/Φ⁻¹(0,75) · Median_j |d_Xpj − m_Xp|)
+D_Xp = (X̄⁰⁻_p − X̄ᵃ_p − m_Xp)/S_Xp
+```
+
+`Φ⁻¹` ist die inverse Standardnormalverteilung; die Umrechnung macht daraus
+keine Ereigniswahrscheinlichkeit. Bei zu wenigen historischen Stützen gelten
+`m_Xp = 0` und `S_Xp = 2ε_Xp`. Die Mindestzahl stammt aus
+`curve_original_kink_history_windows`. Bei der Temperatur verwendet derselbe
+mathematische Hintergrundhelfer die allgemeine Auflösungseinheit `s`; der
+RH-spezifische Faktor `curve_original_kink_factor` wird nicht auf T erweitert.
+
+Die gemeinsame Absenkung benötigt an allen beteiligten Positionen:
 
 ```text
 a_Tp < −γO Eᵃ_Tp
-(T̄⁰⁻_p − T̄ᵃ_p)/(2ε_Tp) > γO
+D_Tp > γO
+D_Hp > γO
 ```
 
-Für die relative Feuchte bleibt der bereits gebundene Fallbeginn erhalten.
-Ihr niedrigeres Niveau muss sich von den zuvor beobachteten Änderungen
-abheben; ein weiterer Feuchtefall nach der Bindung ist nicht erforderlich.
-Die historischen `2K`-Stützen der Knicktoleranz liefern dafür die Beträge
-der Änderungen zwischen ihren beiden Fenstermitteln `d_j`:
-
-```text
-m_Hp = Median(d_j)
-s_Hp = max(2ε_Hp, 1/Φ⁻¹(0,75) · Median(|d_j − m_Hp|))
-(H̄⁰⁻_p − H̄ᵃ_p − m_Hp)/s_Hp > γO
-```
-
-`Φ⁻¹` ist die inverse Standardnormalverteilung; die MAD-Umrechnung macht
-daraus keine Ereigniswahrscheinlichkeit. Hintergrundmittel und Streuung werden
-bei der Kandidatenbindung festgehalten. Bei zu wenigen historischen Stützen
-gelten `m_Hp = 0` und `s_Hp = 2ε_Hp`. Die ausreichende Anzahl historischer
-Stützen stammt aus der gemeinsamen Knicktoleranz-Konfiguration.
-
-Die Temperatur- und Feuchtebedingungen müssen an allen gebundenen Positionen
-passen. Eine zunehmende Anzahl von Messwerten oder eine längere Wartezeit
-bestätigt für sich kein Ereignis. Entscheidend sind der fortgesetzte
-Temperaturfall und die belegte Feuchteabsenkung. Quellenwechsel,
-Unterbrechungen und aufgelöste Gegenverläufe bleiben Ausschlussgründe.
-Der erste solche gemeinsame Absenkungsbeleg wird für den Türvorgang erhalten.
+Ein weiterer Feuchtefall nach der Bindung ist dafür nicht erforderlich.
+Die erste vollständig belegte gemeinsame Absenkung wird im Türvorgang
+gehalten. Eine zunehmende Messwertzahl oder längere Wartezeit bestätigt für
+sich kein Ereignis. Quellenwechsel, unterbrochener Anschluss und aufgelöste
+Gegenverläufe bleiben Ausschlussgründe.
 
 Der zugeordnete Beginn stammt ausschließlich aus den Feuchteknicken der
-gebundenen Messpositionen. Ein später aufgelöster Feuchteknick kann bis zur
-Bestätigung ergänzt werden, wenn er im ursprünglichen Stützbereich des
-Kandidaten liegt. Temperaturknicke verschieben diesen Beginn nicht. Die
-Bestätigung benötigt einen gültigen Feuchtebeginn an jeder beteiligten
-Position und neue Originale für den gemeinsamen Fall. Die Steuerung erhält
-das Ereignis erst bei seiner Bestätigung.
+gebundenen Messpositionen. Ein gültiger Beginnzeuge darf vor dem ersten
+Bindungsfenster liegen oder erst danach hinzukommen. Sein eigener
+unterstützter Originalfit, Quelle, Epoche und Türkontext bleiben maßgeblich;
+sein jüngstes verwendetes Original liegt spätestens im aktuellen Präfix.
+Der Originalanschluss muss erhalten sein.
 
-Nach der Bestätigung wird die zeitliche Lage jedes gebundenen Feuchteknicks
-innerhalb seines ursprünglichen RH-Übergangsfensters nachbestimmt. Der
-Kurvenvergleich verwendet dieselben Originalmessungen, dieselbe Form und
-dieselben Gegenformen. Nur die möglichen Knickpositionen werden auf das
-bereits gebundene Fenster begrenzt; die Originalstützung und der vorherige
-Quellenkontext bleiben erhalten. Damit steht das vorhandene Suchbudget für
-diesen Übergang zur Verfügung. Ohne gestützte Nachbestimmung bleibt der
-bisherige Beginnzeuge bestehen. Die Nachbestimmung liefert keine zusätzliche
-Bestätigung und verändert deren Zeitpunkt nicht.
+Vor der Aufnahme eines Zeugen und erneut vor der gemeinsamen Bestätigung
+wird geprüft, ob nach seinem Beginn eine vollständig gestützte RH-Erholung
+liegt. Dazu werden die verfügbaren nativen `2K`-Blöcke geprüft: Besteht deren
+aktueller `K`-Block vollständig aus Originalen nach dem Beginn und gilt
+`v_Hp > s E_Hp`, gehört der alte Zeuge nicht mehr zum fortlaufenden Fallast.
+Auch eine Erholung unterhalb des alten Vorlaufniveaus zählt. Sie setzt den
+noch unbestätigten Kandidaten zurück; ein späterer Fall der anderen Position
+darf ihn nicht mit dem alten Zeugen bestätigen.
+
+Jede beteiligte Position benötigt einen solchen weiterhin verbundenen
+RH-Zeugen. Die feste Beginnposition des jeweiligen Zeugen wird bei der
+Bestätigung mit seinen eigenen Originalen und derselben Form erneut geprüft.
+Sie wird nicht in das erste gemeinsame Bindungsfenster zurückgesucht.
+Temperaturknicke verschieben den RH-Beginn nicht. Die Steuerung erhält das
+Ereignis erst bei der späteren Bestätigung; die Beginnzuordnung datiert diese
+Bestätigung nicht zurück.
+
+### Abgrenzung zum Aufgussabklingen
+
+Ein nativer starker oder bereits qualifizierter RH-Anstiegsbesitzer desselben
+Quellen- und Epochenkontexts liefert seine gebundenen Temperaturbaselines.
+Berücksichtigt werden die aktuelle Aufgusskomponente sowie Anfangs- und
+aktuelle Komponente einer noch ausstehenden oder aktiven Originalepisode.
+Die Referenzen bleiben beim Öffnungskandidaten erhalten. Jede Referenz kann
+je T-Rolle durch einen vollständig neuen aktuellen `K`-Block mit aufgelöstem
+Fall und eigenständigem Verlust unter ihr damaliges Vorlaufniveau erfüllt
+werden. Dafür gelten `a_Tp < −γO Eᵃ_Tp` und `D_Tp > γO`, ausgewertet nur auf
+den aktuellen `K`-Originalen mit dem lokalen Hintergrund dieser
+Aufgussreferenz.
+
+Eine Unterschreitung der Voraufgussbaseline ist keine zwingende Bedingung.
+Alternativ kann jede T-Rolle einen eigenen neuen lokalen Abwärtsknick binden.
+Die T-Knicktoleranz verwendet wie die RH-Toleranz den größeren Wert aus
+Kataloggröße und historischer Steigungsänderung, jedoch mit Faktor `s`:
+
+```text
+Sᵏ_Tp = max(E_Tp + E⁻_Tp, Median_j |v_Tpj − b_Tpj|)
+κ_Tp  = s · Sᵏ_Tp
+δ_eff,Tp = sgn(v_Tp − b_Tp) · max(0, |v_Tp − b_Tp| − κ_Tp)
+```
+
+Bei zu kurzer Historie ist `Sᵏ_Tp = E_Tp + E⁻_Tp`. Der erste gebundene
+T-Abwärtsknick benötigt `δ_eff,Tp < 0` und `v_Tp < −s E_Tp`. Seine feste
+Vorgängersteigung heißt `bᵈ_Tp`, ihre Grenze `Eᵈ⁻_Tp`. Danach müssen je Rolle
+beide disjunkten Fenster vollständig aus Originalen strikt nach dem jüngsten
+Original dieser eigenen Knickreferenz bestehen und erfüllen:
+
+```text
+b_Tp/E⁻_Tp < −γO
+v_Tp/E_Tp  < −γO
+(b_Tp − bᵈ_Tp)/(E⁻_Tp + Eᵈ⁻_Tp) < −s
+(v_Tp − bᵈ_Tp)/(E_Tp + Eᵈ⁻_Tp)  < −s
+```
+
+Die Prüfung verlangt somit entweder die unabhängigen Niveauverluste gegen
+alle gebundenen Aufgussreferenzen oder den neuen lokalen T-Fall an allen
+Positionen. Ohne gebundenen nativen Aufgussbesitzer entfällt diese zusätzliche
+Prüfung. Der fortgeschriebene Anschluss des Türbesitzers bleibt maßgeblich;
+eine alte Aufgussbaseline muss dafür nicht dauerhaft im Originalring liegen.
+Die allgemeinen RH-Zeugen und die gemeinsame Absenkung bleiben in beiden
+Fällen erforderlich.
 
 Eine vollständige Messposition genügt; bei zwei beteiligten Positionen gelten
 die gemeinsamen Kontraste für beide. Das überträgt keinen empirischen
@@ -247,8 +303,10 @@ verwirft den Nachweis. Liegen gültige RH-Originalfenster vor, bleibt dieser
 Heizweg an denselben RH-Kandidaten und die gemeinsame Originalbestätigung
 gebunden; sein BIC-Nachweis ersetzt dann keinen frischen RH-Beginn.
 
-Eine Schließung setzt eine erkannte Öffnung voraus. Die Temperaturbremse `B`
-und die schwächste beziehungsweise stärkste aktuelle Erwärmung lauten:
+### Temperaturbremse und Schlussbestätigung
+
+Eine Schließung setzt eine erkannte Öffnung voraus. Die schwächste
+beziehungsweise stärkste aktuelle Erwärmung und die native Bremse lauten:
 
 ```text
 B     = min_p (v_Tp − b_Tp)/(E_Tp + E⁻_Tp)
@@ -256,99 +314,83 @@ W_min = min_p v_Tp/E_Tp
 W_max = max_p v_Tp/E_Tp
 ```
 
-Ein früher Schließkandidat benötigt `B > s` oder `W_min > s`. Er bindet die
-damaligen Temperaturfenster. Deren Vorgängersteigung `b⁰_Tp` und
-Steigungsgrenze `E⁰⁻_Tp` bleiben der Bezug für die spätere Temperaturbremse
-`B_f`. Für die Feuchteerholung ist `M_p` das kleinste bisher belegte Mittel des
-aktuellen Feuchtefensters in derselben geöffneten Gruppe. Mit dem aktuellen
-Mittel `H̄_p` gilt:
+Ein gemeinsamer Schließkandidat bindet die damaligen Temperaturfenster, wenn
+entweder jede Rolle einen lokalen Bremsknick mit `δ_eff,Tp > 0` und
+`b_Tp < −s E⁻_Tp` liefert oder `W_min > s` gilt. Für die T-Knicktoleranz gilt
+der oben beschriebene allgemeine Faktor `s` einschließlich des beobachteten
+Steigungsänderungshintergrunds.
+
+Die feste Vorgängersteigung des gebundenen Fensters heißt `b⁰_Tp`, ihre Grenze
+`E⁰⁻_Tp`. Für die Feuchteerholung ist `M_p` das kleinste bisher belegte Mittel
+des aktuellen Feuchtefensters in derselben geöffneten Gruppe. Es gelten:
 
 ```text
 B_f = min_p (v_Tp − b⁰_Tp)/(E_Tp + E⁰⁻_Tp)
 U   = min_p (H̄_p − M_p)/(2ε_Hp)
-C   = max {min(B_f, U), min(B_f, W_max), W_min}
+D_fp = min((v_Tp − b⁰_Tp)/(E_Tp + E⁰⁻_Tp),
+           (b_Tp − b⁰_Tp)/(E⁻_Tp + E⁰⁻_Tp))
+D_f  = min_p D_fp
+C   = max {min(B_f, U), min(B_f, W_max), W_min, D_f}
 ```
 
-Die Bestätigung benötigt seit der Bindung an jeder dafür verwendeten
-Temperaturposition einen vollständig neuen aktuellen Block mit `K` Originalen
-und `C > s`. Die drei hinreichenden Formzweige sind:
+Für eine Rolle gilt die Formel für `D_fp` nur bei aufgelöst fallender
+gebundener Vorgängersteigung `b⁰_Tp < −s E⁰⁻_Tp`; andernfalls wird für diese
+Rolle `D_fp = −s` eingesetzt. Der Feuchtezweig `min(B_f, U)`
+benötigt sämtliche ursprünglichen Positionen und ihre Quellenabschnitte;
+bei gestörter Feuchte entfällt er.
 
-| Zweig | Erforderlicher Verlauf |
-| --- | --- |
-| `min(B_f, U)` | Temperaturabfall bremst gegenüber dem gebundenen Fall an allen beteiligten Positionen ab; die Feuchte hat sich an allen bereits vom Gruppenminimum erholt |
-| `min(B_f, W_max)` | Temperaturabfall bremst gegenüber dem gebundenen Fall an allen beteiligten Positionen ab; mindestens eine Position erwärmt sich bereits |
-| `W_min` | Alle beteiligten Temperaturpositionen erwärmen sich |
+Die Bestätigung verlangt an jeder verwendeten Temperaturposition zwei
+vollständig neue disjunkte `K`-Blöcke nach der gemeinsamen Bindung sowie
+`C > s`. Die ersten drei Formzweige verbinden die Bremse mit Feuchteerholung
+oder Erwärmung. `D_f > s` belegt dagegen in beiden neuen Blöcken die
+anhaltend schwächere Abkühlung gegenüber dem gebundenen Vorlauf. Ihre
+Steigungen dürfen weiterhin negativ sein; waagerechte Fenster und eine
+Verträglichkeit ihrer Mittel sind dafür keine Bedingungen.
 
-Der Feuchtezweig benötigt sämtliche ursprünglichen Positionen mit denselben
-Quellenabschnitten wie bei der Öffnung. Bei gestörter Feuchtemessung bleiben
-die beiden thermischen Zweige für die noch auswertbaren Temperaturpositionen
-der Öffnungsgruppe verfügbar. Ein Wechsel dieser Positionsmenge erfordert
-einen neuen Schließkandidaten. Im zweiten Zweig dürfen die andere Temperatur
-und die Feuchte noch fallen. Bloßes Abflachen der Feuchte bei weiter fallender
-Temperatur und ohne bereits belegte Feuchteerholung genügt nicht.
+Ein weiterer Schließweg bindet dieselbe lokale Bremse zeitversetzt je Rolle.
+Dafür hält der Türbesitzer zunächst ein tatsächlich aufgelöst fallendes
+T-Fenster. Bis zur lokalen Bremse ersetzt ein späteres Fallfenster diese
+Referenz, wenn seine obere Steigungsgrenze `v + sE` kleiner ist. Das bloße
+spätere Schwächerwerden gegenüber diesem gehaltenen Fall bestätigt keinen
+Schluss. Erst ein natives Fenster mit `b_Tp < −s E⁻_Tp` und
+`δ_eff,Tp > 0` bindet die feste Bremsreferenz dieser Rolle. Die beiden danach
+vollständig neuen `K`-Blöcke müssen gegenüber deren Vorgängersteigung dieselben
+beiden positiven Kontraste wie in `D_f` jeweils über `s` liefern.
 
-Ein weiterer Schließweg verwendet ein neues stabiles Temperaturniveau nach
-einem tatsächlich belegten Fall. Dafür wird je Temperaturposition bereits im
-selben Türvorgang ein gültiges aufgelöst fallendes aktuelles Fenster
-gespeichert. Bis zur ersten Erholung ersetzt ein späteres vollständiges
-Fallfenster die Referenz, wenn seine obere Steigungsgrenze `v + sE` kleiner
-ist. Seine tatsächlichen Originalzeiten werden dabei mit übernommen. Sobald
-die Temperatur nicht mehr aufgelöst fällt (`v ≥ −sE`), bleibt diese
-Fallreferenz fest. Die Fallfenster können zeitlich auseinanderliegen und schon
-vor der bestätigten Öffnung entstehen. Der Niveauzweig benötigt keinen
-gemeinsamen momentanen Bremsknick und keinen gewöhnlichen Schließkandidaten.
-Eine Lücke, ein Quellenbruch oder eine Korrektur einer tragenden Stütze
-entwertet den betroffenen Fallbeleg. Ein aufgelöster erneuter Fall nach einer
-Erholung erfordert einen neuen Fallbeleg, sobald das aktuelle `K`-Fenster
-diesen Fall selbst auflöst. Eine einzelne aufgelöst negative Endsekante mit
-negativer Änderung gegenüber der Erholung sperrt bereits den Schluss; sie
-ersetzt für sich allein das feste Fallfenster nicht. Dieser Gegenbeleg bleibt
-an die Zeiten und Werte des letzten Temperatursegments gebunden. Ein
-Feuchtepräfix ohne geänderte Temperaturoriginale löst ihn nicht. Ein neues
-Temperaturoriginal oder ein korrigierter Wert dieses Endsegments führt zur
-erneuten Kantenprüfung; eine Korrektur liefert dabei weder zusätzliche Frische
-noch einen neu gebundenen Fallbeleg.
+Diese Rollenbremsen können zu verschiedenen Präfixen entstehen; ein
+gemeinsamer momentaner Bremsknick und ein gemeinsamer Schließkandidat sind für
+diesen Weg nicht erforderlich. Eine Feuchteerholung ist ebenfalls keine
+Bedingung. Ein Wechsel der verwendeten Temperaturpositionsmenge erfordert im
+gemeinsamen Kandidatenweg eine neue Bindung.
 
-Die Plateauform für die Schließung benötigt je Position
-zwei vollständig neue `K`-Fenster nach ihrer jeweiligen festen Referenz.
-Beide Fenster müssen flach und ihre Mittel miteinander verträglich sein:
+### Anhaltende Gegenform und Originalkorrektur
+
+Jede gebundene Bremse führt je T-Rolle das bisherige Fenster mit der höchsten
+belegten aktuellen Steigung als Erholungsreferenz `v_rec`, `E_rec`. Eine
+anhaltende Gegenform benötigt zwei disjunkte `K`-Blöcke, die vollständig nach
+dem jüngsten Original dieser Referenz liegen. Beide müssen selbst aufgelöst
+fallen und gegenüber derselben Erholungsreferenz stärker fallen:
 
 ```text
-|v_Tp| ≤ s E_Tp                |b_Tp| ≤ s E⁻_Tp
-|T̄_p − T̄⁻_p| ≤ 2s ε_Tp
+v_Tp/E_Tp  < −s
+b_Tp/E⁻_Tp < −s
+(v_Tp − v_rec)/(E_Tp + E_rec)  < −s
+(b_Tp − v_rec)/(E⁻_Tp + E_rec) < −s
 ```
 
-Der Plateauschluss ergänzt diese Geometrie um die aufgelöste Bremse beider
-neuen Fenster gegenüber der festgehaltenen tatsächlichen Fallsteigung
-`vᶠ_Tp` mit Steigungsgrenze `Eᶠ_Tp`. Je Position gelten zusätzlich:
+Eine solche Gegenform an einer Rolle verwirft den gemeinsamen
+Schließkandidaten und entwertet im Rollenfallweg deren alte Fall-/Bremsstütze.
+Eine einzelne negative Endsekante wird weiterhin diagnostiziert, verwirft
+aber für sich weder die Bindung noch den gehaltenen Fall. Wiederholte Ticks
+und fremde neue Originale ersetzen keine frischen T-Blöcke der betroffenen
+Rolle.
 
-```text
-vᶠ_Tp < −s Eᶠ_Tp
-v_Tp − vᶠ_Tp > s(E_Tp + Eᶠ_Tp)
-b_Tp − vᶠ_Tp > s(E⁻_Tp + Eᶠ_Tp)
-```
-
-Dieser Niveauzweig benötigt keine Feuchteerholung. Weiter fallende Temperatur
-erfüllt ihn auch bei flacher Feuchte nicht.
-
-Ein Schließkandidat führt je Temperaturposition zusätzlich das bisherige
-Fenster mit der höchsten belegten Steigung als Erholungsreferenz. Ein
-aufgelöster erneuter Fall verwirft den Kandidaten, wenn die aktuelle
-Fenstersteigung gegenüber dieser Referenz signifikant abnimmt. Dasselbe gilt
-bereits für den jüngsten Originalschritt: Für seine Sekantensteigung `a` und
-Grenze `E_a` gelten mit der Erholungsreferenz `v_rec`, `E_rec`:
-
-```text
-a   = (T_n − T_(n−1))/(t_n − t_(n−1))
-E_a = 2ε_Tp/(t_n − t_(n−1))
-a/E_a < −s  und  (a − v_rec)/(E_a + E_rec) < −s
-```
-
-Der Schritt muss neuer als die Erholungsreferenz sein und selbst aufgelöst
-fallen. Das Abbremsen einer Erwärmung zum Plateau erfüllt diesen Gegenbeleg
-nicht. Ein aktuelles aufgelöst fallendes Fenster verwirft den Kandidaten auch,
-wenn es gegenüber einem gebundenen Fall keine aufgelöste Bremse mehr besitzt.
-Für den gewöhnlichen Schließweg ist danach ein neuer Kandidat erforderlich.
+Eine Lücke oder ein Quellenbruch entwertet die davon abhängigen Nachweise.
+Eine echte T-Korrektur bei gleichem Originalzeitpunkt entwertet auch dann den
+Schließkandidaten und die gehaltene Fall-/Bremsstütze dieser Rolle, wenn der
+korrigierte letzte Wert außerhalb ihrer früheren Referenzfenster liegt. Sie
+liefert keine neue Frische; eine Bestätigung benötigt erneut die eigenen
+neuen Stützblöcke.
 
 Diese Formkriterien bestimmen den erkannten Türzustand. Sie sichern keine
 exakte mechanische Kontaktzeit; eine veränderte Durchmischung bei noch offener
@@ -739,13 +781,15 @@ die Niveauabsenkung gegenüber dem gebundenen Vorlauf (`reference_level_loss`)
 und den festen gemeinsamen Absenkungsbeleg. Für die Bestätigung werden die
 seit der Bindung hinzugekommenen Originale mit ihrem ersten und letzten
 Zeitpunkt, ihrer Anzahl sowie den Richtungs- und Niveaukontrasten getrennt
-ausgewiesen. Bei der Feuchte sind die beobachtete Absenkung, der historische
-Vergleichswert und die verwendete Streuung gesondert sichtbar. Die
-Feuchtebeginnzeugen jeder Position bleiben sichtbar.
-Eine vollständige Anzahl neuer Fenster ist kein Bestätigungskriterium. Beim Türschluss
-werden die gebundene Temperaturbremse, die gespeicherten Rollenfallfenster,
-das neue Temperaturniveau und die Gegenbelege aus Fenstersteigung und
-jüngstem Originalschritt getrennt geführt.
+ausgewiesen. Temperatur und Feuchte halten die beobachtete Absenkung,
+den historischen Vergleichswert und die verwendete Streuung getrennt fest.
+Die Feuchtebeginnzeugen jeder Position, ihre fortlaufende Astprüfung und die
+zusätzlichen Aufgussreferenz- beziehungsweise lokalen T-Fallprüfungen bleiben
+sichtbar. Die vollständigen neuen Stützblöcke gehören zu den jeweiligen
+Bestätigungsbedingungen. Beim Türschluss werden die lokale Temperaturbremse,
+die gespeicherten Rollenfall- und Bremsfenster, ihre Folgeblöcke und die
+anhaltenden Gegenbelege getrennt geführt. Der jüngste Originalschritt bleibt
+als gesonderte Kantendiagnose sichtbar.
 Der zusätzlich gespeicherte ältere
 Öffnungskontrast mit Temperaturknick ist keine Voraussetzung der gemeinsamen
 Bestätigung. Schließkontrast sowie Anstiegs-, Fall- und Hintergrundbedingungen
@@ -760,9 +804,11 @@ Beim Aufguss werden der frische RH-Anstiegsbeginn, die gebundenen und
 fortgesetzten Stützen, der gespeicherte starke Anstiegsbeleg, die aktuelle
 Steigung, die begrenzte Wasserqualifikation und der nach der Spitze belegte
 Abfall getrennt geführt.
-Die Türöffnung benötigt den gemeinsamen Fall auf neuen Originalen und die
-gebundenen Feuchtebeginne. Die zusätzlichen vollständigen Blöcke der
-Schließ- und Aufgusszweige bleiben dort gesonderte Bedingungen. Der
+Die Türöffnung benötigt den gemeinsamen Fall mit einem vollständig neuen
+aktuellen Block je Rolle und die weiterhin verbundenen Feuchtebeginne. Der
+lokale T-Fallweg bei vorhandenem Aufgusskontext und die Schlusswege verlangen
+zwei vollständig neue Blöcke nach ihrer jeweiligen Referenz. Die
+Aufgusszweige behalten ihre eigenen Frischebedingungen. Der
 Hintergrundnachweis trennt den ersten Kandidaten vom durch neue Originale
 bestätigten Abschluss.
 

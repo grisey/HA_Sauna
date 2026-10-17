@@ -11,7 +11,7 @@ from test_cooling import at, controller
 from test_foundation import event, selected_occupancy
 
 from custom_components.ha_sauna.core.presence import binary_presence
-from custom_components.ha_sauna.core.timeline import Event, Kind
+from custom_components.ha_sauna.core.timeline import DoorCloseEvidence, Event, Kind
 
 
 class GangPhaseRulesTests(unittest.TestCase):
@@ -76,12 +76,13 @@ class GangPhaseRulesTests(unittest.TestCase):
         self.c.set_temperature(self.minimum, at(5))
         self.assertIsNone(self.c.session.timeline.active)
 
-    def test_lost_presence_before_minimum_does_not_leave_a_pending_entry(self):
+    def test_new_opening_before_minimum_clears_the_previous_pending_entry(self):
         for state in ("off", "unknown", "unavailable"):
             with self.subTest(state=state):
                 self.setUp()
                 self.c.set_temperature(self.minimum - 1, at(0))
                 self.enter()
+                self.door(Kind.DOOR_OPEN, 3.5)
                 self.presence(state, 4)
                 self.presence("on", 5)
                 self.c.set_temperature(self.minimum, at(6))
@@ -199,7 +200,7 @@ class GangPhaseRulesTests(unittest.TestCase):
         self.assertEqual(repeated.elapsed_seconds, (at(12) - at(7)).total_seconds())
         self.assertEqual(self.c.last_decision.reason, "after_run")
 
-    def test_historical_state_entry_without_current_presence_keeps_cooling(self):
+    def test_proven_return_close_ends_cooling_despite_later_presence_report(self):
         for state in ("off", "unknown", "unavailable"):
             with self.subTest(state=state):
                 self.setUp()
@@ -210,11 +211,29 @@ class GangPhaseRulesTests(unittest.TestCase):
                 self.presence(state, 11)
                 self.c.process(Event(
                     "delayed-return-close", "s", Kind.DOOR_CLOSE,
-                    at(9), at(12), at(12),
+                    at(9), at(12), trace_at=at(10),
+                    door_close_evidence=DoorCloseEvidence(at(9), at(10)),
                 ))
                 self.assertIsNotNone(self.c.session.timeline.active)
                 self.assertEqual(self.c.session.timeline.active.recognition_kind,
                                  Kind.PRESENCE_CONFIRMED)
-                self.assertEqual(self.c.session.after_run.phase_id, phase.phase_id)
-                self.assertFalse(self.c.session.after_run.minimum_duration_requested)
-                self.assertEqual(self.c.last_decision.reason, "after_run")
+                self.assertEqual(self.c.session.timeline.active.started_at, at(9))
+                self.assertIsNone(self.c.session.after_run)
+                completed = self.c.session.after_run_history[-1]
+                self.assertEqual(completed.phase_id, phase.phase_id)
+                self.assertEqual(completed.ends_at, at(12))
+                self.assertFalse(completed.minimum_duration_requested)
+
+    def test_return_without_closing_proof_keeps_cooling(self):
+        self.enter()
+        self.leave_for_ventilation()
+        phase = self.c.session.after_run
+        self.presence("on", 8)
+        self.c.process(Event(
+            "unproven-return-close", "s", Kind.DOOR_CLOSE,
+            at(9), at(12), trace_at=at(10),
+        ))
+        self.assertIsNone(self.c.session.timeline.active)
+        self.assertEqual(self.c.session.after_run.phase_id, phase.phase_id)
+        self.assertFalse(self.c.session.after_run.minimum_duration_requested)
+        self.assertEqual(self.c.last_decision.reason, "after_run")
