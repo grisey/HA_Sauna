@@ -755,6 +755,48 @@ class Detector:
                 witnesses.append((key, candidate))
         return tuple(witnesses)
 
+    def _localize_original_opening(self, episode, trace):
+        """Nach der Bestätigung nur den Knick im gebundenen RH-Übergang verorten."""
+        opening = episode["original_open"]
+        windows = dict(opening["windows"])
+        localized = []
+        diagnostics = {}
+        for key, witness in opening["onset_witnesses"]:
+            if key[2] != Quantity.HUMIDITY:
+                localized.append((key, witness))
+                continue
+            window = windows[key[1].value].humidity
+            bounds = (window.start_at, window.newest_at)
+            features = curve_change(
+                witness.original_points, policy=self.curve_policy, direction=-1,
+                onset_not_before=witness.context[2], onset_bounds=bounds,
+            )
+            supported = self._curve_supports(
+                "door_open", features, witness.context[2], Quantity.HUMIDITY,
+            )
+            selected = witness
+            if supported:
+                identity = witness.candidate_id
+                if features.onset_at != witness.onset_at:
+                    identity = f"{identity}:localized:{features.onset_at.isoformat()}"
+                selected = replace(
+                    witness, candidate_id=identity,
+                    onset_at=features.onset_at, features=features,
+                )
+            diagnostics[key[1].value] = {
+                "before": witness.onset_at, "after": selected.onset_at,
+                "search_bounds": bounds,
+                "first_original_at": witness.original_points[0][0],
+                "newest_original_at": witness.original_points[-1][0],
+                "original_count": len(witness.original_points),
+                "supported": supported,
+                "reason": "bound_humidity_transition" if supported else "retained_original_witness",
+            }
+            localized.append((key, selected))
+        trace["door_open_localization"] = diagnostics
+        opening["onset_witnesses"] = tuple(localized)
+        return opening["onset_witnesses"]
+
     def _original_temperature_fall_evidence(self, episode, prefix, trace):
         """Echte Fallfenster bis zur ersten Erholung im Türbestand halten."""
         falls = episode.setdefault("original_temperature_falls", {})
@@ -5428,7 +5470,7 @@ class Detector:
                 now, floor=open_floor,
                 kind=Kind.DOOR_OPEN, now=now, decision_at=decision_at,
                 onset_allowed=onset_allowed,
-                bound_candidates=(episode["original_open"]["onset_witnesses"]
+                bound_candidates=(self._localize_original_opening(episode, trace)
                                   if mixed_toggle else None),
             )
             onset_status = self._curve_proposal_status.get(

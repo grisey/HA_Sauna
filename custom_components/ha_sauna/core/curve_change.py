@@ -3775,6 +3775,7 @@ def curve_change(
     onset_at: datetime | None = None,
     direction: int | None = None,
     onset_not_before: datetime | None = None,
+    onset_bounds: tuple[datetime, datetime] | None = None,
     hinge_order: int = 1,
 ) -> CurveFeatures | None:
     """Compare local smooth and changed curves without retaining any state.
@@ -3791,6 +3792,9 @@ def curve_change(
     onset_not_before restricts candidate knots before the search budget is
     applied; earlier original observations still support every fit and its noise
     scale. Fixed-onset and replacement comparisons use the same query limits.
+    Optional inclusive onset_bounds narrow only the searched knot positions;
+    they do not trim observations or change the before/after context. The
+    caller supplies these bounds from an already bound original transition.
     A supported hinge remains usable when its separate right-hand direction is
     insufficient; the caller must require after_trend for a directed route.
     Independent lines on the original sides use onset_not_before, retaining
@@ -3815,6 +3819,12 @@ def curve_change(
         ):
             return None
         if onset_not_before is not None and not isinstance(onset_not_before, datetime):
+            return None
+        if onset_bounds is not None and (
+            not isinstance(onset_bounds, tuple) or len(onset_bounds) != 2
+            or not all(isinstance(bound, datetime) for bound in onset_bounds)
+            or onset_bounds[0] > onset_bounds[1]
+        ):
             return None
         if not _policy_valid(policy) or len(samples) < 2 * policy.min_side_samples:
             return None
@@ -3861,6 +3871,7 @@ def curve_change(
                 policy.min_side_samples - 1, len(times) - policy.min_side_samples
             )
             if onset_not_before is None or stamps[index] >= onset_not_before
+            if onset_bounds is None or onset_bounds[0] <= stamps[index] <= onset_bounds[1]
         ]
         if not eligible:
             return None

@@ -217,6 +217,16 @@ Bestätigung benötigt einen gültigen Feuchtebeginn an jeder beteiligten
 Position und neue Originale für den gemeinsamen Fall. Die Steuerung erhält
 das Ereignis erst bei seiner Bestätigung.
 
+Nach der Bestätigung wird die zeitliche Lage jedes gebundenen Feuchteknicks
+innerhalb seines ursprünglichen RH-Übergangsfensters nachbestimmt. Der
+Kurvenvergleich verwendet dieselben Originalmessungen, dieselbe Form und
+dieselben Gegenformen. Nur die möglichen Knickpositionen werden auf das
+bereits gebundene Fenster begrenzt; die Originalstützung und der vorherige
+Quellenkontext bleiben erhalten. Damit steht das vorhandene Suchbudget für
+diesen Übergang zur Verfügung. Ohne gestützte Nachbestimmung bleibt der
+bisherige Beginnzeuge bestehen. Die Nachbestimmung liefert keine zusätzliche
+Bestätigung und verändert deren Zeitpunkt nicht.
+
 Eine vollständige Messposition genügt; bei zwei beteiligten Positionen gelten
 die gemeinsamen Kontraste für beide. Das überträgt keinen empirischen
 Nachweis von vier Kanälen auf eine andere Sensoranordnung. Die Regeln gelten

@@ -2029,7 +2029,8 @@ class InfusionLifecycleTests(unittest.TestCase):
         return {"kind": kind, "onset": onset, "until": until, "quantity": quantity}
 
     def _math_curve(self, shapes, samples, *, policy, onset_at=None,
-                    direction=None, onset_not_before=None, hinge_order=1):
+                    direction=None, onset_not_before=None, onset_bounds=None,
+                    hinge_order=1):
         """Return declared local witnesses, retaining the real original support."""
         # The declared shapes describe first-order hinges only; they do not
         # supply evidence for the detector's optional curvature comparison.
@@ -2046,6 +2047,7 @@ class InfusionLifecycleTests(unittest.TestCase):
                 shape["quantity"] != quantity or direction != sign
                 or (onset_at is not None and onset != onset_at)
                 or (onset_not_before is not None and onset < onset_not_before)
+                or (onset_bounds is not None and not onset_bounds[0] <= onset <= onset_bounds[1])
                 or onset not in {stamp for stamp, _ in samples}
             ):
                 continue
