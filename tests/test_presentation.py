@@ -6,7 +6,7 @@ import unittest
 from copy import deepcopy
 
 from test_cooling import at, controller
-from test_foundation import event, selected_occupancy
+from test_foundation import bindings, event, parameters, selected_occupancy
 
 from custom_components.ha_sauna.archive import plain
 from custom_components.ha_sauna.core.defaults import section
@@ -15,12 +15,64 @@ from custom_components.ha_sauna.core.presence import binary_presence
 from custom_components.ha_sauna.core.timeline import Kind
 from custom_components.ha_sauna.log import SaunaLog
 from custom_components.ha_sauna.presentation import (
-    configuration_message, fault_message, public_phase_projection,
+    configuration_message, fault_message, historical_measurement_context,
+    public_measurement, public_phase_projection,
     public_session, public_state,
 )
 
 
 class PresentationTests(unittest.TestCase):
+    def test_history_context_exposes_only_original_roles_and_validity(self):
+        configuration = {"bindings": bindings().as_dict(), "parameters": parameters().as_dict()}
+        session = {"configuration": configuration, "measurement_ttl_seconds": 99999}
+        before = deepcopy(session)
+        context = historical_measurement_context(session)
+        self.assertEqual(context["sensor_timeout_seconds"],
+                         configuration["parameters"]["sensor_timeout_seconds"])
+        self.assertEqual(context["regulation_position"], "upper")
+        self.assertIn("upper_temperature", context["roles"])
+        public = public_session(session)
+        self.assertEqual(public["measurement_context"], context)
+        self.assertEqual(public_session(public), public)
+        self.assertNotIn("configuration", public)
+        for source in configuration["bindings"].values():
+            if source:
+                self.assertNotIn(source, json.dumps(public))
+        self.assertEqual(session, before)
+        for ttl in (None, True, -1, float("nan"), "60"):
+            with self.subTest(ttl=ttl):
+                altered = deepcopy(session)
+                altered["configuration"]["parameters"]["sensor_timeout_seconds"] = ttl
+                self.assertIsNone(historical_measurement_context(altered))
+        self.assertIsNone(historical_measurement_context({"measurement_ttl_seconds": 60}))
+        partial = deepcopy(session)
+        del partial["configuration"]["bindings"]["upper_temperature"]
+        self.assertIsNone(historical_measurement_context(partial))
+        lower = deepcopy(session)
+        lower["configuration"]["bindings"]["upper_temperature"] = ""
+        self.assertEqual(historical_measurement_context(lower)["regulation_position"], "lower")
+
+    def test_public_measurement_proves_exact_saved_binding_without_source_identity(self):
+        configuration = {"bindings": bindings().as_dict()}
+        source = configuration["bindings"]["upper_temperature"]
+        original = {"position": "upper", "quantity": "temperature", "value": 60,
+                    "received_at": at(1).isoformat(), "source": source}
+        before = deepcopy(original)
+        public = public_measurement(original, configuration=configuration)
+        self.assertTrue(public["source_matches_binding"])
+        self.assertNotIn("source", public)
+        self.assertNotIn(source, json.dumps(public))
+        for change in ({"source": source + "_different"}, {"source": None},
+                       {"position": "lower"}, {"quantity": "humidity"}):
+            with self.subTest(change=change):
+                self.assertFalse(public_measurement(
+                    {**original, **change}, configuration=configuration,
+                )["source_matches_binding"])
+        self.assertNotIn("source_matches_binding", public_measurement({
+            **original, "source_matches_binding": True,
+        }))
+        self.assertEqual(original, before)
+
     def test_direct_presence_public_ids_preserve_live_archive_and_phase_references(self):
         sauna = controller()
         presence_entity = "binary_sensor.private_presence"

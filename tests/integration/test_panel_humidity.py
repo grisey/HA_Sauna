@@ -399,6 +399,12 @@ class PanelHumidityApiTests(unittest.IsolatedAsyncioTestCase):
             Quantity.TEMPERATURE: saved["parameters"]["standard_temperature_c"],
             Quantity.HUMIDITY: harness.HA_INPUTS["seed_measurement"],
         }
+        foreign = replace(
+            measurement(position, Quantity.TEMPERATURE, values[Quantity.TEMPERATURE], 0,
+                        source=current["bindings"]["upper_temperature"]),
+            received_at=at,
+        )
+        runtime.archive.append("measurement", at, foreign, identity)
         inputs = {}
         for quantity, value in values.items():
             inputs[quantity] = replace(
@@ -469,6 +475,12 @@ class PanelHumidityApiTests(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(response.status, 200, await response.text())
                 public = await response.json()
         self.assertNotIn("configuration", public["session"])
+        context = public["session"]["measurement_context"]
+        self.assertEqual(context, shown["session"]["measurement_context"])
+        self.assertEqual(context["sensor_timeout_seconds"], timeout)
+        self.assertEqual(context["regulation_position"], "upper")
+        self.assertEqual([record["payload"]["source_matches_binding"]
+                          for record in _measurements(public)], [False, True, True])
         for record in _measurements(public):
             self.assertNotIn("source", record["payload"])
             self.assertEqual(

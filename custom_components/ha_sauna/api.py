@@ -24,6 +24,7 @@ from .runtime import Configuration
 from .presentation import (
     decision_message,
     fault_message,
+    historical_measurement_context,
     issues,
     parameter_error,
     public_measurement,
@@ -927,6 +928,7 @@ class ArchiveView(HomeAssistantView):
             session["measurement_ttl_seconds"] = historical_measurement_ttl(
                 session, runtime.configuration.parameters.values["sensor_timeout_seconds"]
             )
+            session["measurement_context"] = historical_measurement_context(session)
             if request["hass_user"].is_admin:
                 try:
                     stored_configuration = Configuration.from_options(
@@ -996,7 +998,9 @@ class ArchiveView(HomeAssistantView):
                 result["records"] = [
                     {
                         **record,
-                        "payload": public_measurement(record["payload"]),
+                        "payload": public_measurement(
+                            record["payload"], configuration=session.get("configuration")
+                        ),
                     }
                     if record["kind"] in {"measurement", "source_snapshot"}
                     else record
