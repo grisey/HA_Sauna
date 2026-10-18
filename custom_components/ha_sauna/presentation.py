@@ -232,7 +232,7 @@ def historical_measurement_context(session):
 def public_measurement(measurement, *, configuration=None):
     """Keep chart values and timestamps without exposing entity bindings."""
     result = {key: value for key, value in measurement.items()
-              if key not in {"source", "source_matches_binding"}}
+              if key not in {"source", "source_matches_binding", "sample", "original_id"}}
     bindings = configuration.get("bindings") if isinstance(configuration, Mapping) else None
     if isinstance(bindings, Mapping):
         role = f"{measurement.get('position')}_{measurement.get('quantity')}"

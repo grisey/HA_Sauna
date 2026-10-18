@@ -7183,14 +7183,14 @@ class Detector:
             old = self.latest.get(key)
             if (
                 old
-                and old.source == m.source
+                and old.source_identity == m.source_identity
                 and m.measured_at is not None
                 and old.measured_at is not None
                 and m.measured_at < old.measured_at
             ):
                 self.rejected += 1
                 continue
-            if old and old.source != m.source:
+            if old and old.source_identity != m.source_identity:
                 self.frames[m.position].clear()
                 self._clear_curve_series(m.position, m.quantity)
                 if self.open and m.position in self.ventilation_positions:

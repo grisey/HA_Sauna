@@ -105,6 +105,8 @@ def current_absolute_humidity(
         return None
     if not _current(humidity, position, Quantity.HUMIDITY, now, timeout):
         return None
+    if (temperature.sample is not None or humidity.sample is not None) and temperature.sample != humidity.sample:
+        return None
     try:
         return absolute_humidity(temperature.value, humidity.value)
     except ValueError:
@@ -125,7 +127,7 @@ def _current(
     if measurement.value is None:
         return False
     try:
-        age_seconds = (now - measurement.received_at).total_seconds()
+        age_seconds = (now - measurement.freshness_at).total_seconds()
     except TypeError:
         return False
     return 0 <= age_seconds <= timeout_seconds

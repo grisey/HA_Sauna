@@ -9,11 +9,13 @@ obligation. No recognition defaults, sample gates, timers or interpolation.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
-from datetime import datetime
+from copy import copy
+from dataclasses import dataclass, replace
+from datetime import datetime, timedelta
 from math import exp, fsum, isfinite, lgamma, log, log1p, pi, sqrt
 
 from .probability import student_log_survival
+from .models import SampleIdentity
 
 
 def _number(value):
@@ -285,16 +287,25 @@ class Observation:
     received_at: datetime
     value: float | None
     time_basis: str = "measurement"
+    sample: SampleIdentity | None = None
+    original_id: str | None = None
 
     def __post_init__(self):
         if (not self.channel or not self.source or not self.time_basis
                 or not isinstance(self.epoch, int) or isinstance(self.epoch, bool) or self.epoch < 0
-                or not _time(self.at) or not _time(self.received_at) or self.at > self.received_at
+                or not _time(self.at) or not _time(self.received_at)
+                or self.sample is None and self.at > self.received_at
+                or self.sample is not None and not isinstance(self.sample, SampleIdentity)
+                or self.original_id is not None and (not isinstance(self.original_id, str) or not self.original_id)
                 or self.value is not None and not _number(self.value)):
             raise ValueError("An original needs source, causal times and a finite or unknown value")
 
     @property
     def identity(self):
+        if self.sample is not None:
+            return self.channel, self.source, self.epoch, self.time_basis, self.sample.identity
+        if self.original_id is not None:
+            return self.channel, self.source, self.epoch, self.time_basis, self.original_id
         return self.channel, self.source, self.epoch, self.time_basis, self.at
 
 
@@ -324,6 +335,61 @@ class OriginalSequence:
         self._sources = {}
         self.last_received_at = None
         self.revisions = {}
+        self._measurement_position = None
+        self._measurement_clocks = {}
+
+    def accept(self, measurements):
+        """Atomically consume normalized live or archived physical originals.
+
+        Monotonic time determines curve spacing within a boot. Its first UTC
+        timestamp anchors the coordinate; subsequent wall-clock adjustments do
+        not change that spacing. Receipt time alone orders causal processing.
+        A source/boot change explicitly requires a new comparison. The caller
+        owns that context transition and already confirmed physical events.
+        """
+        measurements = tuple(measurements)
+        if not measurements:
+            return False
+        positions = {m.position for m in measurements}
+        if len(positions) != 1 or self._measurement_position not in (None, measurements[0].position):
+            raise ValueError("One probability comparison belongs to one physical position")
+        trial = copy(self)
+        trial._observations = self._observations.copy()
+        trial._sources = self._sources.copy()
+        trial.revisions = self.revisions.copy()
+        trial._measurement_clocks = self._measurement_clocks.copy()
+        trial._adopt_math_state(self)
+        changed = False
+        for measurement in measurements:
+            channel = measurement.quantity.value
+            if channel not in self.channels:
+                raise ValueError("Measurement quantity is outside this comparison")
+            sample = measurement.sample
+            at = measurement.measured_at or measurement.received_at
+            basis = "measurement" if measurement.measured_at else "receipt"
+            if sample is None and measurement.original_id is not None:
+                previous = trial._observations.get((
+                    channel, measurement.source, 0, basis, measurement.original_id,
+                ))
+                if previous is not None:
+                    at = previous.at
+            if sample is not None and measurement.value is not None:
+                clock = (sample.sensor_id, sample.boot_id)
+                anchor_at, anchor_ns = trial._measurement_clocks.setdefault(
+                    clock, (at, sample.monotonic_ns),
+                )
+                at = anchor_at + timedelta(microseconds=(sample.monotonic_ns - anchor_ns) / 1000)
+                basis = "source_monotonic"
+            changed |= trial.observe(Observation(
+                channel, measurement.source, 0, at, measurement.received_at,
+                measurement.value, basis, sample, measurement.original_id,
+            ))
+        self._observations, self._sources = trial._observations, trial._sources
+        self.revisions, self.last_received_at = trial.revisions, trial.last_received_at
+        self._measurement_clocks = trial._measurement_clocks
+        self._measurement_position = measurements[0].position
+        self._adopt_math_state(trial)
+        return changed
 
     def observe(self, observation):
         if observation.channel not in self.channels:
@@ -333,10 +399,13 @@ class OriginalSequence:
         if observation.value is None:
             self.last_received_at = observation.received_at
             return False
-        source = observation.source, observation.epoch, observation.time_basis
+        source = (observation.source, observation.epoch, observation.time_basis,
+                  (observation.sample.sensor_id, observation.sample.boot_id) if observation.sample else None)
         if observation.channel in self._sources and self._sources[observation.channel] != source:
             raise ValueError("Source identity changed: begin a new comparison")
         old = self._observations.get(observation.identity)
+        if old is not None and (old.at != observation.at or old.sample != observation.sample):
+            raise ValueError("The same sample identity cannot describe different measurement times")
         if old is not None and old.value == observation.value:
             self.last_received_at = observation.received_at
             return False
@@ -345,8 +414,7 @@ class OriginalSequence:
             # the revision is recorded separately from the original sequence.
             corrected = self._new_comparison()
             for identity, item in self._observations.items():
-                corrected.observe(Observation(item.channel, item.source, item.epoch, item.at,
-                                              item.received_at, observation.value, item.time_basis)
+                corrected.observe(replace(item, value=observation.value)
                                   if identity == observation.identity else item)
             self._observations = corrected._observations
             self._adopt_math_state(corrected)
@@ -388,7 +456,8 @@ class EvidenceSequence(OriginalSequence):
         return EvidenceSequence(self.hypotheses)
 
     def _adopt_math_state(self, other):
-        self._states, self._weights = other._states, other._weights
+        self._states = {name: states.copy() for name, states in other._states.items()}
+        self._weights = other._weights.copy()
 
     def _assimilate(self, observation):
         updates = {}

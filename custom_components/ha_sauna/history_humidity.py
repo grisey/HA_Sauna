@@ -48,14 +48,13 @@ def _measurement(record, bindings):
     ):
         value = None
     raw_value = payload.get("raw_value")
-    return Measurement(
-        position,
-        quantity,
-        value,
-        raw_value if isinstance(raw_value, str) else "",
-        source,
-        received_at,
-    )
+    try:
+        return Measurement.from_payload({
+            **payload, "value": value,
+            "raw_value": raw_value if isinstance(raw_value, str) else "",
+        })
+    except (KeyError, TypeError, ValueError):
+        return None
 
 
 def _record_id(record):
@@ -183,7 +182,7 @@ def project_absolute_humidity(
         if value is not None:
             try:
                 valid_until = min(
-                    measurement.received_at for measurement in measurements.values()
+                    measurement.freshness_at for measurement in measurements.values()
                 ) + timedelta(seconds=timeout_seconds)
             except OverflowError:
                 continue

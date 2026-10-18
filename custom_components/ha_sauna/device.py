@@ -70,6 +70,7 @@ class HADevice:
         self._button_event_types = None
         self.source_received_at = {}
         self.measurements = {}
+        self.packet_roles = set()
         self.last_valid_temperature = None
         self.last_valid_lower_temperature = None
         self.warmup = WarmupEstimate(
@@ -143,7 +144,18 @@ class HADevice:
                 role, state, state.last_reported if state else now, initial=True
             )
 
+        from .sht_samples import start_sample_sources
+        connect_samples = await start_sample_sources(self)
+
         async def changed(event):
+            # Discovery can arrive after HA startup. Resolve ownership before
+            # consuming that publisher's first scalar state report.
+            if connect_samples and any(
+                role not in self.packet_roles and entity == event.data["entity_id"]
+                and role in {"upper_temperature", "upper_humidity", "lower_temperature", "lower_humidity"}
+                for role, entity in self.bindings.items()
+            ):
+                await connect_samples()
             await self.runtime.device_input(event)
 
         entities = [entity for role, entity in self.bindings.items()
@@ -158,6 +170,8 @@ class HADevice:
         await self.send(False, now, force=True)
 
     def ingest(self, role, state, received_at, *, initial=False, defer_archive=False):
+        if role in self.packet_roles and not initial:
+            return None
         self.states[role] = state
         if role == "control_input" and state is not None:
             event_types = state.attributes.get("event_types")
@@ -204,34 +218,9 @@ class HADevice:
                 state.state if state else "unavailable",
                 self.bindings[role],
                 received_at,
+                original_id="ha-report:" + getattr(state, "last_reported", received_at).isoformat(),
             )
-            self.measurements[role] = m
-            if (
-                self._heating_progress_key is not None
-                and quantity == "temperature"
-                and m.source == self._heating_progress_key[2]
-                and (value is None or value >= self._heating_progress_key[3])
-            ):
-                self._reset_heating_progress()
-            self.runtime.log.debug(
-                "measurement",
-                "Messwert %s: %s; empfangen: %s.",
-                role,
-                value,
-                received_at,
-            )
-            if role == "upper_temperature" and value is not None:
-                self.last_valid_temperature = m
-            elif role == "lower_temperature" and value is not None:
-                self.last_valid_lower_temperature = m
-            session = self.runtime.session
-            if self.runtime.archive and not initial and not defer_archive:
-                self.runtime.archive.append(
-                    "measurement", received_at, m, session.session_id if session else None
-                )
-            if self.runtime.detector and not initial:
-                self.runtime.detector.accept(m)
-            return m
+            return self.ingest_measurement(m, initial=initial, defer_archive=defer_archive)
         elif self.runtime.archive and self.runtime.session and not initial:
             self.runtime.archive.append(
                 "source_state",
@@ -244,6 +233,41 @@ class HADevice:
                 },
                 self.runtime.session.session_id,
             )
+
+    def ingest_measurement(self, m, *, initial=False, defer_archive=False):
+        """One normalized owner for scalar and physical-packet consumers."""
+        role = f"{m.position.value}_{m.quantity.value}"
+        quantity, value, received_at = m.quantity.value, m.value, m.received_at
+        if self.bindings.get(role) != m.source:
+            raise ValueError("Measurement source differs from the bound role")
+        self.source_received_at[role] = received_at
+        self.measurements[role] = m
+        if (
+            self._heating_progress_key is not None
+            and quantity == "temperature"
+            and m.source == self._heating_progress_key[2]
+            and (value is None or value >= self._heating_progress_key[3])
+        ):
+            self._reset_heating_progress()
+        self.runtime.log.debug(
+            "measurement",
+            "Messwert %s: %s; empfangen: %s.",
+            role,
+            value,
+            received_at,
+        )
+        if role == "upper_temperature" and value is not None:
+            self.last_valid_temperature = m
+        elif role == "lower_temperature" and value is not None:
+            self.last_valid_lower_temperature = m
+        session = self.runtime.session
+        if self.runtime.archive and not initial and not defer_archive:
+            self.runtime.archive.append(
+                "measurement", received_at, m, session.session_id if session else None
+            )
+        if self.runtime.detector and not initial:
+            self.runtime.detector.accept(m)
+        return m
 
     def _archive_illuminance(self, at, *, snapshot=False):
         """Keep the original light reading separate from regulation measurements."""
@@ -625,7 +649,7 @@ class HADevice:
         if (
             measurement is None
             or timeout is None
-            or (age := (now - measurement.received_at).total_seconds()) < 0
+            or (age := (now - measurement.freshness_at).total_seconds()) < 0
             or age > timeout
         ):
             return None
@@ -642,7 +666,7 @@ class HADevice:
 
     def regulation_valid_until(self, measurement):
         """Use the selected measurement's existing freshness deadline."""
-        return (measurement.received_at + timedelta(seconds=self.values["sensor_timeout_seconds"])
+        return (measurement.freshness_at + timedelta(seconds=self.values["sensor_timeout_seconds"])
                 if measurement is not None else None)
 
     def _refresh_warmup(self, now):
@@ -848,7 +872,7 @@ class HADevice:
         timeout = self.values.get("sensor_timeout_seconds")
         result = {}
         for role, measurement in self.measurements.items():
-            age = max(0, (now - measurement.received_at).total_seconds())
+            age = max(0, (now - measurement.freshness_at).total_seconds())
             state = (
                 "unavailable"
                 if measurement.value is None

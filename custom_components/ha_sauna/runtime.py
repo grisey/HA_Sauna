@@ -45,6 +45,7 @@ from .core.input_handoff import (
     TemperatureInput,
 )
 from .core.models import Position, Session
+from .core.sensor_sample import ClimatePacket, SampleStream
 from .core.notification_recipients import ActorRef, RecipientAssignment, SessionRecipients
 from .notification_options import (
     CONF_NOTIFICATION_ASSIGNMENTS, decode_notification_assignments, encode_notification_assignments,
@@ -528,6 +529,7 @@ class SaunaRuntime:
         self._lock = asyncio.Lock()
         self._tick_pending = False
         self._pending_device_inputs = deque()
+        self._climate_stream = SampleStream()
         self._device_input_pending = False
         self._reset_button_gestures()
         self._button_hold_session_id = None
@@ -649,6 +651,9 @@ class SaunaRuntime:
             for measurement in sorted(
                 self.device.measurements.values(), key=lambda m: m.received_at
             ):
+                if (f"{measurement.position.value}_{measurement.quantity.value}"
+                        in getattr(self.device, "packet_roles", ()) and measurement.sample is None):
+                    continue
                 self.detector.accept(measurement)
                 if self.archive:
                     self.archive.append(
@@ -869,7 +874,17 @@ class SaunaRuntime:
     async def device_input(self, event):
         if self.closed:
             return
-        received_at = self._clock()
+        if isinstance(event, ClimatePacket):
+            for measurement in event.measurements:
+                role = f"{measurement.position.value}_{measurement.quantity.value}"
+                if self.device.bindings.get(role) != measurement.source:
+                    raise ValueError("Physical packet does not belong to its configured source")
+            if not self._climate_stream.accept(event):
+                return
+        elif any(self.device.bindings.get(role) == event.data["entity_id"]
+                 for role in getattr(self.device, "packet_roles", ())):
+            return
+        received_at = event.received_at if isinstance(event, ClimatePacket) else self._clock()
         self._pending_device_inputs.append((received_at, event))
         if self._device_input_pending:
             return
@@ -913,12 +928,20 @@ class SaunaRuntime:
             # its one raster, even when a control edge was dispatched between.
             for item in packet:
                 event, originals, _temperature = item
-                entity_id = event.data["entity_id"]
-                for role, source in self.device.bindings.items():
-                    if source == entity_id and role in measurement_roles:
-                        originals.append(self.device.ingest(
-                            role, event.data.get("new_state"), received_at, defer_archive=True,
+                if isinstance(event, ClimatePacket):
+                    for measurement in event.measurements:
+                        originals.append(self.device.ingest_measurement(
+                            measurement, defer_archive=True,
                         ))
+                else:
+                    entity_id = event.data["entity_id"]
+                    for role, source in self.device.bindings.items():
+                        if source == entity_id and role in measurement_roles:
+                            measurement = self.device.ingest(
+                                role, event.data.get("new_state"), received_at, defer_archive=True,
+                            )
+                            if measurement is not None:
+                                originals.append(measurement)
                 regulation = self.device.regulation_measurement(received_at)
                 # A transport snapshot preserves each input's selected value,
                 # including repeated roles at one time. The detector still gets
@@ -961,6 +984,8 @@ class SaunaRuntime:
                             evaluated_at=action_at,
                         ),
                     ))
+                    if isinstance(event, ClimatePacket):
+                        continue
                     entity_id = event.data["entity_id"]
                     for role, source in self.device.bindings.items():
                         if source == entity_id and role not in measurement_roles:

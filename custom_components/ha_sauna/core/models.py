@@ -23,6 +23,27 @@ class Quantity(StrEnum):
 
 
 @dataclass(frozen=True)
+class SampleIdentity:
+    """Physical sensor read, independent of transport and wall-clock changes."""
+
+    sensor_id: str
+    boot_id: str
+    sample_id: int
+    monotonic_ns: int
+
+    def __post_init__(self):
+        if (not isinstance(self.sensor_id, str) or not self.sensor_id
+                or not isinstance(self.boot_id, str) or not self.boot_id
+                or type(self.sample_id) is not int or self.sample_id < 1
+                or type(self.monotonic_ns) is not int or self.monotonic_ns < 0):
+            raise ValueError("Physical sample needs sensor, boot, positive ID and monotonic time")
+
+    @property
+    def identity(self):
+        return self.sensor_id, self.boot_id, self.sample_id
+
+
+@dataclass(frozen=True)
 class Measurement:
     """Normalisierter Eingang; Originalwert und Herkunft bleiben daneben erhalten.
 
@@ -37,6 +58,8 @@ class Measurement:
     source: str
     received_at: datetime
     measured_at: datetime | None = None
+    sample: SampleIdentity | None = None
+    original_id: str | None = None
 
     def __post_init__(self) -> None:
         if not isinstance(self.position, Position) or not isinstance(
@@ -56,6 +79,34 @@ class Measurement:
         object.__setattr__(self, "received_at", utc(self.received_at))
         if self.measured_at is not None:
             object.__setattr__(self, "measured_at", utc(self.measured_at))
+        if self.sample is not None:
+            if not isinstance(self.sample, SampleIdentity):
+                raise ValueError("Sample metadata must describe one physical read")
+            if self.value is not None and self.measured_at is None:
+                raise ValueError("A successful physical sample needs its measurement time")
+        if self.original_id is not None and (not isinstance(self.original_id, str) or not self.original_id):
+            raise ValueError("An archival original identity must be nonempty text")
+
+    @classmethod
+    def from_payload(cls, payload, *, original_id=None):
+        """Read current and legacy archive originals through the same contract."""
+        return cls(
+            Position(payload["position"]), Quantity(payload["quantity"]),
+            payload["value"], payload["raw_value"], payload["source"],
+            datetime.fromisoformat(payload["received_at"]),
+            datetime.fromisoformat(payload["measured_at"]) if payload.get("measured_at") else None,
+            SampleIdentity(**payload["sample"]) if payload.get("sample") is not None else None,
+            payload.get("original_id") or original_id,
+        )
+
+    @property
+    def source_identity(self):
+        return (self.source, self.sample.sensor_id, self.sample.boot_id) if self.sample else (self.source,)
+
+    @property
+    def freshness_at(self):
+        """Control freshness; independent of whether an original is evidence."""
+        return min(self.received_at, self.measured_at) if self.measured_at else self.received_at
 
 
 @dataclass(frozen=True)

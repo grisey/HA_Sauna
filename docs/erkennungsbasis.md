@@ -145,3 +145,51 @@ Die Fachschicht ordnet die Wahrscheinlichkeiten dem aktuellen Tür-/Aufguss-
 vorgang zu. Die natürliche Abklingphase nach einem Aufguss begründet keine
 feste Sperrzeit. Eine eigenständig belegte Türöffnung darf einen
 softwareseitig noch offenen Aufguss beenden.
+
+## Gemeinsamer Messpfad und Altbestand
+
+Die SHT-App 1.2 liefert Temperatur und relative Feuchte einer Position als
+zusammengehörige Probe. `sensor_id`, `boot_id` und `sample_id` identifizieren die
+Auslesung; `monotonic_ns` beschreibt ihren Abstand innerhalb desselben
+App-Starts. Die ausgewählten HA-Entitäten bleiben die fachlichen Quellen.
+Ihre MQTT-Discovery-Konfiguration bestimmt den tatsächlichen Paketkanal;
+Kanalnummern legen keine obere oder untere Position fest.
+
+Der Paketeingang übernimmt beide Größen gemeinsam in die Laufzeit. Er ersetzt
+für diese Quellen den skalaren HA-Eingang bereits vor dem ersten Paket.
+Wiederholte Proben erneuern weder Evidenz noch Regeltemperatur-Frische.
+Unveränderte Zahlen mit einer neuen Proben-ID sind dagegen neue Auslesungen.
+Lesefehler behalten ihre Identität, liefern aber keine Messwerte und keine
+Evidenz. Die Feuchteanzeige kombiniert identifizierte Werte nur innerhalb
+derselben Probe.
+
+`Measurement` ist der gemeinsame Eingang von Gerät, Archiv und mathematischer
+Basis. `OriginalSequence.accept` übernimmt ein vollständiges Paar atomar in
+`EvidenceSequence` oder `CurveProbability`; eine fehlgeschlagene zweite
+Übernahme verändert die erste nicht. Die erste Messzeit verankert die
+Kurvenkoordinate, weitere Abstände stammen aus der monotonen Uhr. Originale
+UTC-Messzeit und Empfangszeit bleiben unverändert im Archiv. Ein Quellen- oder
+App-Startwechsel benötigt einen neuen Vergleichskontext; bestätigte fachliche
+Ereignisse gehören weiterhin ihrem übergeordneten Zustandsmodell.
+
+Ältere Messungen benötigen diese neuen Felder nicht. Ohne Messzeit bleibt die
+aufgezeichnete Empfangszeit ihre ausdrücklich bezeichnete Zeitbasis. Archiv-
+und Datensatzkennung beziehungsweise Replaydatei und Zeilennummer
+identifizieren den Originaleintrag. Es entstehen keine erfundenen
+App-Startkennungen, Proben-IDs oder gemeinsamen T/RH-Auslesungen. Solche
+Originale gehen einzeln in dieselbe mathematische Auswertung ein. Gleichzeitig
+überlieferte Einzelwerte werden dadurch nicht zu einer Messgruppe mit einer
+Mindestanzahl für die Bestätigung.
+
+`Measurement.from_payload` liest beide Archivformate. `archive_measurements`
+führt alte Einzelwerte und neue Paare in Archiv-Reihenfolge zusammen;
+Zustandssnapshots erzeugen keine weiteren Originale. JSONL und CSV erhalten
+vorhandene Herkunftsfelder. Ein unvollständig exportiertes neues Paar wird als
+Datenfehler ausgewiesen. Regeltemperatur und Anzeige verwenden weiterhin die
+konfigurierte Frischegrenze; ein verspätetes Original bleibt unabhängig davon
+mathematisch auswertbar.
+
+Dieser Eingangsanschluss ersetzt noch nicht den aktiven Ereignisdetektor.
+Dessen Ablösung benötigt die kalibrierten Kurvenmodelle sowie die Übergänge
+zwischen Tür-, Aufguss- und Lüftungsvorgängen. Eine erfolgreiche Paket- oder
+Altdatenprüfung ist kein Nachweis dieser Ereigniserkennung.

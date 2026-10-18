@@ -15,6 +15,7 @@
     "http"
   ],
   "after_dependencies": [
-    "frontend"
+    "frontend",
+    "mqtt"
   ]
 }

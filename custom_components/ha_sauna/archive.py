@@ -1428,6 +1428,8 @@ class Archive:
                                 "source",
                                 "value",
                                 "raw_value",
+                                "sensor_id", "boot_id", "sample_id", "monotonic_ns",
+                                "original_id",
                             )
                         )
                         for row in db.execute(
@@ -1446,6 +1448,10 @@ class Archive:
                                     data["source"],
                                     data["value"],
                                     data["raw_value"],
+                                    *((data.get("sample") or {}).get(key) for key in (
+                                        "sensor_id", "boot_id", "sample_id", "monotonic_ns",
+                                    )),
+                                    data.get("original_id"),
                                 )
                             )
                         out.flush()
