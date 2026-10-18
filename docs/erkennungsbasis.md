@@ -56,6 +56,33 @@ keine zusätzliche Mindestzahl je Flanke und keine K-/2K-Bestätigungsblöcke.
 Priormittel, Kovarianz, Varianzverteilung, Ereignispriors und Entscheidungsschwelle
 sind explizite Eingaben, keine versteckten Standardwerte.
 
+## Gerichtete Kurvenhypothesen
+
+Eine physikalische Richtung kann direkt zum Modell gehören. `DirectedRegression`
+beschränkt den Koeffizientenprior auf einen Halbraum `cᵀb > d`, beispielsweise
+einen negativen Steigungsknick. Die Kurve darf beim Anpassen nicht unbemerkt
+ihre Richtung und damit die Bedeutung des Ereignisses wechseln.
+
+Die uneingeschränkte konjugierte Verteilung bleibt rechnerisch erhalten.
+Mit `M(D) = P(cᵀb > d | D)` lautet die korrekte Vorhersagedichte des
+gerichteten Modells:
+
+```text
+p(y | D, cᵀb > d) = p(y | D) * M(D,y) / M(D)
+```
+
+Der Kontrast hat eine Student-t-Verteilung mit Lage `cᵀm`, Skalenquadrat
+`r/a * cᵀCc` und `2a` Freiheitsgraden. Hier wird kein zusätzliches
+Messrauschen addiert. Die Student-t-Randwahrscheinlichkeit wird über die
+[unvollständige Betafunktion](https://dlmf.nist.gov/8.17) berechnet.
+Numerische Nichtkonvergenz ist ein Rechenfehler und kein Gegenbeleg.
+Mehrere korrelierte Richtungsbedingungen dürfen nicht durch Multiplikation
+einzelner Randwahrscheinlichkeiten ersetzt werden.
+
+Ein negativer Steigungsknick ist zunächst eine Kurveneigenschaft. Seine
+Zuordnung zur Türöffnung benötigt ein entsprechendes fachliches Modell;
+die Bezeichnung allein liefert keine zusätzliche Wahrscheinlichkeit.
+
 ## Entscheidung und Kalibrierung
 
 Ein Ereignis erreicht die explizite Wahrscheinlichkeitsschwelle `q_event`,

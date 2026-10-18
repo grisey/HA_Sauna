@@ -13,6 +13,8 @@ from dataclasses import dataclass
 from datetime import datetime
 from math import exp, fsum, isfinite, lgamma, log, log1p, pi, sqrt
 
+from .probability import student_log_survival
+
 
 def _number(value):
     return isinstance(value, (int, float)) and not isinstance(value, bool) and isfinite(value)
@@ -56,6 +58,18 @@ class Prediction:
     mean: float
     scale_squared: float
     degrees_of_freedom: float
+
+    def __post_init__(self):
+        if (not _number(self.mean) or not _number(self.scale_squared)
+                or self.scale_squared <= 0 or not _number(self.degrees_of_freedom)
+                or self.degrees_of_freedom <= 0):
+            raise ValueError("A Student-t prediction needs finite location and positive scales")
+
+    def log_survival(self, value):
+        if not _number(value):
+            raise ValueError("A probability boundary must be finite")
+        return student_log_survival((value - self.mean) / sqrt(self.scale_squared),
+                                    self.degrees_of_freedom)
 
     def log_density(self, value):
         if not _number(value):
@@ -104,6 +118,16 @@ class Regression:
             raise ValueError("Predictive variance is not numerically representable")
         return vector, denominator
 
+    @property
+    def dimension(self):
+        return len(self.mean)
+
+    def coefficient_contrast(self, weights):
+        """Marginal coefficient distribution, WITHOUT observation noise."""
+        vector, _ = self._projection(weights)
+        variance = self.rate / self.shape * _dot(weights, vector)
+        return Prediction(_dot(weights, self.mean), variance, 2 * self.shape)
+
     def predict(self, design):
         _, denominator = self._projection(design)
         variance = self.rate / self.shape * denominator
@@ -134,6 +158,57 @@ class Regression:
         posterior = Regression(mean, tuple(tuple(row) for row in covariance),
                                self.shape + 0.5, rate, self.count + 1)
         return posterior, likelihood
+
+
+@dataclass(frozen=True)
+class HalfSpace:
+    """A physical direction is part of the hypothesis, not a later gate.
+
+    The prior is restricted to dot(weights, coefficients) > lower.
+    A signed amplitude or a specified slope contrast can use this exactly.
+    Multiple constraints cannot be approximated by multiplying their margins.
+    """
+
+    weights: tuple[float, ...]
+    lower: float = 0.0
+
+    def __post_init__(self):
+        if (not self.weights or any(not _number(v) for v in self.weights)
+                or not any(self.weights) or not _number(self.lower)):
+            raise ValueError("A half-space needs a nonzero finite contrast")
+        object.__setattr__(self, "weights", tuple(self.weights))
+
+    def log_mass(self, regression):
+        return regression.coefficient_contrast(self.weights).log_survival(self.lower)
+
+
+@dataclass(frozen=True)
+class DirectedRegression:
+    """Exact NIG regression conditioned on one physical half-space.
+
+    State retains the enclosing conjugate posterior. The event likelihood
+    includes its changing half-space mass. It never treats a wrong-sign fit
+    as the named event or clips the posterior coefficient to the boundary.
+    """
+
+    enclosing: Regression
+    constraint: HalfSpace
+
+    def __post_init__(self):
+        if len(self.constraint.weights) != self.enclosing.dimension:
+            raise ValueError("Constraint and coefficient dimensions must match")
+        if not isfinite(self.constraint.log_mass(self.enclosing)):
+            raise ValueError("The directed prior must have representable nonzero mass")
+
+    @property
+    def dimension(self):
+        return self.enclosing.dimension
+
+    def observe(self, design, value):
+        posterior, likelihood = self.enclosing.observe(design, value)
+        before = self.constraint.log_mass(self.enclosing)
+        after = self.constraint.log_mass(posterior)
+        return DirectedRegression(posterior, self.constraint), likelihood + after - before
 
 
 @dataclass(frozen=True)
@@ -171,15 +246,19 @@ class Basis:
             raise ValueError("Design is not numerically representable")
         return values
 
+    @property
+    def dimension(self):
+        return len(self.powers) + len(self.knots)
+
 
 @dataclass(frozen=True)
 class ChannelModel:
     channel: str
     basis: Basis
-    prior: Regression
+    prior: Regression | DirectedRegression
 
     def __post_init__(self):
-        if not self.channel or len(self.prior.mean) != len(self.basis.powers) + len(self.basis.knots):
+        if not self.channel or self.prior.dimension != self.basis.dimension:
             raise ValueError("Channel, basis and coefficient prior must agree")
 
 
@@ -232,7 +311,8 @@ class EventProbability:
         return self.log_odds - (log(threshold) - log1p(-threshold))
 
     def confirmed(self, threshold):
-        return self.original_count > 0 and self.threshold_margin(threshold) >= 0
+        margin = self.threshold_margin(threshold)
+        return self.original_count > 0 and margin >= 0
 
 
 class EvidenceSequence:
