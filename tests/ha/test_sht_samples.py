@@ -10,7 +10,6 @@ from unittest.mock import AsyncMock, Mock, patch
 import test_device_feedback as fixtures
 from test_sensor_sample import packet, SOURCES, TOPIC, records_for, comparison
 from test_detector import trace
-from custom_components.ha_sauna.archive import plain
 from custom_components.ha_sauna.core.sensor_sample import ClimatePacket, archive_measurements
 
 
