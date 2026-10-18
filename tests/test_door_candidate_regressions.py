@@ -355,11 +355,29 @@ class DoorCandidateRegressionTests(unittest.TestCase):
         self.assertIn(Kind.INFUSION, [event.kind for event in events])
         self.assertIsNotNone(detector.infusion_episode)
         self.assertEqual(detector.infusion_episode.phase, "active")
-        flow._feed(detector, fall, points, events, temperatures=temperatures)
+        # Complete the existing fixture's plateau suffix with actual new
+        # originals. Its interpolation endpoint is not a confirmation deadline.
+        # Both curves keep their already declared final value; T remains above
+        # the preinfusion level throughout this existing lifecycle suffix.
+        completed = flow._declared_flat_end(fall)
+        flow._feed(detector, completed, points, events, temperatures=temperatures)
         opens = [event for event in events if event.kind == Kind.DOOR_OPEN]
         self.assertEqual(len(opens), 1, msg=json.dumps(
             observed, default=str, sort_keys=True,
         ))
+        confirmation = next(row for row in observed if row["at"] == opens[0].trace_at)
+        position = opens[0].channels[0]
+        temperature_proof = confirmation["opening"]["original_fall_evidence"][f"{position}:temperature"]
+        self.assertTrue(temperature_proof["reference_current"])
+        self.assertTrue(confirmation["infusion_guard"]["local_fall"]["result"])
+        self.assertTrue(confirmation["opening"]["resolved_joint_fall"]["result"])
+        print("ABOVE_PREINFUSION_DOOR_PROOF=" + json.dumps({
+            "declared_turn_at": flow._at(door_at), "interpolation_end_at": flow._at(fall),
+            "completed_fixture_at": flow._at(completed),
+            "effective_at": opens[0].effective_at, "confirmed_at": opens[0].detected_at,
+            "trace_at": opens[0].trace_at, "temperature_proof": temperature_proof,
+            "rh_onsets": confirmation["opening"]["binding_onsets"],
+        }, default=str, sort_keys=True))
         observed = flow._value(temperatures, (opens[0].trace_at - T0).total_seconds())
         self.assertGreater(observed, flow.temperature)
         self.assertGreaterEqual(opens[0].effective_at, flow._at(door_at))

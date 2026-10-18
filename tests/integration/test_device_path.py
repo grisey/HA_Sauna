@@ -313,8 +313,22 @@ class DevicePathTests(unittest.IsolatedAsyncioTestCase):
         fixture = InfusionLifecycleTests()
         fixture.setUp()
         points, _, _, final_fall = fixture._scenario(merged=False)
-        # Retain the original entry and all pre-infusion HA inputs through69s.
-        pulse_start = 70
+        # Reuse the real person-only ramp from
+        # test_monotone_rise_has_no_infusion_and_keeps_person_detection_available.
+        # Give it its full configured phase after this HA entry before either pulse.
+        entry_at = 60
+        p = self.runtime.configuration.parameters.values
+        person_begin = entry_at + fixture.begin
+        person_end = person_begin + ceil(
+            p["strong_window_seconds"] + p["strong_hold_seconds"]
+            + p["median_seconds"] + 2 * p["person_step_seconds"]
+        )
+        rate = 2 * max(p["strong_humidity_upper"], p["strong_humidity_lower"]) / 60
+        person_points = [
+            (0, fixture.baseline), (person_begin, fixture.baseline),
+            (person_end, fixture.baseline + rate * (person_end - person_begin)),
+        ]
+        pulse_start = person_end + fixture.step
         pulse_offset = pulse_start - fixture.begin
         through = ceil(pulse_offset + final_fall + fixture.width)
         await self.runtime.set_operation(True)
@@ -322,18 +336,18 @@ class DevicePathTests(unittest.IsolatedAsyncioTestCase):
         provisional_gang = first_gang = None
         for second in range(through + 1):
             self.now = self.base + timedelta(seconds=second)
-            temperature = 70 + second*.01
-            humidity = 20 + second*.001
+            temperature = fixture.temperature
+            humidity = fixture._value(person_points, second)
             if second >= pulse_start:
                 # Only reuse fixture inputs; never patch the detector's maths.
-                humidity = (20 + pulse_start*.001
+                humidity = (fixture._value(person_points, person_end)
                             + fixture._value(points, second - pulse_offset) - fixture.baseline)
             for position in ("upper", "lower"):
                 await self.set_source(position + "_temperature", temperature)
                 await self.set_source(position + "_humidity", humidity)
             await self.runtime.tick()
             await self.hass.async_block_till_done()
-            if second == 60:
+            if second == entry_at:
                 for kind in (Kind.DOOR_OPEN, Kind.DOOR_CLOSE):
                     await self.runtime.receive(Event(
                         f"entry:{kind.value}", self.runtime.session.session_id, kind, self.now, self.now
@@ -341,9 +355,12 @@ class DevicePathTests(unittest.IsolatedAsyncioTestCase):
             active = self.runtime.session.timeline.active
             if active and not active.infusion_events:
                 provisional_gang = provisional_gang or active
-            if second == pulse_start - 1:
-                self.assertIsNotNone(provisional_gang, "The unchanged entry prefix must supply PERSON_STRONG before either pulse")
+            if second == person_end:
+                self.assertIsNotNone(provisional_gang, "The full person-only fixture must supply PERSON_STRONG before either pulse")
                 self.assertEqual(provisional_gang.recognition_kind, Kind.PERSON_STRONG)
+                self.assertIsNotNone(active)
+                self.assertEqual(active.confirmation, Confirmation.PROVISIONAL)
+                self.assertEqual(active.infusion_events, ())
             if active and active.infusion_events:
                 first_gang = first_gang or active
                 self.assertEqual(active.gang_id, first_gang.gang_id)

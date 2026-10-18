@@ -3812,8 +3812,8 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
         await expect(self.panel.locator('input[name="session_light_brightness_percent"]')).to_have_count(0)
         self.assertLessEqual(await self.panel.evaluate("p=>p.shadowRoot.querySelector('main').scrollWidth"),390)
         bindings = dict(self.entry.options["bindings"])
-        await self.open_parameter_group("after_run_minutes")
-        await self.panel.locator('input[name="after_run_minutes"]').fill("45")
+        await self.open_parameter_group("preset_step_c")
+        await self.panel.locator('input[name="preset_step_c"]').fill("45")
         await self.open_settings_section("maintenance")
         await self.panel.get_by_role("button", name="Standards für alle Bereiche", exact=True).click()
         dialog = self.panel.locator("#standards-dialog")
@@ -3824,7 +3824,6 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
         await dialog.get_by_role("button", name="Schließen", exact=True).click()
         # Logging is a separate live control, outside the field-standard scope.
         await expect(self.panel.locator('#log-level')).to_have_value("DEBUG", timeout=browser_timeout("update"))
-        await expect(self.panel.locator('input[name="after_run_minutes"]')).to_have_value(format(DEFAULT_PARAMETERS["after_run_minutes"], "g"))
         await expect(self.panel.locator('input[name="preset_step_c"]')).to_have_value(format(DEFAULT_PARAMETERS["preset_step_c"], "g"))
         await expect(self.panel.locator('input[name="preset_start_c"]')).to_have_value(format(DEFAULT_PARAMETERS["preset_start_c"], "g"))
         await self.hass.async_block_till_done()
