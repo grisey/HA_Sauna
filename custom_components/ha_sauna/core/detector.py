@@ -2030,6 +2030,13 @@ class Detector:
             local_roles[name] = {
                 "supported": supported,
                 "reference_newest_at": reference.newest_at if reference is not None else None,
+                # Die feste Knickreferenz bleibt der Maßstab. Nur ein aktuell
+                # unterstützter eigener Fall erweitert ihre zeitliche Zuordnung
+                # bis zum jüngsten tatsächlich ausgewerteten T-Original.
+                "attribution_bounds": (
+                    (reference.start_at, window.newest_at if supported else reference.newest_at)
+                    if reference is not None else None
+                ),
                 "followup": self._original_followup_trace({(name, Quantity.TEMPERATURE): form}
                                                           if form is not None else None),
             }
@@ -2171,7 +2178,7 @@ class Detector:
 
     def _original_opening_onset_witnesses(
         self, episode, prefix, windows, *, quantities=(Quantity.HUMIDITY,),
-        transitions=None, onset_intervals=None,
+        transitions=None, onset_intervals=None, diagnostics=None,
     ):
         """RH-Beginne desselben fortlaufenden Quellenastes kausal zusammenführen."""
         points = {position: tuple(self._original_segment_points(prefix, position, quantity)
@@ -2183,12 +2190,15 @@ class Detector:
             position = Position(name)
             interval = (onset_intervals.get(name)
                         if onset_intervals is not None else None)
-            if transitions is not None and interval is None:
+            if transitions is not None and (interval is None or name not in transitions):
+                if diagnostics is not None:
+                    diagnostics.append({
+                        "position": name, "received_at": prefix.received_at,
+                        "reason": "missing_local_interval" if interval is None
+                        else "missing_temperature_attribution",
+                    })
                 continue
-            if transitions is not None and name not in transitions:
-                continue
-            bounds = ((transitions[name].start_at, transitions[name].newest_at)
-                      if transitions is not None else None)
+            bounds = transitions[name] if transitions is not None else None
             for index, quantity in enumerate((Quantity.TEMPERATURE, Quantity.HUMIDITY)):
                 if quantity not in quantities:
                     continue
@@ -2197,7 +2207,16 @@ class Detector:
                 status = self._curve_status.get(key, {})
                 source = episode["sources"][position][index]
                 series = self._curve_series[position, quantity]
+                diagnostic = {
+                    "position": name, "quantity": quantity.value,
+                    "received_at": prefix.received_at, "source": source,
+                    "epoch": epochs[position][index], "time_basis": series["time_basis"],
+                    "attribution_bounds": bounds, "accepted": False,
+                }
+                if diagnostics is not None:
+                    diagnostics.append(diagnostic)
                 if series["source"] != source or series["epoch"] != epochs[position][index]:
+                    diagnostic["reason"] = "source_or_epoch_changed"
                     continue
                 floor = max(
                     self._curve_closed_since,
@@ -2207,6 +2226,7 @@ class Detector:
                     (self._curve_door_context, self._curve_closed_since),
                     (epochs[position][index],), floor, None,
                 )
+                diagnostic["context_floor"] = floor
                 window = getattr(pair, quantity.value)
                 originals = dict(points[position][index])
                 current_candidate = bool(
@@ -2221,12 +2241,22 @@ class Detector:
                         <= native["window"].newest_at):
                     # Nur die wirklich aufgelösten Sekanten lokalisieren
                     # diesen Knick. Frühere eigene RH-Formbelege bleiben frei.
+                    diagnostic["native_interval_used"] = False
+                    diagnostic["native_interval_reason"] = "supported_form_outside_native_interval"
                     native = None
                 native_onset = native["interval"].previous[0] if native is not None else None
+                diagnostic.update(
+                    current_supported_candidate=current_candidate,
+                    current_candidate_onset=candidate.onset_at if candidate is not None else None,
+                    native_onset=native_onset,
+                    native_support=(native["window"].start_at, native["window"].newest_at)
+                    if native is not None else None,
+                )
                 if native is not None and not all(
                     originals.get(stamp) == value
                     for stamp, value in native["window"].previous + native["window"].current
                 ):
+                    diagnostic["reason"] = "native_original_changed"
                     continue
                 local_native = native is not None and transitions is not None
                 current_native_branch = bool(
@@ -2255,17 +2285,42 @@ class Detector:
                     support = tuple(point for point in points[position][index]
                                     if start <= point[0] <= prefix.received_at)
                     fit_context = position, quantity, source, series["time_basis"], context
+                    diagnostic["fit_support"] = {
+                        "start_at": support[0][0] if support else None,
+                        "newest_at": support[-1][0] if support else None,
+                        "original_count": len(support),
+                        "before_or_at_native_onset": sum(stamp <= native_onset for stamp, _ in support)
+                        if native_onset is not None else None,
+                        "after_native_onset": sum(stamp > native_onset for stamp, _ in support)
+                        if native_onset is not None else None,
+                        "min_side_samples": self.curve_policy.min_side_samples,
+                    }
                     features = None
                     if native_onset is not None and transitions is None:
                         previous_form = self._fit_candidate_form(
                             "door_open", support, floor, quantity, fit_context=fit_context,
                         )
-                        if (self._curve_supports("door_open", previous_form, floor, quantity)
+                        previous_gates = (self._curve_support_gates(
+                            "door_open", previous_form, floor, quantity,
+                        ) if previous_form is not None else {})
+                        previous_supported = bool(previous_form is not None and all(
+                            gate["result"] for gate in previous_gates.values()
+                        ))
+                        diagnostic["free_form"] = {
+                            "available": previous_form is not None,
+                            "supported": previous_supported, "gates": previous_gates,
+                            "onset_at": previous_form.onset_at if previous_form is not None else None,
+                            "features": self._curve_feature_diagnostic(previous_form)
+                            if previous_form is not None else None,
+                        }
+                        if (previous_supported
                                 and not native["window"].previous[-1][0] <= previous_form.onset_at
                                 <= native["window"].newest_at):
                             features = previous_form
                             native_onset = None
+                            diagnostic["fit_method"] = "supported_form_outside_native_interval"
                     if native_onset is not None:
+                        diagnostic["fit_method"] = "fixed_native_onset"
                         hinge_order = candidate.features.hinge_order if candidate is not None else 1
                         fit_key = (
                             "original_opening_change", fit_context, self.curve_policy,
@@ -2279,15 +2334,29 @@ class Detector:
                             )
                         features = self._curve_fit_cache[fit_key]
                     elif features is None and bounds is None:
+                        diagnostic["fit_method"] = "searched_form"
                         features = self._fit_candidate_form(
                             "door_open", support, floor, quantity, fit_context=fit_context,
                         )
                     elif features is None:
+                        diagnostic["fit_method"] = "searched_form_in_attribution"
                         features = curve_change(
                             support, policy=self.curve_policy, direction=-1,
                             onset_not_before=floor, onset_bounds=bounds,
                         )
-                    if self._curve_supports("door_open", features, floor, quantity):
+                    gates = (self._curve_support_gates("door_open", features, floor, quantity)
+                             if features is not None else {})
+                    supported = bool(features is not None and all(
+                        gate["result"] for gate in gates.values()
+                    ))
+                    diagnostic["selected_form"] = {
+                        "available": features is not None, "supported": supported,
+                        "onset_at": features.onset_at if features is not None else None,
+                        "gates": gates,
+                        "features": self._curve_feature_diagnostic(features)
+                        if features is not None else None,
+                    }
+                    if supported:
                         candidate = _CurveCandidate(
                             f"door_open:{position.value}:{quantity.value}:{source}:"
                             f"{context[1]}:{features.onset_at.isoformat()}:{prefix.received_at.isoformat()}",
@@ -2295,7 +2364,10 @@ class Detector:
                             support, features.newest_at,
                         )
                     elif local_native or not current_native_branch:
+                        diagnostic["reason"] = "no_evaluable_form" if features is None else "form_not_supported"
                         continue
+                    else:
+                        diagnostic["retained_current_form"] = True
                     # Nur die allgemeine Zuordnung darf eine vorhandene eigene
                     # Form weitertragen. Lokal braucht die eigene Stütze ihren
                     # Formbeleg; ein breiterer alter Fit ersetzt ihn nicht.
@@ -2303,18 +2375,27 @@ class Detector:
                 # physischen RH-Beginn jeder Rolle. Der eigene unterstützte
                 # Originalfit darf früher oder erst später einsetzen; Quelle,
                 # Epoche und der lückenlose Fallast müssen weiterhin passen.
-                if (candidate.features.newest_at > prefix.received_at
-                        or candidate.onset_at > window.newest_at
-                        or not self._original_contiguous(prefix, (
-                            (name, quantity, candidate.features.newest_at),
-                        ))):
+                if candidate.features.newest_at > prefix.received_at:
+                    diagnostic["reason"] = "form_after_current_prefix"
                     continue
-                if (quantity == Quantity.HUMIDITY
-                        and not self._original_opening_humidity_connected(
-                            points[position][index], candidate, window, name,
-                            self._original_prefix_time_support(prefix, position, quantity),
-                        )):
+                if candidate.onset_at > window.newest_at:
+                    diagnostic["reason"] = "onset_after_current_original"
                     continue
+                if not self._original_contiguous(prefix, (
+                    (name, quantity, candidate.features.newest_at),
+                )):
+                    diagnostic["reason"] = "original_connection_unresolved"
+                    continue
+                if quantity == Quantity.HUMIDITY:
+                    connected = self._original_opening_humidity_connected(
+                        points[position][index], candidate, window, name,
+                        self._original_prefix_time_support(prefix, position, quantity),
+                    )
+                    diagnostic["humidity_connected"] = connected
+                    if not connected:
+                        diagnostic["reason"] = "humidity_recovery" if connected is False else "humidity_connection_unresolved"
+                        continue
+                diagnostic.update(accepted=True, reason="own_form_bound", onset_at=candidate.onset_at)
                 witnesses.append((key, candidate))
         return tuple(witnesses)
 
@@ -3294,6 +3375,7 @@ class Detector:
                         "onset_witnesses": self._original_opening_onset_witnesses(
                             episode, prefix, contrasts.positions,
                             onset_intervals=onset_intervals,
+                            diagnostics=forms.setdefault("opening_onset_diagnostics", {}).setdefault("initial", []),
                         ),
                         "falling_temperatures": {
                             name for name, pair in contrasts.positions
@@ -3371,11 +3453,18 @@ class Detector:
                                 if ("door_open", Position(name), Quantity.HUMIDITY) not in bound
                             ),
                             onset_intervals=onset_intervals,
+                            diagnostics=forms.setdefault("opening_onset_diagnostics", {}).setdefault("continued", []),
                         ):
                             if key not in bound:
                                 bound[key] = onset
                                 changed = True
-                    transitions = candidate.get("temperature_fall_witnesses", {})
+                    # Speicherprüfung und Formzuordnung konsumieren denselben
+                    # vom T-Fallbesitzer abgeleiteten Originalzeitbereich.
+                    transitions = {
+                        name: role["attribution_bounds"]
+                        for name, role in infusion_guard["new_local_temperature_fall"]["positions"].items()
+                        if role["attribution_bounds"] is not None
+                    }
                     local_intervals = candidate.setdefault("local_humidity_onset_intervals", {})
                     local_candidates, local_background = self._original_opening_local_fall_intervals(
                         candidate, prefix, contrasts.positions,
@@ -3389,8 +3478,8 @@ class Detector:
                         # nicht verbrauchen. Folgeoriginale prüfen dieses feste
                         # Fenster, statt den Bezug bei jedem Präfix zu verschieben.
                         held = local_intervals.get(name)
-                        if (name in transitions and transitions[name].start_at
-                                <= interval["interval"].previous[0] <= transitions[name].newest_at
+                        if (name in transitions and transitions[name][0]
+                                <= interval["interval"].previous[0] <= transitions[name][1]
                                 and interval["kink"].effective_change < 0
                                 and (held is None or held["kink"].effective_change >= 0)):
                             local_intervals[name] = interval
@@ -3408,6 +3497,7 @@ class Detector:
                                 )
                             ),
                             transitions=transitions, onset_intervals=local_intervals,
+                            diagnostics=forms.setdefault("opening_onset_diagnostics", {}).setdefault("local", []),
                         ):
                             if key not in bound or onset.onset_at > bound[key].onset_at:
                                 bound[key] = onset

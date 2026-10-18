@@ -4145,6 +4145,139 @@ class InfusionLifecycleTests(unittest.TestCase):
             self.assertGreater(candidate["confirmation_received_at"], local["received_at"])
         self.assertGreater(candidate["confirmation_received_at"], candidate["received_at"])
 
+    def test_later_rh_branch_uses_continuing_t_fall_without_rebinding_reference(self):
+        # Reuse the existing infusion/independent-door shape. T already falls
+        # on the first return and continues through the later independent RH
+        # turn: the old T-window end must not become a permanent time veto.
+        for variant in ("synchronous", "asynchronous_rh"):
+            with self.subTest(variant=variant):
+                points, peak, door_at, end = self._infusion_then_independent_door()
+                position = Position.UPPER
+                detector, events, rows = Detector(self.parameters, T0, (position,)), [], []
+                detector.observer = rows.append
+                slope = (self.temperature - trace(85)[0]) / (end - door_at)
+                self.assertGreater(slope, 0)
+                temperatures = [
+                    (0, self.temperature), (peak, self.temperature),
+                    (end, self.temperature - slope * (end - peak)),
+                ]
+                references, local_bindings = {}, []
+                originals = {Quantity.TEMPERATURE: {}, Quantity.HUMIDITY: {}}
+                original_guard = detector._original_opening_infusion_guard
+                original_onsets = detector._original_opening_onset_witnesses
+
+                def observe_guard(candidate, prefix, positions, state):
+                    result = original_guard(candidate, prefix, positions, state)
+                    for name, reference in candidate.get("temperature_fall_witnesses", {}).items():
+                        key = id(candidate), name
+                        background = candidate["temperature_fall_backgrounds"][name]
+                        if key not in references:
+                            references[key] = candidate, reference, background
+                        retained_candidate, retained, retained_background = references[key]
+                        self.assertIs(candidate, retained_candidate)
+                        self.assertIs(reference, retained)
+                        self.assertIs(background, retained_background)
+                        role = result[1]["new_local_temperature_fall"]["positions"][name]
+                        bounds = role["attribution_bounds"]
+                        self.assertLessEqual(bounds[1], dict(prefix.temperatures)[name].newest_at)
+                        self.assertLessEqual(bounds[1], prefix.received_at)
+                        if not role["supported"]:
+                            self.assertLessEqual(bounds[1], reference.newest_at)
+                    return result
+
+                def observe_onsets(episode, prefix, windows, **kwargs):
+                    witnesses = original_onsets(episode, prefix, windows, **kwargs)
+                    if kwargs.get("transitions") is not None:
+                        candidate = episode["original_open"]
+                        for key, witness in witnesses:
+                            name = key[1].value
+                            reference = candidate["temperature_fall_witnesses"][name]
+                            background = candidate["temperature_fall_backgrounds"][name]
+                            applicable = detector._original_opening_return_reference(candidate, key[1])
+                            self.assertIsNotNone(applicable)
+                            returned = applicable[1]["humidity_returns"][name]["window"]
+                            local_bindings.append({
+                                "candidate": candidate, "reference": reference,
+                                "background": background, "return": returned,
+                                "witness": witness, "bounds": kwargs["transitions"][name],
+                                "prefix_at": prefix.received_at,
+                            })
+                    return witnesses
+
+                with (
+                    patch.object(detector, "_original_opening_infusion_guard", side_effect=observe_guard),
+                    patch.object(detector, "_original_opening_onset_witnesses", side_effect=observe_onsets),
+                ):
+                    self._feed(detector, peak, points, events, temperatures=temperatures)
+                    for quantity in originals:
+                        originals[quantity].update(detector._curve_series[position, quantity]["points"])
+                    for second in range(peak + self.step, end + self.step, self.step):
+                        # Keep the first return identical; vary only receipt
+                        # alignment of the later independent RH originals.
+                        humidity_second = (second - self.step / 2
+                                           if variant == "asynchronous_rh" and second > door_at
+                                           else second)
+                        for quantity, measured_second, values in (
+                            (Quantity.TEMPERATURE, second, temperatures),
+                            (Quantity.HUMIDITY, humidity_second, points),
+                        ):
+                            stamp = self._at(measured_second)
+                            value = self._value(values, measured_second)
+                            self.assertTrue(detector.accept(measurement(
+                                position, quantity, value, second, measured=stamp,
+                            )))
+                            originals[quantity][stamp] = value
+                        events.extend(detector.advance(self._at(second), enabled=True))
+                        if second == door_at:
+                            self.assertEqual(len(self._infusions(events)), 1)
+                            self.assertIsNotNone(detector.infusion_episode)
+                            self.assertEqual(detector.infusion_episode.phase, "active")
+                            self.assertNotIn(Kind.DOOR_OPEN, [event.kind for event in events])
+
+                diagnostic = json.dumps({
+                    "variant": variant, "peak": self._at(peak), "later_rh_turn": self._at(door_at),
+                    "events": [(event.kind, event.effective_at, event.detected_at) for event in events],
+                    "local_bindings": [{
+                        "reference_end": row["reference"].newest_at,
+                        "first_rh_return_end": row["return"].newest_at,
+                        "own_rh_onset": row["witness"].onset_at,
+                        "bounds": row["bounds"], "prefix_at": row["prefix_at"],
+                    } for row in local_bindings],
+                    "final_forms": detector.diagnostic.get("original_forms"),
+                }, default=str, sort_keys=True)
+                openings = [event for event in events if event.kind == Kind.DOOR_OPEN]
+                self.assertEqual(len(openings), 1, diagnostic)
+                self.assertEqual(len(self._infusions(events)), 1, diagnostic)
+                self.assertIsNone(detector.infusion_episode)
+                candidate = detector.door_episode["original_open"]
+                reached = [row for row in local_bindings if row["candidate"] is candidate
+                           and row["reference"].newest_at <= row["return"].newest_at
+                           and row["witness"].onset_at > row["reference"].newest_at]
+                self.assertTrue(reached, "The formerly impossible native ordering must occur: " + diagnostic)
+                for row in reached:
+                    reference, witness, returned = row["reference"], row["witness"], row["return"]
+                    self.assertIs(reference, candidate["temperature_fall_witnesses"]["upper"])
+                    self.assertIs(row["background"], candidate["temperature_fall_backgrounds"]["upper"])
+                    self.assertGreaterEqual(witness.onset_at, self._at(door_at))
+                    self.assertLessEqual(witness.onset_at, row["bounds"][1])
+                    self.assertLessEqual(row["bounds"][1], row["prefix_at"])
+                    local = candidate["local_humidity_onset_intervals"]["upper"]
+                    self.assertGreater(local["window"].start_at, returned.newest_at)
+                    self.assertLess(local["kink"].effective_change, 0)
+                    self.assertEqual(witness.original_points, tuple(
+                        (stamp, originals[Quantity.HUMIDITY][stamp])
+                        for stamp, _ in witness.original_points
+                    ))
+                    self.assertTrue(all(stamp in originals[Quantity.TEMPERATURE]
+                                        for stamp, _ in reference.previous + reference.current))
+                opening = openings[0]
+                self.assertGreaterEqual(opening.effective_at, self._at(door_at))
+                self.assertLessEqual(opening.effective_at, opening.detected_at)
+                self.assertLessEqual(opening.detected_at, opening.trace_at)
+                self.assertTrue(any(row.get("original_forms", {}).get(
+                    "opening_onset_diagnostics", {},
+                ).get("local") for row in rows), diagnostic)
+
     def test_local_rh_followup_small_change_and_asynchronous_originals(self):
         for variant in ("small_kink", "asynchronous_rh"):
             with self.subTest(variant=variant):

@@ -497,8 +497,17 @@ einen neuen Knickanker. Fehlende oder ungültige Knickstützen eröffnen keine
 neue Transition. Ein bereits zuordenbarer Intervallvorschlag bleibt für
 später eintreffende T-Belege erhalten; ein eigener neuer zulässiger RH-Knick
 kann ihn ablösen. Das bestätigt für sich kein Ereignis.
-Nur der linke Intervallpunkt muss in der Originalzeitstütze des gebundenen
-lokalen T-Knicks liegen; der rechte darf später folgen. Maßgeblich bleibt das
+Die feste lokale T-Knickreferenz und ihr Hintergrund bleiben unverändert.
+Ihr zeitlicher Zuordnungsbereich beginnt beim ersten Original dieser Referenz.
+Solange der lokale T-Fall nicht aktuell unterstützt ist, endet er am letzten
+Original der Referenz. Mit fortlaufendem Originalanschluss, vollständig frischem
+aktuellem T-Block und beiden oben beschriebenen negativen Vergleichen reicht
+er bis zum jüngsten eigenen T-Original dieses ausgewerteten Präfixes. Zeitablauf
+allein erweitert ihn nicht. Speicherprüfung und RH-Formzuordnung verwenden
+denselben vom bestehenden T-Fallbesitzer abgeleiteten Bereich. Eine gültige frühe
+RH-Zuordnung bleibt erhalten; eine spätere benötigt weiterhin eigene RH-Belege.
+Nur der linke Intervallpunkt muss in diesem Zuordnungsbereich liegen; der rechte
+darf später folgen. Maßgeblich bleibt das
 erste signifikante RH-Intervall vor dieser Zeitprüfung; ein späterer Schritt
 desselben Knicks ersetzt es nicht. Ein neuer eigener vollständiger
 RH-Formbeleg am festen linken Originalpunkt hat bei dieser späteren
@@ -508,8 +517,8 @@ aktueller unterstützter eigener RH-Formbeleg mit seinem unveränderten Beginn
 und seinen unveränderten Formmerkmalen übernommen werden. Quelle, Epoche,
 Türkontext und sämtliche eigenen Originale müssen zum aktuellen Präfix passen. Der
 gehaltene Beginn und der Beginn des Formfits müssen übereinstimmen und sowohl
-in der Originalzeitstütze des gebundenen lokalen T-Knicks als auch in der
-nativen RH-Stütze vom letzten Vorgängeroriginal bis zum jüngsten Original
+im aktuell belegten zeitlichen Zuordnungsbereich des lokalen T-Falls als auch
+in der nativen RH-Stütze vom letzten Vorgängeroriginal bis zum jüngsten Original
 liegen. Frische, fortlaufender Originalanschluss und der Ausschluss einer
 vollständig gestützten RH-Erholung bleiben erforderlich. Die spätere
 Zuordnung ersetzt einen älteren Zeugen des Aufgussrücklaufs nur durch einen
