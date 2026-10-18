@@ -315,7 +315,51 @@ class EventProbability:
         return self.original_count > 0 and margin >= 0
 
 
-class EvidenceSequence:
+class OriginalSequence:
+    """Shared receipt/identity owner for fixed and streaming model comparisons."""
+
+    def __init__(self, channels):
+        self.channels = frozenset(channels)
+        self._observations = {}
+        self._sources = {}
+        self.last_received_at = None
+        self.revisions = {}
+
+    def observe(self, observation):
+        if observation.channel not in self.channels:
+            raise ValueError("The observation channel is outside this comparison")
+        if self.last_received_at is not None and observation.received_at < self.last_received_at:
+            raise ValueError("Observations must arrive in causal receipt order")
+        if observation.value is None:
+            self.last_received_at = observation.received_at
+            return False
+        source = observation.source, observation.epoch, observation.time_basis
+        if observation.channel in self._sources and self._sources[observation.channel] != source:
+            raise ValueError("Source identity changed: begin a new comparison")
+        old = self._observations.get(observation.identity)
+        if old is not None and old.value == observation.value:
+            self.last_received_at = observation.received_at
+            return False
+        if old is not None:
+            # Temporary owner makes a failed correction atomic. The receipt of
+            # the revision is recorded separately from the original sequence.
+            corrected = self._new_comparison()
+            for identity, item in self._observations.items():
+                corrected.observe(Observation(item.channel, item.source, item.epoch, item.at,
+                                              item.received_at, observation.value, item.time_basis)
+                                  if identity == observation.identity else item)
+            self._observations = corrected._observations
+            self._adopt_math_state(corrected)
+            self.revisions[observation.identity] = observation.received_at
+        else:
+            self._assimilate(observation)
+            self._observations[observation.identity] = observation
+        self._sources[observation.channel] = source
+        self.last_received_at = observation.received_at
+        return True
+
+
+class EvidenceSequence(OriginalSequence):
     """One source-bound comparison over unique causal originals.
 
     Every hypothesis sees exactly the same channels and observations. Channel
@@ -333,15 +377,18 @@ class EvidenceSequence:
         channels = {m.channel for m in self.hypotheses[0].channels}
         if any({m.channel for m in h.channels} != channels for h in self.hypotheses):
             raise ValueError("All hypotheses must explain the same observed channels")
+        super().__init__(channels)
         self._models = {h.name: {m.channel: m for m in h.channels} for h in self.hypotheses}
-        self._observations = {}
-        self._sources = {}
-        self.last_received_at = None
-        self.revisions = {}
         self._states = {name: {channel: model.prior for channel, model in models.items()}
                         for name, models in self._models.items()}
         normalizer = _logsumexp(log(h.prior_weight) for h in self.hypotheses)
         self._weights = {h.name: log(h.prior_weight) - normalizer for h in self.hypotheses}
+
+    def _new_comparison(self):
+        return EvidenceSequence(self.hypotheses)
+
+    def _adopt_math_state(self, other):
+        self._states, self._weights = other._states, other._weights
 
     def _assimilate(self, observation):
         updates = {}
@@ -355,39 +402,6 @@ class EvidenceSequence:
         for name, (posterior, weight) in updates.items():
             self._states[name][observation.channel] = posterior
             self._weights[name] = weight - normalizer
-
-    def observe(self, observation):
-        if observation.channel not in next(iter(self._models.values())):
-            raise ValueError("The observation channel is outside this comparison")
-        if self.last_received_at is not None and observation.received_at < self.last_received_at:
-            raise ValueError("Observations must arrive in causal receipt order")
-        if observation.value is None:
-            self.last_received_at = observation.received_at
-            return False
-        source = observation.source, observation.epoch, observation.time_basis
-        if observation.channel in self._sources and self._sources[observation.channel] != source:
-            raise ValueError("Source identity changed: begin a new comparison")
-        old = self._observations.get(observation.identity)
-        if old is not None and old.value == observation.value:
-            self.last_received_at = observation.received_at
-            return False
-        if old is not None:
-            # Temporary owner makes a failed correction atomic. The receipt of
-            # the revision is recorded separately from the original sequence.
-            corrected = EvidenceSequence(self.hypotheses)
-            for identity, item in self._observations.items():
-                corrected.observe(Observation(item.channel, item.source, item.epoch, item.at,
-                                              item.received_at, observation.value, item.time_basis)
-                                  if identity == observation.identity else item)
-            self._observations = corrected._observations
-            self._states, self._weights = corrected._states, corrected._weights
-            self.revisions[observation.identity] = observation.received_at
-        else:
-            self._assimilate(observation)
-            self._observations[observation.identity] = observation
-        self._sources[observation.channel] = source
-        self.last_received_at = observation.received_at
-        return True
 
     def probabilities(self):
         result = []

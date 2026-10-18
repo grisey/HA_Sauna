@@ -83,6 +83,42 @@ Ein negativer Steigungsknick ist zunächst eine Kurveneigenschaft. Seine
 Zuordnung zur Türöffnung benötigt ein entsprechendes fachliches Modell;
 die Bezeichnung allein liefert keine zusätzliche Wahrscheinlichkeit.
 
+## Fortlaufende Beginnhypothesen
+
+`core/curve_probability.py` vergleicht den unveränderten Hintergrund mit
+kalibrierbaren kausalen Antworten: Steigungs- und Krümmungswechsel,
+exponentielle Annäherung, Impuls und allmähliche Bremsung. Ihre Zeitmaßstäbe
+beschreiben die Kurvenform; sie sind keine Wartezeiten oder Ablaufgrenzen.
+Die positive unsichere Amplitude gehört zum gerichteten Modell.
+
+Jeder neue Originalwert kann weitere mögliche Beginne zwischen der bisherigen
+und der neuen Messzeit eröffnen. Die bisherige Hintergrundwahrscheinlichkeit
+teilt sich gemäß einer expliziten Ereignisrate `lambda` auf:
+
+```text
+P(noch kein Beginn über dt) = exp(-lambda * dt)
+P(Beginn innerhalb dt)     = 1 - exp(-lambda * dt)
+```
+
+Mehrere Profile und Beginnpositionen teilen dieselbe neue Wahrscheinlichkeitsmasse.
+Die Hintergrundverteilung VOR dem neuen Wert liefert ihren gemeinsamen
+Ausgangszustand. Anschließend erhalten bestehende und neue Alternativen
+denselben Originalwert jeweils genau einmal. Wiederholungen und fehlende
+Werte eröffnen keine Beginne; reine Zeitfortschreibung ist keine Beobachtung.
+
+Die unbekannte Beginnzeit innerhalb eines Messabstands hat eine ausdrücklich
+angegebene endliche Verteilung. Deren Rechnung ist exakt für dieses endliche
+Modell. Sie ist keine exakte Integration über alle kontinuierlichen Zeitpunkte.
+Eine feinere Verteilung benötigt einen Konvergenznachweis. Beginnhypothese,
+zugehöriger Messabstand und tatsächlicher Bestätigungszeitpunkt bleiben
+verschiedene Angaben.
+
+Ereignisrate, Kurvenmaßstäbe, Amplitudenstreuungen und Profilgewichte sind
+explizite kalibrierbare Eingaben. Es gibt keine übernommenen Katalogdefaults
+aus dem bisherigen Detektor. Ebenso gibt es keine verdeckte Kürzung schwacher
+Hypothesen: Kontextübergänge und Laufzeitgrenzen sind vor dem produktiven
+Einsatz zu qualifizieren.
+
 ## Entscheidung und Kalibrierung
 
 Ein Ereignis erreicht die explizite Wahrscheinlichkeitsschwelle `q_event`,
