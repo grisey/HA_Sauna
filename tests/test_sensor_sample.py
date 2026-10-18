@@ -209,6 +209,47 @@ class SensorSampleTests(unittest.TestCase):
         self.assertFalse(stream.accept(originals[1]))
         self.assertEqual(stream.probabilities()[0].original_count, 1)
 
+    def test_later_snapshot_keeps_older_source_time_and_later_knowledge_boundary(self):
+        early = replace(packet(60).measurements[1], sample=None, measured_at=None)
+        later = replace(packet(61).measurements[0], sample=None, measured_at=None)
+        subsequent = replace(packet(62).measurements[0], sample=None, measured_at=None)
+        at = T0 + timedelta(seconds=70)
+        rows = [
+            {'id': 1, 'kind': 'measurement', 'payload': plain(later)},
+            {'id': 2, 'kind': 'source_state', 'received_at': at.isoformat()},
+            {'id': 3, 'kind': 'source_snapshot', 'payload': plain(early),
+             'received_at': (at - timedelta(seconds=1)).isoformat()},
+            {'id': 4, 'kind': 'measurement', 'payload': plain(subsequent)},
+        ]
+        batches = list(archive_measurements(rows, archive_id='late-snapshot'))
+        self.assertEqual(batches[1][0].received_at, early.received_at)
+        self.assertIsNone(batches[1][0].measured_at)
+        self.assertEqual(batches[1].observed_at, at)
+        self.assertEqual(batches[2].observed_at, at)
+        stream, expected = comparison(), comparison()
+        for batch in batches:
+            stream.accept(batch)
+            for m in batch:
+                expected.observe(Observation(m.quantity.value, m.source, 0, m.received_at,
+                                             batch.observed_at, m.value, 'receipt',
+                                             original_id=m.original_id))
+        self.assertEqual(stream.probabilities(), expected.probabilities())
+        self.assertEqual(stream.last_received_at, at)
+        self.assertEqual(stream.probabilities()[0].original_count, 3)
+
+    def test_snapshot_pairs_follow_identity_not_binding_dictionary_order(self):
+        upper = packet()
+        lower = ClimatePacket(tuple(replace(
+            m, position=Position.LOWER, source=m.source.replace('top', 'bottom'),
+            sample=replace(m.sample, sensor_id='sensors/sht35_pca/ch6', sample_id=62),
+        ) for m in upper.measurements))
+        rows = [{'id': index, 'kind': 'source_snapshot', 'payload': plain(m)}
+                for index, m in enumerate((upper.measurements[1], lower.measurements[1],
+                                           upper.measurements[0], lower.measurements[0]), 1)]
+        batches = list(archive_measurements(rows, archive_id='reordered-snapshot'))
+        self.assertEqual(tuple(batches[0]), upper.measurements)
+        self.assertEqual(tuple(batches[1]), lower.measurements)
+
     def test_monotonic_clock_prevents_utc_correction_from_warping_curves(self):
         regular, corrected = comparison(), comparison()
         for second in range(60, 76):

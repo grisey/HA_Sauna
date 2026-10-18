@@ -5,7 +5,7 @@ from datetime import datetime, timedelta
 import json
 from math import isfinite
 
-from .models import Measurement, Position, Quantity, SampleIdentity
+from .models import Measurement, MeasurementBatch, Position, Quantity, SampleIdentity
 from .moisture import KELVIN_OFFSET_C
 from .timeline import utc
 
@@ -116,15 +116,26 @@ def archive_measurements(records, *, archive_id):
     New pairs are kept together; a truncated physical pair is reported instead
     of silently manufacturing its missing quantity.
     """
-    pending = []
+    pending = {}
     seen = set()
     snapshot_originals = {}
+    observed_at = None
     for record in records:
+        recorded_at = (utc(datetime.fromisoformat(record["received_at"]))
+                       if record.get("received_at") else None)
+        if recorded_at is not None:
+            observed_at = max(observed_at, recorded_at) if observed_at else recorded_at
         if record["kind"] not in {"measurement", "source_snapshot"}:
             continue
         measurement = Measurement.from_payload(
-            record["payload"], original_id=f"{archive_id}:{record['id']}",
+            record["payload"],
+            original_id=f"{archive_id}:{record['id']}" if record["payload"].get("sample") is None else None,
         )
+        # Archive order is the knowledge boundary. A session snapshot may
+        # expose an older source reading; queued rows can have earlier clocks
+        # than that snapshot. Neither fact changes the original's time.
+        observed_at = max(at for at in (observed_at, measurement.received_at)
+                          if at is not None)
         fingerprint = (measurement.position, measurement.quantity, measurement.source,
                        measurement.measured_at, measurement.received_at, measurement.sample,
                        measurement.value, measurement.raw_value)
@@ -136,14 +147,16 @@ def archive_measurements(records, *, archive_id):
             measurement = replace(measurement, original_id=snapshot_originals.pop(fingerprint))
         seen.add(fingerprint)
         if measurement.sample is None:
-            if pending:
-                raise ValueError("Incomplete physical sample in archive")
-            yield (measurement,)
+            yield MeasurementBatch((measurement,), observed_at)
             continue
-        pending.append(measurement)
-        if len(pending) == 2:
-            packet = ClimatePacket(tuple(pending))
-            yield packet.measurements
-            pending = []
+        key = measurement.position, measurement.sample.identity, measurement.received_at
+        pair = pending.setdefault(key, {})
+        if measurement.quantity in pair:
+            raise ValueError("Repeated quantity in an incomplete physical sample")
+        pair[measurement.quantity] = measurement
+        if len(pair) == 2:
+            packet = ClimatePacket(tuple(pair[quantity] for quantity in Quantity))
+            yield MeasurementBatch(packet.measurements, observed_at)
+            del pending[key]
     if pending:
         raise ValueError("Incomplete physical sample in archive")

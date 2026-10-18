@@ -15,7 +15,7 @@ from datetime import datetime
 from math import exp, fsum, isfinite, lgamma, log, log1p, pi, sqrt
 
 from .probability import student_log_survival
-from .models import SampleIdentity
+from .models import MeasurementBatch, SampleIdentity
 from .sensor_sample import measurement_coordinate
 
 
@@ -348,6 +348,7 @@ class OriginalSequence:
         A source/boot change explicitly requires a new comparison. The caller
         owns that context transition and already confirmed physical events.
         """
+        observed_at = measurements.observed_at if isinstance(measurements, MeasurementBatch) else None
         measurements = tuple(measurements)
         if not measurements:
             return False
@@ -374,7 +375,7 @@ class OriginalSequence:
                 if previous is not None:
                     at = previous.at
             changed |= trial.observe(Observation(
-                channel, measurement.source, 0, at, measurement.received_at,
+                channel, measurement.source, 0, at, observed_at or measurement.received_at,
                 measurement.value, basis, sample, measurement.original_id,
             ))
         self._observations, self._sources = trial._observations, trial._sources

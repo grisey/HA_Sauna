@@ -194,3 +194,12 @@ Dieser Eingangsanschluss ersetzt noch nicht den aktiven Ereignisdetektor.
 Dessen Ablösung benötigt die kalibrierten Kurvenmodelle sowie die Übergänge
 zwischen Tür-, Aufguss- und Lüftungsvorgängen. Eine erfolgreiche Paket- oder
 Altdatenprüfung ist kein Nachweis dieser Ereigniserkennung.
+
+Die ursprüngliche Empfangszeit und die spätere Verfügbarkeit eines
+Archiv-Snapshots sind getrennte Angaben. `MeasurementBatch.observed_at` führt
+die Verfügbarkeit entlang der Archiv-Reihenfolge fort, während die enthaltenen
+Originale ihre Mess- und Empfangszeiten behalten. Ein später verfügbarer alter
+Wert aktualisiert den aktuellen Vergleich, ohne eine frühere Entscheidung
+vorzutäuschen. Identifizierte Snapshotpaare werden anhand von Probe und
+Messgröße zusammengeführt; die Reihenfolge der konfigurierten Entitäten ist
+unerheblich.

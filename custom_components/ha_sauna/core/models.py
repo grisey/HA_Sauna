@@ -111,6 +111,29 @@ class Measurement:
 
 
 @dataclass(frozen=True)
+class MeasurementBatch:
+    """Originals made available together, without rewriting their own times."""
+
+    measurements: tuple[Measurement, ...]
+    observed_at: datetime
+
+    def __post_init__(self):
+        object.__setattr__(self, "measurements", tuple(self.measurements))
+        object.__setattr__(self, "observed_at", utc(self.observed_at))
+        if any(m.received_at > self.observed_at for m in self.measurements):
+            raise ValueError("A batch cannot be observed before its originals arrived")
+
+    def __iter__(self):
+        return iter(self.measurements)
+
+    def __len__(self):
+        return len(self.measurements)
+
+    def __getitem__(self, index):
+        return self.measurements[index]
+
+
+@dataclass(frozen=True)
 class Deadline:
     """Fristidentität verhindert die Wirkung alter oder ersetzter Aufrufe."""
 
