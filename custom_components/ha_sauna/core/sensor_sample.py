@@ -1,13 +1,26 @@
 """SHT 1.2 packet contract; no time window, curve gate or HA dependency."""
 
-from dataclasses import dataclass
-from datetime import datetime
+from dataclasses import dataclass, replace
+from datetime import datetime, timedelta
 import json
 from math import isfinite
 
 from .models import Measurement, Position, Quantity, SampleIdentity
 from .moisture import KELVIN_OFFSET_C
 from .timeline import utc
+
+
+def measurement_coordinate(measurement, anchors):
+    """Shared curve clock, separate from the untouched archival timestamps."""
+    at = measurement.measured_at or measurement.received_at
+    basis = "measurement" if measurement.measured_at else "receipt"
+    sample = measurement.sample
+    if sample is not None and measurement.value is not None:
+        clock = sample.sensor_id, sample.boot_id
+        anchor_at, anchor_ns = anchors.setdefault(clock, (at, sample.monotonic_ns))
+        at = anchor_at + timedelta(microseconds=(sample.monotonic_ns - anchor_ns) / 1000)
+        basis = "source_monotonic"
+    return at, basis
 
 
 @dataclass(frozen=True)
@@ -98,17 +111,30 @@ def archive_measurements(records, *, archive_id):
     """Yield originals in archive order, preserving both old and new formats.
 
     Old rows remain individual observations, identified by archive/record ID.
-    A source snapshot is a view of an existing original, never another sample.
+    A source snapshot supplies an initial original only if it is not already
+    represented. A later copy of that same original reuses its identity.
     New pairs are kept together; a truncated physical pair is reported instead
     of silently manufacturing its missing quantity.
     """
     pending = []
+    seen = set()
+    snapshot_originals = {}
     for record in records:
-        if record["kind"] != "measurement":
+        if record["kind"] not in {"measurement", "source_snapshot"}:
             continue
         measurement = Measurement.from_payload(
             record["payload"], original_id=f"{archive_id}:{record['id']}",
         )
+        fingerprint = (measurement.position, measurement.quantity, measurement.source,
+                       measurement.measured_at, measurement.received_at, measurement.sample,
+                       measurement.value, measurement.raw_value)
+        if record["kind"] == "source_snapshot":
+            if fingerprint in seen:
+                continue
+            snapshot_originals[fingerprint] = measurement.original_id
+        elif fingerprint in snapshot_originals:
+            measurement = replace(measurement, original_id=snapshot_originals.pop(fingerprint))
+        seen.add(fingerprint)
         if measurement.sample is None:
             if pending:
                 raise ValueError("Incomplete physical sample in archive")

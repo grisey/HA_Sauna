@@ -183,7 +183,8 @@ Mindestanzahl für die Bestätigung.
 
 `Measurement.from_payload` liest beide Archivformate. `archive_measurements`
 führt alte Einzelwerte und neue Paare in Archiv-Reihenfolge zusammen;
-Zustandssnapshots erzeugen keine weiteren Originale. JSONL und CSV erhalten
+Ein ausschließlich im Startsnapshot vorhandenes Original bleibt erhalten;
+weitere Snapshots derselben Probe erzeugen keine zusätzliche Evidenz. JSONL und CSV erhalten
 vorhandene Herkunftsfelder. Ein unvollständig exportiertes neues Paar wird als
 Datenfehler ausgewiesen. Regeltemperatur und Anzeige verwenden weiterhin die
 konfigurierte Frischegrenze; ein verspätetes Original bleibt unabhängig davon

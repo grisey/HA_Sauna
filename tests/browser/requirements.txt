@@ -22,3 +22,5 @@ numpy==2.3.2
 SQLAlchemy==2.0.54
 fnv-hash-fast==2.0.3
 psutil-home-assistant==0.0.1
+# MQTT's native input API from the same target Core manifest.
+paho-mqtt==2.1.0

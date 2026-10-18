@@ -35,6 +35,7 @@ from .curve_change import (
     original_window_changes,
 )
 from .models import Measurement, Position, Quantity
+from .sensor_sample import measurement_coordinate
 from .moisture import KELVIN_OFFSET_C, absolute_humidity
 from .parameters import BY_KEY
 from .timeline import DoorCloseEvidence, InfusionEnd, Kind, utc
@@ -267,6 +268,7 @@ class Detector:
             for position in self.positions
             for quantity in (Quantity.TEMPERATURE, Quantity.HUMIDITY)
         }
+        self._physical_clocks = {}
         self._curve_candidates = {}
         self._curve_evaluated = {}
         self._curve_status = {}
@@ -1258,8 +1260,14 @@ class Detector:
             else "received"
         )
         point_at = measured if time_basis == "measured" else measurement.received_at
+        if measurement.sample is not None:
+            point_at, time_basis = measurement_coordinate(measurement, self._physical_clocks)
         series = self._curve_series[position, quantity]
         value, unavailable = self._value_state(position, quantity, now)
+        if measurement.sample is not None and unavailable == "expired":
+            # Control freshness is not evidence validity. A delayed original
+            # retains its physical curve coordinate and measured value.
+            value, unavailable = measurement.value, None
         if unavailable == "invalid":
             self._correct_curve_proposals(position, quantity, point_at, measurement.value)
             self._correct_infusion_tail(position, quantity, point_at, measurement.value)
@@ -7184,6 +7192,7 @@ class Detector:
             if (
                 old
                 and old.source_identity == m.source_identity
+                and m.sample is None
                 and m.measured_at is not None
                 and old.measured_at is not None
                 and m.measured_at < old.measured_at

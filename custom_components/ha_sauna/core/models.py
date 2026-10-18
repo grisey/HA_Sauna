@@ -106,7 +106,8 @@ class Measurement:
     @property
     def freshness_at(self):
         """Control freshness; independent of whether an original is evidence."""
-        return min(self.received_at, self.measured_at) if self.measured_at else self.received_at
+        return (min(self.received_at, self.measured_at)
+                if self.sample is not None and self.measured_at else self.received_at)
 
 
 @dataclass(frozen=True)

@@ -13,6 +13,7 @@ import zipfile
 
 from test_detector import trace
 from test_foundation import T0
+from test_foundation import parameters
 from test_sht35_app import load_app
 from test_curve_probability import specification
 from custom_components.ha_sauna.archive import Archive, plain
@@ -21,6 +22,7 @@ from custom_components.ha_sauna.core.sensor_sample import (
     ClimatePacket, SampleStream, archive_measurements, decode_sample,
 )
 from custom_components.ha_sauna.core.curve_probability import CurveProbability
+from custom_components.ha_sauna.core.detector import Detector
 from custom_components.ha_sauna.core.sequential_evidence import Basis, ChannelModel, Regression
 from custom_components.ha_sauna.core.sequential_evidence import Observation
 from custom_components.ha_sauna.core.moisture import current_absolute_humidity
@@ -191,6 +193,22 @@ class SensorSampleTests(unittest.TestCase):
         self.assertEqual(old.probabilities(), direct.probabilities())
         self.assertEqual(old.onsets(), direct.onsets())
 
+    def test_initial_legacy_snapshot_preserves_original_when_no_measurement_row_exists(self):
+        old = replace(packet().measurements[0], sample=None, measured_at=None)
+        rows = [
+            {'id': 1, 'kind': 'source_snapshot', 'payload': plain(old)},
+            {'id': 2, 'kind': 'source_snapshot', 'payload': plain(old)},
+            {'id': 3, 'kind': 'measurement', 'payload': plain(old)},
+        ]
+        originals = list(archive_measurements(rows, archive_id='old-start'))
+        self.assertEqual(len(originals), 2)
+        self.assertEqual(originals[0][0].original_id, originals[1][0].original_id)
+        self.assertEqual(originals[0][0].received_at, old.received_at)
+        stream = comparison()
+        self.assertTrue(stream.accept(originals[0]))
+        self.assertFalse(stream.accept(originals[1]))
+        self.assertEqual(stream.probabilities()[0].original_count, 1)
+
     def test_monotonic_clock_prevents_utc_correction_from_warping_curves(self):
         regular, corrected = comparison(), comparison()
         for second in range(60, 76):
@@ -202,6 +220,21 @@ class SensorSampleTests(unittest.TestCase):
         self.assertEqual(corrected.onsets(), regular.onsets())
         with self.assertRaisesRegex(ValueError, 'Source identity changed'):
             corrected.accept(packet(76, boot='different-boot').measurements)
+
+    def test_active_detector_preserves_new_original_after_source_utc_correction(self):
+        detector = Detector(parameters(), T0, positions=(Position.UPPER,))
+        first = packet(60)
+        second = packet(61, changes={'measured_at': (T0 - timedelta(days=1)).isoformat()})
+        for item in (first, second):
+            for measurement in item.measurements:
+                self.assertTrue(detector.accept(measurement))
+            detector._consume(item.received_at)
+        self.assertEqual(detector.rejected, 0)
+        for quantity in Quantity:
+            series = detector._curve_series[Position.UPPER, quantity]
+            self.assertEqual(series['time_basis'], 'source_monotonic')
+            self.assertEqual([at for at, value in series['points']],
+                             [T0 + timedelta(seconds=60), T0 + timedelta(seconds=61)])
 
     def test_absolute_humidity_never_mixes_two_different_physical_samples(self):
         old, new = packet(60), packet(61)

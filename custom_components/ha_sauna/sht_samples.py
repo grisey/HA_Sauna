@@ -75,13 +75,17 @@ async def start_sample_sources(device):
             # in the publisher. Waiting for the first JSON would double count.
             roles = {f"{position}_{q}" for q in sources}
             device.packet_roles.update(roles)
+            subscribed.add(position)
             try:
                 unsubscribe = await mqtt.async_subscribe(hass, topic, received, qos=0)
             except Exception:
                 device.packet_roles.difference_update(roles)
+                subscribed.discard(position)
                 raise
+            if runtime.closed:
+                unsubscribe()
+                return
             runtime.on_close(unsubscribe)
-            subscribed.add(position)
 
     await connect()
     runtime.on_close(async_at_started(hass, connect))

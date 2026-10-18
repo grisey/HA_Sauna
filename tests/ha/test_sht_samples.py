@@ -92,6 +92,8 @@ class ShtSamplesTests(unittest.TestCase):
         self.assertNotIn('upper', sample_bindings(bindings, entries, configs))
         configs[bindings['lower_humidity']]['device']['sw_version'] = '1.1'
         self.assertEqual(sample_bindings(bindings, entries, configs), {})
+        configs[bindings['upper_humidity']] = ''
+        self.assertEqual(sample_bindings(bindings, entries, configs), {})
 
     def test_mqtt_subscription_claims_roles_before_first_message_and_unloads(self):
         async def exercise():
@@ -150,3 +152,32 @@ class ShtSamplesTests(unittest.TestCase):
         math = comparison()
         self.assertTrue(math.accept((old,)))
         self.assertEqual(math.probabilities()[0].original_count, 1)
+
+    def test_late_discovery_claims_scalar_source_before_its_first_event_is_consumed(self):
+        async def exercise():
+            from custom_components.ha_sauna import device as device_module
+            from custom_components.ha_sauna import sht_samples
+            fixture = fixtures.DeviceFeedbackTests()
+            runtime, adapter, clock = fixture.detection_device()
+            runtime._cycle = AsyncMock()
+            runtime._deliver_detection = Mock()
+            runtime._sync_detector = Mock()
+            runtime.archive = SimpleNamespace(append=Mock())
+            adapter.send = AsyncMock()
+            adapter.refresh = Mock()
+            callbacks = []
+            def track(hass, entities, callback):
+                callbacks.append(callback)
+                return Mock()
+            async def resolve():
+                adapter.packet_roles.update(('upper_temperature', 'upper_humidity'))
+            with (patch.object(sht_samples, 'start_sample_sources', AsyncMock(return_value=resolve)),
+                  patch.object(device_module, 'async_track_state_change_event', side_effect=track),
+                  patch.object(device_module, 'async_track_state_report_event', side_effect=track)):
+                await adapter.start()
+            clock[0] += timedelta(seconds=1)
+            await callbacks[0](fixture.detection_edge(runtime, 'upper_temperature', trace(0)[0]))
+            self.assertEqual(adapter.packet_roles, {'upper_temperature', 'upper_humidity'})
+            runtime.archive.append.assert_not_called()
+            runtime._cycle.assert_not_awaited()
+        asyncio.run(exercise())

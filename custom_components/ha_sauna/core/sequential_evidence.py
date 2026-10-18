@@ -11,11 +11,12 @@ from __future__ import annotations
 
 from copy import copy
 from dataclasses import dataclass, replace
-from datetime import datetime, timedelta
+from datetime import datetime
 from math import exp, fsum, isfinite, lgamma, log, log1p, pi, sqrt
 
 from .probability import student_log_survival
 from .models import SampleIdentity
+from .sensor_sample import measurement_coordinate
 
 
 def _number(value):
@@ -365,21 +366,13 @@ class OriginalSequence:
             if channel not in self.channels:
                 raise ValueError("Measurement quantity is outside this comparison")
             sample = measurement.sample
-            at = measurement.measured_at or measurement.received_at
-            basis = "measurement" if measurement.measured_at else "receipt"
+            at, basis = measurement_coordinate(measurement, trial._measurement_clocks)
             if sample is None and measurement.original_id is not None:
                 previous = trial._observations.get((
                     channel, measurement.source, 0, basis, measurement.original_id,
                 ))
                 if previous is not None:
                     at = previous.at
-            if sample is not None and measurement.value is not None:
-                clock = (sample.sensor_id, sample.boot_id)
-                anchor_at, anchor_ns = trial._measurement_clocks.setdefault(
-                    clock, (at, sample.monotonic_ns),
-                )
-                at = anchor_at + timedelta(microseconds=(sample.monotonic_ns - anchor_ns) / 1000)
-                basis = "source_monotonic"
             changed |= trial.observe(Observation(
                 channel, measurement.source, 0, at, measurement.received_at,
                 measurement.value, basis, sample, measurement.original_id,
