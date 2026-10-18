@@ -818,6 +818,12 @@ class Detector:
                     position, state, previous, form, available=available,
                 )
                 records[position] = local
+            # Das Ende gehört noch dem bisherigen Besitzer, bevor die
+            # Positionswahl für die nächste Episode wieder frei wird.
+            ended_owner = self._infusion_episode
+            if (ended_owner is not None and ended_owner["phase"] == "ended"
+                    and ended_owner.get("evidence_end") is not None):
+                self._update_infusion_end(ended_owner, ended_owner["evidence_end"])
             owner = (None if self._infusion_episode is not None
                      and self._infusion_episode["phase"] == "ended" else self._infusion_owner)
             selected = self._select_position("infusion", results, owner, trace)

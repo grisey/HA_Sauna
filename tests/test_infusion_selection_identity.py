@@ -120,7 +120,17 @@ class InfusionSelectionIdentityTests(unittest.TestCase):
     def test_matching_secondary_can_still_confirm_a_pending_primary(self):
         fixture = self.fixture
         detector = Detector(fixture.parameters, fixtures.T0)
-        infusions = []
+        infusions, updates = [], []
+        first_ended_sample = []
+
+        def after_sample(at):
+            owner = detector._position_state(Position.LOWER)["infusion"]
+            if (not first_ended_sample and owner is not None
+                    and owner["confirmed_detection"] is not None
+                    and owner["phase"] == "ended"):
+                selection = detector.diagnostic["position_selection"]["infusion"]
+                first_ended_sample.append((at, selection["selected"], tuple(updates)))
+
         for second in range(0, self.next_rise, fixture.step):
             for position in detector.positions:
                 own_second = max(0, second - fixture.step) if position is Position.UPPER else second
@@ -132,14 +142,27 @@ class InfusionSelectionIdentityTests(unittest.TestCase):
                     )))
             infusions.extend(event for event in detector.advance(
                 fixture._at(second), enabled=True,
+                on_infusion_update=updates.append, after_sample=after_sample,
             ) if event.kind is Kind.INFUSION)
-            if infusions:
-                break
         self.assertEqual(len(infusions), 1)
         self.assertEqual(infusions[0].channels, (Position.LOWER.value,))
         episode = detector._position_state(Position.LOWER)["infusion"]
         self.assertIs(episode["confirmed_detection"], infusions[0])
         self.assertEqual(episode["onset_at"], infusions[0].effective_at)
+        # Continue the same native first pulse through its background end.
+        # The primary is selected again while the published lower owner ends;
+        # its existing end must reach consumers before the first ended sample.
+        self.assertEqual(episode["phase"], "ended")
+        self.assertEqual(episode["end_basis"], "original_background")
+        self.assertEqual(len(first_ended_sample), 1)
+        sampled_at, selected, received = first_ended_sample[0]
+        self.assertEqual(selected, Position.UPPER.value)
+        self.assertEqual(len(updates), 1)
+        self.assertEqual(received, tuple(updates))
+        self.assertIs(updates[0].confirmed_detection, infusions[0])
+        self.assertEqual(updates[0].end, episode["evidence_end"])
+        self.assertEqual(updates[0].end.effective_at, episode["level_end_at"])
+        self.assertLessEqual(updates[0].end.confirmed_at, sampled_at)
 
     def test_retained_proof_is_not_relabelled_after_a_native_source_change(self):
         detector, state, first, _, second = self.build_retained()
