@@ -5,6 +5,8 @@ The assertion concerns the original inputs delivered to that owner, not a
 fabricated door decision. No production threshold or sample minimum changes.
 """
 
+from copy import deepcopy
+from dataclasses import replace
 from datetime import timedelta
 import unittest
 from unittest.mock import patch
@@ -105,3 +107,162 @@ class NativeOnsetSupportTests(unittest.TestCase):
                 self.assertEqual(detector.p, p)
                 self.assertEqual(detector.positions, (Position.UPPER,))
                 self.assertIsNotNone(detector.latest[Position.UPPER, Quantity.HUMIDITY])
+
+    def test_later_own_form_replaces_only_a_rejected_native_onset(self):
+        """Selection contract on existing inputs; declared fits are not evidence of fit quality."""
+        fixture = detector_fixtures.InfusionLifecycleTests(methodName="runTest")
+        fixture.setUp()
+        _, _, rows = fixture._kink_originals(rising=False, large=True)
+        original_onsets = Detector._original_opening_onset_witnesses
+        prepared = []
+
+        def observe(detector, episode, prefix, windows, **kwargs):
+            result = original_onsets(detector, episode, prefix, windows, **kwargs)
+            intervals = kwargs.get("onset_intervals") or {}
+            native = intervals.get(Position.UPPER.value)
+            if native is None or kwargs.get("transitions") is not None:
+                return result
+            fixed_at = native["interval"].previous[0]
+            start = min(
+                prefix.received_at - timedelta(seconds=fixture.p["curve_window_seconds"]),
+                native["window"].start_at,
+            )
+            points = tuple(
+                point for point in detector._original_segment_points(
+                    prefix, Position.UPPER, Quantity.HUMIDITY,
+                ) if start <= point[0] <= prefix.received_at
+            )
+            minimum = detector.curve_policy.min_side_samples
+
+            def evaluable(at):
+                before = sum(stamp <= at for stamp, _ in points)
+                return min(before, len(points) - before) >= minimum
+
+            later = next((
+                stamp for stamp, _ in native["window"].current
+                if stamp > fixed_at and evaluable(stamp)
+            ), None)
+            if later is not None and evaluable(fixed_at):
+                # Save a real source/prefix/window binding, with no declared
+                # geometry verdict yet. Each subcase starts from this state.
+                prepared[:] = [deepcopy(
+                    (detector, episode, prefix, windows, intervals, fixed_at, later),
+                    {id(detector.p): detector.p},
+                )]
+            return result
+
+        detector = Detector(fixture.parameters, detector_fixtures.T0, (Position.UPPER,))
+        with (
+            fixture._patch_math([], forms=detector_fixtures.original_contrasts),
+            patch.object(Detector, "_original_opening_onset_witnesses", new=observe),
+        ):
+            fixture._feed_kink_originals(detector, rows, [])
+        self.assertTrue(prepared, "The existing fixture must provide both evaluable onsets")
+        base = prepared[0]
+        cases = (
+            ("rejected", "rejects", "supports", "later", "own_form_bound"),
+            ("valid_fixed", "supports", "supports", "fixed", "own_form_bound"),
+            ("missing_fixed", None, "supports", None, "no_evaluable_form"),
+            ("unresolved_fixed", "unresolved", "supports", None, "form_not_supported"),
+            ("missing_free", "rejects", None, None, "form_not_supported"),
+            ("wrong_free_direction", "rejects", "supports", None, "form_not_supported"),
+            ("recovery", "rejects", "supports", None, "humidity_recovery"),
+            ("unknown_connection", "rejects", "supports", None, "humidity_connection_unresolved"),
+            ("changed_source", "rejects", "supports", None, "source_or_epoch_changed"),
+            ("changed_epoch", "rejects", "supports", None, "source_or_epoch_changed"),
+            ("local_attribution", "rejects", "supports", None, "form_not_supported"),
+        )
+        for case, fixed_evidence, free_evidence, expected, reason in cases:
+            with self.subTest(case=case):
+                detector, episode, prefix, windows, intervals, fixed_at, later_at = deepcopy(
+                    base, {id(base[0].p): base[0].p},
+                )
+                key = ("door_open", Position.UPPER, Quantity.HUMIDITY)
+                self.assertNotIn(key, detector._curve_candidates)
+                native = intervals[Position.UPPER.value]
+                self.assertLess(fixed_at, later_at)
+                self.assertLessEqual(native["window"].previous[-1][0], later_at)
+                self.assertLessEqual(later_at, native["window"].newest_at)
+                # The preparation deliberately cached absent fits. Only that
+                # memo is reset; originals and their binding remain unchanged.
+                detector._curve_fit_cache.clear()
+                until = (prefix.received_at - detector_fixtures.T0).total_seconds()
+                shapes = [fixture._shape(
+                    "open", (at - detector_fixtures.T0).total_seconds(), until,
+                ) for at in (fixed_at, later_at)]
+
+                def declared_geometry(samples, **kwargs):
+                    evidence = (fixed_evidence if kwargs.get("onset_at") == fixed_at
+                                else free_evidence)
+                    if evidence is None:
+                        return None
+                    features = fixture._math_curve(shapes, samples, **kwargs)
+                    self.assertIsNotNone(features)
+                    features = replace(features, evidence=evidence)
+                    if evidence == "unresolved":
+                        features = replace(features, after_trend=None)
+                    if case == "wrong_free_direction" and features.onset_at == later_at:
+                        features = replace(features, after_trend=replace(
+                            features.after_trend, direction=1,
+                        ))
+                    return features
+
+                if case == "changed_source":
+                    temperature_source, _ = episode["sources"][Position.UPPER]
+                    episode["sources"][Position.UPPER] = (
+                        temperature_source, temperature_source,
+                    )
+                elif case == "changed_epoch":
+                    detector._curve_series[Position.UPPER, Quantity.HUMIDITY]["epoch"] += 1
+                options = {"onset_intervals": intervals, "diagnostics": []}
+                if case == "local_attribution":
+                    options["transitions"] = {Position.UPPER.value: (
+                        native["window"].start_at, native["window"].newest_at,
+                    )}
+                # These two cases isolate consumption of the existing RH
+                # counterform verdict, not its mathematical derivation.
+                connected = detector._original_opening_humidity_connected
+
+                def connection(*args):
+                    if case in ("recovery", "unknown_connection"):
+                        return False if case == "recovery" else None
+                    return connected(*args)
+
+                with (
+                    patch("custom_components.ha_sauna.core.detector.curve_change",
+                          side_effect=declared_geometry) as geometry,
+                    patch.object(detector, "_original_opening_humidity_connected",
+                                 side_effect=connection) as continuity,
+                ):
+                    witnesses = original_onsets(detector, episode, prefix, windows, **options)
+                diagnostic, = options["diagnostics"]
+                self.assertEqual(diagnostic["reason"], reason)
+                self.assertEqual(detector.p, fixture.p)
+                if expected is None:
+                    self.assertEqual(witnesses, ())
+                else:
+                    (actual_key, witness), = witnesses
+                    expected_at = later_at if expected == "later" else fixed_at
+                    self.assertEqual(actual_key, key)
+                    self.assertEqual(witness.onset_at, expected_at)
+                    self.assertEqual(witness.features.onset_at, expected_at)
+                    self.assertEqual(witness.features.newest_at, prefix.received_at)
+                    self.assertTrue(all(point in detector._original_segment_points(
+                        prefix, Position.UPPER, Quantity.HUMIDITY,
+                    ) for point in witness.original_points))
+                    self.assertTrue(all(
+                        stamp <= prefix.received_at for stamp, _ in witness.original_points
+                    ))
+                if case in ("changed_source", "changed_epoch"):
+                    geometry.assert_not_called()
+                    continuity.assert_not_called()
+                else:
+                    self.assertEqual(geometry.call_count, 1 if case == "local_attribution" else 2)
+                if case in ("rejected", "recovery", "unknown_connection"):
+                    continuity.assert_called_once()
+                    self.assertEqual(continuity.call_args.args[1].onset_at, later_at)
+                    self.assertEqual(diagnostic["fit_method"], "supported_later_own_form")
+                    self.assertEqual(diagnostic["rejected_native_form"]["onset_at"], fixed_at)
+                elif expected == "fixed":
+                    self.assertEqual(diagnostic["fit_method"], "fixed_native_onset")
+                    self.assertNotIn("rejected_native_form", diagnostic)

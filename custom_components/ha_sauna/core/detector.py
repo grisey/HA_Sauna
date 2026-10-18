@@ -2302,6 +2302,8 @@ class Detector:
                         "min_side_samples": self.curve_policy.min_side_samples,
                     }
                     features = None
+                    previous_form = None
+                    previous_supported = False
                     if native_onset is not None and transitions is None:
                         previous_form = self._fit_candidate_form(
                             "door_open", support, floor, quantity, fit_context=fit_context,
@@ -2355,6 +2357,21 @@ class Detector:
                     supported = bool(features is not None and all(
                         gate["result"] for gate in gates.values()
                     ))
+                    if (
+                        not supported and not local_native and native_onset is not None
+                        and features is not None and features.evidence == "rejects"
+                        and previous_supported
+                        and native_onset < previous_form.onset_at <= native["window"].newest_at
+                    ):
+                        # Ein abgelehnter Ansatz bindet keinen gültigen Beginn.
+                        # Der bereits gestützte spätere RH-Fit behält seinen
+                        # eigenen Beginn; Anschluss und Gegenformen folgen unten.
+                        diagnostic["rejected_native_form"] = {
+                            "onset_at": features.onset_at, "gates": gates,
+                            "features": self._curve_feature_diagnostic(features),
+                        }
+                        features, gates, supported = previous_form, previous_gates, True
+                        diagnostic["fit_method"] = "supported_later_own_form"
                     diagnostic["selected_form"] = {
                         "available": features is not None, "supported": supported,
                         "onset_at": features.onset_at if features is not None else None,

@@ -1641,7 +1641,7 @@
       "default": 7,
       "minimum": 2,
       "integer": true,
-      "description": "Zahl K zeitlich verschiedener Originalmesspunkte je aktuellem und unmittelbar vorherigem, disjunktem linearem Fenster. Je Messgröße werden mindestens 2K Originale für Steigungen und Knickprüfung benötigt. Die Türöffnung benötigt eine aufgelöste gemeinsame Absenkung und vollständig neue aktuelle T- und RH-Blöcke des verwendeten Sensors nach der RH-Knickbindung. Die gewöhnliche Schließbestätigung benötigt K neue Temperaturoriginale nach ihrem Kandidaten; der Niveauzweig benötigt zwei neue K-Fenster nach dem gespeicherten tatsächlichen Fallfenster des verwendeten Sensors. Die Obergrenze entspricht der Standardkapazität von 96 Kurvenproben.",
+      "description": "Zahl K zeitlich verschiedener Originalmesspunkte je aktuellem und unmittelbar vorherigem, disjunktem linearem Fenster. Je Messgröße werden mindestens 2K Originale für Steigungen und Knickprüfung benötigt. Die Türöffnung benötigt eine aufgelöste gemeinsame Absenkung und vollständig neue aktuelle T- und RH-Blöcke des verwendeten Sensors nach der RH-Knickbindung. Die gewöhnliche Schließbestätigung benötigt zwei vollständig neue disjunkte K-Blöcke mit Temperaturoriginalen nach ihrem Kandidaten; der Niveauzweig benötigt zwei neue K-Fenster nach dem gespeicherten tatsächlichen Fallfenster des verwendeten Sensors. Die Obergrenze entspricht der Standardkapazität von 96 Kurvenproben.",
       "group": "detection",
       "expert": true,
       "step": 1,

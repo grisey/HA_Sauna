@@ -344,9 +344,18 @@ gehalten. Bei einem Formbeginn innerhalb dieser Sekantenstütze verlangt die
 Übernahme des linken Originalpunkts als Beginn einen eigenen vollständigen
 Formbeleg an genau diesem Punkt mit seinen unveränderten Originalen. Dieser
 Fit bleibt bei der späteren Zuordnung zu einem lokalen T-Fall die erste Wahl.
-Die Sekante allein bestätigt kein Ereignis. Ohne ein aufgelöstes
-Einzelintervall bleibt der eigene aggregierte Originalfit
-verfügbar. Ein unterstützter eigener Formbeginn außerhalb der Sekantenstütze
+Die Sekante allein bestätigt kein Ereignis. Wird der feste Ansatz an ihrem
+linken Originalpunkt mathematisch abgelehnt, kann der bereits berechnete eigene
+Originalfit einen späteren Beginn innerhalb derselben nativen RH-Stütze liefern.
+Hierfür müssen sein Modellvergleich, seine Änderungsrichtung, sein Nachlauftrend
+und sein Türkontext vollständig unterstützt sein. Übernommen wird sein eigener
+Beginn, nicht der verworfene linke Intervallpunkt. Quellen- und Epochengleichheit,
+fortlaufender Originalanschluss und RH-Gegenformprüfung bleiben erforderlich.
+Ein unterstützter fester Ansatz bleibt vorrangig. Diese Ersatzwahl gehört zum
+allgemeinen Öffnungsweg; die spätere lokale Zuordnung nach einem Aufguss behält
+ihre gesonderten Voraussetzungen. Ohne ein aufgelöstes Einzelintervall bleibt
+der eigene aggregierte Originalfit verfügbar. Ein unterstützter eigener
+Formbeginn außerhalb der Sekantenstütze
 vom letzten Vorgängeroriginal bis zum jüngsten Original wird nicht auf das
 Intervall verschoben; das gilt auch bei einem erneuten Fit im aktuellen
 Originalpräfix.
