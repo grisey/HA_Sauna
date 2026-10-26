@@ -138,6 +138,35 @@ def fit_source_exchange(tt, y, outside):
     return math.exp(log_lam), float(coef[1]), float(errors[0]), float(errors[2])
 
 
+def fit_decay(tt, y):
+    """Abklingen als nachlassende Zusatzsteigung: ``y = a + r·τ + d0·(1 − e^(−κτ))/κ``.
+
+    ``r`` ist die normale Steigung, ``d0`` die Zusatzsteigung am Gipfel, ``κ`` ihre
+    Abnahmerate.  ``κ`` per Profil (Goldener Schnitt über log κ), ``a, r, d0``
+    linear.  Liefert ``(d0, log κ)`` oder ``None``.
+    """
+    tt = np.asarray(tt, float)
+    y = np.asarray(y, float)
+    if len(tt) < 8 or tt[-1] <= 0:
+        return None
+
+    def solve(log_k):
+        k = math.exp(log_k)
+        basis = np.column_stack([np.ones_like(tt), tt, -np.expm1(-k * tt) / k])
+        coef, *_ = np.linalg.lstsq(basis, y, rcond=None)
+        return coef, float(((basis @ coef - y) ** 2).sum())
+
+    lo, hi = math.log(1.0 / max(tt[-1], 1.0)), math.log(1.0 / max(float(np.median(np.diff(tt))), 1e-3))
+    if hi <= lo:
+        return None
+    log_k = _golden(lambda v: solve(v)[1], lo, hi)
+    coef, _ = solve(log_k)
+    d0 = float(coef[2])
+    if not d0 < 0:
+        return None
+    return d0, log_k
+
+
 def fit_exchange(tt, y, excess0, beta=None):
     """Least-squares fit of the exchange coefficient λ (and β, if not given) for one opening."""
     level0 = y[0]
@@ -234,7 +263,7 @@ def empty_evidence(channels=CHANNELS) -> dict:
         "open_excess_sum": [0.0] * c,
         "open_count": 0,
         "turbulence": {"infusion": [], "decay": []},
-        "prior": {"open": [], "infusion": [], "decay": [], "recovery": []},
+        "prior": {"open": [], "infusion": [], "decay": [], "decay_slope": [], "recovery": []},
         "beta": [],
         "exchange": [],
         "source": [],
@@ -270,7 +299,7 @@ def merge_evidence(*items: dict) -> dict:
         out["open_count"] += ev["open_count"]
         for key in ("turbulence", "prior", "tau"):
             for name in out[key]:
-                out[key][name] += ev[key][name]
+                out[key][name] += ev[key].get(name, [])
         out["beta"] += ev["beta"]
         out["exchange"] += ev.get("exchange", [])
         out["source"] += ev.get("source", [])
@@ -285,11 +314,15 @@ def merge_evidence(*items: dict) -> dict:
     return out
 
 
-def _labels_to_modes(t, y, channels, labels, win, dt):
-    """Mode sequence and per-event measurements from labelled events."""
+def _labels_to_modes(t, y, channels, labels, win, dt, normal_sd=None):
+    """Mode sequence and per-event measurements from labelled events.
+
+    ``normal_sd``: spread of the normal slopes of the closed cabin per channel; the decay
+    lasts until its excess slope is within it (without: until the next event).
+    """
     c = len(channels)
     mode = np.zeros(len(t), int)
-    found = {"open": [], "doors": [], "recovery": [], "infusion": [], "decay": [], "tau": {"infusion": [], "decay": [],
+    found = {"open": [], "doors": [], "recovery": [], "infusion": [], "decay": [], "decay_slope": [], "tau": {"infusion": [], "decay": [],
              "recovery": []}, "turbulence": {"infusion": [], "decay": []}, "segments": []}
     events = sorted([(d["open"], "o", d) for d in labels.get("doors", [])]
                     + [(x["t"] if isinstance(x, dict) else x, "i", x) for x in labels.get("infusions", [])],
@@ -343,18 +376,22 @@ def _labels_to_modes(t, y, channels, labels, win, dt):
                     found["tau"]["infusion"].append(rise)
                     mode[(t >= at) & (t < tp)] = INFUSION
                     found["segments"].append((INFUSION, at, tp, r0, source))
-                after = (t > tp) & (t <= nxt)
-                excess = y[after, i] - base
-                below = np.where(excess <= amp / math.e)[0]
+                after = (t >= tp) & (t <= nxt)
+                fit = fit_decay(t[after] - tp, y[after, i])
                 td = None
-                if len(below):
-                    td = float(t[after][below[0]] - tp)
-                    found["decay"].append((i, math.log(amp / td), source, at))
+                if fit is not None:
+                    d0, log_k = fit
+                    found["decay"].append((i, log_k, source, at))
+                    found["decay_slope"].append((i, d0, source, at))
+                    kappa_rate = math.exp(log_k)
+                    td = float(t[after][-1] - tp)
+                    if normal_sd is not None and normal_sd[i] > 0 and abs(d0) > normal_sd[i]:
+                        td = min(td, math.log(abs(d0) / normal_sd[i]) / kappa_rate)
                     kap = _level_var(t, y[:, i], tp, tp + td)
                     if kap is not None:
-                        found["turbulence"]["decay"].append((i, kap / (amp / td) ** 2, source))
+                        found["turbulence"]["decay"].append((i, kap / d0 ** 2, source))
                     if first:
-                        found["tau"]["decay"].append(td)
+                        found["tau"]["decay"].append(1.0 / kappa_rate)
                         found["segments"].append((DECAY, tp, tp + td, r0, source))
                 if first:
                     mode[(t >= tp) & (t < (tp + td if td else nxt))] = DECAY
@@ -382,7 +419,14 @@ def collect_evidence(times, values, channels, labels, *, outside=None, exclude=(
     dt = float(np.median(np.diff(t)))
     ev["dt"].append(dt)
     win = 15 * dt
-    mode, found = _labels_to_modes(t, y, channels, labels, win, dt)
+    mode, _ = _labels_to_modes(t, y, channels, labels, win, dt)
+    quiet = []
+    for a0 in np.arange(t[0], t[-1] - 60.0, 60.0):
+        m = (t >= a0) & (t < a0 + 60.0)
+        if m.sum() > 20 and (mode[m] == CLOSED).all():
+            quiet.append([_slope(t[m], y[m, i]) for i in range(c)])
+    normal_sd = np.std(quiet, axis=0) if len(quiet) >= 10 else None
+    mode, found = _labels_to_modes(t, y, channels, labels, win, dt, normal_sd)
     # noise scale of every channel (humidity relative to saturation at the same sensor)
     partner = [channels.index(partner_temperature(ch)) if is_humidity(ch) else -1 for ch in channels]
     scale = np.ones_like(y)
@@ -420,9 +464,9 @@ def collect_evidence(times, values, channels, labels, *, outside=None, exclude=(
             if close - at >= 3 * win and not is_humidity(channels[i]):
                 ev["beta"].append([i, float(fit_exchange(tt, yy, excess0)[1]), source])
             ev["_courses"].append([i, tt, yy, excess0, source, key])
-    for name in ("recovery", "infusion", "decay"):
+    for name in ("recovery", "infusion", "decay", "decay_slope"):
         for i, value, source, at in found[name]:
-            ev["prior"][name].append([i, float(value), source, f"{session}@{at:.1f}"])
+            ev["prior"].setdefault(name, []).append([i, float(value), source, f"{session}@{at:.1f}"])
     for name in ("infusion", "decay"):
         for i, value, source in found["turbulence"][name]:
             ev["turbulence"][name].append([i, float(value), source])
@@ -796,6 +840,12 @@ def estimate(evidence: dict, *, base: dict, rejected=frozenset()) -> dict:
                 prior[j, i] = population(v)
     params["prior"] = prior.tolist()
     params["source"] = source.tolist()
+    decay_slope = np.zeros((c, 2))
+    for i in range(c):
+        v = [x for k, x, s, key in evidence["prior"].get("decay_slope", []) if k == i and not _rejected(s, rejected)]
+        if len(v) >= 3:
+            decay_slope[i] = population(v)
+    params["decay_slope"] = decay_slope.tolist()
     # the moisture source of an opening at both sensors (wood, stones: one cause); its wandering within it
     source_entries = [(k, x, key) for k, x, e, s, key in evidence.get("source", []) if not _rejected(s, rejected)]
     params["source_corr"] = event_correlation(source_entries, c).tolist()
@@ -811,7 +861,7 @@ def estimate(evidence: dict, *, base: dict, rejected=frozenset()) -> dict:
     for name, j in (("infusion", INFUSION), ("decay", DECAY), ("recovery", RECOVERY)):
         taus = evidence["tau"][name]
         if taus:
-            log_rate = np.array([is_humidity(ch) and j in (INFUSION, DECAY) for ch in channels])
+            log_rate = np.array([is_humidity(ch) and j in (INFUSION, DECAY) for ch in channels])   # log κ for the decay
             qe[j] = np.where(log_rate, 1.0, prior[j, :, 0] ** 2) / float(np.mean(taus))
     params["qe"] = qe.tolist()
     counts = np.asarray(evidence["counts"], float)

@@ -19,7 +19,10 @@ offen                 Temperatur ``L += (r − λ·(L − außen) − β·(L −
                       Luftaustausch mit außen, Nachschub aus Wand und Steinen
                       bzw. Feuchtequelle
 Aufguss               Feuchte ``L += (r + exp(z))·dt``
-Abklingen             Feuchte ``L += (r − exp(z))·dt``
+Abklingen             Feuchte ``L += (r + d)·dt``, ``d += −exp(z)·d·dt``: die große
+                      negative Zusatzsteigung ``d`` (Slot ``W``) lässt nach; ``r``
+                      ist das normale Steigungsverhalten der geschlossenen Kabine
+                      (gelernte Verteilung), nicht die Steigung vor dem Ereignis
 Erholung              Temperatur ``L += e·dt`` mit ``e ≥ 0`` (sie steigt nach dem
                       Schließen), Feuchte ``L += (r + e)·dt``
 Heizwechsel           wie zu, die Grunddrift der Temperatur springt
@@ -103,6 +106,7 @@ class ModelParameters:
     source: np.ndarray      # Feuchtequelle bei offener Tür: Startverteilung (Mittel, Streuung) je Kanal
     source_corr: np.ndarray  #   ihre Korrelation zwischen den Kanälen
     source_q: float         #   und ihre Wanderung innerhalb einer Öffnung ((g/m³/s)²/s); 0 = konstant
+    decay_slope: np.ndarray  # Abklingen: Startverteilung (Mittel, Streuung) der Zusatzsteigung je Kanal
     qe: np.ndarray          # Wanderung der Ereignisgröße
     rates: np.ndarray       # Übergangsraten zwischen den Zuständen (1/s)
     jump: np.ndarray        # Sprung der Grunddrift beim Heizwechsel
@@ -131,6 +135,8 @@ class ModelParameters:
             source_corr=(arr("source_corr")[index][:, index] if "source_corr" in data
                          else np.eye(len(index))),
             source_q=float(data.get("source_q") or 0.0),
+            decay_slope=(arr("decay_slope")[index] if "decay_slope" in data
+                         else np.zeros((len(index), 2))),
             qe=arr("qe")[:, index],
             rates=arr("rates"),
             jump=arr("jump")[index],
@@ -179,8 +185,9 @@ class StateModel:
         constr[RECOVERY] = ~self.humid
         self.constr = constr
         logm = np.zeros((NM, c), bool)          # infusion and decay carried as log rates
+        self.decay_slope = self.humid & (p.decay_slope[:, 1] > 0)     # channels with a learned decay
         logm[INFUSION] = self.humid
-        logm[DECAY] = self.humid
+        logm[DECAY] = self.humid & ~self.decay_slope                   # without it: constant log rate
         self.logm = logm
         self.sv2 = p.sv ** 2
         self.out = np.asarray(outside, float)
@@ -297,6 +304,32 @@ class StateModel:
             X[j, j] = x[j]
             PP[j, j] = P[j]
         PP[SHIFT][:, ir, ir] += self.jump2             # the drift jumps on entering a heater change
+        # opening: the drift is the normal slope of the closed cabin (learned distribution), not the slope
+        # before (e.g. of a recovery): a rise cannot be explained by an open door
+        if self.p.drift_sd.max() > 0:
+            for m in range(NM):
+                if m == OPEN:
+                    continue
+                X[OPEN, m, ir] = self.p.drift_mean
+                PP[OPEN, m][ir, :] = 0
+                PP[OPEN, m][:, ir] = 0
+                PP[OPEN, m][ir, ir] = self.p.drift_sd ** 2
+        # decay: the excess slope starts with its learned distribution; the humidity drift is the normal
+        # slope of the closed cabin (learned distribution), not the slope before the event
+        dk = np.where(self.decay_slope)[0]
+        if len(dk):
+            src = [m for m in range(NM) if m != DECAY]
+            wd, rd = iW[dk], ir[dk]
+            for m in src:
+                X[DECAY, m, wd] = self.p.decay_slope[dk, 0]
+                PP[DECAY, m][wd, :] = 0
+                PP[DECAY, m][:, wd] = 0
+                PP[DECAY, m][wd, wd] = self.p.decay_slope[dk, 1] ** 2
+                if self.p.drift_sd[dk].max() > 0:
+                    X[DECAY, m, rd] = self.p.drift_mean[dk]
+                    PP[DECAY, m][rd, :] = 0
+                    PP[DECAY, m][:, rd] = 0
+                    PP[DECAY, m][rd, rd] = self.p.drift_sd[dk] ** 2
         return X, PP
 
     def step(self, dt: float, y) -> np.ndarray:
@@ -331,6 +364,18 @@ class StateModel:
         F[OPEN, iL, iL] = 1 - (lam + beta) * dt
         F[OPEN, iL, iz] = -lam * excess * dt
         F[OPEN, iL, iW] = np.where(self.humid, 1.0, beta) * dt
+        # decay: dL = (r + d)·dt, d relaxes with exp(z)
+        dk = np.where(self.decay_slope)[0]
+        if len(dk):
+            kap = np.exp(x0[DECAY, iz[dk]])
+            d = x0[DECAY, iW[dk]]
+            keep = np.exp(-kap * dt)
+            xp[DECAY, iL[dk]] = x0[DECAY, iL[dk]] + (x0[DECAY, ir[dk]] + d) * dt
+            xp[DECAY, iW[dk]] = d * keep
+            F[DECAY, iL[dk], iz[dk]] = 0.0
+            F[DECAY, iL[dk], iW[dk]] = dt
+            F[DECAY, iW[dk], iW[dk]] = keep
+            F[DECAY, iW[dk], iz[dk]] = -kap * dt * d * keep
         # the drift returns to its learned distribution (Ornstein-Uhlenbeck): heating and cooling of the
         # closed cabin are bounded, a door-like fall is not a drift
         tau = self.p.drift_tau
@@ -350,10 +395,12 @@ class StateModel:
         qscale[OPEN] = excess ** 2                     # exchange turbulence ∝ (inside − outside)²
         for j in (INFUSION, DECAY):                    # steam turbulence ∝ (event rate)²
             qscale[j] = np.where(self.logm[j], np.exp(2 * x0[j, iz]), scale2)
+        qscale[DECAY] = np.where(self.decay_slope, x0[DECAY, iW] ** 2, qscale[DECAY])
         level_noise = self.ql * qscale * dt
         level_noise[OPEN] += self.ql[CLOSED] * scale2 * dt
         for j in (INFUSION, DECAY):
-            level_noise[j] += np.where(self.logm[j], self.ql[CLOSED] * scale2, 0) * dt
+            steam = self.logm[j] | (self.decay_slope if j == DECAY else False)
+            level_noise[j] += np.where(steam, self.ql[CLOSED] * scale2, 0) * dt
         Pp[:, iL, iL] += level_noise
         x, cov = xp, Pp
         lik = np.zeros(NM)
