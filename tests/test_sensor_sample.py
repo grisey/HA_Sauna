@@ -1,4 +1,4 @@
-"""Publisher → originals → archive/replay → sequential probability contracts."""
+"""Publisher → originals → archive/replay → input of the recognition."""
 
 from dataclasses import replace
 from datetime import timedelta
@@ -11,20 +11,16 @@ from tempfile import TemporaryDirectory
 import unittest
 import zipfile
 
-from test_detector import trace
+from climate_fixtures import trace
 from test_foundation import T0
-from test_foundation import parameters
 from test_sht35_app import load_app
-from test_curve_probability import specification
 from custom_components.ha_sauna.archive import Archive, plain
 from custom_components.ha_sauna.core.models import Measurement, Position, Quantity
 from custom_components.ha_sauna.core.sensor_sample import (
     ClimatePacket, SampleStream, archive_measurements, decode_sample,
 )
-from custom_components.ha_sauna.core.curve_probability import CurveProbability
-from custom_components.ha_sauna.core.detector import Detector
-from custom_components.ha_sauna.core.sequential_evidence import Basis, ChannelModel, Regression
-from custom_components.ha_sauna.core.sequential_evidence import Observation
+from custom_components.ha_sauna.core.recognition import ClimateRecognizer
+from custom_components.ha_sauna.recognition_parameters import shipped_parameters
 from custom_components.ha_sauna.core.moisture import current_absolute_humidity
 from custom_components.ha_sauna.history_humidity import project_absolute_humidity
 
@@ -45,10 +41,19 @@ def packet(second=60, *, sample_id=None, boot='fixture-boot', received=None, cha
 
 
 def comparison():
-    background, profiles, prior = specification()
-    humidity = ChannelModel('humidity', Basis(T0, 10, (0, 1)),
-                            Regression((trace(0)[1], 0), ((1, 0), (0, 1)), 2, 0.1))
-    return CurveProbability(background + (humidity,), profiles, prior)
+    """Recognition input only: the measurement grid of the upper position, without evaluation."""
+    return ClimateRecognizer(shipped_parameters(), T0, positions=(Position.UPPER,), evaluate=False)
+
+
+def accept(recognizer, measurements):
+    return [recognizer.accept(m) for m in measurements]
+
+
+def course(recognizer, through=T0 + timedelta(seconds=600)):
+    """Evaluated grid: (seconds since start, channel values) per step of the clock channel."""
+    recognizer.advance(through)
+    record = recognizer.record
+    return list(zip(record.times, map(tuple, record.values), strict=True))
 
 
 def records_for(packets):
@@ -100,46 +105,32 @@ class SensorSampleTests(unittest.TestCase):
 
     def test_read_error_is_unknown_without_evidence_or_invented_measurement_time(self):
         stream = comparison()
-        stream.accept(packet().measurements)
-        before = stream.probabilities(), stream.frontier
+        accept(stream, packet().measurements)
+        before = course(stream)
         failed = packet(61, changes={'status': 'read_error', 'temperature': None,
                                      'humidity': None, 'measured_at': None})
-        self.assertFalse(stream.accept(failed.measurements))
-        self.assertEqual((stream.probabilities(), stream.frontier), before)
+        self.assertEqual(accept(stream, failed.measurements), [False, False])
+        self.assertEqual(course(stream), before)
         self.assertIsNone(failed.measurements[0].measured_at)
-        self.assertTrue(stream.accept(packet(62).measurements))
+        self.assertEqual(accept(stream, packet(62).measurements), [True, True])
+        self.assertEqual([at for at, _ in course(stream)], [60.0, 62.0])
 
-    def test_packet_failure_rolls_back_both_quantities_and_clock_anchor(self):
-        stream = comparison()
-        first = packet()
-        stream.accept(first.measurements)
-        before = stream.probabilities(), stream.frontier, stream.last_received_at
-        good, bad = packet(61).measurements
-        with self.assertRaisesRegex(ValueError, 'Source identity changed'):
-            stream.accept((good, replace(bad, source='different_sensor')))
-        self.assertEqual((stream.probabilities(), stream.frontier, stream.last_received_at), before)
-        clean = comparison()
-        clean.accept(first.measurements)
-        clean.accept(packet(61).measurements)
-        stream.accept(packet(61).measurements)
-        self.assertEqual(stream.probabilities(), clean.probabilities())
-
-    def test_archive_roundtrip_has_the_same_probabilities_and_no_snapshot_votes(self):
+    def test_archive_roundtrip_has_the_same_course_and_no_snapshot_votes(self):
         packets = [packet(second) for second in range(60, 76)]
         live, replay = comparison(), comparison()
         for item in packets:
-            live.accept(item.measurements)
+            accept(live, item.measurements)
         rows = records_for(packets)
         rows.insert(2, {'id': 1000, 'kind': 'source_snapshot', 'payload': rows[0]['payload']})
         for originals in archive_measurements(rows, archive_id='fixture-archive'):
-            replay.accept(originals)
-        self.assertEqual(replay.probabilities(), live.probabilities())
-        self.assertEqual(replay.onsets(), live.onsets())
+            accept(replay, originals)
+        self.assertEqual(course(replay), course(live))
+        self.assertEqual(len(course(live)), len(packets))
         repeated = tuple(replace(m, received_at=T0 + timedelta(seconds=80)) for m in packets[-1].measurements)
-        self.assertFalse(replay.accept(repeated))
-        self.assertEqual(replay.probabilities(), live.probabilities())
+        self.assertEqual(accept(replay, repeated), [False, False])
+        self.assertEqual(course(replay), course(live))
 
-    def test_legacy_archive_and_current_archive_share_math_without_fabricated_metadata(self):
+    def test_legacy_archive_and_current_archive_share_the_course_without_fabricated_metadata(self):
         packets = [packet(second) for second in range(60, 76)]
         modern, legacy = comparison(), comparison()
         rows = records_for(packets)
@@ -147,51 +138,51 @@ class SensorSampleTests(unittest.TestCase):
             for key in ('sample', 'measured_at', 'original_id'):
                 row['payload'].pop(key, None)
         for item in packets:
-            modern.accept(item.measurements)
+            accept(modern, item.measurements)
         for originals in archive_measurements(rows, archive_id='legacy-fixture'):
             self.assertEqual(len(originals), 1)
             self.assertIsNone(originals[0].sample)
             self.assertIsNone(originals[0].measured_at)
             self.assertTrue(originals[0].original_id.startswith('legacy-fixture:'))
-            legacy.accept(originals)
-        self.assertEqual(legacy.probabilities(), modern.probabilities())
-        self.assertEqual(legacy.onsets(), modern.onsets())
-        before = legacy.probabilities()
+            accept(legacy, originals)
+        self.assertEqual(course(legacy), course(modern))
+        before = course(legacy)
         for originals in archive_measurements(rows, archive_id='legacy-fixture'):
-            legacy.accept(tuple(replace(m, received_at=T0 + timedelta(seconds=80)) for m in originals))
+            accept(legacy, tuple(replace(m, received_at=T0 + timedelta(seconds=80)) for m in originals))
         # Receipt-only originals retain their original curve time on redelivery.
-        self.assertEqual(legacy.probabilities(), before)
+        self.assertEqual(course(legacy), before)
 
     def test_distinct_legacy_records_at_same_time_remain_distinct_originals(self):
         first = replace(packet().measurements[0], sample=None, measured_at=None)
         rows = [{'id': i, 'kind': 'measurement', 'payload': plain(first)} for i in (1, 2)]
         stream = comparison()
-        for originals in archive_measurements(rows, archive_id='old'):
-            stream.accept(originals)
-        self.assertEqual(stream.probabilities()[0].original_count, 2)
+        accepted = [stream.accept(m) for originals in archive_measurements(rows, archive_id='old')
+                    for m in originals]
+        self.assertEqual(accepted, [True, True])
 
-    def test_existing_r03_rows_without_new_fields_enter_the_same_probability_core(self):
+    def test_existing_r03_rows_without_new_fields_enter_the_recognition(self):
         path = Path(__file__).parent / 'fixtures/replay/R03.samples.jsonl.gz'
         with gzip.open(path, 'rt') as source:
             rows = [(index, json.loads(line)) for index, line in enumerate(source)]
-        old, direct = comparison(), comparison()
+        stream = comparison()
         originals = [(index, row) for index, row in rows
                      if row['role'] in ('upper_temperature', 'upper_humidity')][:32]
         self.assertEqual(len(originals), 32)
+        temperatures = []
         for index, row in originals:
             self.assertNotIn('sample', row)
             self.assertNotIn('measured_at', row)
             quantity = row['role'].removeprefix('upper_')
             at = T0 + timedelta(seconds=row['t'])
             value = row['value'] if type(row['value']) in (float, int) else None
-            original_id = f'fixture:R03:{index}'
             m = Measurement(Position.UPPER, Quantity(quantity), value, str(row['value']),
-                            SOURCES[quantity], at, original_id=original_id)
-            old.accept((m,))
-            direct.observe(Observation(quantity, m.source, 0, at, at, value, 'receipt',
-                                       original_id=original_id))
-        self.assertEqual(old.probabilities(), direct.probabilities())
-        self.assertEqual(old.onsets(), direct.onsets())
+                            SOURCES[quantity], at, original_id=f'fixture:R03:{index}')
+            self.assertEqual(stream.accept(m), value is not None)
+            if quantity == 'temperature' and value is not None:
+                temperatures.append(row['t'])
+        times = [at for at, _ in course(stream, T0 + timedelta(seconds=max(r['t'] for _, r in originals)))]
+        self.assertTrue(times)
+        self.assertTrue(set(times) <= {round(float(t), 6) for t in temperatures} | set(map(float, temperatures)))
 
     def test_initial_legacy_snapshot_preserves_original_when_no_measurement_row_exists(self):
         old = replace(packet().measurements[0], sample=None, measured_at=None)
@@ -205,9 +196,8 @@ class SensorSampleTests(unittest.TestCase):
         self.assertEqual(originals[0][0].original_id, originals[1][0].original_id)
         self.assertEqual(originals[0][0].received_at, old.received_at)
         stream = comparison()
-        self.assertTrue(stream.accept(originals[0]))
-        self.assertFalse(stream.accept(originals[1]))
-        self.assertEqual(stream.probabilities()[0].original_count, 1)
+        self.assertEqual(accept(stream, originals[0]), [True])
+        self.assertEqual(accept(stream, originals[1]), [False])
 
     def test_later_snapshot_keeps_older_source_time_and_later_knowledge_boundary(self):
         early = replace(packet(60).measurements[1], sample=None, measured_at=None)
@@ -226,16 +216,10 @@ class SensorSampleTests(unittest.TestCase):
         self.assertIsNone(batches[1][0].measured_at)
         self.assertEqual(batches[1].observed_at, at)
         self.assertEqual(batches[2].observed_at, at)
-        stream, expected = comparison(), comparison()
-        for batch in batches:
-            stream.accept(batch)
-            for m in batch:
-                expected.observe(Observation(m.quantity.value, m.source, 0, m.received_at,
-                                             batch.observed_at, m.value, 'receipt',
-                                             original_id=m.original_id))
-        self.assertEqual(stream.probabilities(), expected.probabilities())
-        self.assertEqual(stream.last_received_at, at)
-        self.assertEqual(stream.probabilities()[0].original_count, 3)
+        stream = comparison()
+        self.assertEqual([stream.accept(m) for batch in batches for m in batch], [True, True, True])
+        # the snapshot keeps its own (older) curve time; both temperatures are evaluated with it
+        self.assertEqual([at for at, _ in course(stream)], [61.0, 62.0])
 
     def test_snapshot_pairs_follow_identity_not_binding_dictionary_order(self):
         upper = packet()
@@ -253,29 +237,21 @@ class SensorSampleTests(unittest.TestCase):
     def test_monotonic_clock_prevents_utc_correction_from_warping_curves(self):
         regular, corrected = comparison(), comparison()
         for second in range(60, 76):
-            regular.accept(packet(second).measurements)
+            accept(regular, packet(second).measurements)
             shift = timedelta(days=-1 if second > 65 else 0)
             changed = packet(second, changes={'measured_at': (T0 + timedelta(seconds=second) + shift).isoformat()})
-            corrected.accept(changed.measurements)
-        self.assertEqual(corrected.probabilities(), regular.probabilities())
-        self.assertEqual(corrected.onsets(), regular.onsets())
-        with self.assertRaisesRegex(ValueError, 'Source identity changed'):
-            corrected.accept(packet(76, boot='different-boot').measurements)
+            accept(corrected, changed.measurements)
+        self.assertEqual(course(corrected), course(regular))
+        self.assertEqual([at for at, _ in course(regular)], [float(s) for s in range(60, 76)])
 
-    def test_active_detector_preserves_new_original_after_source_utc_correction(self):
-        detector = Detector(parameters(), T0, positions=(Position.UPPER,))
+    def test_active_recognition_preserves_new_original_after_source_utc_correction(self):
+        recognizer = comparison()
         first = packet(60)
         second = packet(61, changes={'measured_at': (T0 - timedelta(days=1)).isoformat()})
         for item in (first, second):
-            for measurement in item.measurements:
-                self.assertTrue(detector.accept(measurement))
-            detector._consume(item.received_at)
-        self.assertEqual(detector.rejected, 0)
-        for quantity in Quantity:
-            series = detector._curve_series[Position.UPPER, quantity]
-            self.assertEqual(series['time_basis'], 'source_monotonic')
-            self.assertEqual([at for at, value in series['points']],
-                             [T0 + timedelta(seconds=60), T0 + timedelta(seconds=61)])
+            self.assertEqual(accept(recognizer, item.measurements), [True, True])
+            recognizer.advance(item.received_at)
+        self.assertEqual([at for at, _ in course(recognizer)], [60.0, 61.0])
 
     def test_absolute_humidity_never_mixes_two_different_physical_samples(self):
         old, new = packet(60), packet(61)

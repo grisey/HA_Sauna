@@ -51,6 +51,24 @@ function parameterValues(overrides = {}) {
   };
 }
 
+// Read-compatibility value of a retired setting (archived sessions still carry it).
+function legacyParameterValue(key) {
+  const definition = (catalog.legacy_parameters || []).find((item) => item.key === key);
+  if (!definition) throw new Error(`Unknown legacy fixture parameter: ${key}`);
+  return definition.default;
+}
+
+// Configuration of an archived session: current values and every retired value,
+// as the runtime keeps them with their defaults.
+function archivedParameterValues(overrides = {}) {
+  return parameterValues({
+    ...Object.fromEntries(
+      (catalog.legacy_parameters || []).map((item) => [item.key, item.default]),
+    ),
+    ...overrides,
+  });
+}
+
 function parameterDefinition(key, values = parameterValues()) {
   const definition = definitions.get(key);
   if (!definition) throw new Error(`Unknown fixture parameter: ${key}`);
@@ -117,6 +135,8 @@ module.exports = {
   panelFixture,
   elementClassList,
   parameterValues,
+  legacyParameterValue,
+  archivedParameterValues,
   parameterDefinition,
   parameterDefinitions,
 };

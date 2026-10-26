@@ -106,6 +106,14 @@ def install_ha():
     )
 
 
+def install_core():
+    # The recognition model of the core uses NumPy (the HA pin of browser/requirements.txt).
+    subprocess.run(
+        [sys.executable, "-m", "pip", "install", "-r", str(ROOT / "tests/requirements-core.txt")],
+        check=True,
+    )
+
+
 def run_core():
     names = select_core_tests(os.environ.get("SAUNA_CORE_TESTS", ""))
     # Named tests need the same module priority as core discovery.
@@ -162,12 +170,13 @@ def run_integration():
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
-        "action", choices=("outputs", "install-ha", "core", "ha", "integration")
+        "action", choices=("outputs", "install-ha", "install-core", "core", "ha", "integration")
     )
     arguments = parser.parse_args()
     {
         "outputs": outputs,
         "install-ha": install_ha,
+        "install-core": install_core,
         "core": run_core,
         "ha": run_ha,
         "integration": run_integration,

@@ -175,14 +175,9 @@ Befund. Ein leerer Ereignisbestand begründet diesen Wert nicht. Die Timeline
 bleibt der einzige Zuordnungsowner.
 
 `InfusionInput` kann bestätigte Aufgussereignisse mit ihren bestehenden
-Identitäten bewahren. `InfusionEpisodeDiagnostics` übernimmt getrennt davon
-den veröffentlichten Episodendiagnosebestand: Phase, Beginn,
-Bestätigungszeit, Ende, Endbeleg, Unterbrechungsstatus sowie Wasser-, Abfall-
-und Niveauwerte. Ein fehlendes Ende ist kein belegter Abschluss. Fortsetzung
-oder Ende erzeugen keinen zusätzlichen Aufguss. Der Episodenoutput wird beim
-Erkennungsowner gelesen und nicht aus bestätigten Ereignissen zurückgerechnet.
-Der bisherige Owner besitzt keine stabile Episoden-ID; eine spätere
-Ereignisbindung darf nicht aus Kandidaten-ID oder Beginn geraten werden.
+Identitäten bewahren. Das Ende eines Aufgusses liefert die Erkennung als
+`InfusionUpdate` zum bereits gelieferten Aufguss; es erzeugt keinen
+zusätzlichen Aufguss. Ein fehlendes Ende ist kein belegter Abschluss.
 
 ## Explizite Beobachtungsformen
 
@@ -224,12 +219,10 @@ damaligen vollständigen Sitzung beziehungsweise Präsenzmeldung verbinden.
 Der bestehende Archivverbrauch des Originalereignisses benötigt keine solche
 Sitzungsvollkopie pro Event.
 
-`DetectionEvaluation` gehört zu genau einem Detektorraster; Rasterzeit,
-Signalfolge und Erkennungen müssen zusammengehören. Die gesamte Rückgabe eines
-mehrere Raster verarbeitenden `Detector.advance()` ist nicht die Diagnose des
-letzten Rasters. `MethodEvaluation` kann den tatsächlichen Diagnosebestand
-anderer Verfahren als `FrozenMap` samt Auswertungszeit und Erkennungen
-übernehmen, ohne Alt-Heuristikfelder vorauszusetzen.
+`MethodEvaluation` kann den tatsächlichen Diagnosebestand eines
+Erkennungsverfahrens als `FrozenMap` samt Auswertungszeit und Erkennungen
+übernehmen. Die gesamte Rückgabe eines mehrere Messschritte verarbeitenden
+`ClimateRecognizer.advance()` ist nicht die Diagnose des letzten Schritts.
 
 Ein expliziter Verbraucher kann eine solche Beobachtung über
 `ModelConsumer.consume` erhalten. Die Form besitzt keine Warteschlange,
@@ -255,11 +248,11 @@ Umschreibung des vorhandenen Anschlusses.
 | 5 | Schütz und Leistung: `ContactorFeedbackInput`, `PowerFeedbackInput`, `ContactorMark` | `HADevice.report_received_feedback` | Neu normalisiert: `consume_contactor_feedback_input` und `consume_power_feedback_input` erreichen `report_contactor` und `report_power`. Marken, Kühlbeginn und Energie werden weiterhin dort geführt. Fehlende Leistung ist nicht null Watt. |
 | 6 | Anwesenheit: `OccupancyInput`; Belege: `PresenceReport`, `PresenceObservation`, `PresenceOutput`, `PresenceSourceSelectionSnapshot` | `Runtime.accept_presence` nach Quellen-, Entity- und Assertionzulassung | Neu normalisiert: `consume_occupancy_input` verarbeitet Belegung, Verfügbarkeit, Qualifikation, Berichtsidentität und Zeiten. Originalreports bleiben für API/Archiv bei Runtime; Originalevents mit einzelner Belegqualifikation bleiben direkt verbunden. Zusätzliche Beobachtungs- und Quellenwahlsnapshots bleiben vorbereitet. |
 | 7 | Türvorgang: `Door`, Originalevents; Beobachtungen: `DoorInput`, `DoorOperation` | Erkennung und vorhandene Timeline-Zuordnung | Bereits direkt: `Controller.process` und `timeline.apply` konsumieren originale Öffnungs-/Schlussereignisse in Reihenfolge. `DoorInput` und `DoorOperation` bleiben vorbereitet; keine Zustandsrekonstruktion vor der Timeline. |
-| 8 | Aufguss: Originalevents; Beobachtungen: `InfusionInput`, `InfusionEpisodeDiagnostics` | Bestätigende Erkennung und Episodenowner | Bereits direkt: Controller und Timeline konsumieren bestätigte Originalvorkommnisse samt Identitäten und Zeiten. Input- und Diagnoseformen bleiben vorbereitet; Fortsetzung und Ende werden nicht als neue Bestätigung ausgegeben. |
+| 8 | Aufguss: Originalevents und Aufgussende (`InfusionUpdate`); Beobachtung: `InfusionInput` | Bestätigende Erkennung | Bereits direkt: Controller und Timeline konsumieren bestätigte Originalvorkommnisse samt Identitäten und Zeiten sowie das Ende je Aufguss. Die Inputform bleibt vorbereitet; ein Ende wird nicht als neue Bestätigung ausgegeben. |
 | 9 | Lüftung: Originalevent; Beobachtung: `DoorOperation.ventilation`, `ventilation_known` | Bestehender Tür-/Timelineowner | Bereits direkt: Controller, Timeline und Türwärmeverarbeitung verwenden das ursprüngliche Lüftungsereignis. Die vorbereitete Vorgangsbeobachtung schafft keinen unabhängigen Lüftungszustand oder zweiten Zuordnungsowner. |
 | 10 | Bedienzustand: `OperationInput`, `ControlModeInput`, `HeaterOverrideInput` | Bestehende Runtime-Bedienverarbeitung | Neu normalisiert: `consume_operation_input`, `consume_control_mode_input` und `consume_heater_override_input` delegieren an die bestehenden Betriebs-, Modus- und Overrideowner. Initiale Controllerkonfiguration bleibt direkt; sie ist kein nachträglicher Modusbefehl. |
 | 11 | Taster: Ergebnis von `ButtonGestures`; Beobachtungen: `ButtonGestureSnapshot`, `ButtonEvaluation` | `ButtonGestures`, `Runtime._handle_button_event` | Bereits direkt: `_apply_button_action` verwendet das berechnete Gestenergebnis. Die zusätzlichen Beobachtungen bleiben vorbereitet; keine erneute Gestenauswertung. |
-| 12 | Erkennung: `Detection`; Beobachtungen: `DetectionEvaluation`, `MethodEvaluation` | Erkennungsowner je Raster und Auswertungsgrenze | Bereits direkt: Runtime und Archiv verwenden Erkennungen und Originaldiagnosen. Zusätzliche Auswertungsformen bleiben vorbereitet; sie müssen beim expliziten Gebrauch genau zugehörige Raster und Erkennungen verbinden. |
+| 12 | Erkennung: `Detection`; Beobachtung: `MethodEvaluation` | Erkennungsowner je Messschritt und Auswertungsgrenze | Bereits direkt: Runtime und Archiv verwenden Erkennungen und Zustandswahrscheinlichkeiten. Die Auswertungsform bleibt vorbereitet; sie muss beim expliziten Gebrauch genau zugehörige Messschritte und Erkennungen verbinden. |
 | 13 | Sitzung, Gang, Verlauf: `Session`, `Gang`, `Timeline`, `Event` | Controller und `timeline.apply` | Bereits direkt: Archiv, API und Darstellung verwenden die vollständigen Ownerwerte. Originalereignisse bleiben mit Identität und Zeitbezügen erhalten; keine parallelen Sitzungs- oder Gangmodelle. |
 | 14 | Steuerungsausgabe: `ControllerOutput` | Explizites `ControllerOutput.capture` | Vorbereitete Beobachtung ohne Laufzeitproduktion. Die State-API liest die vorhandenen Controller-, Sitzungs- und Gerätewerte bereits unter Runtime-Lock konsistent. Kein pauschaler Vollcapture. |
 | 15 | Thermostat: `ControlInputs`, `ThermostatState`, `Decision` | Bedarfsbildung, `thermostat.evaluate`, abschließende Controllerauswertung | Bereits direkt: Controller konsumiert quellenfreie Bedarfspegel, `HADevice.send` die endgültige Entscheidung; Sensoren und API lesen Zustand und Entscheidung. Keine zusätzliche Thermostat-Ausgabeform. |

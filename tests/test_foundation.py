@@ -471,7 +471,7 @@ class PackagingTests(unittest.TestCase):
         manifest = json.loads((folder / "manifest.json").read_text())
         self.assertEqual(manifest["domain"], "ha_sauna")
         self.assertTrue(manifest["config_flow"])
-        self.assertEqual(manifest["requirements"], [])
+        self.assertEqual(manifest["requirements"], ["numpy"])
         strings = json.loads((folder / "strings.json").read_text())
         translated = json.loads((folder / "translations/de.json").read_text())
         self.assertEqual(strings, translated)
@@ -515,7 +515,8 @@ class PackagingTests(unittest.TestCase):
             text = file.read_text()
             ast.parse(text)
             with self.subTest(file=file.name):
-                if file.name not in {"device.py", "notifications.py", "notification_services.py"}:
+                if file.name not in {"device.py", "notifications.py", "notification_services.py",
+                                     "recognition_services.py"}:
                     self.assertNotIn("hass.services", text)
                 if file.name not in {"device.py", "notifications.py"}:
                     self.assertNotIn("async_call(", text)

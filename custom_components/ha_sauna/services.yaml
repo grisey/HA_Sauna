@@ -52,3 +52,44 @@ forget_notification:
       required: true
       selector:
         text:
+
+recognition_feedback:
+  name: Rückmeldung zur Erkennung
+  description: Lehnt ein erkanntes Ereignis für das Nachlernen ab oder hebt die Ablehnung auf. Angabe über die Ereigniskennung oder über Art und Zeit (nächstes Ereignis dieser Art).
+  fields:
+    entry_id:
+      name: Sauna-Instanz
+      required: true
+      selector:
+        config_entry:
+          integration: ha_sauna
+    verdict:
+      name: Rückmeldung
+      required: true
+      selector:
+        select:
+          options:
+            - reject
+            - confirm
+    event_id:
+      name: Ereigniskennung
+      selector:
+        text:
+    kind:
+      name: Ereignisart
+      selector:
+        select:
+          options:
+            - door_open
+            - door_close
+            - ventilation_confirmed
+            - ventilation_complete
+            - infusion
+    at:
+      name: Zeitpunkt
+      selector:
+        datetime:
+    session_id:
+      name: Sitzung
+      selector:
+        text:

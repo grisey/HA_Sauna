@@ -8,12 +8,12 @@ aufeinanderfolgende Archivabschnitte mit 48.346 Messungen, R06 zwei mit 33.845
 und R07 einen mit 52.236. Die Abschnitte einer Aufzeichnung besitzen bereits
 dieselbe relative Zeitachse. `recording_sections` hält ihre ursprünglichen
 Abstände und unbeobachteten Lücken fest. Ein Archivschnitt erzeugt keinen
-Neustart des Detektors. Eine Messung nach dem gespeicherten Archivende bleibt
+Neustart der Erkennung. Eine Messung nach dem gespeicherten Archivende bleibt
 als tatsächlich empfangener Eingang erhalten.
 
 Der Typ `measurement_recording` enthält ausschließlich gemessene Klimaeingänge.
 Bedienaktionen, Aktorrückmeldungen und unabhängig zugeordnete Ereignisse sind
-noch nicht gebunden. Deshalb werden diese Daten mit dem produktiven Detektor
+noch nicht gebunden. Deshalb werden diese Daten mit der produktiven Erkennung
 ausgewertet und nicht als vollständige Steuerungsabnahme gezählt. R01–R04 und
 die Kalibrationsauswahl behalten ihre bisherigen Rollen; ihre Messungen werden
 hier nicht erneut aufgenommen.

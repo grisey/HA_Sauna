@@ -64,6 +64,12 @@ async def async_setup_entry(
         runtime.on_close(notifications.close)
         await notifications.async_start()
         register_notifications(hass)
+        from .recognition_services import register as register_recognition
+        from .recognition_store import async_setup_recognition_learning
+
+        # learned recognition quantities apply from the first session on
+        await async_setup_recognition_learning(hass, entry, runtime)
+        register_recognition(hass)
         from .api import register
 
         register(hass)

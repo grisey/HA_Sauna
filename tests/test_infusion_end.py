@@ -1,22 +1,22 @@
 """Individual infusion end evidence stays separate from gang and control state."""
 
 import asyncio
-from copy import deepcopy
 from dataclasses import replace
+from datetime import timedelta
 from pathlib import Path
 from tempfile import TemporaryDirectory
 import unittest
 from unittest.mock import patch
 
-import test_detector as detector_fixtures
 from test_cooling import at, controller
 from test_foundation import T0, bindings, event
+import test_recognition_model as synthetic
 
 from custom_components.ha_sauna.archive import plain
-from custom_components.ha_sauna.core.detector import (
+from custom_components.ha_sauna.core.recognition import (
+    ClimateRecognizer,
     Detection,
-    Detector,
-    InfusionEpisodeUpdate,
+    InfusionUpdate,
 )
 from custom_components.ha_sauna.core.timeline import (
     Infusion,
@@ -163,7 +163,7 @@ class InfusionEndRuntimeTests(unittest.IsolatedAsyncioTestCase):
         """Replace only detector transport; timeline, controller and SQLite are real."""
         c = controller()
         p = c.parameters
-        grid = p.values["grid_seconds"]
+        grid = 2
         now = [T0]
         runtime = SaunaRuntime(Configuration(bindings(), p), lambda: now[0])
         runtime.controller = c
@@ -177,8 +177,8 @@ class InfusionEndRuntimeTests(unittest.IsolatedAsyncioTestCase):
             at(6 * grid),
             at(7 * grid),
             at(6 * grid),
-            "original_background",
-            "evidence_grid",
+            "steam_decayed",
+            "physical_effective",
         )
         second_end = InfusionEnd(
             at(11 * grid),
@@ -190,16 +190,17 @@ class InfusionEndRuntimeTests(unittest.IsolatedAsyncioTestCase):
         packets = iter(
             (
                 ((first,), ()),
-                ((), (InfusionEpisodeUpdate(first, first_end),)),
+                ((), (InfusionUpdate(first, first_end),)),
                 ((second,), ()),
                 (
                     (),
                     (
-                        InfusionEpisodeUpdate(replace(first), second_end),
-                        InfusionEpisodeUpdate(first, None),
-                        InfusionEpisodeUpdate(first, first_end),
-                        InfusionEpisodeUpdate(second, second_end),
-                        InfusionEpisodeUpdate(second, second_end),
+                        # an equal but different detection is not the delivered source
+                        InfusionUpdate(replace(first), second_end),
+                        InfusionUpdate(first, None),
+                        InfusionUpdate(first, first_end),
+                        InfusionUpdate(second, second_end),
+                        InfusionUpdate(second, second_end),
                     ),
                 ),
             )
@@ -207,13 +208,10 @@ class InfusionEndRuntimeTests(unittest.IsolatedAsyncioTestCase):
 
         def transport_only_advance(through, **callbacks):
             detections, updates = next(packets)
-            self.assertTrue(callbacks["before_sample"](through))
             for detection in detections:
                 callbacks["on_detection"](detection)
             for update in updates:
                 callbacks["on_infusion_update"](update)
-            callbacks["after_sample"](through)
-            detector.index = int((through - detector.origin).total_seconds() / grid)
             return list(detections)
 
         with TemporaryDirectory() as directory:
@@ -269,162 +267,39 @@ class InfusionEndRuntimeTests(unittest.IsolatedAsyncioTestCase):
                 await runtime.archive.close()
 
 
-class InfusionEndDetectorTests(unittest.TestCase):
-    def test_native_door_proof_ends_active_infusion_before_plateau_with_original_times(
-        self,
-    ):
-        """Native producer-to-consumer guards, not a physical event-quality oracle."""
-        fixture = detector_fixtures.InfusionLifecycleTests()
-        fixture.setUp()
-        # Reuse the separate, later door turn. The first infusion return is
-        # not itself an opening; its negative ownership test remains intact.
-        points, peak, door_at, fall = fixture._infusion_then_independent_door()
-        temperatures = [
-            (0, fixture.temperature),
-            (door_at, fixture.temperature),
-            (fall, detector_fixtures.trace(85)[0]),
-        ]
-        detector = Detector(fixture.parameters, T0)
-        events, updates = [], []
-        snapshots_after_updates = {}
-        conflict_detector = None
-        conflict_events, conflict_updates, conflict_traces = [], [], []
+class InfusionEndRecognitionTests(unittest.TestCase):
+    def run_cabin(self, door):
+        t, y = synthetic.cabin(n=600, infusion=560.0, door=door, seed=3)
+        recognizer = ClimateRecognizer(synthetic.parameters(), synthetic.T0,
+                                       outside_reference=synthetic.ROOM)
+        delivered, updates = [], []
+        for m in synthetic.measurements(t, y):
+            recognizer.accept(m)
+            recognizer.advance(m.received_at - timedelta.resolution, on_detection=delivered.append,
+                               on_infusion_update=updates.append)
+        recognizer.advance(synthetic.T0 + timedelta(seconds=float(t[-1])), on_detection=delivered.append,
+                           on_infusion_update=updates.append)
+        return delivered, updates
 
-        def collect(update):
-            updates.append(update)
-
-        for second in range(0, fall + fixture.step, fixture.step):
-            temperature = fixture._value(temperatures, second)
-            humidity = fixture._value(points, second)
-            for position in detector.positions:
-                for quantity, value in (
-                    (detector_fixtures.Quantity.TEMPERATURE, temperature),
-                    (detector_fixtures.Quantity.HUMIDITY, humidity),
-                ):
-                    self.assertTrue(
-                        detector.accept(
-                            detector_fixtures.measurement(
-                                position,
-                                quantity,
-                                value,
-                                second,
-                                measured=at(second),
-                            )
-                        )
-                    )
-            # Deliberately delayed receive time must not become the physical end.
-            received_at = at(second + fixture.step)
-            events.extend(
-                detector.advance(
-                    at(second),
-                    enabled=True,
-                    detected_at=received_at,
-                    on_infusion_update=collect,
-                    after_sample=lambda stamp: snapshots_after_updates.update(
-                        {stamp: tuple(updates)}
-                    ),
-                )
-            )
-            if second == peak:
-                active = detector.infusion_episode
-                self.assertIsNotNone(active)
-                self.assertEqual(active.phase, "active")
-                self.assertIsNone(active.level_end_at)
-                # Reuse the confirmed prefix for two narrow final-state guards.
-                reset_detector = deepcopy(detector, {id(detector.p): detector.p})
-                reset_updates = []
-                reset_detector.advance(
-                    at(second + fixture.step),
-                    enabled=False,
-                    on_infusion_update=reset_updates.append,
-                )
-                self.assertEqual(reset_updates, [])
-                conflict_detector = deepcopy(detector, {id(detector.p): detector.p})
-                conflict_detector.observer = conflict_traces.append
-                conflict_onset = active.confirmed_detection.effective_at - (
-                    at(fixture.step) - T0
-                )
-                original_beginning = conflict_detector._curve_beginning
-            elif conflict_detector is not None and second > peak:
-                for position in conflict_detector.positions:
-                    for quantity, value in (
-                        (detector_fixtures.Quantity.TEMPERATURE, temperature),
-                        (detector_fixtures.Quantity.HUMIDITY, humidity),
-                    ):
-                        self.assertTrue(
-                            conflict_detector.accept(
-                                detector_fixtures.measurement(
-                                    position,
-                                    quantity,
-                                    value,
-                                    second,
-                                    measured=at(second),
-                                )
-                            )
-                        )
-
-                def conflicting_attribution(route, *args, **kwargs):
-                    # Only the optional earlier attribution is controlled here;
-                    # opening proof and its public confirmation remain native.
-                    if route in ("door_open", "door_open_heating"):
-                        return conflict_onset
-                    return original_beginning(route, *args, **kwargs)
-
-                with patch.object(
-                    conflict_detector,
-                    "_curve_beginning",
-                    side_effect=conflicting_attribution,
-                ):
-                    conflict_events.extend(
-                        conflict_detector.advance(
-                            at(second),
-                            enabled=True,
-                            detected_at=received_at,
-                            on_infusion_update=conflict_updates.append,
-                        )
-                    )
-        infusions = [item for item in events if item.kind == Kind.INFUSION]
-        openings = [item for item in events if item.kind == Kind.DOOR_OPEN]
+    def test_door_opening_during_the_steam_ends_the_infusion_at_the_opening(self):
+        delivered, updates = self.run_cabin((630.0, 800.0))
+        infusions = [d for d in delivered if d.kind == Kind.INFUSION]
+        openings = [d for d in delivered if d.kind == Kind.DOOR_OPEN]
         self.assertEqual(len(infusions), 1)
         self.assertEqual(len(openings), 1)
-        ends = [item for item in updates if item.end is not None]
-        self.assertEqual(len(ends), 1)
-        self.assertIs(ends[0].confirmed_detection, infusions[0])
-        end, opening = ends[0].end, openings[0]
-        self.assertGreaterEqual(opening.effective_at, at(door_at))
-        self.assertEqual(
-            end,
-            InfusionEnd(
-                opening.effective_at,
-                opening.detected_at,
-                opening.trace_at,
-                "door_open",
-                "physical_effective",
-            ),
-        )
-        self.assertLess(end.effective_at, end.confirmed_at)
-        self.assertLess(end.trace_at, end.confirmed_at)
-        self.assertIn(ends[0], snapshots_after_updates[end.trace_at])
-        conflicts = [
-            row["infusion_end_conflict"]
-            for row in conflict_traces
-            if "infusion_end_conflict" in row
-        ]
-        self.assertEqual(
-            conflicts,
-            [
-                {
-                    "reason": "door_before_infusion_onset",
-                    "door_effective_at": conflict_onset,
-                    "infusion_effective_at": infusions[0].effective_at,
-                }
-            ],
-        )
-        conflict_openings = [
-            item for item in conflict_events if item.kind == Kind.DOOR_OPEN
-        ]
-        self.assertEqual(len(conflict_openings), 1)
-        self.assertEqual(conflict_openings[0].effective_at, conflict_onset)
-        self.assertEqual(conflict_openings[0].trace_at, opening.trace_at)
-        self.assertEqual(conflict_openings[0].detected_at, opening.detected_at)
-        self.assertEqual(conflict_updates, [])
+        self.assertEqual(len(updates), 1)
+        end = updates[0].end
+        self.assertIs(updates[0].confirmed_detection, infusions[0])
+        self.assertEqual(end.basis, "door_open")
+        self.assertEqual(end.time_basis, "physical_effective")
+        self.assertEqual(end.effective_at, openings[0].effective_at)
+        self.assertLessEqual(end.effective_at, end.trace_at)
+        self.assertLessEqual(end.trace_at, end.confirmed_at)
+        self.assertGreater(end.effective_at, infusions[0].effective_at)
+
+    def test_steam_decaying_before_the_opening_ends_by_itself(self):
+        delivered, updates = self.run_cabin((700.0, 860.0))
+        opening = next(d for d in delivered if d.kind == Kind.DOOR_OPEN)
+        self.assertEqual(len(updates), 1)
+        self.assertEqual(updates[0].end.basis, "steam_decayed")
+        self.assertLess(updates[0].end.effective_at, opening.effective_at)

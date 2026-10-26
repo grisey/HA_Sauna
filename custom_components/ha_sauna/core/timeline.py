@@ -772,9 +772,13 @@ def apply(
             )
         finished = replace(state.active, ended_at=event.booking_at,
                            end_event_id=event.event_id, end_reason="presence_exit")
+        # A closing already observed in this exit episode belongs to the exit: the
+        # delayed absence shows nobody stayed inside, so it cannot be a new entry.
+        closing = ((state.anchor.event_id,)
+                   if state.door == Door.CLOSED and state.anchor is not None else ())
         result = replace(state, active=None, completed=state.completed + (finished,),
                          rejected_start_sources=(*state.rejected_start_sources,
-                                                 opening.event_id),
+                                                 opening.event_id, *closing),
                          resolved_presence_close_id=state.resolved_presence_close_id)
     elif event.kind == Kind.VENTILATION:
         if state.door != Door.OPEN:

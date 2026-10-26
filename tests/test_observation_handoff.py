@@ -7,7 +7,6 @@ from datetime import timedelta
 from test_foundation import T0, parameters
 
 from custom_components.ha_sauna.core.button import ButtonGestures
-from custom_components.ha_sauna.core.detector import Detection, Detector
 from custom_components.ha_sauna.core.light_output import (
     LightOutput,
     LightPlan,
@@ -17,12 +16,10 @@ from custom_components.ha_sauna.core.model_handoff import HandoffContext, ModelH
 from custom_components.ha_sauna.core.models import Measurement, Position, Quantity
 from custom_components.ha_sauna.core.observation_handoff import (
     ButtonEvaluation,
-    DetectionEvaluation,
     DeviceDiagnostics,
     DeviceObservation,
     HeaterServiceResult,
     HeatingObservation,
-    InfusionEpisodeDiagnostics,
     LightOutputSnapshot,
     LightQuantization,
     LightQuantizerSnapshot,
@@ -30,6 +27,7 @@ from custom_components.ha_sauna.core.observation_handoff import (
     MethodEvaluation,
     ObservedSource,
 )
+from custom_components.ha_sauna.core.recognition import Detection
 from custom_components.ha_sauna.core.thermostat import Decision
 from custom_components.ha_sauna.core.timeline import Kind
 
@@ -116,77 +114,6 @@ class ObservationHandoffTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             HeatingObservation.from_result({**complete, "extra": True})
 
-    def test_detector_output_keeps_full_diagnostic_and_actual_detections(self):
-        detector = Detector(parameters(), T0)
-        detections = detector.advance(T0, enabled=True)
-        result = DetectionEvaluation(detector.diagnostic, detections)
-        self.handoff(result)
-        self.assertEqual(result.diagnostic["at"], detector.diagnostic["at"])
-        self.assertEqual(result.detections, tuple(detections))
-        original_checks = dict(result.diagnostic["checks"])
-        detector.diagnostic["checks"]["later"] = True
-        self.assertEqual(dict(result.diagnostic["checks"]), original_checks)
-        detection = Detection(Kind.DOOR_OPEN, T0, T0, ("upper",), T0)
-        with self.assertRaises(ValueError):
-            DetectionEvaluation(result.diagnostic, [detection])
-        with self.assertRaises((TypeError, AttributeError)):
-            result.diagnostic["checks"]["later"] = False
-
-    def test_detection_evaluation_requires_complete_matching_raster_evidence(self):
-        detector = Detector(parameters(), T0)
-        detector.advance(T0, enabled=True)
-        diagnostic = dict(detector.diagnostic)
-        detection = Detection(Kind.DOOR_OPEN, T0, T0, ("upper",), T0)
-        diagnostic["signals"] = (detection.kind,)
-        matched = DetectionEvaluation(diagnostic, (detection,))
-        self.handoff(matched)
-        self.assertIs(matched.detections[0], detection)
-        with self.assertRaises(ValueError):
-            DetectionEvaluation({}, ())
-        for key in diagnostic:
-            incomplete = {
-                name: value for name, value in diagnostic.items() if name != key
-            }
-            with self.subTest(missing=key), self.assertRaises(ValueError):
-                DetectionEvaluation(incomplete, (detection,))
-        later = replace(detection, trace_at=T0 + timedelta(seconds=1))
-        with self.assertRaises(ValueError):
-            DetectionEvaluation(diagnostic, (later,))
-        with self.assertRaises(ValueError):
-            DetectionEvaluation(diagnostic, ())
-
-    def test_detection_evaluation_preserves_open_raster_output_and_optional_episode(
-        self,
-    ):
-        detector = Detector(parameters(), T0)
-        detections = detector.advance(T0, enabled=True)
-        diagnostic = dict(detector.diagnostic)
-        diagnostic["future_output"] = {"values": ["original"]}
-        no_episode = DetectionEvaluation(
-            {**diagnostic, "infusion_episode": None}, detections
-        )
-        self.assertIsNone(no_episode.diagnostic["infusion_episode"])
-        episode = {"future_episode_detail": ["original"]}
-        result = DetectionEvaluation(
-            {**diagnostic, "infusion_episode": episode}, detections
-        )
-        diagnostic["future_output"]["values"].append("changed")
-        episode["future_episode_detail"].append("changed")
-        self.assertEqual(result.diagnostic["future_output"]["values"], ("original",))
-        self.assertEqual(
-            result.diagnostic["infusion_episode"]["future_episode_detail"],
-            ("original",),
-        )
-        for name, value in (
-            ("original_prefix_overflow", 0),
-            ("decisions", None),
-            ("curve_candidates", []),
-            ("curve_proposals", False),
-            ("infusion_episode", []),
-        ):
-            with self.subTest(field=name), self.assertRaises(TypeError):
-                DetectionEvaluation({**diagnostic, name: value}, detections)
-
     def test_method_evaluation_keeps_its_full_diagnostic_without_legacy_placeholders(
         self,
     ):
@@ -219,75 +146,6 @@ class ObservationHandoffTests(unittest.TestCase):
         no_episode = MethodEvaluation({"infusion_episode": None}, evaluated_at, ())
         self.handoff(no_episode)
         self.assertIsNone(no_episode.diagnostic["infusion_episode"])
-
-    def test_episode_projection_retains_unknown_end_interruption_and_late_continuation(
-        self,
-    ):
-        projection = {
-            "phase": "active",
-            "onset_at": T0,
-            "confirmed_at": T0 + timedelta(seconds=5),
-            "level_end_at": None,
-            "end_basis": None,
-            "interrupted": False,
-            "water_change": {"upper": 1.5},
-            "decays": {"upper": T0 + timedelta(seconds=4)},
-            "levels": {
-                "upper": {
-                    "first_newest_at": T0 + timedelta(seconds=6),
-                    "fresh_newest_at": None,
-                    "newest_at": T0 + timedelta(seconds=6),
-                    "start_at": T0 + timedelta(seconds=5),
-                }
-            },
-        }
-        active = InfusionEpisodeDiagnostics.from_result(projection)
-        interrupted = InfusionEpisodeDiagnostics.from_result(
-            {
-                **projection,
-                "interrupted": True,
-            }
-        )
-        ended = InfusionEpisodeDiagnostics.from_result(
-            {
-                **projection,
-                "phase": "ended",
-                "level_end_at": T0 + timedelta(seconds=10),
-                "end_basis": "decay_and_level",
-            }
-        )
-        continued = InfusionEpisodeDiagnostics.from_result(projection)
-        self.handoff(active)
-        self.handoff(interrupted, active)
-        self.handoff(ended, interrupted)
-        correction = self.handoff(continued, ended)
-
-        self.assertIsNone(interrupted.level_end_at)
-        self.assertIsNone(interrupted.end_basis)
-        self.assertTrue(interrupted.interrupted)
-        self.assertEqual(correction.after.onset_at, correction.before.onset_at)
-        self.assertEqual(correction.after.confirmed_at, correction.before.confirmed_at)
-        self.assertEqual(correction.before.phase, "ended")
-        self.assertEqual(correction.after.phase, "active")
-        self.assertIsNone(correction.after.level_end_at)
-        projection["water_change"]["upper"] = 99.0
-        projection["levels"]["upper"]["start_at"] = T0
-        self.assertEqual(active.water_change["upper"], 1.5)
-        self.assertEqual(active.levels["upper"]["start_at"], T0 + timedelta(seconds=5))
-        with self.assertRaises(ValueError):
-            InfusionEpisodeDiagnostics.from_result({"phase": "active"})
-        for change in (
-            {"phase": []},
-            {"onset_at": []},
-            {"confirmed_at": "not a timestamp"},
-            {"level_end_at": []},
-            {"end_basis": []},
-            {"interrupted": 1},
-        ):
-            with self.subTest(change=change), self.assertRaises(TypeError):
-                self.handoff(
-                    InfusionEpisodeDiagnostics.from_result({**projection, **change})
-                )
 
     def test_light_snapshot_reads_curve_override_and_plan_without_advancing(self):
         output = LightOutput(parameters())
@@ -450,9 +308,9 @@ class ObservationHandoffTests(unittest.TestCase):
 
     def test_invalid_nested_outputs_and_live_objects_are_rejected(self):
         with self.assertRaises(TypeError):
-            DetectionEvaluation({}, [object()])
+            MethodEvaluation({}, T0, [object()])
         with self.assertRaises(TypeError):
-            DetectionEvaluation({"live": object()}, ())
+            MethodEvaluation({"live": object()}, T0, ())
         with self.assertRaises(TypeError):
             DeviceObservation([object()], [])
         with self.assertRaises(TypeError):

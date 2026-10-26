@@ -462,117 +462,70 @@ class DeviceFeedbackTests(unittest.TestCase):
         controller.set_heater_override(False, at)
         controller.set_heater_override(None, at)
 
-    async def prepare_infusion_packet(self, runtime, adapter, clock, at):
-        """Reserve the K-th fresh rising RH original after binding.
+    async def baseline_until(self, runtime, adapter, clock, at):
+        """Healthy readings and acknowledged commands up to just before ``at``.
 
-        The existing 20-to-24 RH input rises over K+1 original steps. Its
-        first step binds the component; K-1 subsequent originals precede
-        the caller's RH=24 packet. That packet completes the fresh K-block
-        for early-rise confirmation. Ticks cannot replace originals.
-        Input times are fixed from the catalog K, not a detected outcome.
+        Ticks cannot replace readings: the sensor timeout would otherwise
+        expire before the caller's packet. The clock ends at ``at``.
         """
-        values = runtime.configuration.parameters.values
-        count = values["curve_original_samples"]
-        step = timedelta(seconds=values["grid_seconds"])
-        rising_at = at - (count + 1) * step
-        baseline_start = rising_at - (2 * count - 1) * step
-        baseline_end = baseline_start - step
-        self.assertLessEqual(
-            clock[0], baseline_end, "Insufficient original-report prefix",
+        interval = timedelta(
+            seconds=runtime.configuration.parameters.values["sensor_timeout_seconds"] / 2
         )
-        interval = timedelta(seconds=values["sensor_timeout_seconds"] / 2)
         positions = tuple(
             position for position in ("upper", "lower")
             if f"{position}_temperature" in runtime.configuration.bindings.values
         )
         self.assertTrue(positions)
-        # Both input pairs remain present; the clear leading sensor alone
-        # owns the pending infusion and its water evidence.
-        leading_position = positions[0]
-        prior_infusions = tuple(
-            event.event_id for event in runtime.session.timeline.processed
-            if event.kind == Kind.INFUSION
-        )
-        baseline_humidity, final_humidity = 20, 24
 
-        async def originals(humidity):
-            await asyncio.gather(*(
-                runtime.device_input(self.detection_edge(
-                    runtime, f"{position}_{quantity}", value,
-                ))
-                for position in positions
-                for quantity, value in (
-                    ("temperature", 90), ("humidity", humidity),
-                )
-            ))
-            print("CONFIRMATION_PREFIX " + json.dumps({
-                "packet_at": at.isoformat(),
-                "measurements": [
-                    {"role": f"{position}_{quantity}",
-                     "value": adapter.measurements[f"{position}_{quantity}"].value,
-                     "received_at": adapter.measurements[
-                         f"{position}_{quantity}"
-                     ].received_at.isoformat()}
-                    for position in positions
-                    for quantity in ("temperature", "humidity")
-                ],
-            }, sort_keys=True, separators=(",", ":")), flush=True)
-
-        def no_early_confirmation():
-            self.assertEqual(tuple(
-                event.event_id for event in runtime.session.timeline.processed
-                if event.kind == Kind.INFUSION
-            ), prior_infusions, "Prefix consumed the caller's reserved confirmation")
-
-        def pending_pulse():
-            episode = runtime.detector.diagnostic["infusion_episode"]
-            self.assertIsNotNone(episode, runtime.detector.diagnostic)
-            self.assertEqual(episode["phase"], "pending")
-            self.assertIsNone(episode["confirmed_at"])
-            self.assertEqual(set(episode["water_change"]), {leading_position})
-            self.assertEqual(
-                tuple(position.value for position in runtime.detector.infusion_episode.positions),
-                (leading_position,),
-            )
-            self.assertTrue(all(
-                change > 0 for change in episode["water_change"].values()
-            ))
-            return episode
-
-        # The lightweight adapter fixture acknowledges ordinary relay commands
-        # here; this long healthy baseline must not create a separate fault.
         def acknowledge():
             adapter.ingest(
                 "heater", state("on" if adapter.command else "off"), clock[0],
             )
             adapter.refresh(clock[0])
 
+        end = at - timedelta(seconds=1)
+        self.assertLessEqual(clock[0], end, "Insufficient reading prefix")
         acknowledge()
-        while clock[0] < baseline_end:
-            clock[0] = min(baseline_end, clock[0] + interval)
-            await originals(baseline_humidity)
+        while clock[0] < end:
+            clock[0] = min(end, clock[0] + interval)
+            await asyncio.gather(*(
+                runtime.device_input(self.detection_edge(
+                    runtime, f"{position}_{quantity}", value,
+                ))
+                for position in positions
+                for quantity, value in (("temperature", 90), ("humidity", 20))
+            ))
             acknowledge()
-        for index in range(2 * count):
-            clock[0] = baseline_start + index * step
-            await originals(baseline_humidity)
-            acknowledge()
-
-        for index in range(1, count + 1):
-            clock[0] = rising_at + index * step
-            await originals(
-                baseline_humidity
-                + (final_humidity - baseline_humidity) * index / (count + 1),
-            )
-            acknowledge()
-            no_early_confirmation()
-        self.assertEqual(clock[0], at - step)
-        pending_pulse()
-        component = runtime.detector._infusion_episode["original_component"]
-        self.assertEqual(component["received_at"], rising_at + step,
-                         "Fixture must bind on its declared first rising original")
-        self.assertFalse(component["fall_ready"])
-        no_early_confirmation()
         clock[0] = at
+
+    @staticmethod
+    def recognize_infusion_with_reading(runtime, adapter, at, effective_at):
+        """The recognition outcome of the upper humidity reading at ``at``: one infusion.
+
+        The model's evaluation is replaced by this outcome only; the delivery
+        follows the recognizer's own order of received and evaluated readings.
+        """
+        from custom_components.ha_sauna.core.models import Position, Quantity
+        from custom_components.ha_sauna.core.recognition import Detection
+
+        recognizer = runtime.detector
+        evaluate = recognizer.advance
+        infusion = Detection(Kind.INFUSION, effective_at, at, recognizer.channels,
+                             trace_at=at, probability=0.99)
+        confirmations = []
+
+        def advance(through, **callbacks):
+            out = evaluate(through, **callbacks)
+            humidity = recognizer._latest.get((Position.UPPER, Quantity.HUMIDITY))
+            if not confirmations and humidity is not None and humidity[0] >= at:
+                confirmations.append((at, adapter.measurements["upper_humidity"]))
+                recognizer.detections.append(infusion)
+                callbacks["on_detection"](infusion)
+                out.append(infusion)
+            return out
+
+        recognizer.advance = advance
+        return confirmations
 
     @staticmethod
     def report_infusion_packet(runtime, adapter, at, outputs, **context):
@@ -943,8 +896,9 @@ class DeviceFeedbackTests(unittest.TestCase):
                 with self.subTest(queued=queued):
                     runtime, stored = asyncio.run(exercise(
                         queued, Path(directory) / f"start-{queued}.sqlite"))
-                    self.assertIn(Kind.DOOR_OPEN,
-                                  [event.kind for event in runtime.session.timeline.processed])
+                    # every received reading reached the recognition: one step per time
+                    self.assertEqual(runtime.detector.record.times,
+                                     [float(second) for second in range(39)])
                     self.assertEqual(sum(record["kind"] == "measurement"
                                          for record in stored["records"]), 80)
                     initial_originals = [record["payload"]["value"] for record in stored["records"]
@@ -953,9 +907,11 @@ class DeviceFeedbackTests(unittest.TestCase):
                     self.assertEqual(initial_originals, [90, 20, 89.99, 20.01])
                     traces = [record["payload"] for record in stored["records"]
                               if record["kind"] == "detector_trace"]
-                    self.assertTrue(any(trace["at"] == (T0 + timedelta(seconds=17)).isoformat()
-                                        and trace["metrics"]["upper"]["door_temperature_slope"] is not None
-                                        for trace in traces))
+                    # the state model runs once the surrounding air is known (30 readings)
+                    self.assertEqual([trace["at"] for trace in traces],
+                                     [(T0 + timedelta(seconds=second)).isoformat()
+                                      for second in range(30, 39)])
+                    self.assertTrue(all(trace["state_probabilities"] for trace in traces))
 
     def test_measurement_and_tick_consume_equal_confirmation_only_after_sampling(self):
         async def exercise(tick_first, confirmation_at):
@@ -969,23 +925,15 @@ class DeviceFeedbackTests(unittest.TestCase):
             await runtime.receive(Event("person", "confirmation", Kind.PERSON_STRONG,
                                         clock[0], clock[0]))
             old = runtime.session.timeline.active
-            await self.prepare_infusion_packet(runtime, adapter, clock,
-                                               T0 + timedelta(seconds=confirmation_at))
+            await self.baseline_until(runtime, adapter, clock,
+                                      T0 + timedelta(seconds=confirmation_at))
             self.assertEqual(clock[0], T0 + timedelta(seconds=confirmation_at))
             self.assertFalse(old.infusion_events)
             adapter.apply = AsyncMock(wraps=adapter.apply)
-            observed = runtime.detector.observer
-            confirmations = []
-
-            def observe(trace):
-                if Kind.INFUSION in trace["signals"]:
-                    confirmations.append((
-                        trace["at"], adapter.measurements["upper_humidity"],
-                    ))
-                if observed is not None:
-                    observed(trace)
-
-            runtime.detector.observer = observe
+            # The rise began seven readings earlier; its confirmation is the reading at clock[0].
+            confirmations = self.recognize_infusion_with_reading(
+                runtime, adapter, clock[0], clock[0] - timedelta(seconds=7),
+            )
 
             def packet_result():
                 if confirmation_at <= confirmation:
@@ -1055,8 +1003,13 @@ class DeviceFeedbackTests(unittest.TestCase):
                     self.assertEqual(runtime.presence.current.occupancy, "present")
 
     def test_fifo_native_relay_off_preserves_earlier_thermal_detection(self):
+        from custom_components.ha_sauna.core.recognition import Detection
         from custom_components.ha_sauna.device import HADevice
-        from test_detector import DetectorTests
+
+        # The reading of `confirmed_second` confirms an opening before the relay
+        # turns off; every input waits behind the runtime lock and is consumed
+        # in order afterwards.
+        opened_second, confirmed_second, off_second = 40, 60, 80
 
         async def exercise(path):
             roles = {key: value for key, value in BINDINGS.values.items()
@@ -1086,19 +1039,33 @@ class DeviceFeedbackTests(unittest.TestCase):
                                                   else None)),
                 })
 
-            # Reuse the core catch-up fixture's warm baseline, own falling
-            # hinge with no RH inputs. A decline from the very first
-            # sample has no observed onset and is not an opening oracle.
-            fixture = DetectorTests(methodName="runTest")
-            baseline = fixture._settling_time(runtime.detector)
-            off_second = baseline + 80
+            # The model's own evaluation runs; the opening it confirms with the
+            # reading of `confirmed_second` is its supplied outcome.
+            recognizer = runtime.detector
+            confirmed_at = T0 + timedelta(seconds=confirmed_second)
+            opening = Detection(Kind.DOOR_OPEN, T0 + timedelta(seconds=opened_second),
+                                confirmed_at, recognizer.channels, trace_at=confirmed_at,
+                                probability=0.95)
+            evaluate = recognizer.advance
+
+            def advance(through, **callbacks):
+                out = evaluate(through, **callbacks)
+                processed = recognizer.processed_until
+                if (opening not in recognizer.detections and processed is not None
+                        and processed >= confirmed_at):
+                    recognizer.detections.append(opening)
+                    callbacks["on_detection"](opening)
+                    out.append(opening)
+                return out
+
+            recognizer.advance = advance
             pending = []
             await runtime._lock.acquire()
             for second in range(off_second + 21):
                 clock[0] = T0 + timedelta(seconds=second)
-                fall = max(0, second - baseline + 1)
-                values = [("upper_temperature", 50 - .03 * fall)]
-                for role, value in values:
+                fall = max(0, second - opened_second)
+                for role, value in (("upper_temperature", 90 - .03 * fall),
+                                    ("upper_humidity", 20 - .02 * fall)):
                     pending.append(asyncio.create_task(runtime.device_input(edge(role, value))))
                     await asyncio.sleep(0)
                 if second == off_second:
@@ -1126,12 +1093,11 @@ class DeviceFeedbackTests(unittest.TestCase):
                       if record["kind"] == "detection"]
         opening = next(payload for payload in detections
                        if payload["event"]["kind"] == Kind.DOOR_OPEN.value)
-        self.assertEqual(opening["channels"], ["upper"])
+        self.assertEqual(opening["channels"], ["Tu", "Au"])
         self.assertEqual(opening["trace_at"], openings[0].trace_at.isoformat())
         traces = [record["payload"] for record in stored["records"]
                   if record["kind"] == "detector_trace"]
-        self.assertTrue(any(trace["at"] == opening["trace_at"]
-                            and Kind.DOOR_OPEN.value in trace["signals"]
+        self.assertTrue(any(trace["at"] == opening["trace_at"] and trace["state_probabilities"]
                             for trace in traces))
 
     def test_long_hold_off_decision_and_command_keep_old_archive_session(self):
@@ -1496,14 +1462,13 @@ class DeviceFeedbackTests(unittest.TestCase):
             await asyncio.gather(queued, queued_return)
             outputs = adapter.apply.await_count
             await runtime.tick()
-            return runtime.session.heating, outputs, runtime.detector.heating_since
+            return runtime.session.heating, outputs
 
-        heating, outputs, heating_since = asyncio.run(exercise())
+        heating, outputs = asyncio.run(exercise())
         self.assertEqual(heating.elapsed_seconds, 10)
         self.assertEqual(heating.intervals[0].ended_at, T0 + timedelta(seconds=1))
         self.assertEqual(heating.intervals[1].started_at, T0 + timedelta(seconds=2))
         self.assertEqual(outputs, 1)
-        self.assertEqual(heating_since, T0 + timedelta(seconds=2))
 
     def test_waiting_tick_or_command_consumes_received_contactor_off_first(self):
         async def exercise(command):

@@ -5,6 +5,7 @@ const assert = require("node:assert/strict");
 const {
   catalog: fixtureCatalog,
   parameterValues: fixtureValues,
+  legacyParameterValue,
 } = require("./catalog_fixture.cjs");
 const fs = require("node:fs");
 const vm = require("node:vm");
@@ -48,12 +49,17 @@ const processed = [
     detected_at: iso(12),
   },
 ];
+// Archived sessions of the former curve detector carry its sampling grid.
+const historicalParameters = () => ({
+  ...fixtureValues(),
+  grid_seconds: legacyParameterValue("grid_seconds"),
+});
 const session = {
   ended_at: iso(60),
   timeline: { session_started_at: iso(0), processed, completed: [] },
-  configuration: { parameters: fixtureValues() },
+  configuration: { parameters: historicalParameters() },
 };
-const parameters = fixtureValues();
+const parameters = historicalParameters();
 
 // Equal timestamps do not collapse: IDs remain navigation keys, while each
 // event marker is tied to the archived detector value in its primary curve.

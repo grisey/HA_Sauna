@@ -194,7 +194,7 @@ class DefaultsTests(unittest.TestCase):
                             spec["key"]: spec for spec in data["parameters"]
                         }
                         price = definitions["electricity_price_eur_per_kwh"]
-                        required = definitions["grid_seconds"]
+                        required = definitions["runtime_tick_seconds"]
                         if numeric_default:
                             # Equal numeric defaults would satisfy either
                             # relation without the optionality guard.

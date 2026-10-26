@@ -93,9 +93,9 @@ Präfix erhalten bleiben; Energieanteile dürfen innerhalb derselben Sitzung
 nicht zurückgehen. Der gespeicherte Abschluss muss dieselben Verläufe enthalten.
 Diese Erhaltungsprüfung gibt keinen zweiten Heizalgorithmus vor.
 
-Der Lauf verwendet den produktiven `HADevice`, `SaunaRuntime`, Detektor,
-Controller und SQLite-Archiv. Ersetzt werden HA-Zustandsbereitstellung,
-Diensttransport und Benachrichtigungszustellung. Ein Aktor bestätigt die neuen
+Der Lauf verwendet den produktiven `HADevice`, `SaunaRuntime`, die Erkennung
+(`ClimateRecognizer`), Controller und SQLite-Archiv. Ersetzt werden
+HA-Zustandsbereitstellung, Diensttransport und Benachrichtigungszustellung. Ein Aktor bestätigt die neuen
 Befehle über den normalen Rückmeldeweg. Die
 [gebundenen Replays](../fixtures/replay/README.md) liefern unveränderte reale
 Messmeldungen; historische Aktorwerte stehen separat im Diagnosebericht.
@@ -112,18 +112,6 @@ einschließlich sämtlicher gebundener Varianten. Pro Lauf entstehen Bewertungen
 Bedien- und Dienstprotokoll, Archivnachweis und eine komprimierte Zustandsfolge.
 SQLite kann auf einem Linux-RAM-Dateisystem liegen; Erkennungs- und Regelzeiten
 werden dafür nicht verkürzt.
-
-Der optionale boolesche `workflow_dispatch`-Eingang `replay_profile` (Standard
-`false`) profiliert mit [`profile_replay.py`](profile_replay.py) den vorhandenen
-Sitzungslauf. Die Auswahl über `checks` und `session_cases` sowie die gebundenen
-Bewertungen bleiben erhalten. Im Sitzungsartefakt entsteht zusätzlich
-`replay-profile.json`.
-
-Das Profil enthält Aufrufzahlen sowie inklusive Wall- und Thread-CPU-Zeiten
-der gemessenen Funktionen. Untergeordnete Aufrufe sind enthalten; verschachtelte
-und überlappende Messbereiche dürfen nicht addiert werden. Der Gesamtlauf hat
-separate Wall- und Prozess-CPU-Zeiten. Die Messung verursacht zusätzliche Arbeit;
-profilierte Laufzeiten sind daher kein Beleg für unprofilierte Laufzeiten.
 
 Die [Zuständigkeitstabelle](../coverage_ownership.json) nennt die ersetzten
 Fachtests mit ihrer jeweils führenden Sitzungsbewertung. Der zugehörige Metatest

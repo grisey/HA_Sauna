@@ -1042,7 +1042,6 @@ class HADevice:
         if self.command is not heat or self.command_at is None:
             self.command, self.command_at = heat, now
         self.last_sent_at = now
-        self.runtime._report_detector_heating(now)
         self.runtime.log.info(
             "heater_command",
             "Schaltbefehl an Heizschütz: %s.",
@@ -1098,7 +1097,6 @@ class HADevice:
             self.fault_since.pop("heater_service_unavailable", None)
         elif self.command_error_at is None:
             self.command_error_at = self.runtime._clock()
-        self.runtime._report_detector_heating(self.runtime._clock())
         self.runtime.log.change(
             "heater_command_error",
             error,

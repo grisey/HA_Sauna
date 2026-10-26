@@ -35,7 +35,7 @@ from .core.configuration_model import ConfigurationModel
 from .core.contracts import ConsumerEvent, PresenceReport
 from .core.controller import Controller, Result
 from .core.defaults import instance_default, preference_values
-from .core.detector import Detection, Detector
+from .core.recognition import ClimateRecognizer, Detection, recognition_event_id
 from .core.input_handoff import (
     ControlModeInput,
     HeaterOverrideInput,
@@ -545,8 +545,14 @@ class SaunaRuntime:
         self.device = None
         self.detector = None
         self._detector_session = None
-        self._detector_heating_gates = []
         self._detector_infusion_events: dict[int, tuple[Detection, str]] = {}
+        # Learned recognition quantities; ``recognition_finished`` receives every
+        # finished session's recognizer (session id, recognizer) for learning.
+        self._recognition_parameters = None
+        self.recognition_outside = None
+        self.recognition_finished = None
+        self.recognition_learning = None
+        self.recognition_feedback = None
         self._archive_signature = None
         self._saved_decisions = 0
         self._saved_manual_heater_ends = 0
@@ -592,6 +598,20 @@ class SaunaRuntime:
         self.configuration = replace(self.configuration, log_level=level)
         self.log.info("log_level", "Protokollstufe auf %s gesetzt.", level)
 
+    @property
+    def recognition_parameters(self) -> dict:
+        """Learned recognition quantities (shipped parameters until a learned set is supplied)."""
+        if self._recognition_parameters is None:
+            from .recognition_parameters import shipped_parameters
+
+            self._recognition_parameters = shipped_parameters()
+        return self._recognition_parameters
+
+    @recognition_parameters.setter
+    def recognition_parameters(self, value: dict) -> None:
+        # A new set applies from the next session; the running recognizer keeps its quantities.
+        self._recognition_parameters = value
+
     def _sync_detector(self):
         session_id = self.session.session_id if self.session else None
         if session_id == self._detector_session:
@@ -599,9 +619,14 @@ class SaunaRuntime:
         # Deliver the preceding session's canonical end before a new session
         # replaces its proxy evidence with an initial availability report.
         self._publish_controller_events()
+        finished, finished_session = self.detector, self._detector_session
         self._detector_session = session_id
-        self._detector_heating_gates = []
         self._detector_infusion_events.clear()
+        if finished is not None and finished_session and self.recognition_finished is not None:
+            try:
+                self.recognition_finished(finished_session, finished)
+            except Exception as error:  # learning must never disturb the regulation
+                self.log.error("recognition_learning", "Nachlernen nicht gestartet: %s", error)
         if session_id:
             now = self._clock()
             self._record_presence(PresenceReport(
@@ -635,14 +660,15 @@ class SaunaRuntime:
                     )
 
         self.detector = (
-            Detector(
-                self.configuration.parameters,
+            ClimateRecognizer(
+                self.recognition_parameters,
                 self.session.started_at,
                 positions=tuple(
                     Position(position)
                     for position in self.configuration_model.measurement_positions
                 ),
                 observer=observed,
+                outside_reference=self.recognition_outside,
             )
             if self.session
             else None
@@ -660,24 +686,6 @@ class SaunaRuntime:
                         "source_snapshot", self._clock(), measurement, session_id
                     )
 
-    def _report_detector_heating(self, at):
-        """Book logical command permission; physical evidence stays in intervals."""
-        if self.detector is None:
-            return False
-        heating = bool(
-            self.device
-            and self.device.command is True
-            and not self.device.command_error
-            and self.session
-            and self.session.operation_enabled
-        )
-        marks = self._detector_heating_gates
-        if marks:
-            at = max(at, marks[-1][0])
-        if not marks or marks[-1][1] != heating:
-            marks.append((at, heating))
-        return heating
-
     async def _cycle(self):
         with self.controller.confirmation_batch(self._clock):
             await self._run_cycle()
@@ -691,6 +699,8 @@ class SaunaRuntime:
         now = self._clock()
         self._advance_presence_source(now)
         self.controller.advance(now, finish_confirmation_batch=True)
+        # a session that ended at this advance releases its recognizer now (and its learning starts)
+        self._sync_detector()
         if self.device:
             self.device.refresh(now)
         if self.device:
@@ -732,124 +742,96 @@ class SaunaRuntime:
         return changed
 
     def _deliver_detection(self, through, *, include_current=True):
-        """Book received recognition chronologically, without actuator I/O."""
+        """Book received recognition chronologically, without actuator I/O.
+
+        The recognizer evaluates every measurement up to ``through`` (without
+        ``through`` itself when ``include_current`` is false, so that same-time
+        channels of one raster stay together).  Each event is booked at its
+        confirmation; the controller is first advanced to that time.
+        """
         self._sync_detector()
-        self._report_detector_heating(self._clock())
-        if self.detector:
-            detector = self.detector
-            session_id = self.session.session_id
+        if not self.detector:
+            return
+        recognizer = self.detector
+        session_id = self.session.session_id
+        if not include_current:
+            through = through - timedelta.resolution
 
-            index = 0
+        def current():
+            return (self.detector is recognizer and self.session is not None
+                    and self.session.session_id == session_id)
 
-            def detected(detection):
-                nonlocal index
-                i, index = index, index + 1
-                received_at = self._clock()
-                booking_at = max(detection.trace_at, self.controller._last_at or detection.trace_at)
-                event = Event(
-                    f"detector:{self.session.session_id}:{detection.effective_at.isoformat()}:{i}:{detection.kind}",
-                    self.session.session_id,
-                    detection.kind,
-                    detection.effective_at,
-                    detection.detected_at,
-                    booking_at=booking_at,
-                    trace_at=detection.trace_at,
-                    door_close_evidence=detection.door_close_evidence,
-                )
-                if detection.kind == Kind.INFUSION:
-                    # Retain the exact confirmation across advance calls; the
-                    # per-call callback index is not an episode identity.
-                    self._detector_infusion_events[id(detection)] = (
-                        detection, event.event_id,
-                    )
-                self._process_event(
-                    event, defer_confirmation=True, recognition_at=detection.trace_at,
-                )
-                self.log.info(
-                    "detection",
-                    "Erkanntes Ereignis: %s; zugeordnete Zeit: %s.",
-                    EVENTS.get(detection.kind, "Erkennungssignal"),
-                    detection.effective_at,
-                )
-                if self.archive:
-                    self.archive.append(
-                        "detection",
-                        received_at,
-                        {
-                            "event": event,
-                            "channels": detection.channels,
-                            "trace_at": detection.trace_at,
-                        },
-                        self.session.session_id,
-                    )
-
-            def infusion_updated(update):
-                if (
-                    self.detector is not detector
-                    or self.session is None
-                    or self.session.session_id != session_id
-                    or self._detector_session != session_id
-                ):
-                    return
-                source = self._detector_infusion_events.get(
-                    id(update.confirmed_detection)
-                )
-                if source is None or source[0] is not update.confirmed_detection:
-                    return
-                received_at = self._clock()
-                source_event_id = source[1]
-                if not self.controller.record_infusion_end(
-                    session_id, source_event_id, update.end,
-                ):
-                    return
-                if self.archive:
-                    self.archive.append(
-                        "infusion_update", received_at,
-                        {"source_event_id": source_event_id, "end": update.end},
-                        session_id,
-                    )
-
-            def before_sample(at):
-                # Direct semantic callers may already have advanced the core;
-                # canonical booking never moves that leading clock backwards.
-                if self.controller._last_at is None or at >= self.controller._last_at:
-                    self.controller.advance(at, inclusive_confirmation=False)
-                if self.session is None or self.session.session_id != session_id:
-                    return False
-                return True
-
-            def after_sample(at):
-                if self.controller._last_at is None or at >= self.controller._last_at:
-                    self.controller.advance(at, finish_confirmation_batch=True)
-
-            person_evidence_qualified = self._presence_source_selection.effective_source == "proxy"
-            detector.advance(
-                through,
-                enabled=self.session.operation_enabled,
-                allowed=lambda kind: self.controller.recognition_allowed(
-                    kind, person_evidence_qualified=person_evidence_qualified,
-                ),
-                on_detection=detected,
-                on_infusion_update=infusion_updated,
-                heating_intervals=lambda: self.session.heating.intervals,
-                heating_gates=self._detector_heating_gates,
-                recognition_context=self.controller.recognition_context_at,
-                allowed_at=lambda kind, at: self.controller.recognition_allowed_at(
-                    kind, at, person_evidence_qualified=person_evidence_qualified,
-                ),
-                onset_allowed=self.controller.detection_onset_allowed,
-                before_sample=before_sample,
-                after_sample=after_sample,
-                include_current=include_current,
-                detected_at=self._clock,
+        def detected(detection):
+            if not current():
+                return
+            confirmed = detection.trace_at or detection.detected_at
+            if self.controller._last_at is None or confirmed >= self.controller._last_at:
+                self.controller.advance(confirmed, inclusive_confirmation=False)
+            if not current():
+                return
+            received_at = self._clock()
+            effective = max(detection.effective_at, self.session.started_at)
+            trace_at = max(confirmed, effective)
+            booking_at = max(trace_at, self.controller._last_at or trace_at)
+            event = Event(
+                recognition_event_id(session_id, detection.kind, effective),
+                session_id,
+                detection.kind,
+                effective,
+                max(received_at, booking_at),
+                booking_at=booking_at,
+                trace_at=trace_at,
+                door_close_evidence=detection.door_close_evidence,
             )
-            sampled_at = detector.origin + timedelta(seconds=detector.index * detector.grid_seconds)
-            past = [i for i, (gate_at, _) in enumerate(self._detector_heating_gates)
-                    if gate_at <= sampled_at]
-            if past:
-                self._detector_heating_gates = self._detector_heating_gates[past[-1]:]
-            self.controller.discard_recognition_context_before(sampled_at)
-            self._sync_detector()
+            try:
+                self._process_event(event, defer_confirmation=True, recognition_at=trace_at)
+            except ValueError as error:
+                # A physically recognized event that the gang model cannot
+                # take in its current state is kept for the analysis only.
+                self.log.info(
+                    "detection_rejected", "Erkanntes Ereignis nicht übernommen: %s (%s).",
+                    EVENTS.get(detection.kind, "Erkennungssignal"), error,
+                )
+                if self.archive:
+                    self.archive.append("detection_rejected", received_at, {
+                        "event": event, "reason": str(error), "probability": detection.probability,
+                    }, session_id)
+                return
+            if detection.kind == Kind.INFUSION:
+                self._detector_infusion_events[id(detection)] = (detection, event.event_id)
+            self.log.info(
+                "detection",
+                "Erkanntes Ereignis: %s; zugeordnete Zeit: %s.",
+                EVENTS.get(detection.kind, "Erkennungssignal"),
+                detection.effective_at,
+            )
+            if self.archive:
+                self.archive.append("detection", received_at, {
+                    "event": event,
+                    "channels": detection.channels,
+                    "trace_at": trace_at,
+                    "probability": detection.probability,
+                }, session_id)
+
+        def infusion_updated(update):
+            if not current():
+                return
+            source = self._detector_infusion_events.get(id(update.confirmed_detection))
+            if source is None or source[0] is not update.confirmed_detection:
+                return
+            if not self.controller.record_infusion_end(session_id, source[1], update.end):
+                return
+            if self.archive:
+                self.archive.append("infusion_update", self._clock(),
+                                    {"source_event_id": source[1], "end": update.end}, session_id)
+
+        recognizer.advance(through, on_detection=detected, on_infusion_update=infusion_updated)
+        processed = recognizer.processed_until
+        if processed is not None and current():
+            if self.controller._last_at is None or processed >= self.controller._last_at:
+                self.controller.advance(processed, finish_confirmation_batch=True)
+            self.controller.discard_recognition_context_before(processed)
+        self._sync_detector()
 
     def _detector_presence_available(self):
         return bool(
@@ -1195,8 +1177,6 @@ class SaunaRuntime:
             event, defer_confirmation=defer_confirmation, recognition_at=recognition_at,
             person_evidence_qualified=selected,
         )
-        if result.changed:
-            self._report_detector_heating(event.booking_at)
         if report is not None and result.changed:
             self._record_presence(report)
         return result
@@ -1492,7 +1472,6 @@ class SaunaRuntime:
                 evaluated_at=at,
             ),
         ))
-        self._report_detector_heating(at)
         if enabled:
             self._button_start_hold_session_id = None
             self._button_hold_session_id = None

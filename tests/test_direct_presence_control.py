@@ -87,16 +87,24 @@ class DirectPresenceControlTests(unittest.TestCase):
         self.assertEqual(self.c.session.timeline.completed[0].ended_at, at(7))
         self.assertEqual(self.c.session.after_run.requested_at, at(7))
 
-    def test_absence_starting_after_occupied_close_does_not_finish_the_gang(self):
+    def test_absence_reported_after_the_exit_closing_finishes_the_gang(self):
+        # The sensor reports absence only after the thermal closing of the
+        # ventilated exit (R02 A05); nobody can leave through the closed door.
         self.start()
         gang_id = self.c.session.timeline.active.gang_id
         self.door(Kind.DOOR_OPEN, 5)
         self.door(Kind.VENTILATION, 6)
         self.door(Kind.DOOR_CLOSE, 7)
         self.report("off", 8)
-        self.assertEqual(self.c.session.timeline.active.gang_id, gang_id)
-        self.assertEqual(self.c.session.timeline.completed, ())
-        self.assertIsNone(self.c.session.after_run)
+        self.assertIsNone(self.c.session.timeline.active)
+        self.assertEqual(self.c.session.timeline.completed[0].gang_id, gang_id)
+        self.assertEqual(self.c.session.timeline.completed[0].end_reason, "presence_exit")
+        self.assertEqual(self.c.session.after_run.requested_at, at(8))
+        # the closing belongs to the exit and is no new entry
+        self.report("on", 9)
+        self.c.advance(at(200))
+        self.assertIsNone(self.c.session.timeline.active)
+        self.assertEqual(self.c.session.timeline.gang_count, 1)
 
 
 
@@ -587,12 +595,14 @@ class DirectPresenceRuntimeTests(unittest.TestCase):
         import asyncio
         from dataclasses import replace
         from datetime import timedelta
-        from test_detector import DetectorTests, measurement
+        from unittest.mock import patch
         from test_foundation import T0
         from test_presence_regressions import _runtime
         from custom_components.ha_sauna.bindings import Bindings
-        from custom_components.ha_sauna.core.models import Position, Quantity
+        from custom_components.ha_sauna.core.recognition import Detection
         from custom_components.ha_sauna.runtime import SaunaRuntime
+
+        opening, opening_end, plateau, end = 100, 130, 160, 190
 
         async def exercise(state):
             clock = [T0]
@@ -619,63 +629,54 @@ class DirectPresenceRuntimeTests(unittest.TestCase):
                                         door_close_evidence=DoorCloseEvidence(clock[0], clock[0])))
             gang_id = runtime.session.timeline.active.gang_id
 
-            # Reuse the opening's water fall; its later plateau with continuing
-            # cooling stays queued until the new presence arrives.
-            fixture = DetectorTests()
-            detector = fixture._ventilation_detector()
-            _, plateau, end, values = fixture._ventilation_curve(detector)
-            _, found = fixture._feed_pending_ventilation(detector, end, values)
-            self.assertTrue(detector.open)
-            self.assertFalse(any(item.kind == Kind.VENTILATION for item in found))
-            runtime.detector = detector
-            opening_end = detector.index * detector.grid_seconds
-            opening_index = detector.index
-            clock[0] = T0 + timedelta(seconds=opening_end)
-            runtime.controller.set_temperature(values(opening_end)[0], clock[0])
-            for index, item in enumerate(found):
-                await runtime.receive(Event(f"fixture:{index}", sid, item.kind,
-                                            item.effective_at, clock[0]))
+            # The exit opening is booked; its ventilation plateau lies in measurements the
+            # recognizer has received but not yet evaluated.  It is delivered once the
+            # recognizer is advanced over the plateau's confirmation.
+            clock[0] = T0 + timedelta(seconds=opening)
+            await runtime.receive(Event("exit-open", sid, Kind.DOOR_OPEN, clock[0], clock[0]))
             self.assertEqual(runtime.session.timeline.door, Door.OPEN)
-            await presence("off", opening_end + .2, opening_end + .2)
-            self.assertIsNotNone(runtime.session.timeline.active)
-            step = detector.grid_seconds
-            for second in range(opening_end + step, end + step, step):
-                temperature, humidity = values(second)
-                for position in (Position.UPPER, Position.LOWER):
-                    self.assertTrue(detector.accept(measurement(
-                        position, Quantity.TEMPERATURE, temperature, second,
-                        measured=T0 + timedelta(seconds=second))))
-                    self.assertTrue(detector.accept(measurement(
-                        position, Quantity.HUMIDITY, humidity, second,
-                        measured=T0 + timedelta(seconds=second))))
-            self.assertEqual(detector.index, opening_index)
-            self.assertEqual(len(detector.pending), 4 * ((end - opening_end) // step))
+            delivered = []
 
-            received = end + 1
-            await presence(state, opening_end + .7, received)
-            ventilation = [item for item in runtime.session.timeline.processed
-                           if item.kind == Kind.VENTILATION]
-            self.assertEqual(len(ventilation), 1)
-            self.assertGreater(ventilation[0].effective_at, T0 + timedelta(seconds=opening_end))
-            self.assertLess(ventilation[0].effective_at, T0 + timedelta(seconds=received))
-            self.assertEqual(ventilation[0].detected_at, T0 + timedelta(seconds=received))
-            if state in ("off", "on"):
-                finish = received
-            else:
-                self.assertEqual(runtime.session.timeline.active.gang_id, gang_id)
-                self.assertEqual(runtime.session.timeline.completed, ())
-                self.assertIsNone(runtime.session.after_run)
-                self.assertFalse(any(item.kind == "gang_ended" for item in runtime.consumer_events))
+            def advance(through, **callbacks):
+                if through >= T0 + timedelta(seconds=end) and not delivered:
+                    delivered.append(through)
+                    callbacks["on_detection"](Detection(
+                        Kind.VENTILATION, T0 + timedelta(seconds=plateau), through,
+                        ("Tu", "Tl", "Au", "Al"), trace_at=through, probability=0.95,
+                    ))
+                return []
+
+            with patch.object(runtime.detector, "advance", side_effect=advance):
+                await presence("off", opening_end + .2, opening_end + .2)
+                self.assertIsNotNone(runtime.session.timeline.active)
+                self.assertFalse(any(item.kind == Kind.VENTILATION
+                                     for item in runtime.session.timeline.processed))
+
+                received = end + 1
+                await presence(state, opening_end + .7, received)
+                ventilation = [item for item in runtime.session.timeline.processed
+                               if item.kind == Kind.VENTILATION]
+                self.assertEqual(len(ventilation), 1)
+                self.assertGreater(ventilation[0].effective_at, T0 + timedelta(seconds=opening_end))
+                self.assertLess(ventilation[0].effective_at, T0 + timedelta(seconds=received))
+                self.assertEqual(ventilation[0].detected_at, T0 + timedelta(seconds=received))
+                if state in ("off", "on"):
+                    finish = received
+                else:
+                    self.assertEqual(runtime.session.timeline.active.gang_id, gang_id)
+                    self.assertEqual(runtime.session.timeline.completed, ())
+                    self.assertIsNone(runtime.session.after_run)
+                    self.assertFalse(any(item.kind == "gang_ended" for item in runtime.consumer_events))
+                    await presence("off", received + .5, received + .5)
+                    finish = received + .5
+                self.assertIsNone(runtime.session.timeline.active)
+                self.assertEqual(runtime.session.timeline.gang_count, 1)
+                self.assertEqual(runtime.session.timeline.completed[0].gang_id, gang_id)
+                self.assertEqual(runtime.session.timeline.completed[0].ended_at,
+                                 T0 + timedelta(seconds=finish))
+                self.assertEqual(runtime.session.after_run.requested_at,
+                                 T0 + timedelta(seconds=finish))
                 await presence("off", received + .5, received + .5)
-                finish = received + .5
-            self.assertIsNone(runtime.session.timeline.active)
-            self.assertEqual(runtime.session.timeline.gang_count, 1)
-            self.assertEqual(runtime.session.timeline.completed[0].gang_id, gang_id)
-            self.assertEqual(runtime.session.timeline.completed[0].ended_at,
-                             T0 + timedelta(seconds=finish))
-            self.assertEqual(runtime.session.after_run.requested_at,
-                             T0 + timedelta(seconds=finish))
-            await presence("off", received + .5, received + .5)
             self.assertEqual(runtime.session.timeline.gang_count, 1)
             self.assertEqual(runtime.session.timeline.completed[0].ended_at,
                              T0 + timedelta(seconds=finish))

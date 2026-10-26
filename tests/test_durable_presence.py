@@ -16,7 +16,7 @@ from test_presence_handover import (
     runtime_with_clock,
 )
 
-from custom_components.ha_sauna.core.detector import Detection
+from custom_components.ha_sauna.core.recognition import Detection
 from custom_components.ha_sauna.core.presence import binary_presence
 from custom_components.ha_sauna.core.timeline import (
     Confirmation,

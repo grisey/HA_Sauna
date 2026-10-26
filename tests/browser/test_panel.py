@@ -2465,16 +2465,16 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
         flow = await self.hass.config_entries.options.async_configure(
             flow["flow_id"], {"next_step_id": "sensors"})
         self.assertNotIn("parameters_presence_strong", flow["menu_options"])
-        self.assertIn("parameters_door", flow["menu_options"])
+        self.assertIn("parameters_presence_direct", flow["menu_options"])
         flow = await self.hass.config_entries.options.async_configure(
-            flow["flow_id"], {"next_step_id": "parameters_door"})
+            flow["flow_id"], {"next_step_id": "parameters_presence_direct"})
         values = {
             str(marker): self.entry.options["parameters"][str(marker)]
             for marker in flow["data_schema"].schema
             if str(marker) != "settings_action"
         }
-        parameter_key = "door_window_seconds"
-        changed = values[parameter_key] + DEFAULT_PARAMETERS["grid_seconds"]
+        parameter_key = "presence_fallback_delay_seconds"
+        changed = values[parameter_key] + 1
         result = await self.hass.config_entries.options.async_configure(
             flow["flow_id"], {**values, parameter_key: changed})
         self.assertEqual((result["type"], result["step_id"], result["flow_id"]), ("menu", "sensors", flow["flow_id"]))

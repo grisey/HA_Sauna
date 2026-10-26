@@ -328,67 +328,19 @@
         "title": "Sensoren und Erkennung",
         "menu_options": {
           "parameters_signals": "Messwerte",
-          "parameters_door": "Türöffnung und Türschluss",
           "parameters_presence_direct": "Präsenzsensor",
           "parameters_presence_evaluation": "Personenerkennung und Gangbestätigung",
-          "parameters_presence_strong": "Deutliche Personenhinweise",
-          "parameters_presence_weak": "Schwache Personenhinweise nach Eintritt",
-          "parameters_infusion": "Aufgusserkennung",
           "init": "Zurück zur Übersicht"
         }
       },
       "parameters_signals": {
         "title": "Messwerte",
         "data": {
-          "median_seconds": "Glättungszeit für Messausreißer",
           "sensor_timeout_seconds": "Höchstalter der Messwerte",
-          "curve_original_open_contrast": "Öffnungskontrast der Originalkurven",
-          "curve_original_new_infusion_contrast": "Anstiegskontrast für eine neue Aufgussepisode",
-          "curve_original_continuation_contrast": "Anstiegskontrast für eine Aufgussfortsetzung",
-          "curve_original_background_slope": "Normierte Feuchtesteigung des neuen Hintergrunds",
-          "curve_original_background_residual": "Normierter Feuchterestfehler des neuen Hintergrunds",
-          "curve_original_noise_temperature_upper": "Empirische Rauschskala der Temperatur oben",
-          "curve_original_noise_humidity_upper": "Empirische Rauschskala der Feuchte oben",
-          "curve_original_noise_temperature_lower": "Empirische Rauschskala der Temperatur unten",
-          "curve_original_noise_humidity_lower": "Empirische Rauschskala der Feuchte unten",
-          "curve_original_gap_temperature_upper_seconds": "Zuordnungsabstand für Wasserpaare: Temperatur oben",
-          "curve_original_gap_humidity_upper_seconds": "Zuordnungsabstand für Wasserpaare: Feuchte oben",
-          "curve_original_gap_temperature_lower_seconds": "Zuordnungsabstand für Wasserpaare: Temperatur unten",
-          "curve_original_gap_humidity_lower_seconds": "Zuordnungsabstand für Wasserpaare: Feuchte unten",
-          "curve_original_kink_factor": "Knicktoleranz der Originalfeuchte",
           "settings_action": "Aktion"
         },
         "data_description": {
-          "median_seconds": "Glättet Temperatur und Feuchte für Tür- und Personensignale sowie die Berechnung des Wassergehalts.",
-          "sensor_timeout_seconds": "Ältere Messwerte werden nicht mehr verwendet. Fehlt dadurch die Temperatur für die Regelung, pausiert die Heizung.",
-          "curve_original_open_contrast": "Empirische Grenze für den normierten gemeinsamen Niveauverlust nach einem gebundenen Abfallknick der relativen Feuchte. Der einmalig gebundene Absenkungszeuge benötigt je Temperatur- und Feuchterolle K neue Originale, L = (gebundenes Vorlaufmittel − aktuelles Mittel) / (2 × empirische Abweichungsskala) strikt oberhalb der Grenze und einen aktuellen normierten Temperaturfall an allen Temperaturpositionen strikt über dieser Grenze. Die Öffnungsbestätigung benötigt danach je Temperaturrolle zwei vollständig neue K-Fenster und weiterhin ein gegenüber dem gebundenen Vorlauf ausreichend tieferes Temperaturniveau. Beide Temperaturfenster müssen entweder weiter strikt über dieser Grenze fallen oder die Form eines neuen stabilen tieferen Niveaus erfüllen. Eine aufgelöste Temperaturerholung vor der Bestätigung verwirft den Kandidaten. Der Wert ist keine Wahrscheinlichkeit.",
-          "curve_original_new_infusion_contrast": "Empirische Grenze für den normierten gemeinsamen Feuchteanstieg ohne laufende Aufgussepisode. Nach einem frischen Anstiegsknick der relativen Feuchte liefert ein später beobachteter strikt größerer Kontrast mit mindestens einem neuen Temperatur- und Feuchteoriginal je gebundener Position den starken Anstiegsbeleg. Dieser Beleg bestätigt allein keinen Aufguss. Ein positiver Wasserbeleg bleibt erforderlich. Die frühe Bestätigung benötigt zusätzlich K neue Originale je gebundener Feuchterolle, einen weiterhin strikt größeren Anstieg und einen aktuellen positiven Steigungswechsel der relativen Feuchte. Ein kurzer Puls kann später durch einen Abfall mit K Originalen nach der Spitze je Feuchterolle bestätigt werden. Der Wert ist keine Wahrscheinlichkeit.",
-          "curve_original_continuation_contrast": "Empirische Grenze für den normierten gemeinsamen Feuchteanstieg innerhalb einer laufenden Aufgussepisode. Auch eine weitere Komponente beginnt mit einem frischen Anstiegsknick der relativen Feuchte. Ein später beobachteter strikt größerer Kontrast mit mindestens einem neuen Temperatur- und Feuchteoriginal je gebundener Position liefert den starken Anstiegsbeleg. Ein positiver Wasserbeleg und ein nachfolgender Abfall mit K Originalen nach der Spitze je gebundener Feuchterolle bleiben erforderlich. Weitere Komponenten vor dem bestätigten Abschluss gehören derselben Episode an. Der Wert ist keine Wahrscheinlichkeit.",
-          "curve_original_background_slope": "Empirische Obergrenze für den größten Betrag der normierten aktuellen Feuchtesteigungen oben und unten beim Nachweis eines neuen Hintergrunds. Sie gilt einschließlich der Grenze; die Steigungen des Vorgängerfensters werden dafür nicht begrenzt. Der Hintergrundabschluss benötigt einen vollständig neuen aktuellen Block aus K Originalen je gebundener Feuchterolle bei fortbestehender Hintergrundform. Der Wert ist keine Wahrscheinlichkeit.",
-          "curve_original_background_residual": "Empirische Obergrenze für den größten normierten absoluten linearen Restfehler beider Feuchtekanäle im aktuellen und vorherigen disjunkten Originalfenster. Sie gilt einschließlich der Grenze als Formprüfung des neuen Hintergrunds. Der Hintergrundabschluss benötigt einen vollständig neuen aktuellen Block aus K Originalen je gebundener Feuchterolle bei fortbestehender Hintergrundform. Der Wert ist keine Wahrscheinlichkeit.",
-          "curve_original_noise_temperature_upper": "Medianbetrag der Dreipunktresiduen der oberen Originaltemperatur in den Trainingsdaten. Normiert Steigungs-Störungsgrenzen und lineare Restfehler. Die empirische Skala enthält auch reale kurze Krümmung und ist keine unabhängig bestimmte Sensorfehlergrenze.",
-          "curve_original_noise_humidity_upper": "Medianbetrag der Dreipunktresiduen der oberen Originalfeuchte in den Trainingsdaten. Normiert Steigungs-Störungsgrenzen, lineare Restfehler und Feuchterholung. Die empirische Skala enthält auch reale kurze Krümmung und ist keine unabhängig bestimmte Sensorfehlergrenze.",
-          "curve_original_noise_temperature_lower": "Medianbetrag der Dreipunktresiduen der unteren Originaltemperatur in den Trainingsdaten. Normiert Steigungs-Störungsgrenzen und lineare Restfehler. Die empirische Skala enthält auch reale kurze Krümmung und ist keine unabhängig bestimmte Sensorfehlergrenze.",
-          "curve_original_noise_humidity_lower": "Medianbetrag der Dreipunktresiduen der unteren Originalfeuchte in den Trainingsdaten. Normiert Steigungs-Störungsgrenzen, lineare Restfehler und Feuchterholung. Die empirische Skala enthält auch reale kurze Krümmung und ist keine unabhängig bestimmte Sensorfehlergrenze.",
-          "curve_original_gap_temperature_upper_seconds": "Anfänglicher Zuordnungsbereich für abgeleitete Wasserpaare der Temperatur oben. Die bisherige Grenze bleibt das Maximum aus diesem Katalogwert und dem oberen Tukey-Innenzaun der letzten 2K − 1 vorher abgeschlossenen Originalabstände (Q3 + 1,5 × IQR). Der geprüfte Abstand trainiert seine eigene Grenze nicht. Frühere Paargrenzen bleiben erhalten; die nächste Grenze beschränkt auch das Warten auf einen fehlenden Partner. Eine Überschreitung lässt die abgeleitete Zuordnung ungeklärt. Gültige native Originalfenster werden dadurch nicht gesperrt. Dies ist keine Sensorausfallfrist.",
-          "curve_original_gap_humidity_upper_seconds": "Anfänglicher Zuordnungsbereich für abgeleitete Wasserpaare der Feuchte oben. Die bisherige Grenze bleibt das Maximum aus diesem Katalogwert und dem oberen Tukey-Innenzaun der letzten 2K − 1 vorher abgeschlossenen Originalabstände (Q3 + 1,5 × IQR). Der geprüfte Abstand trainiert seine eigene Grenze nicht. Frühere Paargrenzen bleiben erhalten; die nächste Grenze beschränkt auch das Warten auf einen fehlenden Partner. Eine Überschreitung lässt die abgeleitete Zuordnung ungeklärt. Gültige native Originalfenster werden dadurch nicht gesperrt. Dies ist keine Sensorausfallfrist.",
-          "curve_original_gap_temperature_lower_seconds": "Anfänglicher Zuordnungsbereich für abgeleitete Wasserpaare der Temperatur unten. Die bisherige Grenze bleibt das Maximum aus diesem Katalogwert und dem oberen Tukey-Innenzaun der letzten 2K − 1 vorher abgeschlossenen Originalabstände (Q3 + 1,5 × IQR). Der geprüfte Abstand trainiert seine eigene Grenze nicht. Frühere Paargrenzen bleiben erhalten; die nächste Grenze beschränkt auch das Warten auf einen fehlenden Partner. Eine Überschreitung lässt die abgeleitete Zuordnung ungeklärt. Gültige native Originalfenster werden dadurch nicht gesperrt. Dies ist keine Sensorausfallfrist.",
-          "curve_original_gap_humidity_lower_seconds": "Anfänglicher Zuordnungsbereich für abgeleitete Wasserpaare der Feuchte unten. Die bisherige Grenze bleibt das Maximum aus diesem Katalogwert und dem oberen Tukey-Innenzaun der letzten 2K − 1 vorher abgeschlossenen Originalabstände (Q3 + 1,5 × IQR). Der geprüfte Abstand trainiert seine eigene Grenze nicht. Frühere Paargrenzen bleiben erhalten; die nächste Grenze beschränkt auch das Warten auf einen fehlenden Partner. Eine Überschreitung lässt die abgeleitete Zuordnung ungeklärt. Gültige native Originalfenster werden dadurch nicht gesperrt. Dies ist keine Sensorausfallfrist.",
-          "curve_original_kink_factor": "Skalierbare Toleranz für Steigungswechsel der relativen Feuchte vor Tür- und Aufgusskandidaten. Der Faktor multipliziert den größeren Wert aus der kalibrierten Steigungs-Störungsgröße und dem Medianbetrag vorausgehender Steigungswechsel. Die Toleranz ist keine feste Mindeständerung der relativen Feuchte und keine Wahrscheinlichkeit. 0 deaktiviert nur diese zusätzliche Knicktoleranz."
-        },
-        "description": "{description}",
-        "submit": "Weiter"
-      },
-      "parameters_door": {
-        "title": "Türöffnung und Türschluss",
-        "data": {
-          "door_window_seconds": "Vergleichszeit für den Temperaturverlauf",
-          "door_humidity_seconds": "Vergleichszeit für den Feuchteabfall",
-          "settings_action": "Aktion"
-        },
-        "data_description": {
-          "door_window_seconds": "Zeitraum für den geglätteten Temperaturtrend in der Diagnose und den anfänglichen Temperaturbezug. Bestimmt zusammen mit der Feuchtevergleichszeit den zulässigen zeitlichen Abstand zusammengehöriger Kurvenänderungen.",
-          "door_humidity_seconds": "Zeitraum für die Änderung der relativen Luftfeuchte in der Diagnose. Bestimmt zusammen mit der Temperaturvergleichszeit den zulässigen zeitlichen Abstand zusammengehöriger Kurvenänderungen."
+          "sensor_timeout_seconds": "Ältere Messwerte werden nicht mehr verwendet. Fehlt dadurch die Temperatur für die Regelung, pausiert die Heizung."
         },
         "description": "{description}",
         "submit": "Weiter"
@@ -410,64 +362,14 @@
       "parameters_presence_evaluation": {
         "title": "Personenerkennung und Gangbestätigung",
         "data": {
-          "person_step_seconds": "Auswertungsabstand der Personenerkennung",
-          "strong_window_seconds": "Vergleichszeit für deutliche Personenhinweise",
-          "weak_window_seconds": "Vergleichszeit für schwache Personenhinweise",
           "confirmation_minutes": "Frist für Personenhinweis und Aufguss",
           "settings_action": "Aktion"
         },
         "data_description": {
-          "person_step_seconds": "In diesem Abstand wird der Feuchteanstieg ausgewertet. Beide Vergleichszeiten müssen ganzzahlige Vielfache dieses Abstands sein.",
-          "strong_window_seconds": "Über diesen Zeitraum wird der Anstieg von relativer und absoluter Feuchte ausgewertet. Die Zeit muss ein Vielfaches des Auswertungsabstands sein.",
-          "weak_window_seconds": "Über diesen Zeitraum wird ein neuer Feuchteanstieg nach Türöffnung und Türschluss ausgewertet. Die Zeit muss ein Vielfaches des Auswertungsabstands sein.",
           "confirmation_minutes": "Die gemeinsame Frist für Personenhinweise und die Bestätigung durch einen Aufguss beginnt mit dem möglichen Gangbeginn: nach vollständigem Eintritt, frühestens bei erreichter Mindesttemperatur."
         },
         "submit": "Weiter",
         "description": "{description}"
-      },
-      "parameters_presence_strong": {
-        "title": "Deutliche Personenhinweise",
-        "data": {
-          "strong_humidity_upper": "Mindestanstieg der Luftfeuchte oben pro Minute",
-          "strong_humidity_lower": "Mindestanstieg der Luftfeuchte unten pro Minute",
-          "strong_hold_seconds": "Bestätigungszeit deutlicher Personenhinweise",
-          "settings_action": "Aktion"
-        },
-        "data_description": {
-          "strong_humidity_upper": "Erforderlicher Anstieg in Prozentpunkten pro Minute am oberen Messpunkt für einen deutlichen Personenhinweis. Gleichzeitig muss die absolute Feuchte zunehmen.",
-          "strong_humidity_lower": "Erforderlicher Anstieg in Prozentpunkten pro Minute am unteren Messpunkt für einen deutlichen Personenhinweis. Gleichzeitig muss die absolute Feuchte zunehmen.",
-          "strong_hold_seconds": "So lange müssen Feuchtetrend und zunehmender Wassergehalt gemeinsam nachgewiesen werden."
-        },
-        "description": "{description}",
-        "submit": "Weiter"
-      },
-      "parameters_presence_weak": {
-        "title": "Schwache Personenhinweise nach Eintritt",
-        "data": {
-          "weak_humidity_upper": "Mindestanstieg der Luftfeuchte oben pro Minute",
-          "weak_humidity_lower": "Mindestanstieg der Luftfeuchte unten pro Minute",
-          "weak_hold_seconds": "Bestätigungszeit schwacher Personenhinweise",
-          "settings_action": "Aktion"
-        },
-        "data_description": {
-          "weak_humidity_upper": "Erforderlicher Anstieg in Prozentpunkten pro Minute am oberen Messpunkt für einen schwachen Personenhinweis. Gleichzeitig muss die absolute Feuchte zunehmen.",
-          "weak_humidity_lower": "Erforderlicher Anstieg in Prozentpunkten pro Minute am unteren Messpunkt für einen schwachen Personenhinweis. Gleichzeitig muss die absolute Feuchte zunehmen.",
-          "weak_hold_seconds": "So lange muss der neue Feuchteanstieg zusammen mit zunehmendem Wassergehalt nachgewiesen werden."
-        },
-        "description": "{description}",
-        "submit": "Weiter"
-      },
-      "parameters_infusion": {
-        "title": "Aufgusserkennung",
-        "data": {
-          "infusion_window_seconds": "Vergleichszeit für einen Aufguss",
-          "settings_action": "Aktion"
-        },
-        "data_description": {
-          "infusion_window_seconds": "Zeitraum für den Anstiegsvergleich der relativen Luftfeuchte und des Wassergehalts sowie den jüngsten Niveauvergleich nach der Feuchtespitze. Bestimmt außerdem den zulässigen zeitlichen Abstand zusammengehöriger Aufgussänderungen."
-        },
-        "description": "{description}",
-        "submit": "Weiter"
       },
       "light": {
         "title": "Licht",

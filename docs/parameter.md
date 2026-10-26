@@ -129,8 +129,7 @@ HA-Aktualisierungszeit bleiben getrennt.
 | --- | --- |
 | Solltemperaturen | Gemeinsame Grenzen für direkte Wahl, Programme und Tastervorgabe. Eingaben und Zwischenstufen werden auf ganze Grad gerundet; ab einem halben Grad aufwärts. |
 | Helligkeitsskala | Muss dem konfigurierten Maximalwert des Lichtgeräts entsprechen, damit eigene Befehle und Geräterückmeldungen zusammenpassen. |
-| Vergleichszeiten der Personenerkennung | Müssen ganzzahlige Vielfache des Auswertungsabstands sein. |
-| Auswertungsraster | Median, Vergleichsfenster, Lüftungsreferenz und Auswertungsabstand müssen ganzzahlige Vielfache des Rasters sein. Haltezeiten werden am ersten Rasterpunkt nach ihrem Ablauf erfüllt. |
+| Erkennung | Ohne einstellbare Schwellen: Die Größen des Zustandsmodells stammen aus bewerteten Aufzeichnungen und werden nach jeder Sitzung nachgelernt ([Erkennung](erkennung.md#gelernte-größen-und-nachlernen)). Gespeicherte Werte der früheren Kurvenerkennung bleiben lesbar, wirken aber nicht. |
 | Höchstalter der Messwerte | Muss die regulären Meldeabstände der jeweiligen Quelle abdecken. |
 | Sonnenstand für das Licht | Der Nachtgrenzwert muss unter dem Tagesgrenzwert liegen; dazwischen wird die Helligkeit überblendet. |
 | Aufheizschätzung | Mindestzahl und Zeitraum der Messpunkte, Rausch- und Abfallgrenzen sowie Glättungs- und Bestätigungszeiträume bestimmen, wann und wie eine verbleibende Aufheizzeit ausgewiesen wird. |
@@ -139,7 +138,7 @@ HA-Aktualisierungszeit bleiben getrennt.
 
 Zusammenhänge: [Heizregelung und Licht](betrieb.md),
 [Ofenkühlung](ofenkuehlung.md), [Gangerkennung](gangmodell.md),
-[Erkennungsschwellen](erkennung.md).
+[Erkennung](erkennung.md).
 
 ## Fehler im Home-Assistant-Protokoll untersuchen
 

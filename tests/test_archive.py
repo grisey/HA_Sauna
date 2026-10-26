@@ -23,7 +23,7 @@ from custom_components.ha_sauna.core.parameters import BY_KEY, Parameters
 from custom_components.ha_sauna.presentation import public_session
 from custom_components.ha_sauna.runtime import Configuration, SaunaRuntime
 from test_foundation import T0, event, parameters, bindings
-from test_detector import measurement
+from climate_fixtures import measurement
 from test_settings import async_timeout
 
 

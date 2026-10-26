@@ -122,34 +122,46 @@ Quellenwechsel; die ursprüngliche Bestätigungsart des Gangs bleibt erhalten.
 | Bestätigter neuer Türschluss ohne dauerhafte Sensoranwesenheit, Zustand auswertbar, Lüften noch nicht bestätigt | Gangende durch Auffangregel |
 | Betrieb-AUS | Ende des offenen Gangs |
 
+Meldet der Sensor die Abwesenheit erst nach dem Türschluss des gelüfteten
+Austritts, beendet sie den Gang ebenfalls: Durch die geschlossene Tür kann
+niemand gegangen sein. Dieser Türschluss gehört dann zum Austritt und belegt
+keinen neuen Eintritt.
+
 Aufgüsse werden dem Gang zugeordnet, bestätigen ihn aber nicht erneut.
 Gemeldete Zustandszeiten gelten ohne Abzug eines vermuteten Sensorverzugs.
-Einzelne Personensignale des Proxybetriebs belegen dieses Präsenzintervall nicht;
-für sie gelten die nachfolgenden Regeln des indirekten Verfahrens.
+Einzelne Belege des Proxybetriebs (Aufgüsse) belegen dieses Präsenzintervall
+nicht; für sie gelten die nachfolgenden Regeln des indirekten Verfahrens.
 
 `unknown` und `unavailable` belegen keine Abwesenheit. Ein dadurch allein
 unvollständiger Austrittsnachweis beendet den Gang nicht. Die Wirkung aktueller
 Belegungszustände auf Gangwärme und die gemeinsame Türhilfe beschreibt die
 [Heizpriorität](betrieb.md#heizpriorität).
 
-## Gang durch einmalige Personenbelege erkennen
+## Gang aus Temperatur und Feuchte erkennen
 
-Einmalige Personenbelege aus Temperatur und Feuchte behaupten weder dauerhafte
-Anwesenheit noch spätere Abwesenheit. Ein Aufguss bestätigt einen Gang, erzeugt
-aber keinen fortbestehenden Belegungszustand.
+Die Erkennung aus Temperatur und Feuchte liefert Türvorgänge, Lüften und
+Aufgüsse, aber keine eigenen Personensignale. Ein Aufguss belegt eine Person in
+der Kabine; er behauptet weder dauerhafte Anwesenheit noch spätere Abwesenheit.
+Ein Gang ohne Aufguss wird im Proxyverfahren deshalb nicht erkannt; dafür ist
+ein Präsenzsensor vorgesehen.
 
 | Ereignis | Wirkung |
 | --- | --- |
-| Zulässiges Personensignal nach vollständigem Eintritt | Vorläufiger Gang |
-| Erster gültiger Aufguss | Bestätigt den vorläufigen Gang mit gleichem Beginn oder eröffnet nach vollständigem Eintritt einen bestätigten Gang |
+| Erster gültiger Aufguss nach vollständigem Eintritt | Eröffnet einen bestätigten Gang |
 | Weiterer Aufguss | Ergänzt den aktiven Gang |
-| Bestätigungsfrist abgelaufen oder Lüften nach Austrittsöffnung vor Bestätigung | Vorläufiger Gang zurückgenommen |
 | Bestätigtes Lüften nach Austrittsöffnung | Gangende zum Buchungszeitpunkt der Lüftungsbestätigung |
 | Betrieb-AUS | Ende des offenen Gangs |
 
+Einmalige Personensignale anderer Herkunft (etwa aus älteren Aufzeichnungen)
+behandelt das Gangmodell weiterhin: Ein zulässiges Personensignal nach
+vollständigem Eintritt eröffnet einen vorläufigen Gang, den der erste gültige
+Aufguss mit gleichem Beginn bestätigt. Läuft die Bestätigungsfrist ab oder wird
+vor der Bestätigung nach einer Austrittsöffnung gelüftet, wird der vorläufige
+Gang zurückgenommen.
+
 Als Beginn gilt die passende Türschließung, frühestens jedoch der Beginn des
 anschließenden gültigen Temperaturbereichs ab Mindesttemperatur. Die
-Personen- und Aufgussnachweise müssen zu diesem Eintritt gehören. Ohne gültigen,
+Aufguss- und Personennachweise müssen zu diesem Eintritt gehören. Ohne gültigen,
 ungenutzten Türbezug beginnt kein Gang. Eine vor ihrer tatsächlichen Zulassung
 begonnene Aufgussepisode eröffnet keinen neuen Gang und verkürzt keine Kühlung;
 sie kann einem bereits offenen Gang weiterhin zugeordnet werden. Ihr

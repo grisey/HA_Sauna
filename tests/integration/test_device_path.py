@@ -306,45 +306,52 @@ class DevicePathTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.runtime.device._warmup_key[2], Position.LOWER)
         self.assertIsNone(self.runtime.device.estimated_ready_seconds(self.now))
 
-    async def test_infusion_confirms_presence_and_person_checks_stop_while_further_infusions_work(self):
-        from custom_components.ha_sauna.core.timeline import Confirmation, Event, Kind
-        from test_detector import InfusionLifecycleTests
+    async def test_first_infusion_after_entry_opens_the_gang_and_further_infusions_join_it(self):
+        from custom_components.ha_sauna.core.recognition import Detection, InfusionUpdate
+        from custom_components.ha_sauna.core.timeline import Confirmation, Event, InfusionEnd, Kind
 
-        fixture = InfusionLifecycleTests()
-        fixture.setUp()
-        points, _, _, final_fall = fixture._scenario(merged=False)
-        # Reuse the real person-only ramp from
-        # test_monotone_rise_has_no_infusion_and_keeps_person_detection_available.
-        # Give it its full configured phase after this HA entry before either pulse.
-        entry_at = 60
-        p = self.runtime.configuration.parameters.values
-        person_begin = entry_at + fixture.begin
-        person_end = person_begin + ceil(
-            p["strong_window_seconds"] + p["strong_hold_seconds"]
-            + p["median_seconds"] + 2 * p["person_step_seconds"]
-        )
-        rate = 2 * max(p["strong_humidity_upper"], p["strong_humidity_lower"]) / 60
-        person_points = [
-            (0, fixture.baseline), (person_begin, fixture.baseline),
-            (person_end, fixture.baseline + rate * (person_end - person_begin)),
-        ]
-        pulse_start = person_end + fixture.step
-        pulse_offset = pulse_start - fixture.begin
-        through = ceil(pulse_offset + final_fall + fixture.width)
+        # Sensor values pass the real HA path every second. The recognition
+        # outcome of these readings is supplied: two infusions, the first one
+        # ending before the second (the model itself is tested in the core).
+        entry_at, first_at, first_end_at, second_at, through = 60, 120, 200, 260, 300
         await self.runtime.set_operation(True)
         await self.hass.async_block_till_done()
-        provisional_gang = first_gang = None
+        recognizer = self.runtime.detector
+        self.assertIsNotNone(recognizer)
+
+        def at(second):
+            return self.base + timedelta(seconds=second)
+
+        first = Detection(Kind.INFUSION, at(first_at - 10), at(first_at), recognizer.channels,
+                          trace_at=at(first_at), probability=0.99)
+        second = Detection(Kind.INFUSION, at(second_at - 10), at(second_at), recognizer.channels,
+                           trace_at=at(second_at), probability=0.99)
+        first_end = InfusionEnd(at(first_end_at - 30), at(first_end_at), at(first_end_at),
+                                "steam_decayed", "physical_effective")
+        outcome = [(at(first_at), first), (at(first_end_at), InfusionUpdate(first, first_end)),
+                   (at(second_at), second)]
+        evaluate = recognizer.advance
+
+        def advance(through_at, **callbacks):
+            out = evaluate(through_at, **callbacks)
+            processed = recognizer.processed_until
+            while outcome and processed is not None and processed >= outcome[0][0]:
+                _, item = outcome.pop(0)
+                if isinstance(item, InfusionUpdate):
+                    callbacks["on_infusion_update"](item)
+                else:
+                    recognizer.detections.append(item)
+                    callbacks["on_detection"](item)
+                    out.append(item)
+            return out
+
+        recognizer.advance = advance
+        first_gang = None
         for second in range(through + 1):
             self.now = self.base + timedelta(seconds=second)
-            temperature = fixture.temperature
-            humidity = fixture._value(person_points, second)
-            if second >= pulse_start:
-                # Only reuse fixture inputs; never patch the detector's maths.
-                humidity = (fixture._value(person_points, person_end)
-                            + fixture._value(points, second - pulse_offset) - fixture.baseline)
             for position in ("upper", "lower"):
-                await self.set_source(position + "_temperature", temperature)
-                await self.set_source(position + "_humidity", humidity)
+                await self.set_source(position + "_temperature", 85)
+                await self.set_source(position + "_humidity", 20 if second < first_at else 26)
             await self.runtime.tick()
             await self.hass.async_block_till_done()
             if second == entry_at:
@@ -353,53 +360,37 @@ class DevicePathTests(unittest.IsolatedAsyncioTestCase):
                         f"entry:{kind.value}", self.runtime.session.session_id, kind, self.now, self.now
                     ))
             active = self.runtime.session.timeline.active
-            if active and not active.infusion_events:
-                provisional_gang = provisional_gang or active
-            if second == person_end:
-                self.assertIsNotNone(provisional_gang, "The full person-only fixture must supply PERSON_STRONG before either pulse")
-                self.assertEqual(provisional_gang.recognition_kind, Kind.PERSON_STRONG)
-                self.assertIsNotNone(active)
-                self.assertEqual(active.confirmation, Confirmation.PROVISIONAL)
-                self.assertEqual(active.infusion_events, ())
-            if active and active.infusion_events:
+            if second < first_at:
+                # without a person signal from the climate, the entry alone does not open a gang
+                self.assertIsNone(active)
+            elif active is not None:
                 first_gang = first_gang or active
                 self.assertEqual(active.gang_id, first_gang.gang_id)
-                self.assertEqual(active.started_at, first_gang.started_at)
-                if second % 5 == 0:
-                    self.assertFalse(self.runtime.detector.diagnostic["checks"]["strong"])
-                    self.assertNotIn("strong_temperature_slope", self.runtime.detector.diagnostic["metrics"]["upper"])
-        self.assertIsNotNone(provisional_gang)
-        self.assertEqual(provisional_gang.recognition_kind, Kind.PERSON_STRONG)
-        self.assertEqual(provisional_gang.confirmation, Confirmation.PROVISIONAL)
         self.assertIsNotNone(first_gang)
-        self.assertEqual(first_gang.confirmation, Confirmation.CONFIRMED)
-        self.assertEqual((first_gang.gang_id, first_gang.started_at,
-                          first_gang.recognition_kind, first_gang.recognition_event_id),
-                         (provisional_gang.gang_id, provisional_gang.started_at,
-                          provisional_gang.recognition_kind, provisional_gang.recognition_event_id))
-        self.assertLessEqual(provisional_gang.detected_at, first_gang.confirmed_at)
-        self.assertEqual(len(self.runtime.session.timeline.active.infusion_events), 2)
-        infusions = self.runtime.session.timeline.active.infusion_events
+        gang = self.runtime.session.timeline.active
+        self.assertEqual(gang.confirmation, Confirmation.CONFIRMED)
+        self.assertEqual(gang.recognition_kind, Kind.INFUSION)
+        self.assertEqual(gang.start_source_event_id, f"entry:{Kind.DOOR_CLOSE.value}")
+        self.assertEqual(len(gang.infusion_events), 2)
+        infusions = gang.infusion_events
         self.assertNotEqual(infusions[0].event_id, infusions[1].event_id)
-        first_end = self.runtime.session.timeline.active.infusions[0].end
-        self.assertIsNotNone(first_end)
-        self.assertLess(first_end.effective_at, infusions[1].effective_at)
-        people = [e for e in self.runtime.session.timeline.processed
-                  if e.kind in (Kind.PERSON_STRONG, Kind.PERSON_WEAK)]
-        self.assertEqual([e.event_id for e in people], [provisional_gang.recognition_event_id])
+        self.assertEqual(gang.infusions[0].end, first_end)
+        self.assertLess(gang.infusions[0].end.effective_at, infusions[1].effective_at)
+        self.assertFalse([e for e in self.runtime.session.timeline.processed
+                          if e.kind in (Kind.PERSON_STRONG, Kind.PERSON_WEAK)])
         self.assertTrue(self.heater.is_on)
         await self.runtime.archive.flush()
         import asyncio
         data = await asyncio.to_thread(self.runtime.archive.read, self.runtime.session.session_id, limit=10000)
         detections = [r["payload"]["event"]["kind"] for r in data["records"] if r["kind"] == "detection"]
-        # Entry events were supplied directly; only the real detector outputs
-        # belong to detection records in this sensor-path test.
-        self.assertEqual(detections, [Kind.PERSON_STRONG, Kind.INFUSION, Kind.INFUSION])
+        # Entry events were supplied directly; only recognition outputs are detection records.
+        self.assertEqual(detections, [Kind.INFUSION, Kind.INFUSION])
         archived_infusions = [r["payload"]["event"]["event_id"] for r in data["records"]
-                             if r["kind"] == "detection"
-                             and r["payload"]["event"]["kind"] == Kind.INFUSION]
+                              if r["kind"] == "detection"
+                              and r["payload"]["event"]["kind"] == Kind.INFUSION]
         self.assertEqual(archived_infusions, [event.event_id for event in infusions])
-        self.assertEqual(first_gang.start_source_event_id, f"entry:{Kind.DOOR_CLOSE.value}")
+        updates = [r["payload"] for r in data["records"] if r["kind"] == "infusion_update"]
+        self.assertEqual([u["source_event_id"] for u in updates], [infusions[0].event_id])
 
     async def test_light_uses_real_service_for_temperature_curve_and_phase_ramps(self):
         from custom_components.ha_sauna.core.timeline import Event, Kind

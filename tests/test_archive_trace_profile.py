@@ -12,9 +12,10 @@ from uuid import UUID
 
 from custom_components.ha_sauna.archive import Archive, encoded, plain
 from custom_components.ha_sauna.core.models import Position, Quantity
+from custom_components.ha_sauna.core.recognition import Detection
 from custom_components.ha_sauna.core.timeline import Kind
 from custom_components.ha_sauna.runtime import Configuration, SaunaRuntime
-from test_detector import measurement
+from climate_fixtures import measurement
 from test_foundation import T0, bindings, event, parameters
 
 
@@ -47,13 +48,31 @@ class ArchiveTraceProfileTests(unittest.IsolatedAsyncioTestCase):
                     runtime.controller.report_heating(True, T0)
                     runtime._sync_detector()
                     live = []
-                    observed = runtime.detector.observer
+                    recognizer = runtime.detector
+                    observed = recognizer.observer
 
                     def observe(trace):
                         live.append(plain(trace))
                         observed(trace)
 
-                    runtime.detector.observer = observe
+                    recognizer.observer = observe
+                    # The model's own steps provide the traces; the opening it would confirm
+                    # later is supplied at a fixed confirmation (independent of learned values).
+                    opening = Detection(
+                        Kind.DOOR_OPEN, T0 + timedelta(seconds=16), T0 + timedelta(seconds=36),
+                        recognizer.channels, trace_at=T0 + timedelta(seconds=36), probability=0.95,
+                    )
+                    evaluate = recognizer.advance
+
+                    def advance(through, **callbacks):
+                        out = evaluate(through, **callbacks)
+                        if through >= opening.detected_at and opening not in recognizer.detections:
+                            recognizer.detections.append(opening)
+                            callbacks["on_detection"](opening)
+                            out.append(opening)
+                        return out
+
+                    recognizer.advance = advance
                     # Existing joint-fall fixture used by the native input batch test.
                     for second in range(39):
                         clock[0] = T0 + timedelta(seconds=second)

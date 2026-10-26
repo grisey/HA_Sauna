@@ -3,7 +3,7 @@ const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const test = require("node:test");
 const vm = require("node:vm");
-const { parameterValues } = require("./catalog_fixture.cjs");
+const { parameterValues, archivedParameterValues } = require("./catalog_fixture.cjs");
 let Panel;
 vm.runInNewContext(fs.readFileSync("custom_components/ha_sauna/panel.js", "utf8"), {
   HTMLElement: class {},
@@ -271,7 +271,8 @@ test("archived diagnostics use their saved person source and retain raw measurem
 
 test("person curves, thresholds, markers and selected evidence stay inside effective proxy sections", () => {
   const panel = makePanel(),
-    parameters = parameterValues(),
+    // an archived session of the former curve detector carries its settings
+    parameters = archivedParameterValues(),
     step = Math.min(parameters.grid_seconds, parameters.person_step_seconds),
     plots = { innerHTML: "" };
   panel.state.permissions = { admin: true };

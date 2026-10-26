@@ -1886,8 +1886,6 @@ class Controller:
                        and item.timing.received_at <= self._received_at(at)]
             absence = next((item for item in reversed(history)
                             if item.available and item.occupancy == "absent"
-                            and (t.door != Door.CLOSED or t.anchor is not None
-                                 and item.timing.effective_at <= t.anchor.effective_at)
                             and item.timing.effective_at >= opening.effective_at), None)
             if self._direct_presence_catchup:
                 return False

@@ -12,7 +12,7 @@ from homeassistant.auth.const import GROUP_ID_USER
 import harness
 import test_archive as archive_fixture
 import test_panel_detail_projection as panel_fixture
-from test_detector import measurement
+from climate_fixtures import measurement
 from test_foundation import T0
 
 from custom_components.ha_sauna.core.models import Position, Quantity, Session

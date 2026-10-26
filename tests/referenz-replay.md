@@ -6,8 +6,8 @@ wertet einen Recorderexport aus und schreibt ein JSON-Ergebnis mit den daraus
 abgeleiteten Tür-, Lüftungs-, Personen- und Aufgusssignalen. Seine Eingaben und
 Ausgaben sind lokale Dateien.
 
-Die laufende Integration verwendet den
-[produktiven Detector](../custom_components/ha_sauna/core/detector.py).
+Die laufende Integration verwendet die
+[Erkennung über das Zustandsmodell](../custom_components/ha_sauna/core/recognition.py).
 Die Kanalbezeichnungen K3 und K6 gehören zu diesem festgehaltenen
 Export. Die Integration ordnet ihre Quellen über die konfigurierten Rollen
 oben und unten zu.

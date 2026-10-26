@@ -363,62 +363,11 @@ Aufzeichnungsoption und gehört nicht zur historischen Sauna-Konfiguration.
 Explizit über `Archive.append` eingespielte historische Traces bleiben in beiden
 Profilen zulässig und unverändert lesbar.
 
-Die manuelle Auslösung (`workflow_dispatch`) des Workflows `HA Sauna` mit
-`detector_replay=true` führt ausschließlich die gebundenen Messreplays aus
-[`replay_measurement_manifest.json`](replay_measurement_manifest.json) aus.
-`detector_recordings` begrenzt die Auswahl auf ganze Zeitgruppen.
-[`analysis/detector_replay.py`](analysis/detector_replay.py) übergibt sämtliche
-Originalmessungen an den produktiven `Detector.accept` und `Detector.advance`.
-Je Zeitgruppe bleibt eine Detektorinstanz erhalten; tatsächliche Lücken werden
-nicht mit Messungen aufgefüllt. Die aktuellen Katalogparameter bleiben während
-des Laufs unverändert. Historische Erkennungsausgaben und Bedienannahmen liefern
-keine Eingänge oder Sollereignisse.
-
-Der Messvergleich verwendet ausdrücklich `enabled=True` ohne Controllerfreigaben
-oder belegte Heizintervalle. Er prüft Kandidaten und Erkennungsbestätigungen,
-keine historischen Regelfolgen. Fehlende unabhängige Ereigniszuordnungen erlauben
-keine Treffer- oder Fehlalarmquote. Die Beobachtung protokolliert die
-Originalentscheidungen innerhalb eines Rasters, bevor spätere Präfixe sie
-überschreiben. Ein Paritätsvergleich prüft, dass diese Beobachtung die
-Detektorausgaben nicht ändert. Das Artefakt `detector-measurement-replay` enthält
-Eingangsbindungen, Parameter, Kandidatendiagnosen, Erkennungen sowie Commit,
-Trees, Exitcodes und Prozessabschlüsse. Dieser Auftrag hat Vorrang vor den
-anderen manuellen Analyse- und Prüfoptionen.
-
-Die manuelle Auslösung (`workflow_dispatch`) des Workflows `HA Sauna` mit
-`proxy_calibration_analysis=true` führt ausschließlich die Proxy-Kalibration
-aus, sofern kein Detektor-Messreplay ausgewählt ist. Diese Auswahl hat Vorrang
-vor den übrigen Analyseflags und Prüfbereichen.
-[`analysis/proxy_calibration.py`](analysis/proxy_calibration.py) konsumiert die
-gebundenen Originalmessungen und die separat geführten
-[Kalibrationsvorgaben](analysis/proxy_calibration_policy.json) und
-[Referenzen](analysis/proxy_calibration_references.json).
-
-R01–R03 bilden die Trainingsgrundlage. R02 und R03 teilen die im
-[`replay_manifest.json`](replay_manifest.json) festgelegte Zeitgruppe einschließlich
-der tatsächlichen Lücke; lokale Messzeiten und Meldungsalter bleiben erhalten.
-R04 wird erst mit eingefrorenen Profilen, Methoden und Fehlerbändern bewertet und
-geht nicht in den Parameterfit ein. Die Aufzeichnung war bereits gesichtet und
-ist deshalb keine unberührte unabhängige Validierungsmenge.
-
-Das Artefakt `proxy-calibration` enthält `output/profile.json`,
-`output/calibration.json`, `output/quality.json` und
-`output/ambiguous-cases.json` sowie die zugehörigen Originalkurven unter
-`output/curves/`. Commit, Tree, Produkt-Tree, stdout/stderr, eigener Exitcode und
-Prozessabschluss liegen daneben. Die Auswertung prüft mathematische Kernelprofile
-und Hypothesen; sie ist noch kein produktiver Controller-Replay mit Regelung,
-Aktorausgaben und Archivierung.
-
-Mit zusätzlichem `proxy_calibration_baseline_run` verwendet derselbe Auftrag das
-Artefakt eines abgeschlossenen Kalibrationslaufs für begrenzte Ursachenvergleiche.
-[`analysis/proxy_calibration_diagnosis.py`](analysis/proxy_calibration_diagnosis.py)
-prüft zunächst die Reproduktion der Ausgangsergebnisse. Danach werden einzeln
-festgelegte Einflussgrößen verändert. Das Entfernen einer Prüfschranke ist dabei
-ein Diagnoseeingriff und keine Freigabe eines neuen Erkennungsverfahrens.
-Produktiver Detector, Regelung und Aktorausgaben sind nicht Bestandteil dieses
-Vergleichs. Eingangsprüfsummen, Varianten und Prozessabschluss werden im
-Artefakt `proxy-calibration` mitgeführt.
-`proxy_calibration_diagnosis_mode=gain_boundary` vergleicht ausschließlich die
-Ausgangsprofile mit einer aus den Kalibrationsgegenbeispielen abgeleiteten
-Mindestverbesserung gegenüber dem Verlauf ohne Ereignis. Formen und Fehlerbänder
-bleiben dabei erhalten; R04 wird nicht zur Grenzwahl verwendet.
+Die Erkennungsgrößen entstehen außerhalb der Testläufe aus bewerteten
+Aufzeichnungen: [`tools/recognition_learn.py`](../tools/recognition_learn.py)
+schreibt `recognition_parameters.json` samt den Belegen der Lernaufzeichnungen.
+[`tools/recognition_replay.py`](../tools/recognition_replay.py) spielt
+Aufzeichnungen über `SaunaRuntime` mit der eingebauten Erkennung ab und gibt
+Erkennungen, gebuchte und abgelehnte Ereignisse sowie Gänge aus; Gangmodell,
+Steuerung und Nachlauf bleiben dabei unverändert. Beide Werkzeuge sind keine
+Testsuiten und verändern keine Sollereignisse.

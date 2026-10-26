@@ -487,8 +487,8 @@ class AdapterTests(unittest.IsolatedAsyncioTestCase):
         flow.hass = self.hass
         groups = {
             "temperature_control": ("operation", {"standard_temperature_c", "warmup_estimation_minutes"}),
-            "signals": ("sensors", {"sensor_timeout_seconds", "median_seconds"}),
-            "presence_evaluation": ("sensors", {"person_step_seconds", "confirmation_minutes"}),
+            "signals": ("sensors", {"sensor_timeout_seconds"}),
+            "presence_evaluation": ("sensors", {"confirmation_minutes"}),
             "light_transitions": ("light", {"light_brightness_scale", "light_transition_seconds"}),
         }
         with (

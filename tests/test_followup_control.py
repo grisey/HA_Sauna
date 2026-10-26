@@ -12,7 +12,7 @@ from custom_components.ha_sauna.core.presence import binary_presence
 from custom_components.ha_sauna.core.timeline import Event, Kind
 from custom_components.ha_sauna.runtime import Configuration, SaunaRuntime
 from test_foundation import T0, bindings
-from test_detector import measurement
+from climate_fixtures import measurement
 
 
 def at(s):

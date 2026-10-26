@@ -14,7 +14,7 @@ from test_foundation import bindings, event, parameters
 from custom_components.ha_sauna.bindings import Bindings
 from custom_components.ha_sauna.archive import plain
 from custom_components.ha_sauna.core.parameters import Parameters
-from custom_components.ha_sauna.core.detector import Detection
+from custom_components.ha_sauna.core.recognition import Detection
 from custom_components.ha_sauna.core.presence import binary_presence
 from custom_components.ha_sauna.core.timeline import Confirmation, Event, Kind
 from custom_components.ha_sauna.runtime import Configuration, SaunaRuntime

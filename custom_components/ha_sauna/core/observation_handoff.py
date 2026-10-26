@@ -10,12 +10,11 @@ from dataclasses import dataclass, fields
 from datetime import datetime
 from math import isfinite
 
-from .detector import Detection
 from .light_output import LightOutput, LightPlan, LightQuantizer
 from .model_handoff import FrozenMap, freeze_data, require_immutable
 from .models import Measurement
+from .recognition import Detection
 from .thermostat import Decision
-from .timeline import Kind
 
 
 def _instance(value, expected):
@@ -101,55 +100,6 @@ class HeatingObservation:
 
 
 @dataclass(frozen=True)
-class DetectionEvaluation:
-    """Complete supplied detector diagnostic and its actual Detection results.
-
-    The supplied diagnostic must identify the same raster and complete signal
-    tuple. This constructor neither runs the detector nor reconstructs signals.
-    """
-
-    diagnostic: FrozenMap
-    detections: tuple[Detection, ...]
-
-    def __post_init__(self):
-        object.__setattr__(self, "diagnostic", _mapping(self.diagnostic))
-        object.__setattr__(self, "detections", _tuple_of(self.detections, Detection))
-        required = {
-            "at": datetime,
-            "original_prefix_overflow": bool,
-            "channels": tuple,
-            "metrics": FrozenMap,
-            "conditions": FrozenMap,
-            "checks": FrozenMap,
-            "decisions": FrozenMap,
-            "holds": FrozenMap,
-            "signals": tuple,
-            "door_open": bool,
-            "ventilation_context": bool,
-            "curve_candidates": FrozenMap,
-            "curve_proposals": FrozenMap,
-            "infusion_episode": FrozenMap,
-        }
-        for name, expected in required.items():
-            if name not in self.diagnostic:
-                raise ValueError(f"Detector diagnostic is missing {name}")
-            if name == "infusion_episode" and self.diagnostic[name] is None:
-                continue
-            _instance(self.diagnostic[name], expected)
-        for channel in self.diagnostic["channels"]:
-            _instance(channel, str)
-        for signal in self.diagnostic["signals"]:
-            _instance(signal, Kind)
-        if self.diagnostic["signals"] != tuple(d.kind for d in self.detections):
-            raise ValueError("Diagnostic signals and detection results differ")
-        if any(d.trace_at != self.diagnostic["at"] for d in self.detections):
-            raise ValueError(
-                "Diagnostic and detection results belong to different rasters"
-            )
-        require_immutable(self)
-
-
-@dataclass(frozen=True)
 class MethodEvaluation:
     """Complete actual diagnostic and detections of a supplied evaluation.
 
@@ -166,41 +116,6 @@ class MethodEvaluation:
     def __post_init__(self):
         object.__setattr__(self, "diagnostic", _mapping(self.diagnostic))
         object.__setattr__(self, "detections", _tuple_of(self.detections, Detection))
-
-
-@dataclass(frozen=True)
-class InfusionEpisodeDiagnostics:
-    """Complete published episode diagnostic, separate from confirmed events.
-
-    These are the existing episode projection's fields, not a detector restore
-    state. The episode owner supplies phase, interruption, and any end, including
-    an ended-to-active correction after a late earlier rise. No event or stable
-    episode ID is inferred. Confirmed occurrence identity stays with InfusionInput
-    and its existing events; binding this observation to one is a future producer
-    responsibility. None for an end preserves missing knowledge, not an end.
-    """
-
-    phase: str
-    onset_at: datetime
-    confirmed_at: datetime | None
-    level_end_at: datetime | None
-    end_basis: str | None
-    interrupted: bool
-    water_change: FrozenMap
-    decays: FrozenMap
-    levels: FrozenMap
-
-    def __post_init__(self):
-        for name in ("water_change", "decays", "levels"):
-            object.__setattr__(self, name, _mapping(getattr(self, name)))
-
-    @classmethod
-    def from_result(cls, result: Mapping):
-        """Copy an existing complete episode projection, without running its owner."""
-        _instance(result, Mapping)
-        if set(result) != {definition.name for definition in fields(cls)}:
-            raise ValueError("A complete published infusion-episode result is required")
-        return cls(**result)
 
 
 @dataclass(frozen=True)

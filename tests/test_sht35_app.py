@@ -10,7 +10,7 @@ from types import ModuleType, SimpleNamespace
 import unittest
 from unittest.mock import Mock, mock_open, patch
 
-from test_detector import trace
+from climate_fixtures import trace
 from test_foundation import T0
 
 

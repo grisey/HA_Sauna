@@ -3,7 +3,6 @@
 from copy import deepcopy
 from datetime import timedelta
 import json
-import math
 from pathlib import Path
 import unittest
 
@@ -14,10 +13,8 @@ from custom_components.ha_sauna.appearance import (
 from custom_components.ha_sauna.core.defaults import (
     load_catalog,
     preference_values,
-    section,
     validate_catalog,
 )
-from custom_components.ha_sauna.core.detector import Detector, robust_slope
 from custom_components.ha_sauna.core.light import normal_brightness
 from custom_components.ha_sauna.core.parameters import (
     BY_KEY,
@@ -429,30 +426,6 @@ class ParameterConsumptionTests(unittest.TestCase):
         )
         self.assertTrue(evidence["no_rise"])
         self.assertEqual(evidence["started_at"], T0)
-
-    def test_detector_grid_controls_sample_clock_and_slope_units(self):
-        values = Parameters({}).as_dict()
-        grid = values["grid_seconds"] + BY_KEY["grid_seconds"].number_step
-        # All dependent windows are explicit catalogue relations. This input
-        # adjustment preserves validity; the clock/slope oracle is independent.
-        values["grid_seconds"] = grid
-        for spec in section("parameters"):
-            for divisor in spec.get("multiple_of_parameters", []):
-                values[spec["key"]] = (
-                    math.ceil(values[spec["key"]] / values[divisor]) * values[divisor]
-                )
-        parameters = Parameters(values)
-        detector = Detector(parameters, T0)
-        sampled = []
-        detector.advance(
-            T0 + timedelta(seconds=grid * 2.5),
-            enabled=False,
-            before_sample=lambda at: sampled.append(at),
-        )
-        self.assertEqual(
-            sampled, [T0 + timedelta(seconds=grid * index) for index in range(3)]
-        )
-        self.assertAlmostEqual(robust_slope([0, grid, grid * 2], step=grid), 60)
 
     def test_test_infrastructure_uses_the_exclusive_fixture_catalogue(self):
         # Neither loader contains a second copy of the executable defaults.

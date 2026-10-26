@@ -163,7 +163,7 @@ zeigt die lokale Browserzeit.
 | Zeitfeld bei Erkennungen | Bedeutung |
 | --- | --- |
 | `effective_at` | Zugeordneter Ereignisbeginn, gegebenenfalls rückblickend. |
-| `trace_at` (optional) | Ursprünglicher Diagnose-/Bestätigungszeitpunkt im Auswertungsraster. |
+| `trace_at` (optional) | Messschritt, mit dem die Erkennung das Ereignis bestätigt hat. |
 | `booking_at` | Zeitpunkt der Einordnung in den Betriebsablauf. |
 | `detected_at` | Zeitpunkt, an dem die Erkennung das Ereignis feststellt. |
 

@@ -32,6 +32,12 @@
           "class": "TimelineTests",
           "method": "test_closed_direct_exit_rejects_absence_from_after_its_closure",
           "reason": "Absence after closure does not invalidate a proven exit. R02 binds the user-confirmed counterexample."
+        },
+        {
+          "file": "tests/test_direct_presence_control.py",
+          "class": "DirectPresenceControlTests",
+          "method": "test_absence_starting_after_occupied_close_does_not_finish_the_gang",
+          "reason": "The assertion again required the confirmed exit to remain active solely because absence arrived after door closure; it was hidden while the former detector placed the thermal closing late. It contradicts the user-confirmed real exit."
         }
       ]
     },
@@ -425,7 +431,7 @@
           "file": "tests/test_detector.py",
           "class": "DetectorTests",
           "method": "test_synthetic_episode_person_infusion_and_ventilation",
-          "reason": "The former full synthetic episode repeats the measured whole-session proxy chain. Distinct weak/strong source, invalid-input and timing-boundary contracts stay in the detector suite."
+          "reason": "The former full synthetic episode repeats the measured whole-session proxy chain. The curve detector and its suite were replaced by the state-space recognition and its own suites (tests/test_recognition_model.py, tests/test_recognition_learning.py)."
         }
       ]
     },
@@ -545,8 +551,7 @@
     },
     {
       "files": [
-        "tests/test_cooling.py",
-        "tests/test_detection_context.py"
+        "tests/test_cooling.py"
       ],
       "scope": "Inclusive numeric setpoint comparison, original evidence timestamps, duplicate-event idempotence and programme/cooling state bound to recording identity. Full programme progression, readiness changes and return behaviour belong to the bound session scenarios."
     }

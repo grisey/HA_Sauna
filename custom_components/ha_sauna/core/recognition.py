@@ -1,0 +1,741 @@
+"""Ereigniserkennung aus Temperatur und Feuchte über das Zustandsmodell der Kabine.
+
+Die Erkennung kennt weder Sitzung noch Gang oder Steuerung.  Sie erhält nur
+Messwerte und liefert Ereignisse mit physikalischem Zeitpunkt (``effective_at``)
+und Bestätigungszeitpunkt (``detected_at``):
+
+* Tür auf, Tür zu, Aufguss: aus den Zustandswahrscheinlichkeiten des Modells
+  (``recognition_model``).  Ein Kandidat beginnt, sobald die Wahrscheinlichkeit
+  ihren Ruhebereich verlässt; bestätigt ist er, wenn sie nach dem Nachlauf die
+  Entscheidungsschwelle ``q`` erreicht.  Der Nachlauf bezieht die folgenden
+  Messwerte in die Wahrscheinlichkeit eines Zeitpunkts ein (Glättung über
+  einen festen Abstand).
+* Lüften und Durchgelüftet: Abflachen der relativen bzw. absoluten Feuchte
+  während der offenen Tür, als Kurvenform mit Bayes-Knickmodell
+  (``flattening_probability``), solange die Temperatur weiter fällt.
+"""
+
+from __future__ import annotations
+
+import math
+from collections import OrderedDict, deque
+from dataclasses import dataclass, field
+from datetime import datetime, timedelta
+
+import numpy as np
+
+from .models import Measurement, Position, Quantity
+from .moisture import absolute_humidity
+from .recognition_model import (
+    CHANNELS, CLOSED, DECAY, INFUSION, NM, OPEN, RECOVERY, SHIFT, ModelParameters, StateModel,
+)
+from .timeline import DoorCloseEvidence, InfusionEnd, Kind, utc
+
+CHANNEL_SOURCES = {
+    "Tu": (Position.UPPER, "T"), "Tl": (Position.LOWER, "T"),
+    "Au": (Position.UPPER, "A"), "Al": (Position.LOWER, "A"),
+}
+
+
+@dataclass(frozen=True)
+class Detection:
+    """Erkanntes Ereignis mit physikalischem Zeitpunkt und Bestätigung."""
+
+    kind: Kind
+    effective_at: datetime
+    detected_at: datetime
+    channels: tuple[str, ...]
+    trace_at: datetime | None = None
+    door_close_evidence: DoorCloseEvidence | None = None
+    probability: float | None = None
+
+
+def _start_drift(t: np.ndarray, y: np.ndarray):
+    """Drift of every channel at the start: least-squares slope of the start samples and its variance."""
+    x = t - t.mean()
+    sxx = float(x @ x)
+    if len(t) < 3 or sxx <= 0:
+        return np.zeros(y.shape[1]), np.full(y.shape[1], 1e-4)
+    slope = x @ (y - y.mean(0)) / sxx
+    residual = y - y.mean(0) - np.outer(x, slope)
+    variance = (residual ** 2).sum(0) / (len(t) - 2) / sxx
+    return slope, np.maximum(variance, 1e-10)
+
+
+ORIGINAL_MEMORY = 4096      # recent originals kept to recognise a redelivery
+
+
+def _original_identity(measurement: Measurement):
+    """Identity of one original reading: the physical sample or the archived/HA original."""
+    if measurement.sample is not None:
+        sample = measurement.sample
+        return "sample", sample.sensor_id, sample.boot_id, sample.sample_id, measurement.quantity
+    if measurement.original_id is not None:
+        return "original", measurement.position, measurement.quantity, measurement.source, measurement.original_id
+    return None
+
+
+def recognition_event_id(session_id: str, kind, effective_at: datetime) -> str:
+    """Feste Kennung eines erkannten Ereignisses (auch Quelle seiner Lernbelege)."""
+    return f"recognition:{session_id}:{Kind(kind).value}:{utc(effective_at).isoformat()}"
+
+
+@dataclass(frozen=True)
+class InfusionUpdate:
+    """Ende des Dampfabschnitts zu einem bereits gelieferten Aufguss."""
+
+    confirmed_detection: Detection
+    end: InfusionEnd
+
+
+@dataclass(frozen=True)
+class DecisionParameters:
+    """Entscheidung und Nachlauf (in Messschritten), nicht gelernte Festlegungen."""
+
+    q: float = 0.9
+    lag_door: int = 30
+    lag_infusion: int = 10
+    flat_min_samples: int = 20
+    flat_rise_fraction: float = 0.05
+    # rise peaks closer than this (seconds) belong to one infusion (definition, not learned)
+    infusion_merge_s: float = 20.0
+
+    @classmethod
+    def from_dict(cls, data: dict | None) -> DecisionParameters:
+        data = data or {}
+        return cls(**{k: type(getattr(cls, k))(v) for k, v in data.items() if hasattr(cls, k)})
+
+
+# ---------------------------------------------------------------------------
+# Student-t-Verteilungsfunktion (regularisierte unvollständige Betafunktion)
+
+
+def _betacf(a: float, b: float, x: np.ndarray) -> np.ndarray:
+    """Kettenbruch der unvollständigen Betafunktion (modifizierter Lentz)."""
+    tiny = 1e-300
+    qab, qap, qam = a + b, a + 1.0, a - 1.0
+    c = np.ones_like(x)
+    d = 1.0 - qab * x / qap
+    d = np.where(np.abs(d) < tiny, tiny, d)
+    d = 1.0 / d
+    h = d.copy()
+    for m in range(1, 300):
+        m2 = 2 * m
+        aa = m * (b - m) * x / ((qam + m2) * (a + m2))
+        d = 1.0 + aa * d
+        d = np.where(np.abs(d) < tiny, tiny, d)
+        c = 1.0 + aa / c
+        c = np.where(np.abs(c) < tiny, tiny, c)
+        d = 1.0 / d
+        h *= d * c
+        aa = -(a + m) * (qab + m) * x / ((a + m2) * (qap + m2))
+        d = 1.0 + aa * d
+        d = np.where(np.abs(d) < tiny, tiny, d)
+        c = 1.0 + aa / c
+        c = np.where(np.abs(c) < tiny, tiny, c)
+        d = 1.0 / d
+        delta = d * c
+        h *= delta
+        if np.all(np.abs(delta - 1.0) < 1e-12):
+            break
+    return h
+
+
+def _betainc(a: float, b: float, x: np.ndarray) -> np.ndarray:
+    x = np.clip(np.asarray(x, float), 0.0, 1.0)
+    lbeta = math.lgamma(a + b) - math.lgamma(a) - math.lgamma(b)
+    with np.errstate(divide="ignore"):
+        front = np.exp(lbeta + a * np.log(np.where(x > 0, x, 1)) + b * np.log(np.where(x < 1, 1 - x, 1)))
+    front = np.where((x > 0) & (x < 1), front, 0.0)
+    swap = x >= (a + 1) / (a + b + 2)
+    direct = front * _betacf(a, b, np.where(swap, 0.5, x)) / a
+    mirrored = 1.0 - front * _betacf(b, a, np.where(swap, 1 - x, 0.5)) / b
+    out = np.where(swap, mirrored, direct)
+    return np.where(x <= 0, 0.0, np.where(x >= 1, 1.0, out))
+
+
+def t_cdf(t, dof: float) -> np.ndarray:
+    """Verteilungsfunktion der Student-t-Verteilung."""
+    t = np.asarray(t, float)
+    tail = 0.5 * _betainc(dof / 2, 0.5, dof / (dof + t * t))
+    return np.where(t > 0, 1 - tail, tail)
+
+
+# ---------------------------------------------------------------------------
+# Abflachen als Kurvenform
+
+
+def flattening_probability(x, y, min_samples: int, rise_fraction: float):
+    """Wahrscheinlichkeit, dass ``y`` nach einem Knick abgeflacht ist.
+
+    Stetiges Zwei-Segment-Modell ``y = b0 + b1·(x − τ) + b2·max(x − τ, 0)`` mit
+    unbekanntem Rauschen und flacher A-priori-Verteilung; über den Knick ``τ``
+    wird mit seiner Evidenz gemittelt.  Abgeflacht heißt: vorher fallend
+    (``s1 = b1 < 0``), danach ``s1/e < s2 < rise_fraction·|s1|`` mit
+    ``s2 = b1 + b2`` – nicht mehr steil fallend und nicht wieder steigend.
+    Liefert ``(Wahrscheinlichkeit, Knickzeit)``.
+    """
+    x = np.asarray(x, float)
+    y = np.asarray(y, float)
+    n = len(x)
+    m = int(min_samples)
+    if n < 2 * m + 1:
+        return 0.0, None
+    x = x - x[0]
+    # suffix sums over points right of each candidate kink (strictly increasing x)
+    rx = np.concatenate([np.cumsum(x[::-1])[::-1][1:], [0.0]])
+    rxx = np.concatenate([np.cumsum((x * x)[::-1])[::-1][1:], [0.0]])
+    ry = np.concatenate([np.cumsum(y[::-1])[::-1][1:], [0.0]])
+    rxy = np.concatenate([np.cumsum((x * y)[::-1])[::-1][1:], [0.0]])
+    rn = np.arange(n - 1, -1, -1, dtype=float)
+    k = np.arange(m, n - m)
+    tau = x[k]
+    sx, sxx, sy, sxy, syy = x.sum(), (x * x).sum(), y.sum(), (x * y).sum(), (y * y).sum()
+    s1 = sx - n * tau
+    s2 = sxx - 2 * tau * sx + n * tau * tau
+    a = rx[k] - rn[k] * tau
+    b = rxx[k] - 2 * tau * rx[k] + rn[k] * tau * tau
+    xtx = np.empty((len(k), 3, 3))
+    xtx[:, 0, 0] = n
+    xtx[:, 0, 1] = xtx[:, 1, 0] = s1
+    xtx[:, 0, 2] = xtx[:, 2, 0] = a
+    xtx[:, 1, 1] = s2
+    xtx[:, 1, 2] = xtx[:, 2, 1] = b
+    xtx[:, 2, 2] = b
+    xty = np.stack([np.full(len(k), sy), sxy - tau * sy, rxy[k] - tau * ry[k]], axis=1)
+    det = np.linalg.det(xtx)
+    ok = det > 1e-12 * np.abs(xtx).max(axis=(1, 2)) ** 3
+    if not ok.any():
+        return 0.0, None
+    xtx, xty, tau, det = xtx[ok], xty[ok], tau[ok], det[ok]
+    inv = np.linalg.inv(xtx)
+    coef = np.einsum("kij,kj->ki", inv, xty)
+    rss = syy - np.einsum("ki,ki->k", coef, xty)
+    dof = n - 3
+    good = rss > 0
+    if not good.any():
+        return 0.0, None
+    inv, coef, rss, tau, det = inv[good], coef[good], rss[good], tau[good], det[good]
+    logw = -0.5 * np.log(det) - 0.5 * dof * np.log(rss)
+    s2v = rss / dof
+    flat_low = np.array([0.0, 1 - 1 / math.e, 1.0])                 # s2 − s1/e > 0
+    flat_high = np.array([0.0, -1 - rise_fraction, -1.0])           # rise·|s1| − s2 > 0  (s1 < 0)
+    falling = np.array([0.0, -1.0, 0.0])                            # −s1 > 0
+
+    def prob(vec):
+        se = np.sqrt(s2v * np.einsum("i,kij,j->k", vec, inv, vec))
+        return t_cdf(coef @ vec / se, dof)
+
+    p_low, p_high, p_fall = prob(flat_low), prob(flat_high), prob(falling)
+    p = np.maximum(p_low + p_high - 1, 0.0) * p_fall               # Fréchet lower bound of the joint
+    w = np.exp(logw - logw.max())
+    w /= w.sum()
+    return float((w * p).sum()), float(tau[int(np.argmax(w))])
+
+
+def falling_probability(x, y) -> float:
+    """P(Steigung < 0) einer Geraden durch die Punkte (Student-t)."""
+    x = np.asarray(x, float)
+    y = np.asarray(y, float)
+    if len(x) < 4:
+        return 0.0
+    u = x - x.mean()
+    suu = float((u * u).sum())
+    if suu <= 0:
+        return 0.0
+    slope = float((u * (y - y.mean())).sum() / suu)
+    res = y - y.mean() - slope * u
+    dof = len(x) - 2
+    se = math.sqrt(max(float(res @ res) / dof / suu, 1e-30))
+    return float(t_cdf(np.array([-slope / se]), dof)[0])
+
+
+# ---------------------------------------------------------------------------
+# Episoden aus geglätteten Wahrscheinlichkeiten
+
+
+@dataclass
+class _Episode:
+    """Kandidat → bestätigt → beendet, auf einer Zeitreihe von Wahrscheinlichkeiten."""
+
+    q: float
+    inside: bool = False
+    candidate: int | None = None
+    start: int | None = None
+    leave_candidate: int | None = None
+
+    def feed(self, s: int, p: float):
+        """Return ('start', start_index) or ('end', end_index) when confirmed at step s."""
+        if not self.inside:
+            if p <= 1 - self.q:
+                self.candidate = None
+            elif self.candidate is None:
+                self.candidate = s
+            if p >= self.q:
+                self.inside = True
+                self.start = self.candidate if self.candidate is not None else s
+                self.leave_candidate = None
+                return "start", self.start
+            return None
+        back = 1 - p
+        if back <= 1 - self.q:
+            self.leave_candidate = None
+        elif self.leave_candidate is None:
+            self.leave_candidate = s
+        if back >= self.q:
+            self.inside = False
+            end = self.leave_candidate if self.leave_candidate is not None else s
+            self.candidate = None
+            return "end", end
+        return None
+
+
+@dataclass
+class _OpenDoor:
+    start: int
+    confirmed: int
+    ventilated: tuple[int, int] | None = None
+    exchanged: tuple[int, int] | None = None
+    next_check: int = 0
+    scan: int = 0                    # next step to look for the evident opening
+    opened: int | None = None        # first step of the episode with filtered P(open) ≥ q
+    fall: int | None = None          # begin of the humidity fall: its maximum after the evident opening
+
+
+@dataclass
+class SessionRecord:
+    """Session data kept for learning: grid, channel values, RH and decisions."""
+
+    times: list = field(default_factory=list)
+    values: list = field(default_factory=list)
+    relative: list = field(default_factory=list)
+    door_prob: list = field(default_factory=list)
+    infusion_prob: list = field(default_factory=list)
+
+
+class ClimateRecognizer:
+    """Messwerte annehmen, Zustandsmodell fortschreiben, Ereignisse liefern."""
+
+    def __init__(self, parameters: dict, origin: datetime, *, positions=(Position.UPPER, Position.LOWER),
+                 observer=None, keep_record: bool = True, evaluate: bool = True, outside_reference=None):
+        self.origin = utc(origin)
+        self.positions = tuple(Position(p) for p in positions)
+        channels = tuple(c for c in CHANNELS if CHANNEL_SOURCES[c][0] in self.positions)
+        if not channels:
+            raise ValueError("Erkennung benötigt mindestens eine Messposition")
+        self.channels = channels
+        self.model_parameters = ModelParameters.from_dict(parameters, channels)
+        self.decision = DecisionParameters.from_dict(parameters.get("decision"))
+        self.observer = observer
+        self.evaluate = evaluate
+        self.clock_position = Position.UPPER if Position.UPPER in self.positions else Position.LOWER
+        self._latest: dict[tuple[Position, Quantity], tuple[datetime, float]] = {}
+        self._pending: deque = deque()
+        self._clocks: dict = {}                                # physical sensor clock → (time, monotonic ns)
+        self._seen: OrderedDict = OrderedDict()               # recent originals → value (redelivery)
+        self._model: StateModel | None = None
+        self._outside: list = []
+        self._outside_t: list = []
+        self.outside = None
+        # surrounding air of an earlier session ({channel: value}); used when this session starts warmer
+        self.outside_reference = dict(outside_reference) if outside_reference else None
+        self.outside_from_reference = False
+        self._last_time: datetime | None = None
+        self._steps = 0
+        lag_max = max(self.decision.lag_door, self.decision.lag_infusion)
+        self._buffer: deque = deque(maxlen=lag_max + 1)       # (t, filtered mu, lik, T)
+        self._door = _Episode(self.decision.q)
+        self._infusion = _Episode(self.decision.q)
+        self._steam = _Episode(self.decision.q)               # infusion rise and decay together
+        self._steam_infusions: list[Detection] = []           # delivered infusions of the current steam episode
+        self._held: list[Detection] = []                      # infusions confirmed while the door is still open
+        self._peak: float | None = None                       # rise end (peak) of the latest infusion pour
+        self._undecided: Detection | None = None              # pour that started shortly after that peak
+        self._held_end: InfusionEnd | None = None
+        self.updates: list[InfusionUpdate] = []
+        self._open: _OpenDoor | None = None
+        self._grid_t: list = []          # seconds since origin for every model step
+        self._grid_rh: list = []         # relative humidity of the clock position
+        self._grid_t_temp: list = []     # temperature of the clock position
+        self._grid_temps: list = []      # temperatures of all positions
+        self._temperature_index = [i for i, c in enumerate(self.channels) if not c.startswith("A")]
+        self._rejected = False           # current door episode without a temperature fall (no opening)
+        self._grid_ah: list = []         # absolute humidity of the clock position
+        self._grid_open: list = []       # filtered probability of the open door
+        self.record = SessionRecord() if keep_record else None
+        self.detections: list[Detection] = []
+        self.diagnostic: dict | None = None
+
+    # -- inputs -----------------------------------------------------------------
+
+    @property
+    def active_positions(self) -> tuple[Position, ...]:
+        return tuple(p for p in self.positions if (p, Quantity.TEMPERATURE) in self._latest
+                     and (p, Quantity.HUMIDITY) in self._latest)
+
+    def accept(self, measurement: Measurement) -> bool:
+        """Einen Messwert übernehmen; die Auswertung folgt in ``advance``.
+
+        Zeitachse ist die Messzeit: bei physischen Proben die monotone Uhr des
+        Sensors ab seinem ersten Wert (Korrekturen der Sensoruhrzeit verschieben
+        die Kurve nicht), sonst die Messzeit, wenn sie nicht nach dem Empfang
+        liegt, sonst der Empfang.  Werte von vor dem Beginn (der aktuelle Stand
+        beim Sitzungsstart) gelten ab dem Beginn.  Ein erneut geliefertes
+        Original mit demselben Wert zählt nicht noch einmal.
+        """
+        if measurement.position not in self.positions or measurement.value is None:
+            return False
+        identity = _original_identity(measurement)
+        if identity is not None:
+            if identity in self._seen and self._seen[identity] == measurement.value:
+                return False
+            self._seen[identity] = measurement.value
+            self._seen.move_to_end(identity)
+            while len(self._seen) > ORIGINAL_MEMORY:
+                self._seen.popitem(last=False)
+        at = max(self._coordinate(measurement), self.origin)
+        self._pending.append((at, measurement.position, measurement.quantity, float(measurement.value)))
+        return True
+
+    def _coordinate(self, measurement: Measurement) -> datetime:
+        received = utc(measurement.received_at)
+        measured = utc(measurement.measured_at) if measurement.measured_at is not None else None
+        sample = measurement.sample
+        if sample is not None:
+            clock = sample.sensor_id, sample.boot_id
+            anchor_at, anchor_ns = self._clocks.setdefault(
+                clock, (min(measured or received, received), sample.monotonic_ns))
+            return anchor_at + timedelta(microseconds=(sample.monotonic_ns - anchor_ns) / 1000)
+        return measured if measured is not None and measured <= received else received
+
+    # -- processing ----------------------------------------------------------------
+
+    @property
+    def processed_until(self) -> datetime | None:
+        """Zeit des zuletzt ausgewerteten Messschritts."""
+        return self._last_time
+
+    def advance(self, through: datetime, *, on_detection=None, on_infusion_update=None,
+                **_unused) -> list[Detection]:
+        """Alle bis ``through`` vorliegenden Messwerte auswerten.
+
+        Ereignisse und Aufgussenden werden in ihrer Entstehungsreihenfolge
+        zurückgemeldet, jedes zu seinem Messschritt.
+        """
+        through = utc(through)
+        pending = sorted((p for p in self._pending if p[0] <= through), key=lambda p: p[0])
+        self._pending = deque(p for p in self._pending if p[0] > through)
+        out: list[Detection] = []
+        index = 0
+        while index < len(pending):
+            # all values of one time first (one physical sample: temperature and humidity), then one step
+            at = pending[index][0]
+            clock = False
+            while index < len(pending) and pending[index][0] == at:
+                _, position, quantity, value = pending[index]
+                index += 1
+                previous = self._latest.get((position, quantity))
+                if previous is not None and at < previous[0]:
+                    continue      # a delayed original older than the current value does not replace it
+                self._latest[(position, quantity)] = (at, value)
+                clock = clock or (position is self.clock_position and quantity is Quantity.TEMPERATURE)
+            if not clock:
+                continue
+            for item in self._step(at):
+                if isinstance(item, InfusionUpdate):
+                    self.updates.append(item)
+                    if on_infusion_update is not None:
+                        on_infusion_update(item)
+                    continue
+                out.append(item)
+                self.detections.append(item)
+                if on_detection is not None:
+                    on_detection(item)
+        return out
+
+    def _observation(self):
+        values, rh = [], None
+        for channel in self.channels:
+            position, kind = CHANNEL_SOURCES[channel]
+            temperature = self._latest.get((position, Quantity.TEMPERATURE))
+            humidity = self._latest.get((position, Quantity.HUMIDITY))
+            if temperature is None or (kind == "A" and humidity is None):
+                return None, None
+            if kind == "T":
+                values.append(temperature[1])
+            else:
+                try:
+                    values.append(absolute_humidity(temperature[1], min(max(humidity[1], 0.0), 100.0)))
+                except ValueError:
+                    return None, None
+        humidity = self._latest.get((self.clock_position, Quantity.HUMIDITY))
+        rh = humidity[1] if humidity else None
+        return np.array(values), rh
+
+    def _step(self, at: datetime) -> list[Detection]:
+        if self._last_time is not None and at <= self._last_time:
+            return []             # same reading time (a repeated or corrected value): no new step
+        y, rh = self._observation()
+        if y is None or rh is None:
+            return []
+        sec = (at - self.origin).total_seconds()
+        if self.record is not None:
+            self.record.times.append(sec)
+            self.record.values.append([float(v) for v in y])
+            self.record.relative.append(float(rh))
+        if not self.evaluate:
+            self._last_time = at
+            return []
+        if self._model is None:
+            # the cabin air at the start stands for the surrounding air (mean of the first 30 samples);
+            # a cabin that starts warmer than the surrounding air of an earlier session is still warm from
+            # before, then that earlier surrounding air applies
+            self._outside.append(y)
+            self._outside_t.append(sec)
+            if len(self._outside) < 30:
+                self._last_time = at
+                return []
+            self.outside = np.mean(self._outside, axis=0)
+            reference = self.outside_reference
+            if reference and all(c in reference for c in self.channels):
+                temps = [i for i, c in enumerate(self.channels) if not c.startswith("A")]
+                if any(self.outside[i] > reference[self.channels[i]] for i in temps):
+                    self.outside = np.array([float(reference[c]) for c in self.channels])
+                    self.outside_from_reference = True
+            # the state starts at the newest values; the drift from the slope of the start samples
+            drift, drift_var = _start_drift(np.asarray(self._outside_t), np.asarray(self._outside))
+            self._model = StateModel(self.model_parameters, y, self.outside, drift=drift, drift_var=drift_var)
+            self._last_time = at
+            return []
+        dt = (at - self._last_time).total_seconds()
+        self._last_time = at
+        mu = self._model.step(dt, y).copy()
+        self._buffer.append((sec, mu, self._model.lik.copy(), self._model.T.copy()))
+        self._grid_t.append(sec)
+        self._grid_open.append(float(mu[OPEN]))
+        self._grid_rh.append(math.log(max(rh, 0.1)))
+        clock_t = self.channels.index("Tu" if self.clock_position is Position.UPPER else "Tl")
+        clock_a = self.channels.index("Au" if self.clock_position is Position.UPPER else "Al")
+        self._grid_t_temp.append(float(y[clock_t]))
+        self._grid_temps.append([float(y[i]) for i in self._temperature_index])
+        self._grid_ah.append(math.log(max(float(y[clock_a]), 0.1)))
+        self._steps += 1
+        out = []
+        out.extend(self._decide_door(at))
+        out.extend(self._decide_infusion(at))
+        out.extend(self._flattening(at))
+        self.diagnostic = {
+            "at": at.isoformat(),
+            "state_probabilities": {name: round(float(v), 4) for name, v in zip(
+                ("closed", "open", "infusion", "decay", "recovery", "shift"), mu)},
+        }
+        if self.observer is not None:
+            self.observer(self.diagnostic)
+        return out
+
+    def _smoothed(self, lag: int):
+        """P(state at step s | data up to s + lag) for s = newest − lag; None while the lag is not filled."""
+        buf = self._buffer
+        if len(buf) <= lag:
+            return None
+        items = list(buf)[-(lag + 1):]
+        sec, mu, _, _ = items[0]
+        beta = np.ones(NM)
+        for k in range(len(items) - 1, 0, -1):
+            _, _, lik, T = items[k]
+            emission = np.exp(lik - lik.max())
+            beta = T @ (emission * beta)
+            beta /= beta.sum()
+        post = mu * beta
+        return sec, post / post.sum()
+
+    def _index_time(self, index: int) -> datetime:
+        return self.origin + timedelta(seconds=self._grid_t[index])
+
+    def _door_pending(self) -> bool:
+        """The door episode is open or its closing is not yet confirmed."""
+        return (self._door.inside and not self._rejected) or (not self._door.inside and self._door.candidate is not None)
+
+    def _temperature_falls(self, start: int) -> bool:
+        """An opening lets the temperature fall at once: from the episode start to its lowest value since
+        then the temperature falls with probability q at one of the sensors at least."""
+        times = self._grid_t[start:]
+        temps = np.asarray(self._grid_temps[start:], float)
+        for k in range(temps.shape[1] if temps.ndim == 2 else 0):
+            low = int(np.argmin(temps[:, k]))
+            if low >= 3 and falling_probability(times[:low + 1], temps[:low + 1, k]) >= self.decision.q:
+                return True
+        return False
+
+    def _decide_door(self, at: datetime) -> list:
+        smoothed = self._smoothed(self.decision.lag_door)
+        if smoothed is None:
+            return []
+        sec, post = smoothed
+        s = self._steps - 1 - self.decision.lag_door
+        p_open = float(post[OPEN])
+        if self.record is not None:
+            self.record.door_prob.append((s, p_open))
+        result = self._door.feed(s, p_open)
+        if result is None:
+            if self._held and not self._door_pending():
+                return self._release_held(None, at)      # the opening was not confirmed
+            return []
+        what, index = result
+        effective = min(self._index_time(index), at)
+        if what == "start":
+            if not self._temperature_falls(index):
+                # the humidity alone (e.g. the decay after an infusion) without a temperature fall is no opening
+                self._rejected = True
+                return self._release_held(None, at) if self._held else []
+            self._open = _OpenDoor(start=index, confirmed=self._steps - 1, next_check=index, scan=index)
+            return [Detection(Kind.DOOR_OPEN, effective, at, self.channels, trace_at=at, probability=p_open)]
+        if self._rejected:
+            self._rejected = False
+            return []
+        self._open = None
+        evidence = DoorCloseEvidence(effective, at)
+        out: list = [Detection(Kind.DOOR_CLOSE, effective, at, self.channels, trace_at=at,
+                               door_close_evidence=evidence, probability=1 - p_open)]
+        out.extend(self._release_held(effective, at))
+        return out
+
+    def _release_held(self, closed_at: datetime | None, at: datetime) -> list:
+        """Infusions held while a door episode was undecided; after a closing they follow it."""
+        out: list = []
+        for held in self._held:
+            effective = held.effective_at if closed_at is None else max(held.effective_at, closed_at)
+            detection = Detection(Kind.INFUSION, min(effective, at), at, held.channels,
+                                  trace_at=at, probability=held.probability)
+            out.append(detection)
+            self._steam_infusions.append(detection)
+        self._held = []
+        if self._held_end is not None:
+            out.extend(self._end_steam(self._held_end))
+            self._held_end = None
+        return out
+
+    def _decide_infusion(self, at: datetime) -> list:
+        smoothed = self._smoothed(self.decision.lag_infusion)
+        if smoothed is None:
+            return []
+        sec, post = smoothed
+        s = self._steps - 1 - self.decision.lag_infusion
+        p_inf = float(post[INFUSION])
+        if self.record is not None:
+            self.record.infusion_prob.append((s, p_inf))
+        out: list = []
+        result = self._infusion.feed(s, p_inf)
+        merge = self.decision.infusion_merge_s
+        if result is not None and result[0] == "start":
+            effective = min(self._index_time(result[1]), at)
+            detection = Detection(Kind.INFUSION, effective, at, self.channels, trace_at=at, probability=p_inf)
+            if self._peak is not None and self._grid_t[result[1]] - self._peak < merge:
+                self._undecided = detection          # its peak decides whether it is a further infusion
+            else:
+                out.extend(self._deliver_infusion(detection))
+        elif result is not None:
+            # end of the rise: the peak of this pour; peaks closer than the merge time are one infusion
+            peak = self._grid_t[result[1]]
+            if self._undecided is not None:
+                if peak - self._peak >= merge:
+                    first = self._undecided
+                    out.extend(self._deliver_infusion(Detection(
+                        Kind.INFUSION, first.effective_at, at, first.channels, trace_at=at,
+                        probability=first.probability)))
+                self._undecided = None
+            self._peak = peak
+        # steam episode (rise and decay): its end completes the infusions delivered in it
+        steam = self._steam.feed(s, float(post[INFUSION] + post[DECAY]))
+        if steam is not None and steam[0] == "end":
+            end_at = min(self._index_time(steam[1]), at)
+            # the steam ends into an opened door or decays in the closed cabin
+            opened = post[OPEN] > post[CLOSED] + post[SHIFT] + post[RECOVERY]
+            end = InfusionEnd(end_at, at, at, "door_open" if opened else "steam_decayed", "physical_effective")
+            if self._held:
+                self._held_end = end
+            else:
+                out.extend(self._end_steam(end))
+        return out
+
+    def _deliver_infusion(self, detection: Detection) -> list:
+        """A recognized infusion: held while a door episode is undecided, otherwise delivered."""
+        if self._door_pending():
+            self._held.append(detection)
+            return []
+        self._steam_infusions.append(detection)
+        return [detection]
+
+    def _end_steam(self, end: InfusionEnd) -> list:
+        out = []
+        for detection in self._steam_infusions:
+            if detection.effective_at <= end.effective_at:
+                out.append(InfusionUpdate(detection, end))
+        self._steam_infusions = []
+        return out
+
+    def _flattening(self, at: datetime) -> list[Detection]:
+        """Lüften (relative Feuchte flach) und Durchgelüftet (absolute Feuchte flach) bei offener Tür."""
+        door = self._open
+        if door is None or door.exchanged is not None:
+            return []
+        out = []
+        newest = self._steps - 1
+        d = self.decision
+        if door.fall is None:
+            # the smoothed episode may begin before the opening shows, e.g. over the decay of an infusion
+            # just before; then the humidity also falls from its maximum after the filtered state shows
+            # the open door
+            while door.opened is None and door.scan <= newest:
+                if self._grid_open[door.scan] >= d.q:
+                    door.opened = door.scan
+                door.scan += 1
+            if door.opened is not None and newest >= door.opened + d.flat_min_samples:
+                window = self._grid_rh[door.opened:door.opened + d.flat_min_samples]
+                door.fall = door.opened + int(np.argmax(window))
+        while door.next_check <= newest and door.exchanged is None:
+            j = door.next_check
+            door.next_check += 2
+            if door.ventilated is None:
+                series = self._grid_rh
+                begins = (door.start,) if door.fall is None or door.fall <= door.start else (door.start, door.fall)
+            else:
+                series, begins = self._grid_ah, (door.ventilated[0],)
+            found = None
+            for begin in begins:
+                found = self._flat_stage(series, begin, j)
+                if found is not None:
+                    break
+            if found is None:
+                continue
+            p, kink = found
+            effective = self._index_time(kink)
+            if door.ventilated is None:
+                door.ventilated = (kink, j)
+                out.append(Detection(Kind.VENTILATION, effective, at, self.channels, trace_at=at, probability=p))
+            else:
+                door.exchanged = (kink, j)
+                out.append(Detection(Kind.VENTILATION_COMPLETE, effective, at, self.channels, trace_at=at,
+                                     probability=p))
+        return out
+
+    def _flat_stage(self, series: list, begin: int, j: int):
+        """(probability, kink step) when ``series[begin:j + 1]`` has flattened during the open door."""
+        d = self.decision
+        times = self._grid_t
+        x = np.asarray(times[begin:j + 1])
+        if len(x) < 2 * d.flat_min_samples + 1:
+            return None
+        p, tau = flattening_probability(x, np.asarray(series[begin:j + 1]), d.flat_min_samples,
+                                        d.flat_rise_fraction)
+        if p < d.q or tau is None:
+            return None
+        kink = int(np.searchsorted(times, x[0] + tau))
+        # the flattening only counts while the door is still open after the kink (a closing door also
+        # stops the fall) and the temperature keeps falling
+        seg = slice(kink, j + 1)
+        if j + 1 - kink < 4 or float(np.mean(self._grid_open[seg])) < d.q:
+            return None
+        if falling_probability(times[seg], self._grid_t_temp[seg]) < d.q:
+            return None
+        return p, kink
