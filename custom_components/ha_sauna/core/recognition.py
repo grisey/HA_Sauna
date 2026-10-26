@@ -90,11 +90,14 @@ class InfusionUpdate:
 
 @dataclass(frozen=True)
 class DecisionParameters:
-    """Entscheidung und Nachlauf (in Messschritten), nicht gelernte Festlegungen."""
+    """Nicht gelernte Festlegungen der Entscheidung.
 
-    q: float = 0.9
-    lag_door: int = 30
-    lag_infusion: int = 10
+    ``evidence_ratio``: Ein Zustand gilt als bestätigt, wenn er mindestens so
+    viel wahrscheinlicher ist als die nächstbeste Erklärung (150:1, „sehr starke
+    Evidenz“ nach Kass und Raftery).  Es gibt keine feste Wartezeit.
+    """
+
+    evidence_ratio: float = 150.0
     flat_min_samples: int = 20
     flat_rise_fraction: float = 0.05
 
@@ -253,39 +256,78 @@ def falling_probability(x, y) -> float:
 
 
 @dataclass
-class _Episode:
-    """Kandidat → bestätigt → beendet, auf einer Zeitreihe von Wahrscheinlichkeiten."""
+class _Track:
+    """Episode eines Zustands (oder einer Zustandsgruppe) über die geglätteten Wahrscheinlichkeiten.
 
-    q: float
+    Kandidat: Der Zustand ist an einem Messschritt die wahrscheinlichste Erklärung.
+    Bestätigt: An einem Schritt der Episode ist er mindestens ``ratio``-mal so
+    wahrscheinlich wie die nächstbeste Erklärung.  Der Zeitpunkt ist der erste
+    Schritt der Episode, bestimmt mit allen Messwerten bis zur Bestätigung.  Das
+    Ende ebenso: Kandidat, sobald eine andere Erklärung die wahrscheinlichste ist,
+    bestätigt bei ``ratio`` zugunsten der anderen.
+    """
+
+    states: tuple
     inside: bool = False
-    candidate: int | None = None
     start: int | None = None
-    leave_candidate: int | None = None
+    floor: int = 0                 # first step not yet decided
+    candidate: bool = False        # an unconfirmed start or end is pending
 
-    def feed(self, s: int, p: float):
-        """Return ('start', start_index) or ('end', end_index) when confirmed at step s."""
-        if not self.inside:
-            if p <= 1 - self.q:
-                self.candidate = None
-            elif self.candidate is None:
-                self.candidate = s
-            if p >= self.q:
-                self.inside = True
-                self.start = self.candidate if self.candidate is not None else s
-                self.leave_candidate = None
-                return "start", self.start
-            return None
-        back = 1 - p
-        if back <= 1 - self.q:
-            self.leave_candidate = None
-        elif self.leave_candidate is None:
-            self.leave_candidate = s
-        if back >= self.q:
-            self.inside = False
-            end = self.leave_candidate if self.leave_candidate is not None else s
-            self.candidate = None
-            return "end", end
-        return None
+    def scan(self, post: np.ndarray, base: int, ratio: float) -> list:
+        events = []
+        mask = np.zeros(post.shape[1], bool)
+        mask[list(self.states)] = True
+        target = post[:, mask].sum(1)
+        other = post[:, ~mask].max(1)
+        n = len(post)
+        i = max(self.floor - base, 0)
+        self.candidate = False
+        open_block = False             # an unconfirmed earlier candidate may still be confirmed later
+        while i < n:
+            if not self.inside:
+                if target[i] > other[i]:
+                    j = i
+                    while j < n and target[j] > other[j]:
+                        if target[j] >= ratio * other[j]:
+                            break
+                        j += 1
+                    if j < n and target[j] > other[j]:
+                        events.append(("start", base + i))
+                        self.inside, self.start = True, base + i
+                        i += 1
+                        self.floor = base + i
+                        continue
+                    if j >= n:
+                        self.candidate = True        # pending: more data decides
+                        break
+                    if any(other[k] < ratio * target[k] for k in range(i, j)):
+                        open_block = True            # it ended unconfirmed but is not ruled out
+                    i = j
+                    continue
+                if other[i] >= ratio * target[i] and not open_block:
+                    self.floor = base + i + 1        # settled: no episode here and none before
+                i += 1                               # an undecided step stays open, a later one may start
+                continue
+            if target[i] >= other[i]:
+                i += 1
+                self.floor = base + i
+                continue
+            j = i
+            while j < n and target[j] < other[j]:
+                if other[j] >= ratio * target[j]:
+                    break
+                j += 1
+            if j < n and target[j] < other[j]:
+                events.append(("end", base + i))
+                self.inside = False
+                i += 1
+                self.floor = base + i
+                continue
+            if j >= n:
+                self.candidate = True
+                break
+            i = j                                    # back in the state: no end
+        return events
 
 
 @dataclass
@@ -337,11 +379,12 @@ class ClimateRecognizer:
         self.outside_from_reference = False
         self._last_time: datetime | None = None
         self._steps = 0
-        lag_max = max(self.decision.lag_door, self.decision.lag_infusion)
-        self._buffer: deque = deque(maxlen=lag_max + 1)       # (t, filtered mu, lik, T)
-        self._door = _Episode(self.decision.q)
-        self._infusion = _Episode(self.decision.q)
-        self._steam = _Episode(self.decision.q)               # infusion rise and decay together
+        self._buffer: deque = deque()                         # (step, filtered mu, lik, T) of undecided steps
+        self._door = _Track((OPEN,))
+        self._infusion = _Track((INFUSION,))
+        self._steam = _Track((INFUSION, DECAY))                # infusion rise and decay together
+        self._post: np.ndarray | None = None                  # smoothed probabilities of the buffered steps
+        self._post_base = 0
         self._steam_infusions: list[Detection] = []           # delivered infusions of the current steam episode
         self._held: list[Detection] = []                      # infusions confirmed while the door is still open
         self._held_end: InfusionEnd | None = None
@@ -500,7 +543,7 @@ class ClimateRecognizer:
         dt = (at - self._last_time).total_seconds()
         self._last_time = at
         mu = self._model.step(dt, y).copy()
-        self._buffer.append((sec, mu, self._model.lik.copy(), self._model.T.copy()))
+        self._buffer.append((self._steps, mu, self._model.lik.copy(), self._model.T.copy()))
         self._grid_t.append(sec)
         self._grid_open.append(float(mu[OPEN]))
         self._grid_rh.append(math.log(max(rh, 0.1)))
@@ -510,8 +553,10 @@ class ClimateRecognizer:
         self._grid_ah.append(math.log(max(float(y[clock_a]), 0.1)))
         self._steps += 1
         out = []
+        self._smooth()
         out.extend(self._decide_door(at))
         out.extend(self._decide_infusion(at))
+        self._trim()
         out.extend(self._flattening(at))
         self.diagnostic = {
             "at": at.isoformat(),
@@ -522,53 +567,63 @@ class ClimateRecognizer:
             self.observer(self.diagnostic)
         return out
 
-    def _smoothed(self, lag: int):
-        """P(state at step s | data up to s + lag) for s = newest − lag; None while the lag is not filled."""
-        buf = self._buffer
-        if len(buf) <= lag:
-            return None
-        items = list(buf)[-(lag + 1):]
-        sec, mu, _, _ = items[0]
+    def _smooth(self) -> None:
+        """P(state at every buffered step | all data so far): backward pass from the newest step."""
+        items = list(self._buffer)
+        n = len(items)
+        post = np.empty((n, NM))
         beta = np.ones(NM)
-        for k in range(len(items) - 1, 0, -1):
+        post[-1] = items[-1][1]
+        for k in range(n - 1, 0, -1):
             _, _, lik, T = items[k]
             emission = np.exp(lik - lik.max())
             beta = T @ (emission * beta)
             beta /= beta.sum()
-        post = mu * beta
-        return sec, post / post.sum()
+            row = items[k - 1][1] * beta
+            post[k - 1] = row / row.sum()
+        self._post = post
+        self._post_base = items[0][0]
+
+    def _trim(self) -> None:
+        """Drop steps that every episode has decided."""
+        floor = min(self._door.floor, self._infusion.floor, self._steam.floor)
+        if self._open is not None:
+            floor = min(floor, self._open.start)
+        while self._buffer and self._buffer[0][0] < floor and len(self._buffer) > 1:
+            self._buffer.popleft()
+
+    def _posterior(self, index: int) -> np.ndarray | None:
+        k = index - self._post_base
+        if self._post is None or not 0 <= k < len(self._post):
+            return None
+        return self._post[k]
 
     def _index_time(self, index: int) -> datetime:
         return self.origin + timedelta(seconds=self._grid_t[index])
 
     def _door_pending(self) -> bool:
-        """The door episode is open or its closing is not yet confirmed."""
-        return self._door.inside or self._door.candidate is not None
+        """The door episode is open or its start or end is not yet decided."""
+        return self._door.inside or self._door.candidate
 
     def _decide_door(self, at: datetime) -> list:
-        smoothed = self._smoothed(self.decision.lag_door)
-        if smoothed is None:
-            return []
-        sec, post = smoothed
-        s = self._steps - 1 - self.decision.lag_door
-        p_open = float(post[OPEN])
+        ratio = self.decision.evidence_ratio
         if self.record is not None:
-            self.record.door_prob.append((s, p_open))
-        result = self._door.feed(s, p_open)
-        if result is None:
-            if self._held and not self._door_pending():
-                return self._release_held(None, at)      # the opening was not confirmed
-            return []
-        what, index = result
-        effective = min(self._index_time(index), at)
-        if what == "start":
-            self._open = _OpenDoor(start=index, confirmed=self._steps - 1, next_check=index)
-            return [Detection(Kind.DOOR_OPEN, effective, at, self.channels, trace_at=at, probability=p_open)]
-        self._open = None
-        evidence = DoorCloseEvidence(effective, at)
-        out: list = [Detection(Kind.DOOR_CLOSE, effective, at, self.channels, trace_at=at,
-                               door_close_evidence=evidence, probability=1 - p_open)]
-        out.extend(self._release_held(effective, at))
+            self.record.door_prob.append((self._steps - 1, float(self._post[-1][OPEN])))
+        out: list = []
+        for what, index in self._door.scan(self._post, self._post_base, ratio):
+            effective = min(self._index_time(index), at)
+            p_open = float(self._posterior(index)[OPEN])
+            if what == "start":
+                self._open = _OpenDoor(start=index, confirmed=self._steps - 1, next_check=index)
+                out.append(Detection(Kind.DOOR_OPEN, effective, at, self.channels, trace_at=at, probability=p_open))
+                continue
+            self._open = None
+            evidence = DoorCloseEvidence(effective, at)
+            out.append(Detection(Kind.DOOR_CLOSE, effective, at, self.channels, trace_at=at,
+                                 door_close_evidence=evidence, probability=1 - p_open))
+            out.extend(self._release_held(effective, at))
+        if self._held and not self._door_pending():
+            out.extend(self._release_held(None, at))      # the opening was not confirmed
         return out
 
     def _release_held(self, closed_at: datetime | None, at: datetime) -> list:
@@ -587,24 +642,22 @@ class ClimateRecognizer:
         return out
 
     def _decide_infusion(self, at: datetime) -> list:
-        smoothed = self._smoothed(self.decision.lag_infusion)
-        if smoothed is None:
-            return []
-        sec, post = smoothed
-        s = self._steps - 1 - self.decision.lag_infusion
-        p_inf = float(post[INFUSION])
+        ratio = self.decision.evidence_ratio
         if self.record is not None:
-            self.record.infusion_prob.append((s, p_inf))
+            self.record.infusion_prob.append((self._steps - 1, float(self._post[-1][INFUSION])))
         out: list = []
-        result = self._infusion.feed(s, p_inf)
-        if result is not None and result[0] == "start":
-            effective = min(self._index_time(result[1]), at)
-            detection = Detection(Kind.INFUSION, effective, at, self.channels, trace_at=at, probability=p_inf)
-            out.extend(self._deliver_infusion(detection))
+        for what, index in self._infusion.scan(self._post, self._post_base, ratio):
+            if what == "start":
+                effective = min(self._index_time(index), at)
+                detection = Detection(Kind.INFUSION, effective, at, self.channels, trace_at=at,
+                                      probability=float(self._posterior(index)[INFUSION]))
+                out.extend(self._deliver_infusion(detection))
         # steam episode (rise and decay): its end completes the infusions delivered in it
-        steam = self._steam.feed(s, float(post[INFUSION] + post[DECAY]))
-        if steam is not None and steam[0] == "end":
-            end_at = min(self._index_time(steam[1]), at)
+        for what, index in self._steam.scan(self._post, self._post_base, ratio):
+            if what != "end":
+                continue
+            post = self._posterior(index)
+            end_at = min(self._index_time(index), at)
             # the steam ends into an opened door or decays in the closed cabin
             opened = post[OPEN] > post[CLOSED] + post[SHIFT] + post[RECOVERY]
             end = InfusionEnd(end_at, at, at, "door_open" if opened else "steam_decayed", "physical_effective")
@@ -668,14 +721,19 @@ class ClimateRecognizer:
             return None
         p, tau = flattening_probability(x, np.asarray(series[begin:j + 1]), d.flat_min_samples,
                                         d.flat_rise_fraction)
-        if p < d.q or tau is None:
+        sure = d.evidence_ratio / (1.0 + d.evidence_ratio)       # probability at the evidence ratio
+        if p < sure or tau is None:
             return None
         kink = int(np.searchsorted(times, x[0] + tau))
         # the flattening only counts while the door is still open after the kink (a closing door also
         # stops the fall) and the temperature keeps falling
         seg = slice(kink, j + 1)
-        if j + 1 - kink < 4 or float(np.mean(self._grid_open[seg])) < d.q:
+        if j + 1 - kink < 4:
             return None
-        if falling_probability(times[seg], self._grid_t_temp[seg]) < d.q:
+        for step in range(kink, j + 1):                  # the door stays the most probable explanation
+            post = self._posterior(step)
+            if post is None or post[OPEN] < post.max():
+                return None
+        if falling_probability(times[seg], self._grid_t_temp[seg]) < sure:
             return None
         return p, kink

@@ -233,42 +233,46 @@ class RecognizerTests(unittest.TestCase):
         self.assertTrue(recognizer.outside_from_reference)
         np.testing.assert_allclose(recognizer.outside, [21.0, 21.0, 8.0, 8.0])
 
-    def test_infusion_waits_for_an_undecided_door_and_follows_its_closing(self):
+    def test_episodes_are_confirmed_by_evidence_ratio_and_timed_at_their_first_step(self):
+        def row(closed=0.0, opened=0.0, infusion=0.0, decay=0.0):
+            r = np.zeros(NM)
+            r[CLOSED], r[OPEN], r[INFUSION], r[DECAY] = closed, opened, infusion, decay
+            return r / r.sum()
+
+        def script(k):                                  # smoothed probabilities of steps 0..k seen at step k
+            rows = [row(closed=1)] * 3
+            rows += [row(closed=0.4, infusion=0.6) if k < 7 else row(closed=0.001, infusion=0.999)]
+            rows += [row(closed=0.3, opened=0.7)] * 3       # door candidate 4..6, confirmed from step 7 on
+            rows += [row(closed=0.001, opened=0.999)] * 3
+            rows += [row(closed=0.6, opened=0.4)] * 2       # closing candidate at 10
+            rows += [row(closed=0.999, opened=0.001)] * 3
+            return np.array(rows[:k + 1])
+
         recognizer = ClimateRecognizer(parameters(), T0)
-        script = []                                   # (p_open at lag 30, p_infusion, p_decay at lag 10)
-        script += [(0.0, 0.0, 0.0)] * 5
-        script += [(0.95, 0.0, 0.0)] * 5              # door confirmed open
-        script += [(0.95, 0.95, 0.0)] * 2             # infusion confirmed while the door is open
-        script += [(0.95, 0.0, 0.9)] * 2
-        script += [(0.05, 0.0, 0.9)] * 2              # closing confirmed
-        script += [(0.0, 0.0, 0.0)] * 3               # steam over
-        state = {"k": -1}
-
-        def smoothed(lag):
-            k = state["k"]
-            p_open, p_inf, p_dec = script[k]
-            post = np.zeros(NM)
-            if lag == recognizer.decision.lag_door:
-                post[OPEN], post[CLOSED] = p_open, 1 - p_open
-            else:
-                post[INFUSION], post[DECAY], post[CLOSED] = p_inf, p_dec, 1 - p_inf - p_dec
-            return 0.0, post
-
-        recognizer._smoothed = smoothed
-        recognizer._steps = 100
-        recognizer._grid_t = [float(i) for i in range(200)]
+        recognizer._grid_t = [float(i) for i in range(15)]
         events = []
-        for k in range(len(script)):
-            state["k"] = k
-            recognizer._steps += 1
-            at = T0 + timedelta(seconds=k)
+        for k in range(15):
+            recognizer._steps = k + 1
+            recognizer._post, recognizer._post_base = script(k), 0
+            at = T0 + timedelta(seconds=100 + k)
             events.extend(recognizer._decide_door(at))
             events.extend(recognizer._decide_infusion(at))
-        kinds = [e.kind if not isinstance(e, InfusionUpdate) else "end" for e in events]
-        self.assertEqual(kinds, [Kind.DOOR_OPEN, Kind.DOOR_CLOSE, Kind.INFUSION, "end"])
-        close, infusion = events[1], events[2]
-        self.assertGreaterEqual(infusion.effective_at, close.effective_at)
-        self.assertEqual(events[3].confirmed_detection, infusion)
+        found = [(e.kind, (e.effective_at - T0).total_seconds()) for e in events if not isinstance(e, InfusionUpdate)]
+        # the infusion confirmed while the door was undecided follows the confirmed closing
+        self.assertEqual(found, [(Kind.DOOR_OPEN, 4.0), (Kind.DOOR_CLOSE, 10.0), (Kind.INFUSION, 10.0)])
+
+    def test_a_candidate_without_the_evidence_ratio_is_no_event(self):
+        recognizer = ClimateRecognizer(parameters(), T0)
+        rows = [np.eye(NM)[CLOSED]] * 3 + [np.array([0.2, 0.8, 0, 0, 0, 0])] * 4 + [np.eye(NM)[CLOSED] * 0.999
+                                                                                   + np.eye(NM)[OPEN] * 0.001] * 4
+        recognizer._grid_t = [float(i) for i in range(len(rows))]
+        events = []
+        for k in range(len(rows)):
+            recognizer._steps = k + 1
+            recognizer._post, recognizer._post_base = np.array(rows[:k + 1]), 0
+            events.extend(recognizer._decide_door(T0 + timedelta(seconds=50 + k)))
+        self.assertEqual(events, [])
+        self.assertFalse(recognizer._door_pending())
 
     def test_event_identity_is_stable(self):
         at = T0 + timedelta(seconds=12.5)

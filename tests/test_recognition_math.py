@@ -7,7 +7,7 @@ import numpy as np
 
 from custom_components.ha_sauna.core.moisture import absolute_humidity
 from custom_components.ha_sauna.core.recognition import (
-    _Episode,
+    _Track,
     falling_probability,
     flattening_probability,
     t_cdf,
@@ -117,20 +117,22 @@ class ExponentialTests(unittest.TestCase):
             self.assertAlmostEqual(saturation_humidity(temperature), absolute_humidity(temperature, 100.0), places=9)
 
 
-class EpisodeTests(unittest.TestCase):
-    def test_candidate_confirmation_and_symmetric_leaving(self):
-        episode = _Episode(0.9)
-        sequence = [0.0, 0.05, 0.3, 0.6, 0.95, 0.97, 0.8, 0.5, 0.05, 0.01]
-        results = [episode.feed(s, p) for s, p in enumerate(sequence)]
-        self.assertEqual(results[4], ("start", 2))           # candidate began when 0.1 was left
-        self.assertEqual(results[8], ("end", 6))             # leaving began when 0.9 was left
-        self.assertTrue(all(r is None for i, r in enumerate(results) if i not in (4, 8)))
+class TrackTests(unittest.TestCase):
+    @staticmethod
+    def rows(p_target):
+        return np.array([[1 - p, p] for p in p_target])
 
-    def test_candidate_returning_to_rest_is_forgotten(self):
-        episode = _Episode(0.9)
-        for s, p in enumerate([0.0, 0.5, 0.05, 0.2, 0.95]):
-            result = episode.feed(s, p)
-        self.assertEqual(result, ("start", 3))
+    def test_episode_starts_at_its_first_step_once_the_evidence_ratio_is_reached(self):
+        track = _Track((1,))
+        events = track.scan(self.rows([0.0, 0.3, 0.6, 0.9, 0.995, 0.6, 0.2, 0.001]), 0, 150.0)
+        self.assertEqual(events, [("start", 2), ("end", 6)])   # 0.6 at step 5 is still the door
+
+    def test_unconfirmed_candidate_stays_pending_and_is_no_event(self):
+        track = _Track((1,))
+        self.assertEqual(track.scan(self.rows([0.0, 0.6, 0.9]), 0, 150.0), [])
+        self.assertTrue(track.candidate)
+        self.assertEqual(track.scan(self.rows([0.0, 0.6, 0.9, 0.3, 0.001]), 0, 150.0), [])
+        self.assertFalse(track.candidate)
 
 
 if __name__ == "__main__":
