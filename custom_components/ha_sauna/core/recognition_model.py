@@ -107,6 +107,7 @@ class ModelParameters:
     source_corr: np.ndarray  #   ihre Korrelation zwischen den Kanälen
     source_q: float         #   und ihre Wanderung innerhalb einer Öffnung ((g/m³/s)²/s); 0 = konstant
     decay_slope: np.ndarray  # Abklingen: Startverteilung (Mittel, Streuung) der Zusatzsteigung je Kanal
+    strat: np.ndarray       # Feuchtedifferenz oben − unten je Zustand: Lage, Skala, ν, Korrelationszeit (NaN: keine)
     qe: np.ndarray          # Wanderung der Ereignisgröße
     rates: np.ndarray       # Übergangsraten zwischen den Zuständen (1/s)
     jump: np.ndarray        # Sprung der Grunddrift beim Heizwechsel
@@ -137,6 +138,8 @@ class ModelParameters:
             source_q=float(data.get("source_q") or 0.0),
             decay_slope=(arr("decay_slope")[index] if "decay_slope" in data
                          else np.zeros((len(index), 2))),
+            strat=(np.array([[math.nan] * 4 if row is None else row for row in data["strat"]], float)
+                   if data.get("strat") and "Au" in channels and "Al" in channels else np.full((NM, 4), math.nan)),
             qe=arr("qe")[:, index],
             rates=arr("rates"),
             jump=arr("jump")[index],
@@ -243,6 +246,14 @@ class StateModel:
         if drift is not None:
             self.x[:, self.ir] = np.asarray(drift, float)
             self.P[:, self.ir, self.ir] = np.asarray(drift_var, float)
+        # stratification: the humidity difference upper − lower as an additional state-specific quantity
+        self.strat_pair = ((channels.index("Au"), channels.index("Al"))
+                           if np.isfinite(p.strat).all() and "Au" in channels and "Al" in channels else None)
+        if self.strat_pair is not None:
+            loc, sc, nu, _ = p.strat.T
+            self.strat_const = np.array([math.lgamma((v + 1) / 2) - math.lgamma(v / 2) - 0.5 * math.log(v * math.pi)
+                                         for v in nu]) - np.log(sc)
+        self.last_strat = np.zeros(NM)                 # log contribution of the difference in the latest step
         self.mu = np.full(NM, 1e-6)
         self.mu[CLOSED] = 1 - (NM - 1) * 1e-6
         self.lik = np.zeros(NM)
@@ -436,6 +447,12 @@ class StateModel:
             cov[j] = cov[j] - np.outer(gain, cov[j, e, :])
             cov[j] = 0.5 * (cov[j] + cov[j].T)
         self.x, self.P = x, cov
+        if self.strat_pair is not None:
+            loc, sc, nu, tau = self.p.strat.T
+            diff = y[self.strat_pair[0]] - y[self.strat_pair[1]]
+            weight = np.minimum(1.0, dt / tau)         # one correlation time counts as one observation
+            self.last_strat = weight * (self.strat_const - (nu + 1) / 2 * np.log1p(((diff - loc) / sc) ** 2 / nu))
+            lik = lik + self.last_strat
         logw = np.log(np.maximum(prior_mode, 1e-300)) + lik
         top = logw.max()
         w = np.exp(logw - top)

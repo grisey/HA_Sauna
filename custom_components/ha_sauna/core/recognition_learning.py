@@ -35,6 +35,8 @@ NU_GRID = (1.5, 2.0, 3.0, 4.0, 6.0, 10.0, 30.0, 100.0)
 # steam turbulence κ (level variance per second relative to the squared event rate): likelihood profile grid
 KAPPA_GRID = np.geomspace(1e-3, 16.0, 9)
 SOURCE_Q_GRID = np.geomspace(1e-7, 1e-2, 11)        # wandering of the moisture source in an opening
+STRAT_BINS = np.linspace(-20.0, 20.0, 401)          # histogram of the humidity difference upper − lower (g/m³)
+STRAT_LAGS = 400                                    # autocorrelation of the difference over this many steps
 
 
 def _slope(t, y):
@@ -277,6 +279,9 @@ def empty_evidence(channels=CHANNELS) -> dict:
         "turbulence_profile": [],
         "source_q_grid": SOURCE_Q_GRID.tolist(),
         "source_profile": [],
+        "strat_hist": [[0] * (len(STRAT_BINS) - 1) for _ in MODES],
+        "strat_ac": [[0.0] * STRAT_LAGS for _ in MODES],  # Σ lagged products of deviations (lag 0, 1, …)
+        "strat_ac_n": [[0] * STRAT_LAGS for _ in MODES],   # their counts
     }
 
 
@@ -311,6 +316,12 @@ def merge_evidence(*items: dict) -> dict:
             out["source_profile"] += ev.get("source_profile", [])
         out["jumps"] += ev["jumps"]
         out["drift"] += ev.get("drift", [])
+        for j in range(NM):
+            if "strat_hist" in ev:
+                out["strat_hist"][j] = [a + b for a, b in zip(out["strat_hist"][j], ev["strat_hist"][j])]
+                if len(ev["strat_ac"][j]) == STRAT_LAGS:
+                    out["strat_ac"][j] = [a + b for a, b in zip(out["strat_ac"][j], ev["strat_ac"][j])]
+                    out["strat_ac_n"][j] = [a + b for a, b in zip(out["strat_ac_n"][j], ev["strat_ac_n"][j])]
     return out
 
 
@@ -493,6 +504,22 @@ def collect_evidence(times, values, channels, labels, *, outside=None, exclude=(
     for k, (row, dd) in enumerate(zip(slopes.tolist(), dist)):
         if all(math.isfinite(v) for v in row):
             ev["drift"].append([session, k] + row + [float(dd)])
+    # stratification: humidity difference upper − lower per labelled state and its correlation time
+    if "Au" in channels and "Al" in channels:
+        diff = y[:, channels.index("Au")] - y[:, channels.index("Al")]
+        for j in range(NM):
+            hist, _ = np.histogram(diff[mode == j], bins=STRAT_BINS)
+            ev["strat_hist"][j] = [a + int(b) for a, b in zip(ev["strat_hist"][j], hist)]
+            if not (mode == j).any():
+                continue
+            centre = float(np.median(diff[mode == j]))       # deviation from the state's level, not the run mean
+            for s in _runs(mode == j, 10):
+                d = diff[s] - centre
+                lags = min(STRAT_LAGS, len(d))
+                prod = np.correlate(d, d, mode="full")[len(d) - 1:len(d) - 1 + lags]
+                ev["strat_ac"][j] = [a + float(b) for a, b in zip(ev["strat_ac"][j], prod)] + ev["strat_ac"][j][lags:]
+                ev["strat_ac_n"][j] = ([a + len(d) - k for k, a in enumerate(ev["strat_ac_n"][j][:lags])]
+                                       + ev["strat_ac_n"][j][lags:])
     dts = np.diff(t)
     for j in range(NM):
         ev["occupancy"][j] += float(dts[mode[:-1] == j].sum())
@@ -660,6 +687,50 @@ def likelihood_evidence(evidence: dict, params: dict, times, values, *, turbulen
             if any(v is None or not math.isfinite(v) for v in profile):
                 continue
             evidence["source_profile"].append([profile, source])
+
+
+def stratification(evidence: dict) -> list | None:
+    """Verteilung der Feuchtedifferenz oben − unten je Zustand: Lage, Skala, ν und Korrelationszeit.
+
+    Student-t per Maximum-Likelihood über das Histogramm (Lage Median, Skala per EM
+    je ν).  Die Korrelationszeit folgt aus der Autokorrelation aufeinanderfolgender
+    Schritte; sie gewichtet die Differenz im Modell (ein langsam veränderlicher Wert
+    zählt nicht bei jedem Messschritt neu).
+    """
+    hists = np.asarray(evidence.get("strat_hist") or [], float)
+    if not len(hists):
+        return None
+    centres = (STRAT_BINS[:-1] + STRAT_BINS[1:]) / 2
+    dt = float(np.median(evidence["dt"])) if evidence["dt"] else 1.0
+    out = []
+    for j in range(NM):
+        counts = hists[min(j, len(hists) - 1)] if j != SHIFT else hists[CLOSED]
+        if counts.sum() < 200:
+            out.append(None)
+            continue
+        cum = np.cumsum(counts) / counts.sum()
+        loc = float(centres[np.searchsorted(cum, 0.5)])
+        u = centres - loc
+        best = None
+        for nu in NU_GRID:
+            s2 = float((counts * u ** 2).sum() / counts.sum()) or 1e-4
+            for _ in range(50):
+                w = (nu + 1) / (nu + u ** 2 / s2)
+                s2 = max(float((counts * w * u ** 2).sum() / counts.sum()), 1e-6)
+            ll = float((counts * (math.lgamma((nu + 1) / 2) - math.lgamma(nu / 2) - 0.5 * math.log(nu * math.pi * s2)
+                                  - (nu + 1) / 2 * np.log1p(u ** 2 / (nu * s2)))).sum())
+            if best is None or ll > best[0]:
+                best = (ll, nu, math.sqrt(s2))
+        # integrated autocorrelation time: dt·(1 + 2·Σ ρ_k) up to the first lag where ρ is no longer positive
+        sums = np.asarray(evidence["strat_ac"][j if j != SHIFT else CLOSED], float)
+        counts_k = np.asarray(evidence["strat_ac_n"][j if j != SHIFT else CLOSED], float)
+        ok = counts_k > 0
+        rho = np.where(ok, sums / np.maximum(counts_k, 1), 0.0)
+        rho = rho / rho[0] if rho[0] > 0 else rho
+        cut = int(np.argmax(rho[1:] <= 0)) + 1 if (rho[1:] <= 0).any() else len(rho)
+        tau = dt * (1.0 + 2.0 * float(rho[1:cut].sum()))
+        out.append([loc, best[2], best[1], tau])
+    return out
 
 
 def _fit_student(hist: np.ndarray):
@@ -900,6 +971,7 @@ def estimate(evidence: dict, *, base: dict, rejected=frozenset()) -> dict:
     dts = evidence["dt"]
     rates[SHIFT, CLOSED] = 1.0 / (float(np.median(dts)) if dts else 1.0)
     params["rates"] = rates.tolist()
+    params["strat"] = stratification(evidence)
     hist = np.asarray(evidence["innovations"], float)
     nu = np.asarray(base["nu"], float).copy()
     nus = np.asarray(base["nus"], float).copy()

@@ -149,8 +149,9 @@ async def replay(case_dir: Path, parameters: dict | None, *, presence: bool = Fa
                       if e.event_id.startswith("recognition:")]
     detections = [(d.kind.value, (d.effective_at - ORIGIN).total_seconds(), (d.detected_at - ORIGIN).total_seconds())
                   for rec in recognizers for d in rec.detections]
+    decisions = [d for rec in recognizers for d in rec.decisions]
     return {"recording": case_dir.name, "sessions": len(sessions), "gangs": gangs, "retracted": retracted,
-            "detections": detections, "processed": processed, "rejected": rejected}
+            "detections": detections, "processed": processed, "rejected": rejected, "decisions": decisions}
 
 
 def main():

@@ -251,6 +251,8 @@ def falling_probability(x, y) -> float:
     return float(t_cdf(np.array([-slope / se]), dof)[0])
 
 
+MODE_NAMES = ("closed", "open", "infusion", "decay", "recovery", "shift")
+
 # ---------------------------------------------------------------------------
 # Episoden aus geglätteten Wahrscheinlichkeiten
 
@@ -292,7 +294,7 @@ class _Track:
                             break
                         j += 1
                     if j < n and target[j] > other[j]:
-                        events.append(("start", base + i))
+                        events.append(("start", base + i, base + j))
                         self.inside, self.start = True, base + i
                         i += 1
                         self.floor = base + i
@@ -318,7 +320,7 @@ class _Track:
                     break
                 j += 1
             if j < n and target[j] < other[j]:
-                events.append(("end", base + i))
+                events.append(("end", base + i, base + j))
                 self.inside = False
                 i += 1
                 self.floor = base + i
@@ -397,6 +399,7 @@ class ClimateRecognizer:
         self._grid_open: list = []       # filtered probability of the open door
         self.record = SessionRecord() if keep_record else None
         self.detections: list[Detection] = []
+        self.decisions: list[dict] = []                     # why and when every event was decided
         self.diagnostic: dict | None = None
 
     # -- inputs -----------------------------------------------------------------
@@ -543,7 +546,8 @@ class ClimateRecognizer:
         dt = (at - self._last_time).total_seconds()
         self._last_time = at
         mu = self._model.step(dt, y).copy()
-        self._buffer.append((self._steps, mu, self._model.lik.copy(), self._model.T.copy()))
+        self._buffer.append((self._steps, mu, self._model.lik.copy(), self._model.T.copy(),
+                             self._model.last_strat.copy()))
         self._grid_t.append(sec)
         self._grid_open.append(float(mu[OPEN]))
         self._grid_rh.append(math.log(max(rh, 0.1)))
@@ -575,7 +579,7 @@ class ClimateRecognizer:
         beta = np.ones(NM)
         post[-1] = items[-1][1]
         for k in range(n - 1, 0, -1):
-            _, _, lik, T = items[k]
+            _, _, lik, T, _ = items[k]
             emission = np.exp(lik - lik.max())
             beta = T @ (emission * beta)
             beta /= beta.sum()
@@ -591,6 +595,31 @@ class ClimateRecognizer:
             floor = min(floor, self._open.start)
         while self._buffer and self._buffer[0][0] < floor and len(self._buffer) > 1:
             self._buffer.popleft()
+
+    def _explain(self, kind, index: int, confirmed: int, states: tuple, at: datetime, entering: bool) -> None:
+        """Record why and when an event was decided: competing explanation, ratio, contribution of the
+        humidity difference upper − lower over the episode."""
+        post = self._posterior(confirmed)
+        mask = np.zeros(NM, bool)
+        mask[list(states)] = True
+        p_target = float(post[mask].sum())
+        others = np.where(~mask)[0]
+        rival = int(others[np.argmax(post[others])])
+        p_rival = float(post[rival])
+        winner, loser = (states[0], rival) if entering else (rival, states[0])
+        items = list(self._buffer)
+        lo, hi = min(index, confirmed), max(index, confirmed)
+        strat = sum(float(e[4][winner] - e[4][loser]) for e in items if lo <= e[0] <= hi)
+        self.decisions.append({
+            "event": Kind(kind).value,
+            "effective_at": self._index_time(index).isoformat(),
+            "decided_at": at.isoformat(),
+            "state": MODE_NAMES[winner],
+            "against": MODE_NAMES[loser],
+            "ratio": round((p_target / max(p_rival, 1e-300)) if entering else (p_rival / max(p_target, 1e-300)), 1),
+            "steps_to_decision": confirmed - index,
+            "difference_factor": round(math.exp(strat), 2),
+        })
 
     def _posterior(self, index: int) -> np.ndarray | None:
         k = index - self._post_base
@@ -610,7 +639,9 @@ class ClimateRecognizer:
         if self.record is not None:
             self.record.door_prob.append((self._steps - 1, float(self._post[-1][OPEN])))
         out: list = []
-        for what, index in self._door.scan(self._post, self._post_base, ratio):
+        for what, index, confirmed in self._door.scan(self._post, self._post_base, ratio):
+            self._explain(Kind.DOOR_OPEN if what == "start" else Kind.DOOR_CLOSE, index, confirmed, (OPEN,), at,
+                          what == "start")
             effective = min(self._index_time(index), at)
             p_open = float(self._posterior(index)[OPEN])
             if what == "start":
@@ -646,14 +677,15 @@ class ClimateRecognizer:
         if self.record is not None:
             self.record.infusion_prob.append((self._steps - 1, float(self._post[-1][INFUSION])))
         out: list = []
-        for what, index in self._infusion.scan(self._post, self._post_base, ratio):
+        for what, index, confirmed in self._infusion.scan(self._post, self._post_base, ratio):
             if what == "start":
+                self._explain(Kind.INFUSION, index, confirmed, (INFUSION,), at, True)
                 effective = min(self._index_time(index), at)
                 detection = Detection(Kind.INFUSION, effective, at, self.channels, trace_at=at,
                                       probability=float(self._posterior(index)[INFUSION]))
                 out.extend(self._deliver_infusion(detection))
         # steam episode (rise and decay): its end completes the infusions delivered in it
-        for what, index in self._steam.scan(self._post, self._post_base, ratio):
+        for what, index, _confirmed in self._steam.scan(self._post, self._post_base, ratio):
             if what != "end":
                 continue
             post = self._posterior(index)

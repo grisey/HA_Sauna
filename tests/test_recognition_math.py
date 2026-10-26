@@ -125,7 +125,7 @@ class TrackTests(unittest.TestCase):
     def test_episode_starts_at_its_first_step_once_the_evidence_ratio_is_reached(self):
         track = _Track((1,))
         events = track.scan(self.rows([0.0, 0.3, 0.6, 0.9, 0.995, 0.6, 0.2, 0.001]), 0, 150.0)
-        self.assertEqual(events, [("start", 2), ("end", 6)])   # 0.6 at step 5 is still the door
+        self.assertEqual([e[:2] for e in events], [("start", 2), ("end", 6)])   # 0.6 at step 5 is still the door
 
     def test_unconfirmed_candidate_stays_pending_and_is_no_event(self):
         track = _Track((1,))
