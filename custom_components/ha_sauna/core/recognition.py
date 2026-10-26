@@ -270,6 +270,7 @@ class _Track:
     """
 
     states: tuple
+    exits: tuple = ()              # the episode ends only into these states (empty: any other state)
     inside: bool = False
     start: int | None = None
     floor: int = 0                 # first step not yet decided
@@ -310,7 +311,8 @@ class _Track:
                     self.floor = base + i + 1        # settled: no episode here and none before
                 i += 1                               # an undecided step stays open, a later one may start
                 continue
-            if target[i] >= other[i]:
+            leaves = target[i] < other[i] and (not self.exits or int(np.argmax(post[i])) in self.exits)
+            if not leaves:
                 i += 1
                 self.floor = base + i
                 continue
@@ -382,7 +384,7 @@ class ClimateRecognizer:
         self._last_time: datetime | None = None
         self._steps = 0
         self._buffer: deque = deque()                         # (step, filtered mu, lik, T) of undecided steps
-        self._door = _Track((OPEN,))
+        self._door = _Track((OPEN,), exits=(RECOVERY, INFUSION, DECAY))   # a closing: recovery sets in (or steam)
         self._infusion = _Track((INFUSION,))
         self._steam = _Track((INFUSION, DECAY))                # infusion rise and decay together
         self._post: np.ndarray | None = None                  # smoothed probabilities of the buffered steps

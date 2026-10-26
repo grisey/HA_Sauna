@@ -234,9 +234,9 @@ class RecognizerTests(unittest.TestCase):
         np.testing.assert_allclose(recognizer.outside, [21.0, 21.0, 8.0, 8.0])
 
     def test_episodes_are_confirmed_by_evidence_ratio_and_timed_at_their_first_step(self):
-        def row(closed=0.0, opened=0.0, infusion=0.0, decay=0.0):
+        def row(closed=0.0, opened=0.0, infusion=0.0, decay=0.0, recovery=0.0):
             r = np.zeros(NM)
-            r[CLOSED], r[OPEN], r[INFUSION], r[DECAY] = closed, opened, infusion, decay
+            r[CLOSED], r[OPEN], r[INFUSION], r[DECAY], r[RECOVERY] = closed, opened, infusion, decay, recovery
             return r / r.sum()
 
         def script(k):                                  # smoothed probabilities of steps 0..k seen at step k
@@ -244,8 +244,8 @@ class RecognizerTests(unittest.TestCase):
             rows += [row(closed=0.4, infusion=0.6) if k < 7 else row(closed=0.001, infusion=0.999)]
             rows += [row(closed=0.3, opened=0.7)] * 3       # door candidate 4..6, confirmed from step 7 on
             rows += [row(closed=0.001, opened=0.999)] * 3
-            rows += [row(closed=0.6, opened=0.4)] * 2       # closing candidate at 10
-            rows += [row(closed=0.999, opened=0.001)] * 3
+            rows += [row(recovery=0.6, opened=0.4)] * 2     # closing candidate at 10: the recovery sets in
+            rows += [row(recovery=0.999, opened=0.001)] * 3
             return np.array(rows[:k + 1])
 
         recognizer = ClimateRecognizer(parameters(), T0)
