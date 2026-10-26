@@ -646,7 +646,7 @@ def base_parameters(channels=CHANNELS) -> dict:
         "modes": list(MODES),
         # decision: probability threshold and confirmation horizon in measurement steps
         "decision": {"q": 0.9, "lag_door": 30, "lag_infusion": 10, "flat_min_samples": 20,
-                     "flat_rise_fraction": 0.05, "infusion_merge_s": 20.0},
+                     "flat_rise_fraction": 0.05},
         # random-walk intensities chosen by model evidence on the training recordings
         "qd": [1e-6] * c,
         "qlam": 1e-3,

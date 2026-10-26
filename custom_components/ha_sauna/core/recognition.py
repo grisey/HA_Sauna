@@ -97,8 +97,6 @@ class DecisionParameters:
     lag_infusion: int = 10
     flat_min_samples: int = 20
     flat_rise_fraction: float = 0.05
-    # rise peaks closer than this (seconds) belong to one infusion (definition, not learned)
-    infusion_merge_s: float = 20.0
 
     @classmethod
     def from_dict(cls, data: dict | None) -> DecisionParameters:
@@ -297,9 +295,6 @@ class _OpenDoor:
     ventilated: tuple[int, int] | None = None
     exchanged: tuple[int, int] | None = None
     next_check: int = 0
-    scan: int = 0                    # next step to look for the evident opening
-    opened: int | None = None        # first step of the episode with filtered P(open) ≥ q
-    fall: int | None = None          # begin of the humidity fall: its maximum after the evident opening
 
 
 @dataclass
@@ -349,17 +344,12 @@ class ClimateRecognizer:
         self._steam = _Episode(self.decision.q)               # infusion rise and decay together
         self._steam_infusions: list[Detection] = []           # delivered infusions of the current steam episode
         self._held: list[Detection] = []                      # infusions confirmed while the door is still open
-        self._peak: float | None = None                       # rise end (peak) of the latest infusion pour
-        self._undecided: Detection | None = None              # pour that started shortly after that peak
         self._held_end: InfusionEnd | None = None
         self.updates: list[InfusionUpdate] = []
         self._open: _OpenDoor | None = None
         self._grid_t: list = []          # seconds since origin for every model step
         self._grid_rh: list = []         # relative humidity of the clock position
         self._grid_t_temp: list = []     # temperature of the clock position
-        self._grid_temps: list = []      # temperatures of all positions
-        self._temperature_index = [i for i, c in enumerate(self.channels) if not c.startswith("A")]
-        self._rejected = False           # current door episode without a temperature fall (no opening)
         self._grid_ah: list = []         # absolute humidity of the clock position
         self._grid_open: list = []       # filtered probability of the open door
         self.record = SessionRecord() if keep_record else None
@@ -517,7 +507,6 @@ class ClimateRecognizer:
         clock_t = self.channels.index("Tu" if self.clock_position is Position.UPPER else "Tl")
         clock_a = self.channels.index("Au" if self.clock_position is Position.UPPER else "Al")
         self._grid_t_temp.append(float(y[clock_t]))
-        self._grid_temps.append([float(y[i]) for i in self._temperature_index])
         self._grid_ah.append(math.log(max(float(y[clock_a]), 0.1)))
         self._steps += 1
         out = []
@@ -554,18 +543,7 @@ class ClimateRecognizer:
 
     def _door_pending(self) -> bool:
         """The door episode is open or its closing is not yet confirmed."""
-        return (self._door.inside and not self._rejected) or (not self._door.inside and self._door.candidate is not None)
-
-    def _temperature_falls(self, start: int) -> bool:
-        """An opening lets the temperature fall at once: from the episode start to its lowest value since
-        then the temperature falls with probability q at one of the sensors at least."""
-        times = self._grid_t[start:]
-        temps = np.asarray(self._grid_temps[start:], float)
-        for k in range(temps.shape[1] if temps.ndim == 2 else 0):
-            low = int(np.argmin(temps[:, k]))
-            if low >= 3 and falling_probability(times[:low + 1], temps[:low + 1, k]) >= self.decision.q:
-                return True
-        return False
+        return self._door.inside or self._door.candidate is not None
 
     def _decide_door(self, at: datetime) -> list:
         smoothed = self._smoothed(self.decision.lag_door)
@@ -584,15 +562,8 @@ class ClimateRecognizer:
         what, index = result
         effective = min(self._index_time(index), at)
         if what == "start":
-            if not self._temperature_falls(index):
-                # the humidity alone (e.g. the decay after an infusion) without a temperature fall is no opening
-                self._rejected = True
-                return self._release_held(None, at) if self._held else []
-            self._open = _OpenDoor(start=index, confirmed=self._steps - 1, next_check=index, scan=index)
+            self._open = _OpenDoor(start=index, confirmed=self._steps - 1, next_check=index)
             return [Detection(Kind.DOOR_OPEN, effective, at, self.channels, trace_at=at, probability=p_open)]
-        if self._rejected:
-            self._rejected = False
-            return []
         self._open = None
         evidence = DoorCloseEvidence(effective, at)
         out: list = [Detection(Kind.DOOR_CLOSE, effective, at, self.channels, trace_at=at,
@@ -626,25 +597,10 @@ class ClimateRecognizer:
             self.record.infusion_prob.append((s, p_inf))
         out: list = []
         result = self._infusion.feed(s, p_inf)
-        merge = self.decision.infusion_merge_s
         if result is not None and result[0] == "start":
             effective = min(self._index_time(result[1]), at)
             detection = Detection(Kind.INFUSION, effective, at, self.channels, trace_at=at, probability=p_inf)
-            if self._peak is not None and self._grid_t[result[1]] - self._peak < merge:
-                self._undecided = detection          # its peak decides whether it is a further infusion
-            else:
-                out.extend(self._deliver_infusion(detection))
-        elif result is not None:
-            # end of the rise: the peak of this pour; peaks closer than the merge time are one infusion
-            peak = self._grid_t[result[1]]
-            if self._undecided is not None:
-                if peak - self._peak >= merge:
-                    first = self._undecided
-                    out.extend(self._deliver_infusion(Detection(
-                        Kind.INFUSION, first.effective_at, at, first.channels, trace_at=at,
-                        probability=first.probability)))
-                self._undecided = None
-            self._peak = peak
+            out.extend(self._deliver_infusion(detection))
         # steam episode (rise and decay): its end completes the infusions delivered in it
         steam = self._steam.feed(s, float(post[INFUSION] + post[DECAY]))
         if steam is not None and steam[0] == "end":
@@ -682,30 +638,14 @@ class ClimateRecognizer:
         out = []
         newest = self._steps - 1
         d = self.decision
-        if door.fall is None:
-            # the smoothed episode may begin before the opening shows, e.g. over the decay of an infusion
-            # just before; then the humidity also falls from its maximum after the filtered state shows
-            # the open door
-            while door.opened is None and door.scan <= newest:
-                if self._grid_open[door.scan] >= d.q:
-                    door.opened = door.scan
-                door.scan += 1
-            if door.opened is not None and newest >= door.opened + d.flat_min_samples:
-                window = self._grid_rh[door.opened:door.opened + d.flat_min_samples]
-                door.fall = door.opened + int(np.argmax(window))
         while door.next_check <= newest and door.exchanged is None:
             j = door.next_check
             door.next_check += 2
             if door.ventilated is None:
-                series = self._grid_rh
-                begins = (door.start,) if door.fall is None or door.fall <= door.start else (door.start, door.fall)
+                series, begin = self._grid_rh, door.start
             else:
-                series, begins = self._grid_ah, (door.ventilated[0],)
-            found = None
-            for begin in begins:
-                found = self._flat_stage(series, begin, j)
-                if found is not None:
-                    break
+                series, begin = self._grid_ah, door.ventilated[0]
+            found = self._flat_stage(series, begin, j)
             if found is None:
                 continue
             p, kink = found

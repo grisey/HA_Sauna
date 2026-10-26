@@ -101,27 +101,10 @@ später.
 | Aufguss | Beginn des Zustands Aufguss |
 | Aufgussende | Ende von Aufguss und Abklingen zusammen; öffnet sich vorher die Tür, endet der Aufguss mit der Öffnung |
 
-Eine Türöffnung lässt die Temperatur sofort fallen. Bestätigt wird „Tür auf“
-darum nur, wenn die Temperatur vom Beginn der Episode bis zu ihrem tiefsten
-Wert seither an mindestens einem Sensor fällt (Gerade durch die Messpunkte,
-Wahrscheinlichkeit der fallenden Steigung mindestens `q`). Eine Episode ohne
-diesen Abfall – etwa das Abklingen nach einem Aufguss, bei dem die Feuchte wie
-bei einer Öffnung sinkt und sich einpendelt – ist keine Öffnung: Sie wird
-weder als Öffnen noch als Schließen gemeldet und hält keinen Aufguss zurück.
-
 Ein Aufguss, der bestätigt wird, solange eine Türöffnung noch nicht
 entschieden ist, folgt dem bestätigten Türschluss; er liegt dann nicht vor
 diesem. Wird die Öffnung nicht bestätigt, gilt der Aufguss mit seinem
 eigenen Zeitpunkt.
-
-Mehrere Güsse kurz hintereinander ergeben mehrere Anstiege. Der Gipfel eines
-Anstiegs ist das Ende des Zustands Aufguss. Liegen zwei Gipfel weniger als
-20 Sekunden auseinander, gelten sie als ein Aufguss (Festlegung
-`infusion_merge_s`, nicht gelernt; sie gilt fortlaufend für jeden weiteren
-Gipfel). Beginnt ein Anstieg mindestens 20 Sekunden nach dem letzten Gipfel,
-wird er sofort als Aufguss gemeldet; beginnt er früher, entscheidet sein
-eigener Gipfel, und ein weiterer Aufguss wird erst dann mit dem Zeitpunkt
-seines Beginns gemeldet.
 
 ## Lüften und Durchgelüftet
 
@@ -132,14 +115,6 @@ führenden Sensor:
 | --- | --- | --- |
 | Lüften | ln relative Feuchte flacht ab | Die feuchte Kabinenluft ist ausgetauscht |
 | Durchgelüftet | ln absolute Feuchte flacht ab (nach dem Lüften) | Die Feuchte hat ihr neues Gleichgewicht erreicht |
-
-Die Kurve der relativen Feuchte beginnt mit der Türepisode. Die geglättete
-Episode kann früher beginnen als die Öffnung selbst, etwa über das Abklingen
-eines unmittelbar vorausgehenden Aufgusses; dann gehören ihre ersten
-Messschritte nicht zum Feuchteabfall. Darum wird die Kurve zusätzlich ab dem
-Maximum der relativen Feuchte innerhalb der ersten 20 Messschritte geprüft,
-nachdem die gefilterte Wahrscheinlichkeit des Zustands offen `q` erreicht hat;
-die Stufe gilt, sobald eine der beiden Kurven abgeflacht ist.
 
 Modell ist eine stetige Gerade mit einem Knick:
 `y = b0 + b1·(x − τ) + b2·max(x − τ, 0)` bei unbekanntem Rauschen und

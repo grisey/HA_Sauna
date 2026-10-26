@@ -257,7 +257,6 @@ class RecognizerTests(unittest.TestCase):
         recognizer._smoothed = smoothed
         recognizer._steps = 100
         recognizer._grid_t = [float(i) for i in range(200)]
-        recognizer._grid_temps = [[90.0 - 0.1 * i, 80.0 - 0.1 * i] for i in range(200)]   # the opening cools
         events = []
         for k in range(len(script)):
             state["k"] = k
@@ -270,98 +269,6 @@ class RecognizerTests(unittest.TestCase):
         close, infusion = events[1], events[2]
         self.assertGreaterEqual(infusion.effective_at, close.effective_at)
         self.assertEqual(events[3].confirmed_detection, infusion)
-
-    def test_humidity_episode_without_temperature_fall_is_no_opening(self):
-        # the decay after an infusion can look like an opening in the humidity; the temperature keeps rising
-        for temperatures, expected in (([[84.0 + 0.01 * i, 73.0 + 0.01 * i] for i in range(200)], []),
-                                       ([[84.0 - 0.05 * i, 73.0 - 0.04 * i] for i in range(200)],
-                                        [Kind.DOOR_OPEN, Kind.DOOR_CLOSE])):
-            recognizer = ClimateRecognizer(parameters(), T0)
-            p_open = [0.0] * 5 + [0.95] * 6 + [0.0] * 4
-            state = {"k": -1}
-
-            def smoothed(lag, recognizer=recognizer, state=state, p_open=p_open):
-                post = np.zeros(NM)
-                if lag == recognizer.decision.lag_door:
-                    post[OPEN] = p_open[state["k"]]
-                post[CLOSED] = 1 - post.sum()
-                return 0.0, post
-
-            recognizer._smoothed = smoothed
-            recognizer._steps = 140
-            recognizer._grid_t = [float(i) for i in range(200)]
-            recognizer._grid_temps = temperatures
-            events = []
-            for k in range(len(p_open)):
-                state["k"] = k
-                recognizer._steps += 1
-                events += recognizer._decide_door(T0 + timedelta(seconds=200 + k))
-            self.assertEqual([e.kind for e in events], expected)
-            self.assertFalse(recognizer._door_pending())
-
-    def test_infusion_peaks_closer_than_the_merge_time_are_one_infusion(self):
-        recognizer = ClimateRecognizer(parameters(), T0)
-        p_inf = [0.0] * 80                            # step k decides grid second 90 + k (lag 10)
-        p_inf[2:5] = [0.95] * 3                       # pour 1: start 92 s, peak 95 s
-        p_inf[13:17] = [0.95] * 4                     # pour 2: start 103 s, peak 107 s (12 s later)
-        p_inf[20:40] = [0.95] * 20                    # pour 3: start 110 s, peak 130 s (23 s later)
-        p_inf[60:62] = [0.95] * 2                     # pour 4: start 150 s, 20 s after that peak
-        state = {"k": -1}
-
-        def smoothed(lag):
-            post = np.zeros(NM)
-            if lag == recognizer.decision.lag_infusion:
-                post[INFUSION] = p_inf[state["k"]]
-            post[CLOSED] = 1 - post.sum()
-            return 0.0, post
-
-        recognizer._smoothed = smoothed
-        recognizer._steps = 100
-        recognizer._grid_t = [float(i) for i in range(300)]
-        found = []
-        for k in range(len(p_inf)):
-            state["k"] = k
-            recognizer._steps += 1
-            found += [(k, e) for e in recognizer._decide_infusion(T0 + timedelta(seconds=100 + k))
-                      if not isinstance(e, InfusionUpdate)]
-        self.assertEqual([(k, (e.effective_at - T0).total_seconds()) for k, e in found],
-                         [(2, 92.0), (40, 110.0), (60, 150.0)])
-        self.assertEqual({e.kind for _, e in found}, {Kind.INFUSION})
-
-    def test_ventilation_after_an_infusion_decay_is_read_from_the_visible_opening(self):
-        # R02 at 214:49: the smoothed door episode begins in the decay of the infusion at 214:37, the
-        # filtered state shows the opening only at 215:07; the humidity falls until about 215:42
-        path = Path(__file__).parent / "fixtures/replay/R02.samples.jsonl.gz"
-        with gzip.open(path, "rt") as source:
-            rows = [json.loads(line) for line in source]
-        grid, rh = [], None
-        for row in rows:
-            if not 12880 <= row["t"] <= 13008 or type(row["value"]) not in (float, int):
-                continue
-            if row["role"] == "upper_humidity":
-                rh = row["value"]
-            elif row["role"] == "upper_temperature" and rh is not None:
-                grid.append((row["t"], math.log(rh), math.log(absolute_humidity(row["value"], rh)), row["value"]))
-        times = np.array([g[0] for g in grid])
-        log_rh = np.array([g[1] for g in grid])
-        start = int(np.searchsorted(times, 12889.9))
-        # from the episode start alone the curve does not read as flattened
-        self.assertLess(max(flattening_probability(times[start:j + 1], log_rh[start:j + 1], 20, 0.05)[0]
-                            for j in range(start + 41, len(times))), 0.9)
-        recognizer = ClimateRecognizer(parameters(), T0)
-        recognizer._grid_t = list(times)
-        recognizer._grid_rh = list(log_rh)
-        recognizer._grid_ah = [g[2] for g in grid]
-        recognizer._grid_t_temp = [g[3] for g in grid]
-        recognizer._grid_open = [0.0 if g[0] < 12907.8 else 1.0 for g in grid]
-        recognizer._open = _OpenDoor(start=start, confirmed=start, next_check=start, scan=start)
-        found = []
-        for k in range(start, len(grid)):
-            recognizer._steps = k + 1
-            found += recognizer._flattening(T0 + timedelta(seconds=grid[k][0]))
-        self.assertEqual(found[0].kind, Kind.VENTILATION)
-        self.assertAlmostEqual((found[0].effective_at - T0).total_seconds(), 215 * 60 + 42, delta=10)
-        self.assertGreater(recognizer._open.fall, recognizer._open.opened - 1)
 
     def test_event_identity_is_stable(self):
         at = T0 + timedelta(seconds=12.5)
