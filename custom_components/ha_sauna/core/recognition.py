@@ -27,7 +27,8 @@ import numpy as np
 from .models import Measurement, Position, Quantity
 from .moisture import absolute_humidity
 from .recognition_model import (
-    CHANNELS, CLOSED, DECAY, INFUSION, NM, OPEN, RECOVERY, SHIFT, ModelParameters, StateModel,
+    CHANNELS, CLOSED, DECAY, INFUSION, NM, OPEN, RECOVERY, SHIFT, ModelParameters, StateModel, closing_kink,
+    is_humidity,
 )
 from .timeline import DoorCloseEvidence, InfusionEnd, Kind, utc
 
@@ -401,6 +402,7 @@ class ClimateRecognizer:
         self.updates: list[InfusionUpdate] = []
         self._open: _OpenDoor | None = None
         self._grid_t: list = []          # seconds since origin for every model step
+        self._grid_y: list = []          # channel values of every model step
         self._grid_rh: list = []         # relative humidity of the clock position
         self._grid_t_temp: list = []     # temperature of the clock position
         self._grid_ah: list = []         # absolute humidity of the clock position
@@ -558,6 +560,7 @@ class ClimateRecognizer:
         self._buffer.append((self._steps, mu, self._model.lik.copy(), self._model.T.copy(),
                              self._model.last_strat.copy()))
         self._grid_t.append(sec)
+        self._grid_y.append(y)
         self._grid_open.append(float(mu[OPEN]))
         self._grid_rh.append(math.log(max(rh, 0.1)))
         clock_t = self.channels.index("Tu" if self.clock_position is Position.UPPER else "Tl")
@@ -683,6 +686,7 @@ class ClimateRecognizer:
                 self._open = _OpenDoor(start=index, confirmed=self._steps - 1, next_check=index)
                 out.append(Detection(Kind.DOOR_OPEN, effective, at, self.channels, trace_at=at, probability=p_open))
                 continue
+            effective = min(self._closing_time(self._open.start if self._open else None, index), at)
             self._open = None
             evidence = DoorCloseEvidence(effective, at)
             out.append(Detection(Kind.DOOR_CLOSE, effective, at, self.channels, trace_at=at,
@@ -691,6 +695,25 @@ class ClimateRecognizer:
         if self._held and not self._door_pending():
             out.extend(self._release_held(None, at))      # the opening was not confirmed
         return out
+
+    def _closing_time(self, start: int | None, index: int) -> datetime:
+        """Zeitpunkt des Schließens: Knick am Ende des Abfalls der offenen Tür.
+
+        Die Bestätigung (Beginn der Erholung bei ``index``) bleibt die Entscheidung;
+        ihr Zeitpunkt ist der Knick der gelernten Vergleichsform (``closing_kink``)
+        in den Temperaturkanälen, bestimmt über die Messschritte von der Öffnung
+        bis zum aktuellen Schritt.  Ohne gelernte Form oder ohne Knick mit
+        anschließender Erholung gilt ``index``.
+        """
+        fallback = self._index_time(index)
+        form = self.model_parameters.close_form
+        columns = [i for i, c in enumerate(self.channels) if not is_humidity(c) and form[i] is not None]
+        if start is None or start >= index or not columns:
+            return fallback
+        t = np.asarray(self._grid_t[start:])
+        y = np.asarray(self._grid_y[start:])[:, columns]
+        kink = closing_kink(t, y, t[t <= self._grid_t[index]], [form[i] for i in columns])
+        return fallback if kink is None else self.origin + timedelta(seconds=kink)
 
     def _release_held(self, closed_at: datetime | None, at: datetime) -> list:
         """Infusions held while a door episode was undecided; after a closing they follow it."""

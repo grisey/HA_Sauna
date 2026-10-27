@@ -114,6 +114,21 @@ wird ebenso entschieden.
 | Aufguss | Beginn des Zustands Aufguss |
 | Aufgussende | Ende von Aufguss und Abklingen zusammen; öffnet sich vorher die Tür, endet der Aufguss mit der Öffnung |
 
+Der Zeitpunkt von Tür zu ist der Knick, an dem der Temperaturabfall der
+offenen Tür endet. Die Bestätigung des Übergangs bleibt die Entscheidung; sie
+liegt danach. Bei der Bestätigung wird die gelernte Vergleichsform des
+Schließens an die Temperaturkanäle von der Öffnung bis zum aktuellen
+Messschritt gelegt:
+`y = a − s·(e^(p·(t_k − t)) − 1)/p` vor dem Knick `t_k` (offene Tür, der
+Abfall wird mit der Rate `p` langsamer) und
+`y = a + e·u + (s − e)·(1 − e^(−k·u))/k` mit `u = t − t_k` danach (die
+Steigung geht mit der Rate `k` stetig in die Erholung über). Die Raten `k`
+und `p` sind je Kanal fest gelernt; angepasst werden nur Niveau, Steigungen
+und `t_k`. Gewählt wird der Knick mit der kleinsten Restquadratsumme, an dem
+die Temperatur vorher fällt (`s < 0`) und danach wieder steigt (`e ≥ 0`).
+Ohne gelernte Form oder ohne solchen Knick (etwa beim Abkühlen ohne Heizung)
+gilt der erste Schritt des Übergangs.
+
 Ohne Heizung gibt es nach dem Schließen keine Erholung. Deshalb endet eine
 Öffnung bei ausgeschaltetem Ofen auch in den Zustand zu oder Heizwechsel; bei
 heizendem Ofen nicht, damit ein Ausschlag mitten in einer Öffnung sie nicht
@@ -185,6 +200,7 @@ Verwendet werden Sitzungen ohne Türöffnung während eines Gangs.
 | Normale Steigungen der geschlossenen Kabine | Steigungen ruhiger Minuten fern von Ereignissen: Mittel, Streuung, Rückkehrzeit |
 | Feuchtedifferenz oben − unten | Student-t je bezeichnetem Zustand; Korrelationszeit aus der Autokorrelation um den Median des Zustands |
 | Student-t-Formen | Innovationen je bezeichnetem Zustand |
+| Vergleichsform des Schließens | Je bezeichnetem Schließen und Temperaturkanal die Raten `k`, `p` mit der kleinsten Restquadratsumme (Fenster von der Öffnung bis gleich lange nach dem Schließen, höchstens bis zum nächsten Ereignis); gelernt wird der Median über alle Schließen |
 
 Nach jeder abgeschlossenen Sitzung mit beiden Messpositionen zieht die
 Integration aus deren Messwerten und eigenen bestätigten Erkennungen neue

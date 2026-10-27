@@ -15,8 +15,9 @@ from custom_components.ha_sauna.core.recognition import (
     ClimateRecognizer, InfusionUpdate, _OpenDoor, flattening_probability, recognition_event_id,
 )
 from custom_components.ha_sauna.core.recognition_model import (
-    CLOSED, DECAY, INFUSION, NM, OPEN, RECOVERY, SHIFT, ModelParameters, StateModel,
+    CLOSED, DECAY, INFUSION, NM, OPEN, RECOVERY, SHIFT, ModelParameters, StateModel, closing_basis, closing_kink,
 )
+from custom_components.ha_sauna.core.recognition_learning import CLOSE_RATE_GRID, fit_close_form
 from custom_components.ha_sauna.core.timeline import Kind
 
 T0 = datetime(2026, 1, 10, 18, tzinfo=UTC)
@@ -305,6 +306,42 @@ class RecognizerTests(unittest.TestCase):
         joined, log = run(-0.0599)                     # no evident flattening between the pours: one infusion
         self.assertEqual(joined, [2.0])
         self.assertIn("infusion_pour", [d["event"] for d in log])
+
+    def test_closing_is_timed_at_the_kink_of_the_learned_form(self):
+        # opening at step 0, recovery confirmed at step 80 (160 s); the fall of the open door ends at 120 s
+        params = parameters()
+        params["close_form"] = [[0.05, 1 / 500], [0.05, 1 / 500], None, None]
+        recognizer = ClimateRecognizer(params, T0)
+        t = np.arange(0.0, 170.0, 2.0)
+        form = closing_basis(t - 120.0, 0.05, 1 / 500)
+        rng = np.random.default_rng(2)
+        recognizer._grid_t = t.tolist()
+        recognizer._grid_y = [np.array([tu, tl, 30.0, 28.0]) for tu, tl in zip(
+            form @ [80.0, -0.08, 0.004] + rng.normal(0, 0.015, len(t)),
+            form @ [72.0, -0.07, 0.004] + rng.normal(0, 0.011, len(t)))]
+        timed = (recognizer._closing_time(0, 80) - T0).total_seconds()
+        self.assertAlmostEqual(timed, 120.0, delta=4.0)
+        recognizer._grid_y = [np.array([tu, tl, 30.0, 28.0]) for tu, tl in zip(   # cooling without a recovery
+            form @ [80.0, -0.08, -0.08], form @ [72.0, -0.07, -0.07])]
+        self.assertEqual(recognizer._closing_time(0, 80), T0 + timedelta(seconds=160.0))
+        recognizer = ClimateRecognizer(parameters(), T0)  # no learned form: the confirmed step
+        recognizer._grid_t, recognizer._grid_y = t.tolist(), []
+        self.assertEqual(recognizer._closing_time(0, 80), T0 + timedelta(seconds=160.0))
+
+    def test_closing_kink_needs_a_falling_open_door_and_a_recovery(self):
+        t = np.arange(0.0, 200.0, 2.0)
+        rates = [(0.1, 1 / 300)]
+        rng = np.random.default_rng(1)
+        y = closing_basis(t - 120.0, *rates[0]) @ [80.0, -0.05, 0.01] + rng.normal(0, 0.01, len(t))
+        self.assertAlmostEqual(closing_kink(t, y[:, None], t, rates), 120.0, delta=4.0)
+        falling = closing_basis(t - 120.0, *rates[0]) @ [80.0, -0.05, -0.05]      # cooling without a recovery
+        self.assertIsNone(closing_kink(t, falling[:, None], t, rates))
+
+    def test_closing_form_rates_are_learned_from_a_closing(self):
+        u = np.arange(-150.0, 150.0, 2.0)
+        k, p = CLOSE_RATE_GRID[22], CLOSE_RATE_GRID[8]
+        y = closing_basis(u, k, p) @ [80.0, -0.05, 0.01]
+        self.assertEqual(fit_close_form(u, y), (float(k), float(p)))
 
     def test_event_identity_is_stable(self):
         at = T0 + timedelta(seconds=12.5)

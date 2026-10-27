@@ -118,6 +118,7 @@ class ModelParameters:
     drift_sd: np.ndarray    #   Streuung
     drift_tau: np.ndarray   #   und Rückkehrzeit (s); unendlich = freie Wanderung
     qlam: float             # Wanderung des Austauschkoeffizienten (log) bei offener Tür
+    close_form: tuple = ()  # Vergleichsform des Schließens: (k, p) je Kanal, None ohne gelernte Form
 
     @classmethod
     def from_dict(cls, data: dict, channels: tuple[str, ...] = CHANNELS) -> ModelParameters:
@@ -151,7 +152,54 @@ class ModelParameters:
             drift_tau=(np.array([math.inf if v is None else float(v) for v in data["drift_tau"]])[index]
                        if "drift_tau" in data else np.full(len(index), math.inf)),
             qlam=float(data["qlam"]),
+            close_form=(tuple(None if data["close_form"][i] is None else tuple(data["close_form"][i]) for i in index)
+                        if data.get("close_form") else (None,) * len(index)),
         )
+
+
+def closing_basis(u, k: float, p: float) -> np.ndarray:
+    """Vergleichsform des Schließens zur Zeit ``u`` relativ zum Knick.
+
+    Vor dem Knick verläuft die offene Tür mit der Steigung ``s`` am Knick, die
+    rückwärts mit der Rate ``p`` steiler wird (nachlassender Abfall der offenen
+    Tür); danach geht die Steigung mit der Rate ``k`` stetig in die Steigung
+    ``e`` der geschlossenen Kabine über.  Spalten: Niveau, ``s``, ``e``.
+    """
+    u = np.asarray(u, float)
+    after = u >= 0
+    g = -np.expm1(-k * np.maximum(u, 0)) / k
+    h = np.expm1(-p * np.minimum(u, 0)) / -p
+    return np.column_stack([np.ones_like(u), np.where(after, g, h), np.where(after, u - g, 0.0)])
+
+
+def closing_kink(t, y, candidates, rates) -> float | None:
+    """Zeitpunkt des Schließens: Knick, an dem der Abfall der offenen Tür endet.
+
+    ``y`` hat eine Spalte je Temperaturkanal, ``rates`` je Kanal die gelernten
+    Raten ``(k, p)`` der Vergleichsform (``closing_basis``).  Gesucht ist unter
+    ``candidates`` der gemeinsame Knick mit der kleinsten, je Kanal auf seine
+    Streuung bezogenen Restquadratsumme, an dem die Temperatur vorher fällt und
+    danach wieder steigt (Erholung bei laufender Heizung).  Liefert ``None``
+    ohne solchen Knick.
+    """
+    t = np.asarray(t, float)
+    y = np.asarray(y, float).reshape(len(t), -1)
+    scale = np.maximum(y.var(axis=0), 1e-12)
+    best = None
+    for c in candidates:
+        if min((t < c).sum(), (t >= c).sum()) < 3:     # each side at least as many points as the form has coefficients
+            continue
+        total = 0.0
+        for column, (k, p) in enumerate(rates):
+            basis = closing_basis(t - c, k, p)
+            coef, *_ = np.linalg.lstsq(basis, y[:, column], rcond=None)
+            if coef[1] >= 0 or coef[2] < 0:        # no falling open door or no recovery: no closing here
+                break
+            total += float(((basis @ coef - y[:, column]) ** 2).sum()) / scale[column]
+        else:
+            if best is None or total < best[0]:
+                best = (total, float(c))
+    return None if best is None else best[1]
 
 
 class StateModel:

@@ -27,13 +27,14 @@ import numpy as np
 from .timeline import Kind
 from .recognition_model import (
     ALLOWED, CHANNELS, CLOSED, DECAY, INFUSION, MODES, NM, OPEN, RECOVERY, SHIFT,
-    ModelParameters, StateModel, is_humidity, partner_temperature, saturation_humidity,
+    ModelParameters, StateModel, closing_basis, is_humidity, partner_temperature, saturation_humidity,
 )
 
 INNOVATION_BINS = np.concatenate([[0.0], np.geomspace(0.05, 60.0, 59)])
 NU_GRID = (1.5, 2.0, 3.0, 4.0, 6.0, 10.0, 30.0, 100.0)
 # steam turbulence κ (level variance per second relative to the squared event rate): likelihood profile grid
 KAPPA_GRID = np.geomspace(1e-3, 16.0, 9)
+CLOSE_RATE_GRID = np.geomspace(1 / 2000, 1 / 2, 31)  # rates (1/s) of the closing form
 SOURCE_Q_GRID = np.geomspace(1e-7, 1e-2, 11)        # wandering of the moisture source in an opening
 STRAT_BINS = np.linspace(-20.0, 20.0, 401)          # histogram of the humidity difference upper − lower (g/m³)
 STRAT_LAGS = 400                                    # autocorrelation of the difference over this many steps
@@ -211,6 +212,20 @@ def exchange_uncertainty(tt, y, excess0, lam, beta) -> float:
     return math.sqrt(variance / information)
 
 
+def fit_close_form(u, y) -> tuple[float, float]:
+    """Raten ``(k, p)`` der Vergleichsform des Schließens (``closing_basis``) mit der
+    kleinsten Restquadratsumme auf ``CLOSE_RATE_GRID``; ``u`` relativ zum Schließen."""
+    best = None
+    for k in CLOSE_RATE_GRID:
+        for p in CLOSE_RATE_GRID:
+            basis = closing_basis(u, k, p)
+            coef, *_ = np.linalg.lstsq(basis, y, rcond=None)
+            sse = float(((basis @ coef - y) ** 2).sum())
+            if best is None or sse < best[0]:
+                best = (sse, float(k), float(p))
+    return best[1], best[2]
+
+
 def population(values, errors=None):
     """Verteilung der Ereignisgrößen (Mittel, Streuung) aus Einzelwerten mit Messfehlern.
 
@@ -272,6 +287,7 @@ def empty_evidence(channels=CHANNELS) -> dict:
         "tau": {"infusion": [], "decay": [], "recovery": []},
         "jumps": [],
         "drift": [],
+        "close_form": [],
         "counts": [[0.0] * NM for _ in range(NM)],
         "occupancy": [0.0] * NM,
         "innovations": [[[0] * (len(INNOVATION_BINS)) for _ in range(c)] for _ in MODES],
@@ -316,6 +332,7 @@ def merge_evidence(*items: dict) -> dict:
             out["source_profile"] += ev.get("source_profile", [])
         out["jumps"] += ev["jumps"]
         out["drift"] += ev.get("drift", [])
+        out["close_form"] += ev.get("close_form", [])
         for j in range(NM):
             if "strat_hist" in ev:
                 out["strat_hist"][j] = [a + b for a, b in zip(out["strat_hist"][j], ev["strat_hist"][j])]
@@ -333,7 +350,7 @@ def _labels_to_modes(t, y, channels, labels, win, dt, normal_sd=None):
     """
     c = len(channels)
     mode = np.zeros(len(t), int)
-    found = {"open": [], "doors": [], "recovery": [], "infusion": [], "decay": [], "decay_slope": [], "tau": {"infusion": [], "decay": [],
+    found = {"open": [], "doors": [], "closings": [], "recovery": [], "infusion": [], "decay": [], "decay_slope": [], "tau": {"infusion": [], "decay": [],
              "recovery": []}, "turbulence": {"infusion": [], "decay": []}, "segments": []}
     events = sorted([(d["open"], "o", d) for d in labels.get("doors", [])]
                     + [(x["t"] if isinstance(x, dict) else x, "i", x) for x in labels.get("infusions", [])],
@@ -353,6 +370,7 @@ def _labels_to_modes(t, y, channels, labels, win, dt, normal_sd=None):
                 found["doors"].append((source, at, close, r0, m))
                 found["segments"].append((OPEN, at, close, r0, source))
             if item.get("close"):
+                found["closings"].append((source, at, close, nxt))
                 recovery_end = nxt - close
                 for i in range(c):
                     r_ref = r0[i] if is_humidity(channels[i]) else 0.0   # temperature: the recovery is the rate
@@ -475,6 +493,17 @@ def collect_evidence(times, values, channels, labels, *, outside=None, exclude=(
             if close - at >= 3 * win and not is_humidity(channels[i]):
                 ev["beta"].append([i, float(fit_exchange(tt, yy, excess0)[1]), source])
             ev["_courses"].append([i, tt, yy, excess0, source, key])
+    # closing form: rates of the best fit at the labelled closing, per temperature channel; window from the
+    # opening to as long after the closing (at most to the next event)
+    for source, at, close, nxt in found["closings"]:
+        m = (t >= at) & (t <= min(nxt, close + (close - at)))
+        u = t[m] - close
+        if (u < 0).sum() < 5 or (u >= 0).sum() < 10:
+            continue
+        for i in range(c):
+            if not is_humidity(channels[i]):
+                k, p = fit_close_form(u, y[m, i])
+                ev["close_form"].append([i, math.log(k), math.log(p), source, f"{session}@{at:.1f}"])
     for name in ("recovery", "infusion", "decay", "decay_slope"):
         for i, value, source, at in found[name]:
             ev["prior"].setdefault(name, []).append([i, float(value), source, f"{session}@{at:.1f}"])
@@ -972,6 +1001,13 @@ def estimate(evidence: dict, *, base: dict, rejected=frozenset()) -> dict:
     rates[SHIFT, CLOSED] = 1.0 / (float(np.median(dts)) if dts else 1.0)
     params["rates"] = rates.tolist()
     params["strat"] = stratification(evidence)
+    # closing form: median rates over the closings (robust against single outliers)
+    form = []
+    for i in range(c):
+        rows = [(k, p) for j, k, p, s, key in evidence.get("close_form", []) if j == i and not _rejected(s, rejected)]
+        form.append([math.exp(float(np.median([r[0] for r in rows]))), math.exp(float(np.median([r[1] for r in rows])))]
+                    if len(rows) >= 3 else None)
+    params["close_form"] = form
     hist = np.asarray(evidence["innovations"], float)
     nu = np.asarray(base["nu"], float).copy()
     nus = np.asarray(base["nus"], float).copy()
