@@ -825,6 +825,8 @@ class SaunaRuntime:
                 self.archive.append("infusion_update", self._clock(),
                                     {"source_event_id": source[1], "end": update.end}, session_id)
 
+        # the heater feedback tells the recognition whether a closing shows as recovery
+        recognizer.report_heating(self._clock(), self.controller.feedback)
         recognizer.advance(through, on_detection=detected, on_infusion_update=infusion_updated)
         processed = recognizer.processed_until
         if processed is not None and current():

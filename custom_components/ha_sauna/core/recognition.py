@@ -276,7 +276,8 @@ class _Track:
     floor: int = 0                 # first step not yet decided
     candidate: bool = False        # an unconfirmed start or end is pending
 
-    def scan(self, post: np.ndarray, base: int, ratio: float) -> list:
+    def scan(self, post: np.ndarray, base: int, ratio: float, more_exits=None) -> list:
+        """``more_exits``: per step further states the episode may end into (or None)."""
         events = []
         mask = np.zeros(post.shape[1], bool)
         mask[list(self.states)] = True
@@ -311,7 +312,9 @@ class _Track:
                     self.floor = base + i + 1        # settled: no episode here and none before
                 i += 1                               # an undecided step stays open, a later one may start
                 continue
-            leaves = target[i] < other[i] and (not self.exits or int(np.argmax(post[i])) in self.exits)
+            top = int(np.argmax(post[i]))
+            leaves = target[i] < other[i] and (not self.exits or top in self.exits
+                                               or (more_exits is not None and top in more_exits[i]))
             if not leaves:
                 i += 1
                 self.floor = base + i
@@ -387,6 +390,9 @@ class ClimateRecognizer:
         self._door = _Track((OPEN,), exits=(RECOVERY, INFUSION, DECAY))   # a closing: recovery sets in (or steam)
         self._infusion = _Track((INFUSION,))
         self._steam = _Track((INFUSION, DECAY))                # infusion rise and decay together
+        self._decay = _Track((DECAY,))                         # confirmed decays separate infusions
+        self._pour: int | None = None                         # start step of the latest pour
+        self._decayed = False                                 # a decay was confirmed since that pour
         self._post: np.ndarray | None = None                  # smoothed probabilities of the buffered steps
         self._post_base = 0
         self._steam_infusions: list[Detection] = []           # delivered infusions of the current steam episode
@@ -402,6 +408,7 @@ class ClimateRecognizer:
         self.record = SessionRecord() if keep_record else None
         self.detections: list[Detection] = []
         self.decisions: list[dict] = []                     # why and when every event was decided
+        self._heating: list = []                            # (seconds, heater on) reported by the runtime
         self.diagnostic: dict | None = None
 
     # -- inputs -----------------------------------------------------------------
@@ -592,7 +599,7 @@ class ClimateRecognizer:
 
     def _trim(self) -> None:
         """Drop steps that every episode has decided."""
-        floor = min(self._door.floor, self._infusion.floor, self._steam.floor)
+        floor = min(self._door.floor, self._infusion.floor, self._steam.floor, self._decay.floor)
         if self._open is not None:
             floor = min(floor, self._open.start)
         while self._buffer and self._buffer[0][0] < floor and len(self._buffer) > 1:
@@ -632,6 +639,28 @@ class ClimateRecognizer:
     def _index_time(self, index: int) -> datetime:
         return self.origin + timedelta(seconds=self._grid_t[index])
 
+    def report_heating(self, at: datetime, on: bool | None) -> None:
+        """Heizzustand (Rückmeldung) ab ``at``.  Ohne laufende Heizung gibt es keine Erholung nach dem
+        Schließen; eine Öffnung darf dann auch in die geschlossene, abkühlende Kabine enden."""
+        sec = (utc(at) - self.origin).total_seconds()
+        if self._heating and self._heating[-1][1] == on:
+            return
+        if self._heating and sec <= self._heating[-1][0]:
+            self._heating[-1] = (self._heating[-1][0], on)
+            return
+        self._heating.append((sec, on))
+
+    def _heater_off(self, steps) -> list:
+        """Per buffered step: True when the heater was reported off at its time."""
+        if not self._heating:
+            return [False] * len(steps)
+        times = [h[0] for h in self._heating]
+        out = []
+        for step in steps:
+            k = int(np.searchsorted(times, self._grid_t[step], side="right")) - 1
+            out.append(k >= 0 and self._heating[k][1] is False)
+        return out
+
     def _door_pending(self) -> bool:
         """The door episode is open or its start or end is not yet decided."""
         return self._door.inside or self._door.candidate
@@ -641,12 +670,15 @@ class ClimateRecognizer:
         if self.record is not None:
             self.record.door_prob.append((self._steps - 1, float(self._post[-1][OPEN])))
         out: list = []
-        for what, index, confirmed in self._door.scan(self._post, self._post_base, ratio):
+        steps = range(self._post_base, self._post_base + len(self._post))
+        cooling = [(CLOSED, SHIFT) if off else () for off in self._heater_off(steps)]
+        for what, index, confirmed in self._door.scan(self._post, self._post_base, ratio, cooling):
             self._explain(Kind.DOOR_OPEN if what == "start" else Kind.DOOR_CLOSE, index, confirmed, (OPEN,), at,
                           what == "start")
             effective = min(self._index_time(index), at)
             p_open = float(self._posterior(index)[OPEN])
             if what == "start":
+                self._decayed = True                  # an opening also separates infusions
                 self._open = _OpenDoor(start=index, confirmed=self._steps - 1, next_check=index)
                 out.append(Detection(Kind.DOOR_OPEN, effective, at, self.channels, trace_at=at, probability=p_open))
                 continue
@@ -679,8 +711,19 @@ class ClimateRecognizer:
         if self.record is not None:
             self.record.infusion_prob.append((self._steps - 1, float(self._post[-1][INFUSION])))
         out: list = []
+        for what, index, _confirmed in self._decay.scan(self._post, self._post_base, ratio):
+            if what == "start" and self._pour is not None and index > self._pour:
+                self._decayed = True
         for what, index, confirmed in self._infusion.scan(self._post, self._post_base, ratio):
             if what == "start":
+                # several pours are one infusion unless a confirmed decay lies between them
+                merged = self._pour is not None and not self._decayed
+                self._pour, self._decayed = index, False
+                if merged:
+                    self.decisions.append({"event": "infusion_pour", "effective_at": self._index_time(index).isoformat(),
+                                           "decided_at": at.isoformat(), "joined": "no confirmed decay since the "
+                                           "previous pour"})
+                    continue
                 self._explain(Kind.INFUSION, index, confirmed, (INFUSION,), at, True)
                 effective = min(self._index_time(index), at)
                 detection = Detection(Kind.INFUSION, effective, at, self.channels, trace_at=at,
