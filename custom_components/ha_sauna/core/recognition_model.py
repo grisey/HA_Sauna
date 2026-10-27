@@ -278,6 +278,14 @@ class StateModel:
                 self._transition[key] = t
         return t
 
+    def humidity_decay_slope(self) -> tuple[float, float]:
+        """Humidity slope in the decay (sum of the humidity channels, drift plus decaying excess): mean and
+        variance from the filtered state of the decay mode."""
+        a = np.zeros(self.n)
+        a[self.ir[self.humid]] = 1.0
+        a[self.iW[self.humid & self.decay_slope]] = 1.0
+        return float(a @ self.x[DECAY]), float(a @ self.P[DECAY] @ a)
+
     def channel_state(self, mode: int) -> tuple[np.ndarray, np.ndarray]:
         """State ``[L, r, z, W]`` and its covariance per channel for one mode."""
         x = self.x[mode].reshape(len(self.channels), NX)

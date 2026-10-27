@@ -390,9 +390,9 @@ class ClimateRecognizer:
         self._door = _Track((OPEN,), exits=(RECOVERY, INFUSION, DECAY))   # a closing: recovery sets in (or steam)
         self._infusion = _Track((INFUSION,))
         self._steam = _Track((INFUSION, DECAY))                # infusion rise and decay together
-        self._decay = _Track((DECAY,))                         # confirmed decays separate infusions
         self._pour: int | None = None                         # start step of the latest pour
-        self._decayed = False                                 # a decay was confirmed since that pour
+        self._separations: deque = deque(maxlen=64)           # steps that separate pours (flattened decay, door)
+        self._steepest: tuple | None = None                   # steepest humidity slope of the running decay
         self._post: np.ndarray | None = None                  # smoothed probabilities of the buffered steps
         self._post_base = 0
         self._steam_infusions: list[Detection] = []           # delivered infusions of the current steam episode
@@ -565,6 +565,7 @@ class ClimateRecognizer:
         self._grid_t_temp.append(float(y[clock_t]))
         self._grid_ah.append(math.log(max(float(y[clock_a]), 0.1)))
         self._steps += 1
+        self._watch_decay(mu, at)
         out = []
         self._smooth()
         out.extend(self._decide_door(at))
@@ -599,7 +600,7 @@ class ClimateRecognizer:
 
     def _trim(self) -> None:
         """Drop steps that every episode has decided."""
-        floor = min(self._door.floor, self._infusion.floor, self._steam.floor, self._decay.floor)
+        floor = min(self._door.floor, self._infusion.floor, self._steam.floor)
         if self._open is not None:
             floor = min(floor, self._open.start)
         while self._buffer and self._buffer[0][0] < floor and len(self._buffer) > 1:
@@ -678,7 +679,7 @@ class ClimateRecognizer:
             effective = min(self._index_time(index), at)
             p_open = float(self._posterior(index)[OPEN])
             if what == "start":
-                self._decayed = True                  # an opening also separates infusions
+                self._separations.append(index)       # an opening also separates infusions
                 self._open = _OpenDoor(start=index, confirmed=self._steps - 1, next_check=index)
                 out.append(Detection(Kind.DOOR_OPEN, effective, at, self.channels, trace_at=at, probability=p_open))
                 continue
@@ -711,18 +712,20 @@ class ClimateRecognizer:
         if self.record is not None:
             self.record.infusion_prob.append((self._steps - 1, float(self._post[-1][INFUSION])))
         out: list = []
-        for what, index, _confirmed in self._decay.scan(self._post, self._post_base, ratio):
-            if what == "start" and self._pour is not None and index > self._pour:
-                self._decayed = True
+        steam_events = self._steam.scan(self._post, self._post_base, ratio)
+        for what, index, _confirmed in steam_events:
+            if what == "end":
+                self._separations.append(index)       # the steam has decayed completely
         for what, index, confirmed in self._infusion.scan(self._post, self._post_base, ratio):
             if what == "start":
-                # several pours are one infusion unless a confirmed decay lies between them
-                merged = self._pour is not None and not self._decayed
-                self._pour, self._decayed = index, False
+                # several pours are one infusion unless the decay has evidently begun to flatten in between
+                # (or the steam ended, or the door opened)
+                merged = self._pour is not None and not any(self._pour < k <= index for k in self._separations)
+                self._pour = index
                 if merged:
                     self.decisions.append({"event": "infusion_pour", "effective_at": self._index_time(index).isoformat(),
-                                           "decided_at": at.isoformat(), "joined": "no confirmed decay since the "
-                                           "previous pour"})
+                                           "decided_at": at.isoformat(), "joined": "the decay of the previous pour "
+                                           "had not evidently flattened"})
                     continue
                 self._explain(Kind.INFUSION, index, confirmed, (INFUSION,), at, True)
                 effective = min(self._index_time(index), at)
@@ -730,7 +733,7 @@ class ClimateRecognizer:
                                       probability=float(self._posterior(index)[INFUSION]))
                 out.extend(self._deliver_infusion(detection))
         # steam episode (rise and decay): its end completes the infusions delivered in it
-        for what, index, _confirmed in self._steam.scan(self._post, self._post_base, ratio):
+        for what, index, _confirmed in steam_events:
             if what != "end":
                 continue
             post = self._posterior(index)
@@ -743,6 +746,40 @@ class ClimateRecognizer:
             else:
                 out.extend(self._end_steam(end))
         return out
+
+    def _watch_decay(self, mu: np.ndarray, at: datetime) -> None:
+        """Abflachen des Abklingens: Die Feuchtesteigung (Summe der Feuchtekanäle im Zustand Abklingen) ist
+        mit dem Evidenzverhältnis weniger steil als ihr bisher steilster Wert in diesem Abklingen.  Ab dann
+        ist ein weiterer Anstieg ein neuer Aufguss."""
+        top = int(np.argmax(mu))
+        if top == INFUSION:
+            self._steepest = None                 # a rise: the decay starts anew after it
+            return
+        if top != DECAY or self._pour is None:
+            return
+        step = self._steps - 1
+        if any(k > self._pour for k in self._separations):
+            return                                # already separated
+        slope, var = self._model.humidity_decay_slope()
+        if self._steepest is None or slope < self._steepest[0]:
+            self._steepest = (slope, var, step)
+            return
+        steepest, var0, at_steepest = self._steepest
+        z = (slope - steepest) / math.sqrt(max(var + var0, 1e-30))
+        less_steep = 0.5 * math.erfc(-z / math.sqrt(2))
+        ratio = self.decision.evidence_ratio
+        if less_steep < ratio * (1 - less_steep):
+            return
+        self._separations.append(step)
+        self.decisions.append({
+            "event": "infusion_decay_flattened",
+            "effective_at": self._index_time(step).isoformat(),
+            "decided_at": at.isoformat(),
+            "steepest_at": self._index_time(at_steepest).isoformat(),
+            "slope": round(slope, 5),
+            "steepest": round(steepest, 5),
+            "ratio": round(less_steep / max(1 - less_steep, 1e-300), 1),
+        })
 
     def _deliver_infusion(self, detection: Detection) -> list:
         """A recognized infusion: held while a door episode is undecided, otherwise delivered."""

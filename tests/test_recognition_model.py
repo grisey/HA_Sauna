@@ -274,6 +274,38 @@ class RecognizerTests(unittest.TestCase):
         self.assertEqual(events, [])
         self.assertFalse(recognizer._door_pending())
 
+    def test_pours_are_one_infusion_until_the_decay_evidently_flattens(self):
+        class Decay:                                   # filtered humidity slope in the decay mode
+            slope, var = -0.05, 1e-6
+
+            def humidity_decay_slope(self):
+                return self.slope, self.var
+
+        def run(flat_slope):
+            eye = np.eye(NM)
+            recognizer = ClimateRecognizer(parameters(), T0)
+            recognizer._model = Decay()
+            plan = ([CLOSED] * 2 + [INFUSION] * 2 + [DECAY] * 4 + [INFUSION] * 2 + [DECAY] * 2)
+            slopes = {4: -0.05, 5: -0.06, 6: flat_slope, 7: flat_slope}
+            recognizer._grid_t = [float(i) for i in range(len(plan))]
+            events = []
+            for k, state in enumerate(plan):
+                recognizer._steps = k + 1
+                recognizer._model.slope = slopes.get(k, -0.05)
+                recognizer._watch_decay(eye[state], T0 + timedelta(seconds=100 + k))
+                rows = [eye[s] * 0.999 + eye[CLOSED] * 0.001 for s in plan[:k + 1]]
+                recognizer._post, recognizer._post_base = np.array(rows), 0
+                events.extend(recognizer._decide_infusion(T0 + timedelta(seconds=100 + k)))
+            return [(e.effective_at - T0).total_seconds() for e in events if not isinstance(e, InfusionUpdate)
+                    and e.kind == Kind.INFUSION], recognizer.decisions
+
+        separate, log = run(-0.01)                     # the slope is evidently less steep: a new infusion
+        self.assertEqual(separate, [2.0, 8.0])
+        self.assertIn("infusion_decay_flattened", [d["event"] for d in log])
+        joined, log = run(-0.0599)                     # no evident flattening between the pours: one infusion
+        self.assertEqual(joined, [2.0])
+        self.assertIn("infusion_pour", [d["event"] for d in log])
+
     def test_event_identity_is_stable(self):
         at = T0 + timedelta(seconds=12.5)
         self.assertEqual(recognition_event_id("s1", Kind.INFUSION, at),
