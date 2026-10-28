@@ -271,7 +271,7 @@ class InfusionEndRecognitionTests(unittest.TestCase):
     def run_cabin(self, door):
         t, y = synthetic.cabin(n=600, infusion=560.0, door=door, seed=3)
         recognizer = ClimateRecognizer(synthetic.parameters(), synthetic.T0,
-                                       outside_reference=synthetic.ROOM)
+                                       outside=synthetic.ROOM_AIR)
         delivered, updates = [], []
         for m in synthetic.measurements(t, y):
             recognizer.accept(m)

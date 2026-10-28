@@ -1,4 +1,4 @@
-"""Read optional weather sources for display, outside the sauna control inputs."""
+"""Read optional weather sources: display data and the outside air of the sauna for the recognition."""
 
 from __future__ import annotations
 
@@ -9,6 +9,7 @@ from homeassistant.helpers import entity_registry as er
 from homeassistant.util import dt as dt_util
 
 from .bindings import ROLE_BY_KEY, metadata_error
+from .core.moisture import absolute_humidity
 
 
 # Weather attributes supplement the selected weather entity. Explicit sensor
@@ -169,3 +170,31 @@ def environment_snapshot(hass, bindings):
                 "interpolated": interpolation if isinstance(interpolation, bool) else None,
             }
     return result
+
+
+def outside_air(hass, bindings) -> dict | None:
+    """Outside air of the sauna from the configured weather source or sensors.
+
+    ``{"temperature": °C, "absolute_humidity": g/m³}``; a value that is not
+    available is omitted (the recognition then uses its typical value).  The
+    absolute humidity comes from a direct value, else from temperature and
+    relative humidity, else from the dew point.
+    """
+    snapshot = environment_snapshot(hass, bindings)
+    if not snapshot["configured"]:
+        return None
+    values = {v["key"]: v["value"] for v in snapshot["values"] if v["available"]}
+    air = {}
+    temperature = values.get("temperature")
+    if temperature is not None:
+        air["temperature"] = float(temperature)
+    try:
+        if values.get("absolute_humidity") is not None:
+            air["absolute_humidity"] = float(values["absolute_humidity"])
+        elif temperature is not None and values.get("humidity") is not None:
+            air["absolute_humidity"] = absolute_humidity(float(temperature), float(values["humidity"]))
+        elif values.get("dew_point") is not None:
+            air["absolute_humidity"] = absolute_humidity(float(values["dew_point"]), 100.0)
+    except ValueError:
+        pass
+    return air or None

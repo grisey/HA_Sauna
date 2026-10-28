@@ -10,12 +10,12 @@ from custom_components.ha_sauna.core.timeline import Kind
 from custom_components.ha_sauna.recognition_parameters import shipped_evidence, shipped_parameters
 from custom_components.ha_sauna.recognition_store import RecognitionLearning
 
-from test_recognition_model import ROOM, T0, cabin, measurements
+from test_recognition_model import ROOM_AIR, T0, cabin, measurements
 
 
 def recognized(positions=(Position.UPPER, Position.LOWER)):
     times, values = cabin(n=1100, door=(700.0, 900.0), infusion=1400.0, seed=8)
-    recognizer = ClimateRecognizer(shipped_parameters(), T0, positions=positions, outside_reference=ROOM)
+    recognizer = ClimateRecognizer(shipped_parameters(), T0, positions=positions, outside=ROOM_AIR)
     for m in measurements(times, values):
         recognizer.accept(m)
     recognizer.advance(T0 + timedelta(seconds=float(times[-1])))

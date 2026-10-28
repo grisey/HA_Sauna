@@ -63,6 +63,12 @@ ALLOWED = (
 )
 
 
+# typical surrounding air of the cabin (outside sauna) when no outside measurement is available
+# (development, missing weather data): European winter half-year, mean of October–March about 4 °C
+# (DWD 1991–2020), nearly saturated as on most evenings and nights (95 % relative humidity: 6.0 g/m³)
+OUTSIDE_TYPICAL = {"temperature": 4.0, "absolute_humidity": 6.0}
+
+
 def is_humidity(channel: str) -> bool:
     return channel.startswith("A")
 

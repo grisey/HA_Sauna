@@ -33,7 +33,6 @@ class RecognitionLearning:
         self.sessions: list[dict] = list(data.get("sessions", []))
         self.rejected: set[str] = set(data.get("rejected", []))
         self.parameters: dict | None = data.get("parameters")
-        self.outside: dict | None = data.get("outside")
         self.pending: int = int(data.get("pending", 0))   # sessions and feedback since the last estimate
 
     def as_dict(self) -> dict:
@@ -41,7 +40,6 @@ class RecognitionLearning:
             "sessions": self.sessions,
             "rejected": sorted(self.rejected),
             "parameters": self.parameters,
-            "outside": self.outside,
             "pending": self.pending,
         }
 
@@ -52,8 +50,6 @@ class RecognitionLearning:
         """Belege einer abgeschlossenen Sitzung aufnehmen (nur mit beiden Messpositionen)."""
         if tuple(recognizer.channels) != CHANNELS:
             return False
-        if recognizer.outside is not None and not recognizer.outside_from_reference:
-            self.outside = {c: float(v) for c, v in zip(recognizer.channels, recognizer.outside)}
 
         def source(detection):
             return recognition_event_id(session_id, detection.kind, detection.effective_at)
@@ -110,12 +106,14 @@ async def async_setup_recognition_learning(hass, entry, runtime) -> RecognitionL
     """Lernstand laden und an die Laufzeit binden: Belege nach jeder Sitzung, Schätzung auf Anforderung."""
     from homeassistant.helpers.storage import Store
 
+    from .environment import outside_air
+
     store = Store(hass, STORAGE_VERSION, f"ha_sauna.recognition.{entry.entry_id}")
     await hass.async_add_executor_job(shipped_parameters)      # file read outside the event loop
     state = RecognitionLearning(await store.async_load())
     lock = asyncio.Lock()
     runtime.recognition_parameters = state.current_parameters()
-    runtime.recognition_outside = state.outside
+    runtime.outside_air = lambda: outside_air(hass, runtime.configuration.bindings.values)
     runtime.recognition_learning = state
 
     async def update(work):
@@ -126,7 +124,6 @@ async def async_setup_recognition_learning(hass, entry, runtime) -> RecognitionL
             await store.async_save(state.as_dict())
             if not runtime.closed:
                 runtime.recognition_parameters = state.current_parameters()
-                runtime.recognition_outside = state.outside
 
     def learn(session_id, recognizer):
         def work():

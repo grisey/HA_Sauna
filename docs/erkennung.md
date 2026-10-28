@@ -35,10 +35,14 @@ nicht noch einmal; ein verspätetes älteres Original ersetzt keinen neueren
 Wert.
 
 Die Luft der Umgebung (wohin die Kabinenluft bei offener Tür entweicht und
-woher Frischluft kommt) ist der Mittelwert der ersten 30 Messschritte einer
-Sitzung. Beginnt eine Sitzung wärmer als die Umgebungsluft einer früheren
-Sitzung, ist die Kabine noch vom vorherigen Betrieb warm; dann gilt die
-früher bestimmte Umgebungsluft.
+woher Frischluft kommt) ist die Außenluft. Sie wird beim Sitzungsstart aus der
+konfigurierten Wetterquelle oder den Außensensoren übernommen: Temperatur und
+absolute Feuchte (direkt, sonst aus Temperatur und relativer Feuchte, sonst
+aus dem Taupunkt). Fehlt ein Wert, gilt der typische Wert des europäischen
+Winterhalbjahrs: 4 °C (Mittel Oktober bis März, DWD 1991–2020) und 6,0 g/m³
+(nahezu gesättigt, 95 % relative Feuchte). Die Kabine beim Start sagt über die
+Außenluft nichts aus und wird dafür nicht verwendet. Welche Werte gelten und
+woher sie stammen, steht im Entscheidungsprotokoll der Sitzung.
 
 ## Zustandsmodell der Kabine
 

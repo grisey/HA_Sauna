@@ -549,7 +549,8 @@ class SaunaRuntime:
         # Learned recognition quantities; ``recognition_finished`` receives every
         # finished session's recognizer (session id, recognizer) for learning.
         self._recognition_parameters = None
-        self.recognition_outside = None
+        # outside air of the sauna for the recognition: () -> {"temperature", "absolute_humidity"} or None
+        self.outside_air = None
         self.recognition_finished = None
         self.recognition_learning = None
         self.recognition_feedback = None
@@ -613,6 +614,16 @@ class SaunaRuntime:
         # A new set applies from the next session; the running recognizer keeps its quantities.
         self._recognition_parameters = value
 
+    def _outside_air(self):
+        """Current outside air from the configured weather source or sensors (None: not available)."""
+        if self.outside_air is None:
+            return None
+        try:
+            return self.outside_air()
+        except Exception as error:  # noqa: BLE001 - a weather read must not prevent the recognition
+            self.log.error("outside_air", "Außenluft nicht lesbar: %s", error)
+            return None
+
     def _sync_detector(self):
         session_id = self.session.session_id if self.session else None
         if session_id == self._detector_session:
@@ -669,7 +680,7 @@ class SaunaRuntime:
                     for position in self.configuration_model.measurement_positions
                 ),
                 observer=observed,
-                outside_reference=self.recognition_outside,
+                outside=self._outside_air(),
             )
             if self.session
             else None

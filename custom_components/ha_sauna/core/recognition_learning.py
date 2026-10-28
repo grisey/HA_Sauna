@@ -27,7 +27,7 @@ import numpy as np
 from .timeline import Kind
 from .recognition_model import (
     ALLOWED, CHANNELS, CLOSED, DECAY, INFUSION, MODES, NM, OPEN, RECOVERY, SHIFT,
-    ModelParameters, StateModel, closing_basis, is_humidity, opening_basis, partner_temperature, saturation_humidity,
+    OUTSIDE_TYPICAL, ModelParameters, StateModel, closing_basis, is_humidity, opening_basis, partner_temperature, saturation_humidity,
 )
 
 INNOVATION_BINS = np.concatenate([[0.0], np.geomspace(0.05, 60.0, 59)])
@@ -515,7 +515,10 @@ def collect_evidence(times, values, channels, labels, *, outside=None, exclude=(
     if len(t) < 300:
         return ev
     ev["sessions"] = 1
-    out = np.asarray(outside if outside is not None else y[:30].mean(0), float)
+    # surrounding air: given (the session's outside air) or the typical value
+    out = np.asarray(outside if outside is not None else [OUTSIDE_TYPICAL["absolute_humidity"] if is_humidity(ch)
+                                                          else OUTSIDE_TYPICAL["temperature"] for ch in channels],
+                     float)
     dt = float(np.median(np.diff(t)))
     ev["dt"].append(dt)
     win = 15 * dt
@@ -710,7 +713,7 @@ def labels_from_detections(detections, origin, source) -> dict:
 def session_evidence(recognizer, params: dict, *, session: str, source) -> dict | None:
     """Belege einer abgeschlossenen Sitzung aus ihrer eigenen Erkennung (Nachlernen)."""
     record = recognizer.record
-    if record is None or recognizer.outside is None or len(record.times) < 300:
+    if record is None or len(record.times) < 300:
         return None
     labels = labels_from_detections(recognizer.detections, recognizer.origin, source)
     exclude = [(u.end.effective_at - recognizer.origin).total_seconds() for u in getattr(recognizer, "updates", ())]
