@@ -7,13 +7,10 @@ from homeassistant.components.sensor import (
 )
 from homeassistant.helpers.entity import EntityCategory
 
-from .core.defaults import section
 from .core.models import Position
 from .core.moisture import current_absolute_humidity
+from .core.timeline import active_gang_duration_seconds
 from .entity import SaunaEntity
-
-DISPLAY_PRECISION = section("appearance")["precision"]
-
 
 async def async_setup_entry(hass, entry, async_add_entities):
     async_add_entities(entities_for_entry(entry))
@@ -36,7 +33,6 @@ class SaunaAbsoluteHumidity(SaunaEntity, SensorEntity):
     _attr_native_unit_of_measurement = "g/m³"
     _attr_entity_category = EntityCategory.DIAGNOSTIC
     _attr_state_class = SensorStateClass.MEASUREMENT
-    _attr_suggested_display_precision = DISPLAY_PRECISION["absolute_humidity"]
 
     def __init__(self, entry, position: Position):
         if not isinstance(position, Position):
@@ -44,6 +40,10 @@ class SaunaAbsoluteHumidity(SaunaEntity, SensorEntity):
         super().__init__(entry, f"absolute_humidity_{position.value}")
         self.position = position
         self._attr_name = f"Absoluter Wassergehalt {'oben' if position is Position.UPPER else 'unten'}"
+
+    @property
+    def suggested_display_precision(self):
+        return self.runtime.configuration.appearance["preferences"]["absolute_humidity_precision"]
 
     @property
     def available(self):
@@ -60,7 +60,7 @@ class SaunaAbsoluteHumidity(SaunaEntity, SensorEntity):
             self.runtime._clock(),
             self.runtime.configuration.parameters.values.get("sensor_timeout_seconds"),
         )
-        return round(value, self._attr_suggested_display_precision) if value is not None else None
+        return round(value, self.suggested_display_precision) if value is not None else None
 
     @property
     def extra_state_attributes(self):
@@ -82,7 +82,10 @@ class SaunaEnergy(SaunaEntity, SensorEntity):
     @property
     def native_value(self):
         session = self.runtime.session
-        return round(session.energy.total_kwh, DISPLAY_PRECISION["energy"]) if session else None
+        return round(
+            session.energy.total_kwh,
+            self.runtime.configuration.appearance["preferences"]["energy_precision"],
+        ) if session else None
 
     @property
     def extra_state_attributes(self):
@@ -148,7 +151,8 @@ class SaunaPhase(SaunaEntity, SensorEntity):
             ]
             if self.runtime.detector
             else [],
-            "gang_duration_seconds": active.elapsed_seconds(self.runtime._clock())
-            if active
+            "gang_duration_seconds": active_gang_duration_seconds(
+                session.timeline, self.runtime._clock(),
+            ) if session
             else None,
         }

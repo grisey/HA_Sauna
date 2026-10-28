@@ -8,9 +8,8 @@ from unittest.mock import patch
 from homeassistant.components import frontend
 
 from custom_components.ha_sauna.const import DOMAIN
-from custom_components.ha_sauna.config_flow import pack_binding_input
 from custom_components.ha_sauna.frontend import register
-from harness import create_sauna, seed_sources, start_hass
+from harness import complete_entity_form, create_sauna, seed_sources, start_hass
 
 
 class PanelRegistrationTests(unittest.IsolatedAsyncioTestCase):
@@ -125,10 +124,9 @@ class PanelRegistrationTests(unittest.IsolatedAsyncioTestCase):
                 "custom_components.ha_sauna.frontend.register",
                 side_effect=RuntimeError("synthetic panel registration failure"),
             ):
-                result = await hass.config_entries.flow.async_configure(
-                    flow["flow_id"],
-                    pack_binding_input({"name": "Testsauna", "control_input_mode": "switch", **bindings}),
-                )
+                result = await complete_entity_form(hass, flow, {
+                    "name": "Testsauna", "control_input_mode": "switch", **bindings,
+                })
                 self.assertEqual(result["type"], "create_entry")
                 await hass.async_block_till_done()
             entry = result["result"]

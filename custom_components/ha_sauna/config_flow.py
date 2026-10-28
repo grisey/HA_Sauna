@@ -12,14 +12,71 @@ from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers import selector
 
-from .bindings import ROLE_BY_KEY, ROLES, BindingError, Bindings, metadata_error, validate_metadata
+from .bindings import (
+    ROLE_BY_KEY,
+    ROLES,
+    BindingError,
+    Bindings,
+    metadata_error,
+    validate_metadata,
+)
 from .const import CONF_BINDINGS, DOMAIN
+from .core.configuration_model import ButtonCapabilities, ConfigurationModel
 from .core.defaults import instance_default, section
-from .core.parameters import BY_KEY, EDITABLE_DEFINITIONS, LIVE_TEMPERATURE_KEYS, ParameterError, Parameters
-from .presentation import parameter_error
+from .core.parameters import (
+    BY_KEY,
+    EDITABLE_DEFINITIONS,
+    LIVE_TEMPERATURE_KEYS,
+    ParameterError,
+    Parameters,
+)
 from .maintenance_flow import MaintenanceOptionsMixin
+from .notification_options import NotificationOptionsMixin
+from .presentation import parameter_error
 from .runtime import Configuration
-from .settings import parameter_change
+from .settings import (
+    ConfigurationLocked,
+    StaleFieldStandardPreview,
+    async_apply_field_standard_action,
+    async_get_field_standards,
+    async_preview_field_standard_action,
+    parameter_change,
+)
+
+
+FIELD_STANDARD_ACTION_LABELS = {
+    "overwrite_standard": "Formularwert als Standard speichern",
+    "restore_standard": "Standard wiederherstellen",
+    "restore_factory": "Werkseinstellungen wiederherstellen",
+}
+
+
+def field_standard_preview_rows(preview):
+    """Render owner values; the translated form description owns the headings."""
+    def cell(value, unit=""):
+        if value is None:
+            text = "—"
+        elif isinstance(value, bool):
+            text = "✓" if value else "—"
+        else:
+            text = str(value)
+            if unit and isinstance(value, (int, float)):
+                text = f"{text} {unit}"
+        return text.replace("|", r"\|").replace("\n", " ")
+
+    rows = []
+    for row in preview["fields"]:
+        label = row["label"]
+        if row.get("bound"):
+            label = f"{label} ({row['bound']})"
+        values = [cell(label)] + [
+            cell(row[key], row["unit"])
+            for key in ("factory", "standard", "target_standard", "active", "target")
+        ] + [f"{cell(row['has_standard'])} → {cell(row['target_has_standard'])}"]
+        rows.append(f"| {' | '.join(values)} |")
+    if preview.get("validation_error"):
+        rows.extend(("", preview["validation_error"]))
+    return "\n".join(rows)
 
 
 def internal_control_source(hass: HomeAssistant, key: str, entity_id: str) -> bool:
@@ -193,12 +250,17 @@ def binding_schema(hass: HomeAssistant, *, include_name: bool = False, saved=Non
             ] = selector.SelectSelector(
                 {"options": ["button", "switch"], "translation_key": "control_input_mode"}
             )
-            fields[
-                vol.Optional(
-                    "button_event_type",
-                    default=saved.get("button_event_type", instance_default("button_event_type"))
-                )
-            ] = selector.TextSelector()
+            capabilities = button_capabilities(hass, saved, setup=include_name)
+            if (
+                capabilities.additional_short_event_configurable
+                or capabilities.event_selection_configurable
+            ):
+                fields[
+                    vol.Optional(
+                        "button_event_type",
+                        default=saved.get("button_event_type", instance_default("button_event_type"))
+                    )
+                ] = selector.TextSelector()
         elif role.key == "presence":
             fields[
                 vol.Required(
@@ -234,11 +296,35 @@ def binding_schema(hass: HomeAssistant, *, include_name: bool = False, saved=Non
     return vol.Schema(grouped)
 
 
+def button_capabilities(hass, values, *, setup=False):
+    """Use the same input capabilities before a complete configuration exists."""
+    entity_id = values.get("control_input")
+    state = hass.states.get(entity_id) if entity_id else None
+    event_types = state.attributes.get("event_types") if state is not None else None
+    return ButtonCapabilities.from_input(
+        entity_id,
+        values.get("control_input_mode", instance_default("control_input_mode", setup=setup)),
+        values.get("button_event_type", instance_default("button_event_type")),
+        event_types if isinstance(event_types, (list, tuple)) else None,
+    )
+
+
+def event_name_form_needed(hass, values, *, setup=False):
+    """A newly selected event input may add a field absent from the prior form."""
+    capabilities = button_capabilities(hass, values, setup=setup)
+    return "button_event_type" not in values and (
+        capabilities.additional_short_event_configurable
+        or capabilities.event_selection_configurable
+    )
+
+
 def checked_bindings(hass: HomeAssistant, user_input: dict[str, Any], *, saved=None) -> Bindings:
     if user_input.get("presence_source", instance_default("presence_source")) not in ("proxy", "ha_presence"):
         raise BindingError("presence_source", "invalid_presence_source")
     if user_input.get("presence_source") == "ha_presence" and not user_input.get("presence"):
         raise BindingError("presence", "entity_required")
+    if not button_capabilities(hass, user_input).event_name_valid:
+        raise BindingError("button_event_type", "native_button_event")
     bindings = Bindings(
         {
             k: v
@@ -333,9 +419,10 @@ class SaunaConfigFlow(ConfigFlow, domain=DOMAIN):
             except BindingError as error:
                 errors[error.key] = error.code
             else:
-                return self.async_create_entry(
-                    title=name, data={}, options=configuration.as_options()
-                )
+                if not event_name_form_needed(self.hass, user_input, setup=True):
+                    return self.async_create_entry(
+                        title=name, data={}, options=configuration.as_options()
+                    )
         suggested = user_input if user_input is not None else getattr(self, "_device_values", {})
         errors = errors or (getattr(self, "_device_errors", {}) if user_input is None else {})
         return self.async_show_form(
@@ -353,7 +440,7 @@ class SaunaConfigFlow(ConfigFlow, domain=DOMAIN):
         return SaunaOptionsFlow()
 
 
-class SaunaOptionsFlow(MaintenanceOptionsMixin, OptionsFlow):
+class SaunaOptionsFlow(NotificationOptionsMixin, MaintenanceOptionsMixin, OptionsFlow):
     """Anlagenwerte ändern und unabhängige Panel-Einstellungen erhalten."""
 
     def _has_session(self) -> bool:
@@ -381,10 +468,12 @@ class SaunaOptionsFlow(MaintenanceOptionsMixin, OptionsFlow):
         return self._show_area_menu(area)
 
     def _show_area_menu(self, area):
+        self._field_standard_origin = None
         if area == "init":
             return self.async_show_menu(
                 step_id="init", menu_options=[
-                    "name", "bindings", *integration_groups(),
+                    "name", "bindings", "notification_user", *integration_groups(),
+                    "field_standards",
                     "rename_entity", "cleanup_entities",
                 ]
             )
@@ -405,22 +494,221 @@ class SaunaOptionsFlow(MaintenanceOptionsMixin, OptionsFlow):
             )
         return self._show_area_menu(area)
 
-    def _definitions(self, subgroup, *, area=None):
-        source = self.config_entry.options.get("presence_source", instance_default("presence_source"))
-        group = next(
-            item for item in section("frontend")["settings_subgroups"]
-            if item["id"] == subgroup
+    def _field_standard_runtime_available(self):
+        runtime = getattr(self.config_entry, "runtime_data", None)
+        return runtime is not None and not runtime.closed
+
+    def _field_standard_error(self, error, placeholders):
+        if isinstance(error, ConfigurationLocked):
+            return {"base": "configuration_busy"}
+        if isinstance(error, ParameterError):
+            definition = BY_KEY.get(error.key)
+            placeholders.update({
+                "parameter": definition.label if definition else "Anlagenwerte",
+                "reason": parameter_error(error),
+            })
+            return {"base": "parameter_dependency"}
+        return {"base": "invalid_configuration"}
+
+    async def _async_return_standard_origin(self):
+        self._field_standard_preview = None
+        self._field_standard_request = None
+        origin = getattr(self, "_field_standard_origin", None)
+        if origin is not None:
+            return await self._async_step_parameters(origin)
+        return self._show_area_menu("init")
+
+    async def async_step_field_standards(self, user_input=None):
+        if self._has_session():
+            return self.async_abort(reason="session_exists")
+        if not self._field_standard_runtime_available():
+            return self.async_abort(reason="integration_not_loaded")
+        origin = getattr(self, "_field_standard_origin", None)
+        actions = ["restore_standard", "restore_factory"]
+        if origin is not None and getattr(self, "_parameter_drafts", {}).get(origin):
+            actions.insert(0, "overwrite_standard")
+        if user_input is not None and user_input.get("action") == "cancel":
+            return await self._async_return_standard_origin()
+        errors = {}
+        if user_input is not None:
+            if set(user_input) == {"action"} and user_input["action"] in actions:
+                self._field_standard_action = user_input["action"]
+                self._field_standard_preview = None
+                return await self.async_step_field_standard_scope()
+            errors["base"] = "invalid_configuration"
+        context = "Dauerhafte Einstellungen"
+        if origin is not None:
+            context = next(
+                group["label"] for group in section("frontend")["settings_subgroups"]
+                if group["id"] == origin
+            )
+        return self.async_show_form(
+            step_id="field_standards",
+            data_schema=vol.Schema({
+                vol.Required("action", default="cancel"): selector.SelectSelector({
+                    "options": [*actions, "cancel"],
+                    "translation_key": "field_standard_action",
+                    "mode": "dropdown",
+                }),
+            }),
+            errors=errors,
+            description_placeholders={"context": context},
         )
-        if source not in group.get("presence_sources", ("proxy", "ha_presence")):
-            return ()
+
+    async def async_step_field_standard_scope(self, user_input=None):
+        if self._has_session():
+            return self.async_abort(reason="session_exists")
+        if not self._field_standard_runtime_available():
+            return self.async_abort(reason="integration_not_loaded")
+        action = getattr(self, "_field_standard_action", None)
+        if action not in FIELD_STANDARD_ACTION_LABELS:
+            return await self.async_step_field_standards()
+        if user_input is not None and user_input.get("scope") == "cancel":
+            return await self._async_return_standard_origin()
+        placeholders = {"action": FIELD_STANDARD_ACTION_LABELS[action]}
+        errors = {}
+        scopes = {}
+        choices = []
+        try:
+            inventory = await async_get_field_standards(self.config_entry)
+            fields = inventory["fields"]
+            if action == "overwrite_standard":
+                origin = getattr(self, "_field_standard_origin", None)
+                draft = getattr(self, "_parameter_drafts", {}).get(origin, {})
+                visible = {
+                    f"parameters.{definition.key}" for definition in self._definitions(origin)
+                    if definition.key in draft
+                } if origin is not None else set()
+                fields = [row for row in fields if row["id"] in visible]
+            for row in fields:
+                key = f"field:{row['id']}"
+                scopes[key] = {"field": row["id"]}
+                label = row["label"]
+                if row.get("bound"):
+                    label = f"{label} ({row['bound']})"
+                choices.append({"value": key, "label": label})
+            if action != "overwrite_standard":
+                groups = {row["group"] for row in fields}
+                for group in section("frontend")["settings_groups"]:
+                    if group["id"] in groups:
+                        key = f"group:{group['id']}"
+                        scopes[key] = {"group": group["id"]}
+                        choices.append({"value": key, "label": group["label"]})
+                scopes["all"] = {"all": True}
+                choices.append({"value": "all", "label": "Alle dauerhaften Einstellungen"})
+            if user_input is not None:
+                if set(user_input) != {"scope"} or user_input["scope"] not in scopes:
+                    raise ValueError("Ungültiger Standardumfang")
+                request = {"action": action, **scopes[user_input["scope"]]}
+                if action == "overwrite_standard":
+                    key = request["field"].split(".", 1)[1]
+                    request["value"] = draft[key]
+                preview = await async_preview_field_standard_action(
+                    self.config_entry, **request,
+                )
+                self._field_standard_request = request
+                self._field_standard_preview = preview
+                return await self.async_step_field_standard_confirm()
+        except ValueError as error:
+            errors = self._field_standard_error(error, placeholders)
+        except RuntimeError:
+            if not self._field_standard_runtime_available():
+                return self.async_abort(reason="integration_not_loaded")
+            raise
+        return self.async_show_form(
+            step_id="field_standard_scope",
+            data_schema=vol.Schema({
+                vol.Required("scope", default="cancel"): selector.SelectSelector({
+                    "options": choices + [{
+                        "value": "cancel", "label": "Zurück ohne Änderung",
+                    }],
+                    "mode": "dropdown",
+                }),
+            }),
+            errors=errors,
+            description_placeholders=placeholders,
+        )
+
+    def _update_standard_drafts(self, result):
+        """Only the restored scope follows A; other submitted D stays visible."""
+        if result["action"] == "overwrite_standard":
+            return
+        affected = {
+            row["id"].split(".", 1)[1]: row["target"]
+            for row in result["fields"] if row["id"].startswith("parameters.")
+        }
+        for subgroup, draft in getattr(self, "_parameter_drafts", {}).items():
+            baseline = self._parameter_baselines[subgroup]
+            for key in draft.keys() & affected.keys():
+                draft[key] = affected[key]
+                baseline[key] = affected[key]
+
+    async def async_step_field_standard_confirm(self, user_input=None):
+        if self._has_session():
+            return self.async_abort(reason="session_exists")
+        if not self._field_standard_runtime_available():
+            return self.async_abort(reason="integration_not_loaded")
+        preview = getattr(self, "_field_standard_preview", None)
+        request = getattr(self, "_field_standard_request", None)
+        if preview is None or request is None:
+            return await self.async_step_field_standards()
+        if user_input is not None and user_input.get("decision") == "cancel":
+            return await self._async_return_standard_origin()
+        errors = {}
+        placeholders = {"action": FIELD_STANDARD_ACTION_LABELS[request["action"]]}
+        if user_input is not None:
+            if set(user_input) != {"decision"} or user_input["decision"] != "confirm":
+                errors["base"] = "invalid_configuration"
+            elif not preview.get("confirmation"):
+                errors["base"] = "invalid_configuration"
+            else:
+                try:
+                    result = await async_apply_field_standard_action(
+                        self.hass, self.config_entry,
+                        confirmation=preview["confirmation"], **request,
+                    )
+                except StaleFieldStandardPreview as error:
+                    preview = self._field_standard_preview = error.preview
+                    errors["base"] = "preview_changed"
+                except ValueError as error:
+                    errors = self._field_standard_error(error, placeholders)
+                except RuntimeError:
+                    if not self._field_standard_runtime_available():
+                        return self.async_abort(reason="integration_not_loaded")
+                    raise
+                else:
+                    self._update_standard_drafts(result)
+                    return await self._async_return_standard_origin()
+        placeholders["preview"] = field_standard_preview_rows(preview)
+        return self.async_show_form(
+            step_id="field_standard_confirm",
+            data_schema=vol.Schema({
+                vol.Required("decision", default="cancel"): selector.SelectSelector({
+                    "options": (
+                        ["confirm", "cancel"] if preview.get("confirmation") else ["cancel"]
+                    ),
+                    "translation_key": "field_standard_decision",
+                    "mode": "dropdown",
+                }),
+            }),
+            errors=errors,
+            description_placeholders=placeholders,
+        )
+
+    def _definitions(self, subgroup, *, area=None):
+        model = ConfigurationModel.from_configuration(
+            Configuration.from_options(self.config_entry.options)
+        )
         areas = integration_groups()
         return tuple(
             definition for definition in EDITABLE_DEFINITIONS
             if definition.settings_group in areas
+            and definition.configuration_surface == "integration"
             and (area is None or definition.settings_group == area)
             and definition.settings_subgroup == subgroup
             and definition.key not in LIVE_TEMPERATURE_KEYS
             and definition.minimum != definition.maximum
+            and model.parameter_applicable(definition)
         )
 
     async def _async_step_parameters(self, subgroup, user_input=None):
@@ -434,7 +722,8 @@ class SaunaOptionsFlow(MaintenanceOptionsMixin, OptionsFlow):
         keys = {definition.key for definition in definitions}
         if not hasattr(self, "_parameter_baselines"):
             self._parameter_baselines = {}
-        if user_input is None:
+            self._parameter_drafts = {}
+        if user_input is None and subgroup not in self._parameter_drafts:
             self._parameter_baselines[subgroup] = {
                 key: effective.get(key) for key in keys
             }
@@ -456,15 +745,30 @@ class SaunaOptionsFlow(MaintenanceOptionsMixin, OptionsFlow):
         }
         if user_input is not None and not errors:
             try:
-                if set(user_input) - keys:
+                if set(user_input) - keys - {"settings_action"}:
                     raise ParameterError("base", "unknown_parameter")
+                action = user_input.get("settings_action", "save")
+                if action not in {"save", "field_standards", "discard"}:
+                    raise ValueError("Ungültige Formularaktion")
+                submitted = {
+                    key: value for key, value in user_input.items() if key in keys
+                }
+                if action == "discard":
+                    self._parameter_drafts.pop(subgroup, None)
+                    return await self._async_step_parameters(subgroup)
                 for definition in definitions:
-                    if not definition.optional and definition.key not in user_input:
+                    if definition.optional:
+                        submitted.setdefault(definition.key, None)
+                self._parameter_drafts[subgroup] = submitted
+                if action == "field_standards":
+                    self._field_standard_origin = subgroup
+                    return await self.async_step_field_standards()
+                for definition in definitions:
+                    if definition.key not in submitted:
                         raise ParameterError(definition.key, "required")
-                    if definition.key in user_input:
-                        definition.validate(user_input[definition.key])
+                    definition.validate(submitted[definition.key])
                 edits = {
-                    key: value for key, value in user_input.items()
+                    key: value for key, value in submitted.items()
                     if value != baseline.get(key)
                 }
                 change = parameter_change(
@@ -473,11 +777,11 @@ class SaunaOptionsFlow(MaintenanceOptionsMixin, OptionsFlow):
                 candidate = {
                     **self.config_entry.options,
                     "parameters": {
-                        **current.parameters.as_dict(),
+                        **current.parameters.as_options(),
                         **{key: change.configuration.parameters.values[key] for key in edits},
                     },
                 }
-                Configuration.from_options(candidate)
+                candidate = Configuration.from_options(candidate).as_options()
             except ParameterError as error:
                 if error.key in keys:
                     errors[error.key] = error.code
@@ -491,6 +795,7 @@ class SaunaOptionsFlow(MaintenanceOptionsMixin, OptionsFlow):
             except ValueError:
                 errors["base"] = "invalid_configuration"
             else:
+                self._parameter_drafts.pop(subgroup, None)
                 return self._save_and_return(
                     candidate if edits else self.config_entry.options,
                     definitions[0].settings_group,
@@ -499,16 +804,23 @@ class SaunaOptionsFlow(MaintenanceOptionsMixin, OptionsFlow):
         for definition in definitions:
             marker = vol.Optional if definition.optional else vol.Required
             fields[marker(definition.key)] = selector.NumberSelector({
-                "min": definition.minimum if definition.minimum is not None else 0,
+                "min": current.parameters.minimum_for(definition.key),
                 "max": definition.maximum,
                 "step": definition.step,
                 "unit_of_measurement": definition.unit,
                 "mode": "box",
             })
+        fields[vol.Optional("settings_action", default="save")] = selector.SelectSelector({
+            "options": ["save", "field_standards", "discard"],
+            "translation_key": "settings_action",
+            "mode": "dropdown",
+        })
         return self.async_show_form(
             step_id=f"parameters_{subgroup}",
             data_schema=self.add_suggested_values_to_schema(
-                vol.Schema(fields), user_input if user_input is not None else effective
+                vol.Schema(fields), user_input if user_input is not None else (
+                    self._parameter_drafts.get(subgroup, effective)
+                )
             ),
             errors=errors,
             description_placeholders=placeholders,
@@ -603,7 +915,8 @@ class SaunaOptionsFlow(MaintenanceOptionsMixin, OptionsFlow):
             except BindingError as error:
                 errors[error.key] = error.code
             else:
-                return self._save_and_return(candidate, "init")
+                if not event_name_form_needed(self.hass, user_input):
+                    return self._save_and_return(candidate, "init")
         return self.async_show_form(
             step_id="binding_entities",
             data_schema=self.add_suggested_values_to_schema(

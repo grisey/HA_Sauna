@@ -5,8 +5,14 @@ import unittest
 
 from custom_components.ha_sauna.core.contracts import ContactorMark, ReadinessPause
 from custom_components.ha_sauna.core.oven_cooling import calculate_oven_cooling
+from custom_components.ha_sauna.core.parameters import Parameters
 
 T0 = datetime(2030, 1, 1, tzinfo=UTC)
+PARAMETERS = Parameters({}).values
+BASE = PARAMETERS["after_run_minutes"]
+MAXIMUM = PARAMETERS["oven_cooling_max_minutes"]
+HALF_LIFE = PARAMETERS["oven_cooling_half_life_minutes"]
+RATIO = PARAMETERS["oven_cooling_heat_idle_ratio"]
 
 
 def at(minutes: float) -> datetime:
@@ -14,14 +20,11 @@ def at(minutes: float) -> datetime:
 
 
 def calculate(*, marks=(), pauses=(), now=20, start=0, **settings):
-    # Fixed synthetic policy for the analytic expectations below.
-    policy = {
-        "after_run_minutes": 5,
-        "oven_cooling_max_minutes": 15,
-        "oven_cooling_half_life_minutes": 15,
-        "oven_cooling_heat_idle_ratio": 2,
-        **settings,
-    }
+    policy = {key: PARAMETERS[key] for key in (
+        "after_run_minutes", "oven_cooling_max_minutes",
+        "oven_cooling_half_life_minutes", "oven_cooling_heat_idle_ratio",
+    )}
+    policy.update(settings)
     return calculate_oven_cooling(
         contactor_history=marks,
         readiness_pauses=pauses,
@@ -37,13 +40,12 @@ class OvenCoolingPolicyTests(unittest.TestCase):
         result = calculate(
             marks=(ContactorMark(at(0), True), ContactorMark(at(10), False)),
             now=10,
-            oven_cooling_half_life_minutes=10,
         )
-        # Integral_0^10 2**(-(10-t)/10) dt, expressed in minutes.
-        expected = 10 / log(2) * (1 - 0.5)
+        # Independent integral over the declared ten-minute contactor interval.
+        expected = HALF_LIFE / log(2) * (1 - 2 ** (-10 / HALF_LIFE))
         self.assertAlmostEqual(result.weighted_heat_minutes, expected)
         self.assertEqual(result.weighted_idle_minutes, 0)
-        self.assertAlmostEqual(result.duration_seconds, (5 + expected / 2) * 60)
+        self.assertAlmostEqual(result.duration_seconds, min(MAXIMUM, BASE + expected / RATIO) * 60)
         self.assertEqual(result.quality, "complete")
 
     def test_equal_subnormal_half_life_and_ratio_keep_their_quotient(self):
@@ -54,7 +56,7 @@ class OvenCoolingPolicyTests(unittest.TestCase):
             oven_cooling_half_life_minutes=smallest,
             oven_cooling_heat_idle_ratio=smallest,
         )
-        self.assertAlmostEqual(result.duration_seconds, (5 + 1 / log(2)) * 60)
+        self.assertAlmostEqual(result.duration_seconds, min(MAXIMUM, BASE + 1 / log(2)) * 60)
 
     def test_recent_heat_has_more_effect_than_equal_old_heat(self):
         old = calculate(
@@ -75,14 +77,13 @@ class OvenCoolingPolicyTests(unittest.TestCase):
             ),
             pauses=(ReadinessPause(at(0), at(10)),),
             now=10,
-            oven_cooling_half_life_minutes=10,
         )
-        off = 10 / log(2) * (0.5**0.5 - 0.5)
-        heat = 10 / log(2) * (1 - 0.5**0.5)
+        off = HALF_LIFE / log(2) * (2 ** (-5 / HALF_LIFE) - 2 ** (-10 / HALF_LIFE))
+        heat = HALF_LIFE / log(2) * (1 - 2 ** (-5 / HALF_LIFE))
         self.assertAlmostEqual(result.weighted_heat_minutes, heat)
         self.assertAlmostEqual(result.weighted_idle_minutes, off)
         # Idle credit remains signed in the balance; it is not floored by itself.
-        self.assertEqual(result.duration_seconds, 5 * 60)
+        self.assertEqual(result.duration_seconds, BASE * 60)
 
     def test_unknown_contactor_never_credits_idle_and_marks_result_incomplete(self):
         result = calculate(
@@ -91,7 +92,7 @@ class OvenCoolingPolicyTests(unittest.TestCase):
         )
         self.assertEqual(result.weighted_heat_minutes, 0)
         self.assertEqual(result.weighted_idle_minutes, 0)
-        self.assertEqual(result.duration_seconds, 5 * 60)
+        self.assertEqual(result.duration_seconds, BASE * 60)
         self.assertEqual(result.quality, "incomplete")
 
     def test_old_idle_gets_less_credit_than_equal_recent_idle(self):
@@ -105,8 +106,8 @@ class OvenCoolingPolicyTests(unittest.TestCase):
             pauses=(ReadinessPause(at(15), at(20)),),
             now=20,
         )
-        expected_early = 15 / log(2) * (0.5 - 0.5 ** (20 / 15))
-        expected_late = 15 / log(2) * (1 - 0.5 ** (5 / 15))
+        expected_early = HALF_LIFE / log(2) * (2 ** (-15 / HALF_LIFE) - 2 ** (-20 / HALF_LIFE))
+        expected_late = HALF_LIFE / log(2) * (1 - 2 ** (-5 / HALF_LIFE))
         self.assertAlmostEqual(early.weighted_idle_minutes, expected_early)
         self.assertAlmostEqual(late.weighted_idle_minutes, expected_late)
         self.assertLess(early.weighted_idle_minutes, late.weighted_idle_minutes)
@@ -121,7 +122,7 @@ class OvenCoolingPolicyTests(unittest.TestCase):
             pauses=(ReadinessPause(at(10), at(18)), ReadinessPause(at(12), at(20))),
             now=20,
         )
-        expected_idle = 15 / log(2) * (1 - 0.5 ** (10 / 15))
+        expected_idle = HALF_LIFE / log(2) * (1 - 2 ** (-10 / HALF_LIFE))
         self.assertAlmostEqual(result.weighted_idle_minutes, expected_idle)
 
     def test_window_clips_old_history_and_base_above_maximum_is_preserved(self):
@@ -129,13 +130,13 @@ class OvenCoolingPolicyTests(unittest.TestCase):
             marks=(ContactorMark(at(0), True), ContactorMark(at(10), False)),
             start=5,
             now=10,
-            after_run_minutes=20,
-            oven_cooling_max_minutes=15,
+            after_run_minutes=MAXIMUM * 2,
+            oven_cooling_max_minutes=MAXIMUM,
         )
         self.assertEqual(result.window_started_at, at(5))
         self.assertGreater(result.weighted_heat_minutes, 0)
-        self.assertEqual(result.maximum_minutes, 20)
-        self.assertEqual(result.duration_seconds, 20 * 60)
+        self.assertEqual(result.maximum_minutes, MAXIMUM * 2)
+        self.assertEqual(result.duration_seconds, MAXIMUM * 2 * 60)
 
     def test_projection_incompleteness_is_reported_without_changing_math(self):
         result = calculate(

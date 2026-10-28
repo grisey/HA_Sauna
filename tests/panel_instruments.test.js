@@ -1,11 +1,11 @@
 "use strict";
+const { panelFixture: fixturePanel } = require("./catalog_fixture.cjs");
 const assert = require("node:assert/strict");
+const { parameterDefinition: fixtureDefinition } = require("./catalog_fixture.cjs");
 const fs = require("node:fs");
 const test = require("node:test");
 const vm = require("node:vm");
-const defaults = JSON.parse(
-  fs.readFileSync("custom_components/ha_sauna/defaults.json", "utf8"),
-);
+const defaults = structuredClone(require("./catalog_fixture.cjs").catalog);
 const clone = (value) => JSON.parse(JSON.stringify(value));
 let Panel;
 vm.runInNewContext(fs.readFileSync("custom_components/ha_sauna/panel.js", "utf8"), {
@@ -33,7 +33,7 @@ function panel() {
       ]),
     ),
   };
-  return Object.assign(Object.create(Panel.prototype), {
+  return Object.assign(fixturePanel(Panel), {
     entry: "instrument-test",
     generation: 0,
     state: {
@@ -74,7 +74,7 @@ test("legacy appearance inherits catalog defaults and individual styles override
   assert.equal(p.instrumentStyle("humidity"), "round");
 });
 
-test("instrument edits preview separately, submit with colors and scales, and reset only the draft", async () => {
+test("instrument edits preview separately, submit with colors and scales, and discard reloads active values", async () => {
   const p = panel(),
     saved = clone(p.state.appearance),
     calls = [];
@@ -104,8 +104,8 @@ test("instrument edits preview separately, submit with colors and scales, and re
   assert.equal(p.appearanceDraft, null);
   assert.equal(p.state.configuration.appearance, p.state.appearance);
   const persisted = clone(p.state.appearance);
-  p.resetAppearanceDraft(true);
-  assert.deepEqual(clone(p.appearanceDraft.instruments), instrumentDefaults());
+  edit(p, "default", "round");
+  assert.equal(p.instrumentStyle("humidity"), "round");
   assert.deepEqual(p.state.appearance, persisted);
   p.resetAppearanceDraft();
   assert.equal(p.appearanceDraft, null);
@@ -252,7 +252,7 @@ test("light status refresh moves both controls with external feedback instead of
       const response = clone(p.state);
       response.manual_controls.light.observation.brightness_percent = brightness;
       p.api = async (path) => {
-        assert.equal(path, "/instrument-test/state");
+        assert.equal(path, "/instrument-test/state?include_catalog=false");
         return response;
       };
       await Panel.prototype.refresh.call(p);
@@ -284,13 +284,7 @@ test("zero light feedback removes the colored progress arc while retaining its c
   p.state.appearance.instruments = { light: "round" };
   Object.assign(p.state, {
     now: "2026-09-20T12:00:00Z",
-    parameters: [
-      {
-        ...defaults.parameters.find(({ key }) => key === "target_temperature_c"),
-        minimum: 30,
-        maximum: 100,
-      },
-    ],
+    parameters: [fixtureDefinition("target_temperature_c")],
     measurements: [],
     measurement_status: {},
     issues: [],
@@ -485,7 +479,7 @@ test("linear target completion cannot clear newer drafts or another entry", asyn
   }
 });
 
-test("weather uses only configured supplied metrics and escapes source strings", () => {
+test("non-DWD weather keeps supplied metrics and escapes source strings", () => {
   const p = panel();
   assert.equal(p.weatherMarkup(), "");
   p.state.environment = { configured: false, values: [] };
@@ -493,7 +487,9 @@ test("weather uses only configured supplied metrics and escapes source strings",
   p.state.environment = {
     configured: true,
     condition: "partlycloudy",
-    station: { name: '<img src=x onerror="bad()">' },
+    // A generic weather source has no provider field in the environment snapshot.
+    station: { name: 'Private Wetterstation <img src=x onerror="bad()">' },
+    source: { mode: null, interpolated: null },
     values: [
       {
         key: "temperature",
@@ -513,10 +509,18 @@ test("weather uses only configured supplied metrics and escapes source strings",
     ],
   };
   const html = p.weatherMarkup();
+  console.log(
+    "weather-evidence " +
+      JSON.stringify({ scenario: "non-DWD", environment: p.state.environment, html }),
+  );
+  assert.ok(html.includes('<div class="weather-heading"><span>Umgebungswetter</span>'));
+  assert.ok(!html.includes("DWD"));
   assert.ok(html.includes('role="img"'));
   assert.ok(html.includes("Leicht bewölkt"));
   assert.ok(html.includes("16,4"));
-  assert.ok(html.includes("&lt;img src=x onerror=&quot;bad()&quot;&gt;"));
+  assert.ok(
+    html.includes("Private Wetterstation &lt;img src=x onerror=&quot;bad()&quot;&gt;"),
+  );
   assert.ok(html.includes("Außen &lt;b&gt;"));
   assert.ok(html.includes("&lt;script&gt;bad()&lt;/script&gt;"));
   assert.ok(!html.includes("<script>"));

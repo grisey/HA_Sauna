@@ -2,22 +2,33 @@
 
 ## Starten und nach einer Pause fortsetzen
 
-Erneutes Einschalten in Automatik innerhalb der Wiederaufnahmefrist setzt die vorherige
-Sitzung fort; der Lichtnachlauf endet dabei.
+Erneutes Einschalten vor Ablauf der Wiederaufnahmefrist setzt dieselbe Sitzung
+fort. Das gilt in Automatik, in Manuell und bei einem Wechsel dazwischen.
+Beginn, Messungen, Heizverlauf, Energie und erkannte Gänge bleiben erhalten;
+ein automatischer Lichtnachlauf endet beim Einschalten. Ab dem Fristende beginnt
+eine neue Sitzung.
 
 Die unter **Einstellungen → Programme und Start → Sitzung starten und beenden**
 gewählte Tastergeste startet Automatik
 mit der gespeicherten Tastervorgabe, auch aus dem manuellen Modus. Die Auswahl
-richtet sich nach den Ereignismeldungen des Tasters. Einmaliges Drücken bleibt
-der direkten Ofensteuerung vorbehalten. Die Tastervorgabe
+richtet sich nach den Ereignismeldungen des Tasters. Vom Gerät erkannte Gesten
+werden unmittelbar übernommen; die Integration misst deren Haltezeit nicht erneut.
+Nur ein Taster, der lediglich Drücken und Loslassen meldet, verwendet die
+eingestellte Haltezeit. Einmaliges Drücken bleibt der direkten Ofensteuerung
+vorbehalten. Nicht als Sitzungsgeste gewählte Mehrfachgesten lösen keine
+zusätzlichen Ofenhandlungen aus. Die Tastervorgabe
 gilt unabhängig von der Temperaturwahl im Panel. Bei **Konstante Temperatur**
 verwendet sie die Standardtemperatur aus der Integrationskonfiguration;
 gespeicherte Programme verwenden ihre eigenen Temperaturen.
+Läuft vorher bereits manuelles Vorheizen, setzt die Sitzungsgeste diese
+Aufzeichnung ohne Unterbrechung im gewählten Automatikprogramm fort.
 
-Bei gewählter Haltegeste geht das Licht beim Drücken zunächst aus. Sobald die
-Haltezeit erreicht ist, bestätigt die eingestellte Einschalthelligkeit den Start
+Bei gewählter Haltegeste und vorhandenen Drück- und Loslassmeldungen geht das
+Licht beim Drücken zunächst aus. Sobald der Langdruck erkannt ist, bestätigt
+die eingestellte Einschalthelligkeit den Start
 bis zum Loslassen. Ein kurzer Druck stellt die vorherige Helligkeit wieder her
-und schaltet den Ofen. Dafür muss der Taster Drücken, Halten und Loslassen melden.
+und schaltet den Ofen. Meldet das Gerät nur die erkannte Langdruckgeste, startet
+oder beendet diese die Sitzung ohne eine Rückmeldung während des Haltens.
 
 ## Temperatur während der Sitzung ändern
 
@@ -70,8 +81,8 @@ Lichtnachlauf. Eine spätere Raumlichtwahl startet keinen neuen Nachlauf.
 
 ## Dauerhaft manuell betreiben
 
-Die Betriebsart **Manuell** ist mit normalen Bedienrechten nach vollständigem
-Ende einer automatischen Sitzung wählbar und bleibt bis zur erneuten Betriebsartwahl erhalten.
+Die Betriebsart **Manuell** ist mit normalen Bedienrechten bei ausgeschaltetem
+Automatikbetrieb wählbar und bleibt bis zur erneuten Betriebsartwahl erhalten.
 Ofen und Licht beginnen beim Wechsel über das Panel und nach einem Home-Assistant-Neustart
 mit AUS. Die Bedienwahlen gelten ohne Übersteuerungsfrist.
 
@@ -88,24 +99,34 @@ Auch manuelles EIN benötigt eine gültige
 Regeltemperatur und Heizfreigabe; Schutz hat Vorrang. Zurückschalten auf
 Automatik gibt Ofen und Licht wieder für die automatische Steuerung frei.
 
-Ofen-EIN beginnt eine Aufzeichnung, Ofen-AUS beendet sie. Thermostatzyklen
-unterbrechen sie nicht. Tür, Anwesenheit, Gänge und Aufgüsse werden nach
+Ofen-EIN beginnt eine Aufzeichnung oder setzt sie innerhalb der
+Wiederaufnahmefrist fort. Ofen-AUS beendet die Heizfreigabe und den offenen Gang;
+erst nach der Wiederaufnahmefrist ist die Aufzeichnung abgeschlossen.
+Thermostatzyklen unterbrechen sie nicht. Tür, Anwesenheit, Gänge und Aufgüsse werden nach
 denselben [Erkennungsregeln](gangmodell.md) erfasst, ohne Ofen oder Licht zu
 steuern. Für die Speicherung gelten dieselben [Archivregeln](speicherung.md)
 wie im Automatikbetrieb.
 
-## Ausschalten oder sofort beenden
+## Ausschalten und Lichtnachlauf beenden
 
-**Ausschalten** beendet den offenen Gang und startet die gemeinsame
-Wiederaufnahme- und Lichtnachlauffrist. Erst nach dieser Frist ist die Sitzung
-abgeschlossen. Bis dahin bleiben Betriebsartwechsel und technische
-Konfiguration gesperrt.
+**Ausschalten** beendet den offenen Gang und startet die Wiederaufnahmefrist.
+Im Automatikbetrieb läuft währenddessen der Lichtnachlauf. Erst nach dieser
+Frist ist die Sitzung abgeschlossen. Ein Betriebsartwechsel bei ausgeschaltetem
+Betrieb erhält die Aufzeichnung; technische Konfiguration bleibt bis zum
+Abschluss gesperrt.
 
-Dieselbe Tastergeste beendet eine laufende automatische Sitzung sofort.
-Bei gewählter Haltegeste wird zuvor ausgeschaltetes Licht beim Drücken mit der
-eingestellten Einschalthelligkeit eingeschaltet. Sobald die Haltezeit erreicht
-ist, bleibt es bis zur Loslassmeldung AUS;
-anschließend beginnt der Lichtnachlauf.
+Dieselbe Tastergeste schaltet einen laufenden Automatikbetrieb sofort aus.
+Bei gewählter Haltegeste und vorhandenen Drück- und Loslassmeldungen wird zuvor
+ausgeschaltetes Licht beim Drücken mit der eingestellten Einschalthelligkeit
+eingeschaltet. Sobald der Langdruck erkannt ist, bleibt es bis zur Loslassmeldung
+AUS; anschließend beginnt der Lichtnachlauf. Bei Geräten ohne diese Kantenmeldungen
+beginnt der Lichtnachlauf unmittelbar mit der erkannten Sitzungsgeste. In beiden
+Fällen endet er spätestens mit der beim Ausschalten begonnenen
+Wiederaufnahmefrist.
+
+**Lichtnachlauf beenden** schaltet das Nachlauflicht sofort aus. Die
+Wiederaufnahmefrist und die bis dahin zusammengehörige Aufzeichnung bleiben
+erhalten.
 
 Nach einem Home-Assistant-Neustart setzt sich der Ofenbetrieb nicht fort;
 er benötigt ausdrückliches Einschalten. Die unterbrochene Sitzung bleibt im
@@ -116,13 +137,23 @@ er benötigt ausdrückliches Einschalten. Die unterbrochene Sitzung bleibt im
 | Änderung | Besonderheit |
 | --- | --- |
 | Programmbibliothek | **Fertig** ändert nur den Entwurf; erst **Programme speichern** übernimmt den gesamten Katalog. Nach Sitzungsende auch ohne Administratorrechte. |
-| Darstellung | Auch die Rücksetzung ändert nur den Entwurf; Speichern wirkt für alle Benutzer der Sauna. |
+| Darstellung | Eingaben erscheinen als Vorschau. **Darstellung speichern** übernimmt sie für alle Benutzer der Sauna; **Änderungen verwerfen** lädt die aktiven Werte. |
 | Anlagenwerte und Gerätezuordnungen in der Integrationskonfiguration | Administratorrechte und vollständiges Sitzungsende erforderlich. Die aktuelle Temperaturwahl bleibt erhalten. |
 
 Die gemeinsame Instrumentenform kann für Temperatur, Luftfeuchte und Licht
 einzeln überschrieben werden. Die konstanten Temperaturen der Schnellwahl werden
 ebenfalls unter **Darstellung** eingestellt.
+Bei gespeicherten Programmen bleiben Name sowie Anfangs- und Endtemperatur
+sichtbar. Die Zwischenstufen entfalten sich beim Darüberfahren oder Fokussieren;
+bei reduzierter Bewegung entfällt die Animation.
 
 Offene oder nach Speicherfehlern verbliebene Entwürfe werden durch Sitzungsende
 nicht übernommen. Protokollstufe und Darstellung bleiben während der Sitzung
 änderbar. [Umfang der Rücksetzungen](parameter.md#werkseinstellungen)
+
+Das Feldmenü **⋯** zeigt Werkseinstellung, gespeicherten Standard, aktiven Wert
+und Entwurf. **Standard überschreiben** speichert den geprüften Entwurf eines
+Feldes als Standard. **Standard wiederherstellen** und **Werkseinstellung**
+übernehmen die bestätigte Vorschau sofort in die betroffenen aktiven Werte und
+Entwürfe. Bei inzwischen geänderten Einstellungen ist die neue Vorschau erneut
+zu bestätigen. [Feldstandards und Umfang](parameter.md#werkseinstellungen)

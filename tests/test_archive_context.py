@@ -13,7 +13,7 @@ from custom_components.ha_sauna.core.controller import Controller
 from custom_components.ha_sauna.core.history import HISTORY_CONTEXT_SECONDS
 from custom_components.ha_sauna.core.models import Position, Quantity
 from custom_components.ha_sauna.core.timeline import Kind
-from test_detector import measurement
+from climate_fixtures import measurement
 from test_foundation import T0, bindings, event, parameters
 
 

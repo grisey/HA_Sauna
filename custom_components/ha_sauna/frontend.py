@@ -7,6 +7,8 @@ from homeassistant.components import frontend
 from homeassistant.components.http import StaticPathConfig
 from homeassistant.components.panel_custom import async_register_panel
 from .const import DOMAIN
+from .appearance import APPEARANCE_CATALOG
+from .core.defaults import section
 
 
 async def register(hass, *, exclude_entry_id=None):
@@ -41,7 +43,7 @@ async def register(hass, *, exclude_entry_id=None):
         panel = Path(__file__).with_name("panel.js")
         # Auch bei unveränderter Integrationsversion muss ein HACS-Update eine
         # neue Moduladresse bekommen; Browser halten bereits geladene Module vor.
-        fingerprint = sha256(await asyncio.to_thread(panel.read_bytes)).hexdigest()[:16]
+        fingerprint = sha256(await asyncio.to_thread(panel.read_bytes)).hexdigest()
         if not data.get("panel_static_registered"):
             await hass.http.async_register_static_paths(
                 [StaticPathConfig("/ha_sauna/panel.js", str(panel), False)]
@@ -56,6 +58,10 @@ async def register(hass, *, exclude_entry_id=None):
             module_url=f"/ha_sauna/panel.js?v={fingerprint}",
             embed_iframe=False,
             require_admin=False,
+            config={
+                "appearance_catalog": APPEARANCE_CATALOG,
+                "frontend_defaults": section("frontend"),
+            },
         )
         data["panel_registered"] = True
         data["panel_sidebar_title"] = title

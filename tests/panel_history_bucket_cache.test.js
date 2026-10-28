@@ -1,3 +1,4 @@
+const { panelFixture: fixturePanel } = require("./catalog_fixture.cjs");
 // Independent raw-point oracle for continuous, pixel-reduced user history.
 const assert = require("node:assert/strict");
 const fs = require("node:fs");
@@ -52,7 +53,7 @@ const makeRecord = (id, time, value) => ({
   },
 });
 const panel = (records) => {
-  const p = Object.create(context.Panel.prototype);
+  const p = fixturePanel(context.Panel);
   p.historyIndex(records);
   return p;
 };

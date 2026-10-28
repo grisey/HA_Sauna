@@ -1,3 +1,4 @@
+const { panelFixture: fixturePanel } = require("./catalog_fixture.cjs");
 const assert = require("node:assert/strict");
 const test = require("node:test");
 const fs = require("node:fs");
@@ -10,7 +11,7 @@ vm.runInNewContext(fs.readFileSync("custom_components/ha_sauna/panel.js", "utf8"
 function fixture() {
   const writes = [],
     nodes = { "#archive-management": {} };
-  const p = Object.assign(Object.create(Panel.prototype), {
+  const p = Object.assign(fixturePanel(Panel), {
     entry: "e",
     generation: 1,
     archiveRevision: 0,

@@ -8,6 +8,84 @@ from .contracts import PresenceReport
 from .timeline import Event, Kind, utc
 
 
+class PresenceSourceSelection:
+    """Führende Quelle anhand kontinuierlicher Sensorverfügbarkeit wählen.
+
+    Die Zeitangaben beschreiben die tatsächliche Verarbeitung. Das Alter einer
+    gültigen Sensormeldung ist keine Nichtverfügbarkeit. Ohne erste Beobachtung
+    beginnt keine Wartezeit; beide Verzögerungen kommen vom Aufrufer.
+    """
+
+    def __init__(self, configured_source: str) -> None:
+        if configured_source not in ("proxy", "ha_presence"):
+            raise ValueError("Ungültige Präsenzquelle")
+        self._configured_source = configured_source
+        self._effective_source = configured_source
+        self._available: bool | None = None
+        self._availability_since: datetime | None = None
+        self._last_changed_at: datetime | None = None
+        self._last_processed_at: datetime | None = None
+
+    @property
+    def configured_source(self) -> str:
+        return self._configured_source
+
+    @property
+    def effective_source(self) -> str:
+        return self._effective_source
+
+    @property
+    def available(self) -> bool | None:
+        return self._available
+
+    @property
+    def availability_since(self) -> datetime | None:
+        return self._availability_since
+
+    @property
+    def last_changed_at(self) -> datetime | None:
+        return self._last_changed_at
+
+    def observe(self, available: bool, at: datetime) -> None:
+        """Normalisierte Verfügbarkeit auch während des Proxybetriebs erfassen."""
+        at = self._processing_time(at)
+        if not isinstance(available, bool):
+            raise ValueError("Präsenzverfügbarkeit muss ein boolescher Wert sein")
+        self._last_processed_at = at
+        if available != self._available:
+            self._available = available
+            self._availability_since = at
+
+    def advance(
+        self, at: datetime, *, fallback_delay_seconds: float,
+        recovery_delay_seconds: float,
+    ) -> bool:
+        """Fälligen Quellenwechsel zur tatsächlichen Verarbeitung ausführen."""
+        at = self._processing_time(at)
+        self._last_processed_at = at
+        since = self._availability_since
+        if self._configured_source == "proxy" or since is None:
+            return False
+        source = "ha_presence" if self._available else "proxy"
+        delay = (
+            recovery_delay_seconds if self._available else fallback_delay_seconds
+        )
+        if (
+            self._effective_source == source
+            or (at - since).total_seconds() < delay
+        ):
+            return False
+        self._effective_source = source
+        self._last_changed_at = at
+        return True
+
+    def _processing_time(self, at: datetime) -> datetime:
+        at = utc(at)
+        if self._last_processed_at is not None and at < self._last_processed_at:
+            raise ValueError("Präsenzverarbeitung darf nicht rückwärts laufen")
+        return at
+
+
 class ProxyPresenceSource:
     """Kapselt vorhandene Personenereignisse ohne Schwellen oder Zeiten zu ändern."""
 

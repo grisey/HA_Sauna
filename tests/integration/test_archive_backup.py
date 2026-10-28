@@ -16,6 +16,7 @@ from homeassistant.components.backup.manager import CoreBackupReaderWriter
 from homeassistant.backup_restore import restore_backup
 from custom_components.ha_sauna.core.models import Measurement, Position, Quantity
 from harness import create_sauna, credentials, start_hass, retain_session
+from test_settings import async_timeout
 from custom_components.ha_sauna import backup
 from custom_components.ha_sauna.const import DOMAIN
 
@@ -56,12 +57,12 @@ class ArchiveIntegrationTests(unittest.IsolatedAsyncioTestCase):
                 self.hass, binding_overrides={"heater": "switch.second_heater"}
             ))
             try:
-                await asyncio.wait_for(entered.wait(), 5)
+                await asyncio.wait_for(entered.wait(), async_timeout("background"))
                 self.assertFalse(paths[0].exists())
                 self.assertFalse(creating.done())
             finally:
                 await backup.async_post_backup(self.hass)
-            entry = await asyncio.wait_for(creating, 10)
+            entry = await asyncio.wait_for(creating, async_timeout("reload"))
         self.assertTrue(paths[0].exists())
         self.assertIn(entry.runtime_data.archive, self.hass.data[DOMAIN]["archives"])
 
@@ -77,14 +78,14 @@ class ArchiveIntegrationTests(unittest.IsolatedAsyncioTestCase):
 
         with patch.object(self.runtime.device, "close", delayed_close):
             closing = asyncio.create_task(self.runtime.close())
-            await asyncio.wait_for(entered.wait(), 5)
+            await asyncio.wait_for(entered.wait(), async_timeout("background"))
             self.assertFalse(self.runtime.closed)
             await backup.async_pre_backup(self.hass)
             archive = self.runtime.archive
             try:
                 before = await asyncio.to_thread(archive.read, self.session_id, now=self.now)
                 release.set()
-                await asyncio.wait_for(device_done.wait(), 5)
+                await asyncio.wait_for(device_done.wait(), async_timeout("background"))
                 self.assertFalse(closing.done())
                 self.assertEqual(await asyncio.to_thread(archive.read, self.session_id, now=self.now), before)
             finally:
@@ -116,7 +117,7 @@ class ArchiveIntegrationTests(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(len(rows), 21)
                 session = json.loads(archive.read("sessions.jsonl").splitlines()[0])
                 self.assertEqual(session["timeline"]["session_id"], self.session_id)
-                self.assertEqual(session["configuration"], self.runtime.configuration.as_options())
+                self.assertEqual(session["configuration"], self.runtime.configuration.as_snapshot())
 
     async def test_actual_ha_backup_and_restore_to_new_installation(self):
         assert await async_setup_component(self.hass, "backup", {})

@@ -12,6 +12,7 @@ from custom_components.ha_sauna.settings import (
     async_set_parameters,
 )
 from harness import create_sauna, credentials, start_hass
+from test_settings import async_timeout
 
 
 class ParameterPatchTests(unittest.IsolatedAsyncioTestCase):
@@ -91,7 +92,7 @@ class ParameterPatchTests(unittest.IsolatedAsyncioTestCase):
                     pending = asyncio.create_task(client.patch(
                         self.base + "/parameters", json={"preset_count": 3}
                     ))
-                    await asyncio.wait_for(entered.wait(), 5)
+                    await asyncio.wait_for(entered.wait(), async_timeout("background"))
                     self.assertFalse(pending.done())
                     # This preceding serialized live edit completes before the
                     # waiting HTTP writer may read or merge the current values.
@@ -99,7 +100,7 @@ class ParameterPatchTests(unittest.IsolatedAsyncioTestCase):
                         self.hass, self.entry,
                         {"target_temperature_c": 79}, partial=True,
                     )
-                response = await asyncio.wait_for(pending, 5)
+                response = await asyncio.wait_for(pending, async_timeout("background"))
                 async with response:
                     self.assertEqual(response.status, 200, await response.text())
                     result = await response.json()

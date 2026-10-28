@@ -17,7 +17,7 @@ NATIVE_BUTTON_EVENTS = {
     "single_push": "short", "single": "short",
     "double_push": "double", "double": "double",
     "triple_push": "triple", "triple": "triple",
-    "long_push": "long",
+    "long_push": "long", "long": "long",
 }
 
 START_STANDARD_PROGRAM = "start_standard_program"
@@ -48,14 +48,15 @@ class ButtonGestures:
     ``short`` and ``long`` are also accepted without a preceding press. Some
     event-only devices publish only their completed classification; each such
     event starts an independent gesture with the current operation context.
+    Their ``hold_threshold`` is ``None``; only binary inputs have a local duration.
     """
 
     def __init__(
-        self, hold_threshold: timedelta,
+        self, hold_threshold: timedelta | None,
         session_gesture: str = instance_default("button_session_gesture"),
     ):
         self.session_gesture = validate_session_gesture(session_gesture)
-        if hold_threshold < timedelta(0):
+        if hold_threshold is not None and hold_threshold < timedelta(0):
             raise ValueError("hold_threshold must not be negative")
         self.hold_threshold = hold_threshold
         self._pressed_at: datetime | None = None
@@ -70,7 +71,10 @@ class ButtonGestures:
         self._short_completed = False
         self._native_started_while_off: bool | None = None
 
-    def handle(self, event: str, operation_enabled: bool, now: datetime) -> str | None:
+    def handle(
+        self, event: str, operation_enabled: bool, now: datetime,
+        *, supports_hold_feedback: bool = True,
+    ) -> str | None:
         """Accept one normalized event and return its single semantic action."""
         if event == "unavailable":
             if self._gesture_active:
@@ -86,27 +90,36 @@ class ButtonGestures:
         if event == "off":
             return self._release(operation_enabled, now, binary=True)
         if event == "press":
+            if not supports_hold_feedback:
+                return None
             return self._press(operation_enabled, now, binary=False)
         if event == "short":
             return self._short(operation_enabled)
         if event == "long":
             return self._long(operation_enabled)
         if event == "release":
+            if not supports_hold_feedback:
+                return None
             return self._release(operation_enabled, now, binary=False)
         raise ValueError(f"unknown button event: {event!r}")
 
     def handle_actions(
-        self, event: str, operation_enabled: bool, now: datetime
+        self, event: str, operation_enabled: bool, now: datetime,
+        *, supports_hold_feedback: bool = True,
     ) -> tuple[str, ...]:
         """Accept one event and return every action completed by it.
 
         Shelly publishes a click summary after the individual ``btn_down`` and
         ``btn_up`` events. Their first press supplies the operation context;
-        the summary confirms all short presses. Event-only devices supply
-        every press through their summary itself.
+        the summary identifies one completed gesture. Only a single short
+        gesture toggles the heater; a selected multi-click gesture starts or
+        ends operation. Other native gestures have no additional meaning.
         """
         if event not in {"double", "triple"}:
-            action = self.handle(event, operation_enabled, now)
+            action = self.handle(
+                event, operation_enabled, now,
+                supports_hold_feedback=supports_hold_feedback,
+            )
             return () if action is None else (action,)
         if self._short_suppressed or self._short_completed:
             return ()
@@ -115,7 +128,6 @@ class ButtonGestures:
                 return ()
             self._clear()
 
-        clicks = 2 if event == "double" else 3
         native = self._native_started_while_off is not None
         started_while_off = (
             self._native_started_while_off if native else not operation_enabled
@@ -125,7 +137,7 @@ class ButtonGestures:
         elif event == self.session_gesture:
             actions = (END_RELEASE if operation_enabled else START_STANDARD_PROGRAM,)
         else:
-            actions = (HEATER_TOGGLE_OVERRIDE,) * clicks
+            actions = ()
         if native:
             # A native summary consumes this gesture, just like ``short``.
             # Keep its context so a trailing long cannot become a sparse hold.
@@ -138,7 +150,8 @@ class ButtonGestures:
     def advance(self, now: datetime, operation_enabled: bool) -> str | None:
         """Recognize a held binary press after its configured duration."""
         if (
-            not self._gesture_active
+            self.hold_threshold is None
+            or not self._gesture_active
             or not self._binary_press
             or self._pressed_at is None
             or self._long_seen
@@ -151,6 +164,8 @@ class ButtonGestures:
     def _press(
         self, operation_enabled: bool, now: datetime, *, binary: bool
     ) -> str | None:
+        if binary and self.hold_threshold is None:
+            raise ValueError("binary button input requires a hold threshold")
         # A new press always starts a new gesture, even if a prior release vanished.
         if binary or self._binary_press or self._short_completed or self._long_seen:
             self._native_started_while_off = None
@@ -210,12 +225,16 @@ class ButtonGestures:
         if self._started_while_off:
             if operation_enabled:
                 return None
-            if self._event_only_gesture:
+            if self._pressed_at is None:
                 return START_STANDARD_PROGRAM
             self._start_hold_sent = True
             return START_HOLD
         if not operation_enabled:
             return None
+        if self._pressed_at is None:
+            # A final classification has no remaining physical hold. Do not
+            # defer the ordinary light after-run to an unavailable release.
+            return END_RELEASE
         self._end_hold_sent = True
         return END_HOLD
 
@@ -234,6 +253,9 @@ class ButtonGestures:
             self._clear(suppress_short=True)
             return None
         if binary and self._binary_press:
+            if self._pressed_at is None or self.hold_threshold is None:
+                self._clear(suppress_short=True)
+                return None
             # A delayed timer callback must not turn a completed long hold into
             # a short action. The runtime ends the session on END_RELEASE even
             # if it could not show the acknowledgement before this release.
@@ -254,6 +276,7 @@ class ButtonGestures:
             self._clear(suppress_short=True)
             return action
         # Keep the press context for Shelly's usual release-then-short order.
+        self._pressed_at = None
         return None
 
     def _clear(self, *, suppress_short: bool = False) -> None:

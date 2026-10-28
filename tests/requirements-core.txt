@@ -1,0 +1,2 @@
+# Fachkern: Erkennungsmodell (gleiche Fassung wie in der HA-Testumgebung).
+numpy==2.3.2

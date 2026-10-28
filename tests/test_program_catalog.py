@@ -3,7 +3,7 @@
 import unittest
 
 from custom_components.ha_sauna.core.defaults import section
-from custom_components.ha_sauna.core.parameters import BY_KEY
+from custom_components.ha_sauna.core.parameters import BY_KEY, Parameters
 from custom_components.ha_sauna.core.program_catalog import (
     DEFAULT_PROGRAMS,
     NamedTemperatureProgram,
@@ -14,6 +14,12 @@ from custom_components.ha_sauna.core.program_catalog import (
 
 
 class ProgramCatalogTests(unittest.TestCase):
+    def setUp(self):
+        self.bounds = {
+            "minimum_c": Parameters({}).minimum_for("target_temperature_c"),
+            "maximum_c": BY_KEY["target_temperature_c"].maximum,
+        }
+
     def test_defaults_have_stable_names_and_hold_their_end_target(self):
         catalog = section("programs")
         self.assertEqual(
@@ -22,7 +28,7 @@ class ProgramCatalogTests(unittest.TestCase):
         )
         for entry, spec in zip(DEFAULT_PROGRAMS, catalog):
             with self.subTest(program=entry.id):
-                program = entry.temperature_program(minimum_c=60, maximum_c=100)
+                program = entry.temperature_program(**self.bounds)
                 self.assertEqual(program.gangs, spec["distribution_gangs"])
                 self.assertEqual(program.target(0), spec["start_c"])
                 self.assertEqual(program.target(program.gangs - 1), spec["end_c"])
@@ -57,8 +63,7 @@ class ProgramCatalogTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             load_programs(
                 [DEFAULT_PROGRAMS[0].as_dict(), DEFAULT_PROGRAMS[0].as_dict()],
-                minimum_c=60,
-                maximum_c=100,
+                **self.bounds,
             )
 
     def test_manual_steps_are_canonical_and_reject_conflicting_metadata(self):
@@ -69,33 +74,31 @@ class ProgramCatalogTests(unittest.TestCase):
             (program.start_c, program.end_c, program.distribution_gangs), (80, 90, 3)
         )
         self.assertEqual(
-            program.temperature_program(minimum_c=60, maximum_c=100).target(8), 90
+            program.temperature_program(**self.bounds).target(8), 90
         )
         loaded = load_programs(
             [{"id": "manuell", "name": "Manuell", "temperature_steps": [80, 86, 90]}],
-            minimum_c=60,
-            maximum_c=100,
+            **self.bounds,
         )
         self.assertEqual(loaded, (program,))
         with self.assertRaises(ValueError):
             NamedTemperatureProgram("manuell", "Manuell", 80, 90, 4, (80, 86, 90))
         with self.assertRaises(ValueError):
             load_programs(
-                [{**DEFAULT_PROGRAMS[0].as_dict(), "start_c": 59}],
-                minimum_c=60,
-                maximum_c=100,
+                [{**DEFAULT_PROGRAMS[0].as_dict(),
+                  "start_c": self.bounds["minimum_c"] - .1}],
+                **self.bounds,
             )
         with self.assertRaises(ValueError):
             load_programs(
                 [{**DEFAULT_PROGRAMS[0].as_dict(), "id": "current"}],
-                minimum_c=60,
-                maximum_c=100,
+                **self.bounds,
             )
 
     def test_options_are_small_and_json_safe(self):
         first = section("programs")[0]
         self.assertEqual(
-            program_options(DEFAULT_PROGRAMS, minimum_c=60, maximum_c=100)[0],
+            program_options(DEFAULT_PROGRAMS, **self.bounds)[0],
             {"id": first["id"], "name": first["name"]},
         )
 
@@ -103,14 +106,13 @@ class ProgramCatalogTests(unittest.TestCase):
         self.assertEqual(
             [
                 program.id
-                for program in migrate_legacy_programs({}, minimum_c=60, maximum_c=100)
+                for program in migrate_legacy_programs({}, **self.bounds)
             ],
             [program.id for program in DEFAULT_PROGRAMS],
         )
         migrated = migrate_legacy_programs(
             {"parameters": {"program_1_end_c": 98}, "button_program": "program_2"},
-            minimum_c=60,
-            maximum_c=100,
+            **self.bounds,
         )
         self.assertEqual(
             [program.id for program in migrated][-2:], ["program_1", "program_2"]

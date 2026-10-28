@@ -7,6 +7,7 @@ from datetime import timedelta
 from unittest.mock import patch
 
 import test_device_path as device_path
+from test_settings import async_timeout, fixture, setting
 from homeassistant.components.switch import SwitchEntity
 from homeassistant.core import Event, State
 from homeassistant.exceptions import HomeAssistantError
@@ -15,13 +16,15 @@ from custom_components.ha_sauna import async_unload_entry
 from custom_components.ha_sauna.entity import SaunaEntity
 
 
+TRANSPORT_INPUTS = fixture("transport")
+
+
 class TransportLifecycleTests(unittest.IsolatedAsyncioTestCase):
     # Reuse the real HA platforms, actors and cleanup from the device-path suite.
     asyncSetUp = device_path.DevicePathTests.asyncSetUp
 
     async def test_executor_timeout_retains_on_and_final_off_until_close(self):
         adapter = self.runtime.device
-        adapter.values = {**adapter.values, "feedback_timeout_seconds": .05}
         release, entered = threading.Event(), asyncio.Event()
         trace = []
         original_off = self.heater.async_turn_off
@@ -29,7 +32,7 @@ class TransportLifecycleTests(unittest.IsolatedAsyncioTestCase):
         def sync_on(**_kwargs):
             trace.append("on_started")
             self.hass.loop.call_soon_threadsafe(entered.set)
-            if not release.wait(5):
+            if not release.wait(6 * adapter.values["feedback_timeout_seconds"]):
                 raise TimeoutError("test did not release executor")
             self.heater._attr_is_on = True
             trace.append("on_finished")
@@ -65,7 +68,7 @@ class TransportLifecycleTests(unittest.IsolatedAsyncioTestCase):
                 self.assertFalse(final_off.done())
             finally:
                 release.set()
-            self.assertTrue(await asyncio.wait_for(final_off, 3))
+            self.assertTrue(await asyncio.wait_for(final_off, async_timeout("service")))
             await self.hass.async_block_till_done()
             self.assertEqual(trace, ["on_started", "on_finished", "off_finished"])
             self.assertFalse(self.heater.is_on)
@@ -74,7 +77,6 @@ class TransportLifecycleTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_cancelled_caller_and_failed_on_still_require_ordered_off(self):
         adapter = self.runtime.device
-        adapter.values = {**adapter.values, "feedback_timeout_seconds": .05}
         entered, release = asyncio.Event(), asyncio.Event()
 
         async def failing_on(**_kwargs):
@@ -85,7 +87,7 @@ class TransportLifecycleTests(unittest.IsolatedAsyncioTestCase):
         with patch.object(self.heater, "async_turn_on", side_effect=failing_on):
             starting = asyncio.create_task(self.runtime.set_operation(True))
             try:
-                await asyncio.wait_for(entered.wait(), 3)
+                await asyncio.wait_for(entered.wait(), async_timeout("service"))
                 starting.cancel()
                 with self.assertRaises(asyncio.CancelledError):
                     await starting
@@ -101,7 +103,7 @@ class TransportLifecycleTests(unittest.IsolatedAsyncioTestCase):
                 self.assertIsNot(final_off, old_service)
             finally:
                 release.set()
-            self.assertTrue(await asyncio.wait_for(final_off, 3))
+            self.assertTrue(await asyncio.wait_for(final_off, async_timeout("service")))
             self.assertFalse(await old_service)
             await self.runtime.tick()
             await self.hass.async_block_till_done()
@@ -127,7 +129,6 @@ class TransportLifecycleTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_cancelled_on_service_still_runs_owned_final_off_without_a_tick(self):
         adapter = self.runtime.device
-        adapter.values = {**adapter.values, "feedback_timeout_seconds": .05}
         release = asyncio.Event()
         original_on = self.heater.async_turn_on
         self.heater.calls.clear()
@@ -151,7 +152,7 @@ class TransportLifecycleTests(unittest.IsolatedAsyncioTestCase):
                 async with self.runtime._lock:
                     # No periodic/feedback cycle can rescue a lost final OFF.
                     release.set()
-                    self.assertTrue(await asyncio.wait_for(final_off, 3))
+                    self.assertTrue(await asyncio.wait_for(final_off, async_timeout("service")))
                     self.assertTrue(previous.cancelled())
                     self.assertEqual(self.heater.calls, [True, False])
                     self.assertFalse(self.heater.is_on)
@@ -169,7 +170,6 @@ class TransportLifecycleTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_cancelling_queued_off_keeps_its_running_on_owned_for_retry(self):
         adapter = self.runtime.device
-        adapter.values = {**adapter.values, "feedback_timeout_seconds": .05}
         release = asyncio.Event()
         original_on = self.heater.async_turn_on
         self.heater.calls.clear()
@@ -197,7 +197,7 @@ class TransportLifecycleTests(unittest.IsolatedAsyncioTestCase):
                     self.assertFalse(retry.done())
                     self.assertEqual(self.heater.calls, [])
                     release.set()
-                    self.assertTrue(await asyncio.wait_for(retry, 3))
+                    self.assertTrue(await asyncio.wait_for(retry, async_timeout("service")))
                     self.assertEqual(self.heater.calls, [True, False])
             finally:
                 release.set()
@@ -205,7 +205,6 @@ class TransportLifecycleTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_rejected_unload_stays_off_after_old_on_finishes(self):
         adapter = self.runtime.device
-        adapter.values = {**adapter.values, "feedback_timeout_seconds": .05}
         release = asyncio.Event()
         original_on = self.heater.async_turn_on
 
@@ -224,7 +223,7 @@ class TransportLifecycleTests(unittest.IsolatedAsyncioTestCase):
                 final_off = adapter._heater_service_task
             finally:
                 release.set()
-            self.assertTrue(await asyncio.wait_for(final_off, 3))
+            self.assertTrue(await asyncio.wait_for(final_off, async_timeout("service")))
             await self.hass.async_block_till_done()
             for _ in range(5):
                 await self.runtime.tick()
@@ -245,7 +244,7 @@ class TransportLifecycleTests(unittest.IsolatedAsyncioTestCase):
         with patch.object(self.heater, "async_turn_off", side_effect=paused_off):
             first = asyncio.create_task(adapter.prepare_heater_handoff())
             try:
-                await asyncio.wait_for(entered.wait(), 3)
+                await asyncio.wait_for(entered.wait(), async_timeout("service"))
                 service = adapter._heater_service_task
                 second = asyncio.create_task(adapter.prepare_heater_handoff())
                 await asyncio.sleep(0)
@@ -260,7 +259,6 @@ class TransportLifecycleTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_pending_heater_blocks_rebinding_before_platform_unload(self):
         adapter = self.runtime.device
-        adapter.values = {**adapter.values, "feedback_timeout_seconds": .05}
         entered, release, rolled_back = asyncio.Event(), asyncio.Event(), asyncio.Event()
         original_on = self.heater.async_turn_on
         from custom_components.ha_sauna import _restore_failed_options
@@ -284,16 +282,18 @@ class TransportLifecycleTests(unittest.IsolatedAsyncioTestCase):
                 await self.runtime.set_operation(True)
                 self.assertTrue(entered.is_set())
                 await self.runtime.set_operation(False)
-                await self.runtime.finish_session_gap(next(
-                    deadline.token for deadline in self.runtime.session.deadlines
-                    if deadline.purpose == "session_gap"
-                ))
+                self.runtime.controller.finish_session(
+                    self.runtime._clock(), light_after_run=False,
+                )
+                await self.runtime._cycle()
                 self.assertIsNone(self.runtime.session)
                 self.hass.config_entries.async_update_entry(self.entry, options={
                     **old_options,
                     "bindings": {**old_options["bindings"], "heater": "switch.replacement"},
                 })
-                await asyncio.wait_for(rolled_back.wait(), 3)
+                await asyncio.wait_for(
+                    rolled_back.wait(), 2 * adapter.values["feedback_timeout_seconds"]
+                )
                 reload_entry.assert_not_called()
                 self.assertEqual(dict(self.entry.options), old_options)
                 self.assertIs(self.entry.runtime_data, self.runtime)
@@ -301,7 +301,7 @@ class TransportLifecycleTests(unittest.IsolatedAsyncioTestCase):
                 self.assertTrue(adapter._heater_owned)
             finally:
                 release.set()
-            self.assertTrue(await asyncio.wait_for(adapter._heater_service_task, 3))
+            self.assertTrue(await asyncio.wait_for(adapter._heater_service_task, async_timeout("service")))
             await self.hass.async_block_till_done()
         self.assertFalse(self.heater.is_on)
 
@@ -325,7 +325,6 @@ class TransportLifecycleTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_pending_light_does_not_delay_later_ticks_or_operation_off(self):
         adapter = self.runtime.device
-        adapter.values = {**adapter.values, "feedback_timeout_seconds": .5}
         await self.runtime.set_operation(True)
         await self.hass.async_block_till_done()
         entered, release = asyncio.Event(), asyncio.Event()
@@ -368,15 +367,22 @@ class TransportLifecycleTests(unittest.IsolatedAsyncioTestCase):
         with patch.object(self.light, "async_turn_on", side_effect=paused_on):
             selecting = asyncio.create_task(self.runtime.set_light_override(80))
             try:
-                await asyncio.wait_for(entered.wait(), 3)
+                await asyncio.wait_for(entered.wait(), async_timeout("service"))
                 for _ in range(4):
-                    await asyncio.sleep(1.05)
+                    await asyncio.sleep(
+                        self.runtime.configuration.parameters.values["runtime_tick_seconds"]
+                        + setting("asyncio.scheduler_grace_s")
+                    )
                     ticks = [
                         task for task in asyncio.all_tasks()
                         if not task.done()
                         and "SaunaRuntime.tick" in getattr(task.get_coro(), "__qualname__", "")
                     ]
                     self.assertLessEqual(len(ticks), 1)
+                await asyncio.wait_for(
+                    asyncio.shield(selecting),
+                    2 * self.runtime.configuration.parameters.values["feedback_timeout_seconds"],
+                )
                 self.assertTrue(selecting.done())
                 self.assertFalse(self.runtime.device._light_service_task.done())
                 await asyncio.wait_for(self.runtime.set_operation(False), .5)
@@ -390,9 +396,6 @@ class TransportLifecycleTests(unittest.IsolatedAsyncioTestCase):
     async def test_continuous_inputs_with_slow_light_failures_do_not_queue_before_off(self):
         await self.runtime.set_operation(True)
         await self.hass.async_block_till_done()
-        self.runtime.device.values = {
-            **self.runtime.device.values, "feedback_timeout_seconds": .05,
-        }
         source = self.runtime.configuration.bindings.values["upper_temperature"]
         attributes = self.hass.states.get(source).attributes
         entered = asyncio.Event()
@@ -400,7 +403,7 @@ class TransportLifecycleTests(unittest.IsolatedAsyncioTestCase):
 
         async def failing_on(**_kwargs):
             entered.set()
-            await asyncio.sleep(.035)
+            await asyncio.sleep(TRANSPORT_INPUTS["light_service_delay_s"])
             raise HomeAssistantError("slow repeatable light failure")
 
         async def produce():
@@ -408,14 +411,14 @@ class TransportLifecycleTests(unittest.IsolatedAsyncioTestCase):
                 value = 25 + (len(produced) + 1) / 100000
                 produced.append(value)
                 self.hass.states.async_set(source, str(value), attributes)
-                await asyncio.sleep(.003)
+                await asyncio.sleep(TRANSPORT_INPUTS["measurement_interval_s"])
 
         with patch.object(self.light, "async_turn_on", side_effect=failing_on):
             selecting = asyncio.create_task(self.runtime.set_light_override(81))
-            await asyncio.wait_for(entered.wait(), 3)
+            await asyncio.wait_for(entered.wait(), async_timeout("service"))
             producer = asyncio.create_task(produce())
             try:
-                await asyncio.sleep(.1)
+                await asyncio.sleep(TRANSPORT_INPUTS["load_lead_s"])
                 stopping = asyncio.create_task(self.runtime.set_operation(False))
                 done, _ = await asyncio.wait({stopping}, timeout=.25)
                 completed = stopping in done
@@ -423,7 +426,7 @@ class TransportLifecycleTests(unittest.IsolatedAsyncioTestCase):
             finally:
                 producer.cancel()
                 await asyncio.gather(producer, return_exceptions=True)
-                await asyncio.wait_for(stopping, 3)
+                await asyncio.wait_for(stopping, async_timeout("service"))
                 await selecting
                 await self.hass.async_block_till_done()
         self.assertTrue(completed, "old sensor callbacks repeated slow light cycles before OFF")
@@ -459,7 +462,7 @@ class TransportLifecycleTests(unittest.IsolatedAsyncioTestCase):
         with patch.object(self.light, "async_turn_on", side_effect=paused_on):
             worker = asyncio.create_task(self.runtime.device_input(event(26)))
             try:
-                await asyncio.wait_for(entered.wait(), 3)
+                await asyncio.wait_for(entered.wait(), async_timeout("service"))
                 await self.runtime.device_input(event(27))
                 await self.runtime.device_input(event(28))
                 worker.cancel()
@@ -477,14 +480,16 @@ class TransportLifecycleTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_light_output_lock_does_not_block_control_and_handoff_is_bounded(self):
         adapter = self.runtime.device
-        adapter.values = {**adapter.values, "feedback_timeout_seconds": .1}
         await self.runtime.set_operation(True)
         await self.hass.async_block_till_done()
         await adapter._light_output_lock.acquire()
         try:
             await asyncio.wait_for(self.runtime.set_operation(False), .5)
             self.assertFalse(self.heater.is_on)
-            self.assertFalse(await asyncio.wait_for(adapter.finish_session_light(self.now, None), .5))
+            self.assertFalse(await asyncio.wait_for(
+                adapter.finish_session_light(self.now, None),
+                2 * adapter.values["feedback_timeout_seconds"],
+            ))
         finally:
             adapter._light_output_lock.release()
             adapter.restore_light_ownership()
@@ -496,7 +501,6 @@ class TransportLifecycleTests(unittest.IsolatedAsyncioTestCase):
             await self.hass.async_block_till_done()
         self.assertFalse(self.light.is_on)
         adapter = self.runtime.device
-        adapter.values = {**adapter.values, "feedback_timeout_seconds": .1}
         entered, release = asyncio.Event(), asyncio.Event()
         original_on = self.light.async_turn_on
 
@@ -511,7 +515,7 @@ class TransportLifecycleTests(unittest.IsolatedAsyncioTestCase):
             selecting = asyncio.create_task(self.runtime.set_light_override(80))
             finishing = None
             try:
-                await asyncio.wait_for(entered.wait(), 3)
+                await asyncio.wait_for(entered.wait(), async_timeout("service"))
                 selecting.cancel()
                 with self.assertRaises(asyncio.CancelledError):
                     await selecting
@@ -579,12 +583,11 @@ class TransportLifecycleTests(unittest.IsolatedAsyncioTestCase):
             }, blocking=True)
             self.assertEqual(self.hass.states.get(self.climate).attributes["temperature"], 85)
             entities = [callback.__self__ for callback in self.runtime._subscribers]
-            target = next(entity for entity in entities
-                          if entity.unique_id.endswith("_target_temperature_c"))
             humidity = next(entity for entity in entities
                             if entity.unique_id.endswith("_absolute_humidity_upper"))
-            self.assertEqual(float(self.hass.states.get(target.entity_id).state), 85)
             self.assertNotEqual(self.hass.states.get(humidity.entity_id).state, "unavailable")
-            self.now += timedelta(seconds=31)
+            self.now += timedelta(seconds=
+                self.runtime.configuration.parameters.values["sensor_timeout_seconds"] + 1
+            )
             await self.runtime.tick()
             self.assertEqual(self.hass.states.get(humidity.entity_id).state, "unavailable")

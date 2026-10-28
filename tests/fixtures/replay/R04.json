@@ -1,0 +1,629 @@
+{
+  "schema_version": 1,
+  "id": "R04",
+  "kind": "real_session",
+  "title": "Zusammenhängender Saunatag mit Regleränderungen, Türfolgen und kurzen Betriebspausen",
+  "duration_s": 18156.728469,
+  "configuration": {
+    "presence_source": "ha_presence",
+    "control_mode": "automatic",
+    "parameters": {
+      "target_temperature_c": 80,
+      "final_temperature_c": 90,
+      "temperature_gangs": 4,
+      "button_hold_seconds": 2.0,
+      "session_gap_minutes": 15.0,
+      "manual_override_minutes": 10.0,
+      "standard_temperature_c": 90,
+      "sauna_min_temperature_c": 60.0,
+      "readiness_offset_c": 1.0,
+      "readiness_hysteresis_c": 1.0,
+      "minimum_heating_minutes": 10.0,
+      "thermostat_cooldown_minutes": 5.0,
+      "feedback_timeout_seconds": 10.0,
+      "fault_confirmation_seconds": 60.0,
+      "warmup_estimation_minutes": 5.0,
+      "after_run_minutes": 5.0,
+      "oven_cooling_max_minutes": 15.0,
+      "oven_cooling_heat_idle_ratio": 2.0,
+      "oven_cooling_half_life_minutes": 15.0,
+      "power_heating_threshold_w": 50.0,
+      "nominal_power_kw": 4.5,
+      "heat_reset_minutes": 10.0,
+      "sensor_timeout_seconds": 180.0,
+      "grid_seconds": 1,
+      "median_seconds": 5,
+      "door_window_seconds": 8,
+      "door_humidity_seconds": 10,
+      "door_open_slope": -1.8,
+      "door_open_drop_c": 1.0,
+      "door_open_humidity_upper": 0.45,
+      "door_open_humidity_lower": 0.3,
+      "door_open_hold_seconds": 2,
+      "door_heating_slope": -0.8,
+      "door_heating_hold_seconds": 5,
+      "door_close_slope": 0.15,
+      "door_close_hold_seconds": 3,
+      "person_step_seconds": 5,
+      "strong_window_seconds": 60,
+      "weak_window_seconds": 120,
+      "strong_humidity_upper": 0.5,
+      "strong_humidity_lower": 0.5,
+      "strong_hold_seconds": 10,
+      "weak_humidity_upper": 0.14,
+      "weak_humidity_lower": 0.14,
+      "weak_hold_seconds": 30,
+      "infusion_window_seconds": 10,
+      "infusion_humidity": 2.0,
+      "infusion_hold_seconds": 3,
+      "confirmation_minutes": 12.0,
+      "vent_baseline_seconds": 60,
+      "vent_drop_upper": 3.0,
+      "vent_drop_lower": 3.0,
+      "vent_absolute_humidity_loss_percent": 30.0,
+      "vent_hold_seconds": 60,
+      "light_brightness_scale": 255,
+      "light_reference_temperature_c": 30.0,
+      "cooling_brightness_percent": 5.0,
+      "operation_brightness_percent": 45.0,
+      "night_brightness_percent": 30.0,
+      "after_run_brightness_percent": 10.0,
+      "session_light_brightness_percent": 50.0,
+      "light_transition_seconds": 30.0,
+      "light_output_hysteresis_percent": 0.1,
+      "preset_start_c": 70,
+      "preset_step_c": 5.0,
+      "preset_count": 6
+    },
+    "control_input_mode": "button",
+    "button_input_kind": "event",
+    "button_event_types": [
+      "btn_down",
+      "btn_up",
+      "single_push",
+      "double_push",
+      "triple_push",
+      "long_push"
+    ],
+    "button_session_gesture": "long",
+    "button_program": "constant",
+    "program": {
+      "mode": "progressive",
+      "start_c": 80,
+      "end_c": 90,
+      "gangs": 4
+    },
+    "initial_light_percent": 0
+  },
+  "initial_state": {
+    "presence": {
+      "value": false,
+      "reported_age_s": 2942.458951
+    },
+    "upper_temperature": {
+      "value": 56.7,
+      "reported_age_s": 0.224994
+    },
+    "upper_humidity": {
+      "value": 18.36,
+      "reported_age_s": 0.21676
+    },
+    "lower_temperature": {
+      "value": 47.41,
+      "reported_age_s": 0.200227
+    },
+    "lower_humidity": {
+      "value": 27.47,
+      "reported_age_s": 0.195126
+    },
+    "heater_feedback": {
+      "value": false
+    },
+    "light_feedback": {
+      "value": {
+        "on": false,
+        "brightness": null
+      }
+    }
+  },
+  "feedback_mode": "simulated_acknowledgement",
+  "samples_file": "R04.samples.jsonl.gz",
+  "samples_sha256": "ac60b7f73a8eca659f1dfbc1031b1a2f809b95a91f421683e1d146fa28891406",
+  "samples_count": 56304,
+  "observed_outputs_file": "R04.observed-outputs.jsonl.gz",
+  "observed_outputs_sha256": "d72615a5d3c29ed7720eb0b2d6eb359f1f9708afbc83734bfc099e7561d12c56",
+  "observed_outputs_count": 2830,
+  "actions": [
+    {
+      "t": 0.0,
+      "name": "start",
+      "args": {}
+    },
+    {
+      "t": 378.442201,
+      "name": "select_program",
+      "args": {
+        "mode": "progressive",
+        "start_c": 80,
+        "end_c": 90,
+        "gangs": 3
+      }
+    },
+    {
+      "t": 2531.757214,
+      "name": "set_temperature",
+      "args": {
+        "value": 82
+      }
+    },
+    {
+      "t": 2552.309481,
+      "name": "select_program",
+      "args": {
+        "mode": "progressive",
+        "start_c": 83,
+        "end_c": 90,
+        "gangs": 3
+      }
+    },
+    {
+      "t": 3017.625922,
+      "name": "set_heater",
+      "args": {
+        "value": false
+      }
+    },
+    {
+      "t": 3138.386868,
+      "name": "set_temperature",
+      "args": {
+        "value": 90
+      }
+    },
+    {
+      "t": 3139.927644,
+      "name": "set_heater",
+      "args": {
+        "value": true
+      }
+    },
+    {
+      "t": 3178.077242,
+      "name": "set_heater",
+      "args": {
+        "value": null
+      }
+    },
+    {
+      "t": 5607.618068,
+      "name": "finish_cooling",
+      "args": {}
+    },
+    {
+      "t": 7337.421921,
+      "name": "stop",
+      "args": {}
+    },
+    {
+      "t": 7338.415211,
+      "name": "finish_session",
+      "args": {}
+    },
+    {
+      "t": 7339.509256,
+      "name": "start",
+      "args": {}
+    },
+    {
+      "t": 9180.864965,
+      "name": "stop",
+      "args": {}
+    },
+    {
+      "t": 9181.720962,
+      "name": "finish_session",
+      "args": {}
+    },
+    {
+      "t": 9182.441585,
+      "name": "start",
+      "args": {}
+    },
+    {
+      "t": 16834.825818,
+      "name": "button",
+      "args": {
+        "event": "btn_down"
+      }
+    },
+    {
+      "t": 16835.179259,
+      "name": "button",
+      "args": {
+        "event": "btn_up"
+      }
+    },
+    {
+      "t": 16835.326775,
+      "name": "button",
+      "args": {
+        "event": "single_push"
+      }
+    },
+    {
+      "t": 17010.656615,
+      "name": "set_light",
+      "args": {
+        "value": false
+      }
+    },
+    {
+      "t": 17256.137652,
+      "name": "stop",
+      "args": {}
+    },
+    {
+      "t": 17256.970104,
+      "name": "finish_session",
+      "args": {}
+    }
+  ],
+  "expectations": [
+    {
+      "id": "D01-original-start",
+      "values": {
+        "recording": true,
+        "operation_enabled": true,
+        "program_mode": "progressive",
+        "target_temperature_c": 80,
+        "gang_count": 0
+      },
+      "reason": "Der Tag beginnt mit dem belegten steigenden Programm 80 bis 90 °C. Die echte Anfangstemperatur liegt unter der Ganggrenze und Präsenz ist abwesend.",
+      "at_s": 1
+    },
+    {
+      "id": "D02-first-slider-keeps-program",
+      "values": {
+        "program_mode": "progressive",
+        "temperature_scope": "next_gang",
+        "next_target_temperature_c": 82
+      },
+      "reason": "Die vom Nutzer beschriebene Regleränderung darf keine Konstantwahl erzeugen. Sie setzt ausschließlich die nächste Gangtemperatur auf 82 °C.",
+      "at_s": 2533.883311
+    },
+    {
+      "id": "D03-explicit-program-selection",
+      "values": {
+        "program_mode": "progressive",
+        "target_temperature_c": 83
+      },
+      "reason": "Die anschließend ausdrücklich wieder gewählte steigende Programmart beginnt bei 83 °C und endet weiterhin bei 90 °C.",
+      "at_s": 2553.883311
+    },
+    {
+      "id": "D04-second-slider-keeps-program",
+      "values": {
+        "program_mode": "progressive",
+        "temperature_scope": "next_gang",
+        "next_target_temperature_c": 90
+      },
+      "reason": "Der Nutzer hat für 19:24:59 ausdrücklich ausschließlich eine Regleränderung bestätigt. Der alte automatische Wechsel auf Konstant ist ein Fehlerausgang, keine Auswahl; die nächste Gangtemperatur beträgt 90 °C.",
+      "at_s": 3138.883311
+    },
+    {
+      "id": "D05-program-persists",
+      "values": {
+        "program_mode": "progressive"
+      },
+      "reason": "Keine der belegten weiteren Handlungen wählt Konstant. Regler, Heizübersteuerungen, kurze AUS/EIN-Pausen und native Einfachdrücke dürfen die Programmart nicht stillschweigend ersetzen.",
+      "between_s": [
+        3140.883311,
+        17257.883311
+      ]
+    },
+    {
+      "id": "D06-brief-door-does-not-create-stay",
+      "values": {
+        "active_gang": false,
+        "gang_count": 0
+      },
+      "reason": "Der Nutzer beschreibt eine kurze frühere Türfolge vor dem echten Aufenthalt. Die echte Präsenz ist ab 19:31:45 wieder abwesend; die spätere thermische Erholung allein ist kein Gang.",
+      "between_s": [
+        3678.883311,
+        3918.883311
+      ]
+    },
+    {
+      "id": "D07-new-presence-cannot-reuse-old-closure",
+      "values": {
+        "active_gang": false,
+        "gang_count": 0
+      },
+      "reason": "Die neue Präsenzmeldung geht der thermischen Reaktion des späteren Eintritts voraus. Sie darf den bereits abgeschlossenen kurzen Türvorgang nicht rückwirkend zum Gangbeginn machen.",
+      "at_s": 3943.883311
+    },
+    {
+      "id": "D08-current-entry-starts",
+      "values": {
+        "active_gang": true,
+        "gang_confirmation": "confirmed",
+        "target_temperature_c": 90,
+        "cooling_active": false
+      },
+      "reason": "Nach dem neuen beidseitigen Temperaturabfall erholen sich beide Messhöhen bei anhaltender direkter Präsenz deutlich oberhalb der Mindesttemperatur. Das breite Fenster folgt dieser Messfolge, nicht einem alten Detektorzeitpunkt. Der erste echte Gang übernimmt den zuletzt gewählten einmaligen Wert 90 °C.",
+      "between_s": [
+        4128.883311,
+        4218.883311
+      ],
+      "eventually": true
+    },
+    {
+      "id": "D09-brief-absence-without-new-ventilation",
+      "values": {
+        "active_gang": true,
+        "cooling_active": false
+      },
+      "reason": "Die kurze Abwesenheitsmeldung vor dem neuen deutlichen Türabfall genügt allein nicht zum Gangende. Der laufende Gang darf nicht mit der vorherigen Eintrittsöffnung beendet werden. Der tatsächliche menschliche Grund dieser kurzen Meldung wird nicht erfunden.",
+      "between_s": [
+        4903.883311,
+        4948.883311
+      ]
+    },
+    {
+      "id": "D10-ventilated-empty-sauna-ends-gang",
+      "values": {
+        "active_gang": false,
+        "gang_heat_demand": false
+      },
+      "reason": "Auf den erneuten gemeinsamen Temperatur- und Feuchteabfall folgt anhaltende Abwesenheit. Nach der anschließenden beidseitigen Erholung bleibt die Sauna leer; ein alter Gang darf dann keine weitere Gangheizanforderung tragen.",
+      "between_s": [
+        5178.883311,
+        5358.883311
+      ]
+    },
+    {
+      "id": "D11-return-is-recognized",
+      "values": {
+        "active_gang": true,
+        "gang_confirmation": "confirmed",
+        "cooling_active": false,
+        "gang_heat_demand": true
+      },
+      "reason": "Der weitere echte Eintritt zeigt ab 20:02 direkte Präsenz, einen neuen beidseitigen Türabfall und danach geschlossene Erholung. Ein dadurch bestätigter Gang muss vor der späteren manuellen Kühlungsbedienung erkannt werden und unterbricht eventuell noch laufende Kühlung. Dass die alte fehlerhafte Kühlung noch besteht, ist ausdrücklich keine Voraussetzung.",
+      "between_s": [
+        5508.883311,
+        5598.883311
+      ],
+      "eventually": true
+    },
+    {
+      "id": "D12-exit-survives-presence-blip",
+      "values": {
+        "active_gang": false,
+        "gang_heat_demand": false
+      },
+      "reason": "Nach dem langen beidseitigen Lüftungsabfall fällt die direkte Präsenz endgültig auf abwesend zurück. Der kurze ON/OFF-Zwischenstand beim offenen Raum rechtfertigt keinen fortlaufenden Gang in der anschließend leeren Sauna.",
+      "at_s": 6618.883311
+    },
+    {
+      "id": "D13-pause-1-keeps-recording",
+      "values": {
+        "operation_enabled": false,
+        "recording": true,
+        "completed_sessions": 0,
+        "retained_sessions": 0,
+        "session_started_s": {
+          "since_s": 1,
+          "min": 0,
+          "max": 0
+        }
+      },
+      "reason": "Die belegte kurze Betriebspause bleibt innerhalb der konfigurierten Sitzungsfrist. Auch das gesonderte Beenden des Lichtnachlaufs darf weder Aufzeichnung noch Archividentität teilen.",
+      "at_s": 7337.621921
+    },
+    {
+      "id": "D14-light-finish-1-keeps-recording",
+      "values": {
+        "operation_enabled": false,
+        "recording": true,
+        "completed_sessions": 0,
+        "retained_sessions": 0,
+        "session_started_s": {
+          "since_s": 1,
+          "min": 0,
+          "max": 0
+        }
+      },
+      "reason": "Die belegte kurze Betriebspause bleibt innerhalb der konfigurierten Sitzungsfrist. Auch das gesonderte Beenden des Lichtnachlaufs darf weder Aufzeichnung noch Archividentität teilen.",
+      "at_s": 7338.615211
+    },
+    {
+      "id": "D15-resume-1-same-session",
+      "values": {
+        "operation_enabled": true,
+        "recording": true,
+        "completed_sessions": 0,
+        "retained_sessions": 0,
+        "session_started_s": {
+          "since_s": 1,
+          "min": 0,
+          "max": 0
+        }
+      },
+      "reason": "Das erneute EIN setzt vor Fristablauf dieselbe begonnene Sitzung mit allen bisher gemeldeten Messwerten fort.",
+      "at_s": 7340.509256
+    },
+    {
+      "id": "D13-pause-2-keeps-recording",
+      "values": {
+        "operation_enabled": false,
+        "recording": true,
+        "completed_sessions": 0,
+        "retained_sessions": 0,
+        "session_started_s": {
+          "since_s": 1,
+          "min": 0,
+          "max": 0
+        }
+      },
+      "reason": "Die belegte kurze Betriebspause bleibt innerhalb der konfigurierten Sitzungsfrist. Auch das gesonderte Beenden des Lichtnachlaufs darf weder Aufzeichnung noch Archividentität teilen.",
+      "at_s": 9181.064965
+    },
+    {
+      "id": "D14-light-finish-2-keeps-recording",
+      "values": {
+        "operation_enabled": false,
+        "recording": true,
+        "completed_sessions": 0,
+        "retained_sessions": 0,
+        "session_started_s": {
+          "since_s": 1,
+          "min": 0,
+          "max": 0
+        }
+      },
+      "reason": "Die belegte kurze Betriebspause bleibt innerhalb der konfigurierten Sitzungsfrist. Auch das gesonderte Beenden des Lichtnachlaufs darf weder Aufzeichnung noch Archividentität teilen.",
+      "at_s": 9181.920962
+    },
+    {
+      "id": "D15-resume-2-same-session",
+      "values": {
+        "operation_enabled": true,
+        "recording": true,
+        "completed_sessions": 0,
+        "retained_sessions": 0,
+        "session_started_s": {
+          "since_s": 1,
+          "min": 0,
+          "max": 0
+        }
+      },
+      "reason": "Das erneute EIN setzt vor Fristablauf dieselbe begonnene Sitzung mit allen bisher gemeldeten Messwerten fort.",
+      "at_s": 9183.441585
+    },
+    {
+      "id": "D16-door-reopening-with-continuing-presence",
+      "values": {
+        "active_gang": true,
+        "gang_confirmation": "confirmed",
+        "gang_count": {
+          "since_s": 14628.883311,
+          "min": 0,
+          "max": 0
+        }
+      },
+      "reason": "Im späteren Aufenthalt bleibt die direkte Präsenz durchgehend vorhanden. Der weitere beidseitige kurze Temperatureinbruch um 22:45 darf weder einen zusätzlichen Gang zählen noch den fortdauernden Aufenthalt unterbrechen. Eine neue Präsenzflanke ist dafür nicht nötig.",
+      "between_s": [
+        14628.883311,
+        15348.883311
+      ]
+    },
+    {
+      "id": "D17-later-empty-sauna-ends-gang",
+      "values": {
+        "active_gang": false,
+        "gang_heat_demand": false
+      },
+      "reason": "Nach 22:49 folgen direkte Abwesenheit und ein neuer gemeinsamer Lüftungsabfall mit anschließendem Wiederanstieg. Das breite Kontrollfenster bewertet den leeren Raum und erfindet keinen sekundengenauen menschlichen Austritt.",
+      "at_s": 15678.883311
+    },
+    {
+      "id": "D18-final-stop-keeps-common-gap",
+      "values": {
+        "operation_enabled": false,
+        "heater_request": false,
+        "active_gang": false,
+        "recording": true,
+        "completed_sessions": 0,
+        "retained_sessions": 0,
+        "session_started_s": {
+          "since_s": 1,
+          "min": 0,
+          "max": 0
+        }
+      },
+      "reason": "Das belegte letzte Betrieb-AUS ist von dem eine Sekunde später ausgelösten Lichtnachlauf-Ende getrennt. Die Aufzeichnung läuft bis zur ursprünglichen gemeinsamen 15-Minuten-Frist weiter.",
+      "between_s": [
+        17257.883311,
+        18155.883311
+      ]
+    },
+    {
+      "id": "D19-one-complete-day-session",
+      "values": {
+        "operation_enabled": false,
+        "heater_request": false,
+        "active_gang": false,
+        "recording": false,
+        "light_after_run": false,
+        "completed_sessions": 1,
+        "retained_sessions": 1,
+        "gang_count": {
+          "min": 1
+        },
+        "session_started_s": {
+          "since_s": 1,
+          "min": 0,
+          "max": 0
+        },
+        "archived_preheat_roles": 4,
+        "recording_history_intact": true
+      },
+      "reason": "Nach der vollständigen Frist ab dem letzten Betrieb-AUS ist genau eine gemeinsame, durch bestätigte Gänge speicherwürdige Sitzung vorhanden. Alle unveränderten Messungen sämtlicher vier Kanäle vom ursprünglichen Beginn bis Fristende müssen einschließlich Empfangszeit, Wert und Duplikatanzahl unter derselben Archiv-ID erhalten sein. Eine minutengenaue Gesamtzahl menschlicher Aufenthalte wurde nicht unabhängig zugeordnet und wird deshalb nicht aus alten Gangzählungen übernommen.",
+      "at_s": 18156.728469
+    }
+  ],
+  "preserve_measurements_before_s": 18156.137652,
+  "coverage": [
+    "Zwei echte Regleränderungen erhalten das steigende Programm und verändern nur die nächste Gangtemperatur",
+    "Frühere kurze Türfolge und späterer tatsächlicher Eintritt bleiben unterscheidbar",
+    "Kurze Abwesenheitsmeldung vor Lüftung genügt nicht zum Gangende",
+    "Rückkehr wird nach neuem Eintritt trotz möglicher Kühlung erkannt",
+    "Weitere Türöffnung bei fortbestehender Präsenz teilt den Gang nicht",
+    "Leere Sauna nach Austritt und Lüftung trägt keine fortgesetzte Gangheizanforderung",
+    "Zwei kurze AUS/EIN-Pausen und manuelle Lichtnachlauf-Enden behalten eine Session-ID",
+    "Vollständiger gemeinsamer Abschluss mit allen vier Messkanälen unter einer Archiv-ID"
+  ],
+  "source": {
+    "kind": "measured",
+    "timestamp_basis": "received; separate reported_age_s only when supplied",
+    "transformations": [
+      "Subtract the common original recording origin from timestamps",
+      "Replace physical source identifiers with functional roles",
+      "Retain all original climate and direct-presence values and message spacing without interpolation or smoothing",
+      "Keep only the first receipt of each native device event; cached old button states are not new presses",
+      "Reconstruct explicit operation boundaries separately from manual light/session-gap finish and old archive end",
+      "Use human attribution for slider inputs; never import the historical forced constant-mode output",
+      "Exclude old detections, phases, gang decisions and commands from inputs and expected outcomes"
+    ],
+    "source_sha256": [
+      "ae9de179767aa6ade1bccbc6e18a0b9be631796e82edede7e1ba7e333c0044d4",
+      "66c5b53ab9c15d2a56c212c3742f023ee31d2cc346481bf7d2d16f64d959ae43"
+    ],
+    "boundaries": "Original operation begin through all short OFF/ON pauses and the full common session deadline after the final operation-OFF. Old archive ends are not new operation inputs.",
+    "channel_counts": {
+      "lower_humidity": 14999,
+      "lower_temperature": 13057,
+      "presence": 22,
+      "upper_humidity": 14890,
+      "upper_temperature": 13336
+    },
+    "largest_climate_message_gap_s": {
+      "lower_humidity": 5.273747,
+      "lower_temperature": 7.357478,
+      "upper_humidity": 5.272366,
+      "upper_temperature": 9.330521
+    },
+    "recorded_through_s": 18156.728469,
+    "final_operation_stop_s": 17256.137652,
+    "common_session_deadline_s": 18156.137652,
+    "limitations": [
+      "The historical output file contains recorded actuator state snapshots, including unchanged repeated states. They describe the old run and do not acknowledge changed commands.",
+      "The unchanged measured climate is not a physical counterfactual after corrected programme or heating decisions. Separate constructed session scenarios cover physical consequences of the intended control.",
+      "The user attributed the second slider input explicitly. The precise UI endpoint of operation-OFF effects was not recorded; no specific surface control is claimed.",
+      "Human movement is evaluated only at the resolution jointly supported by the user's account and actual climate/presence messages. Old detector timestamps and total gang counts are not human ground truth.",
+      "Two old boundary snapshots retain an undated upper-sensor status. They are not new status-change events; the four actual numeric measurement streams continue without a gap near the configured timeout.",
+      "Initial actuator values are boundary observations; their earlier report ages are unavailable. Historical solar elevation and the physical lamp fade are not measured and are not brightness oracles."
+    ]
+  }
+}

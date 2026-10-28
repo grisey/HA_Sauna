@@ -11,6 +11,7 @@ from types import SimpleNamespace
 from custom_components.ha_sauna import backup
 from custom_components.ha_sauna.archive import Archive
 from custom_components.ha_sauna.const import DOMAIN
+from test_settings import async_timeout
 
 
 class Hook:
@@ -76,7 +77,7 @@ class BackupReleaseTests(unittest.IsolatedAsyncioTestCase):
                 await asyncio.sleep(0)
                 self.assertFalse(preparation.done())
                 release.set()
-                await asyncio.wait_for(preparation, 1)
+                await asyncio.wait_for(preparation, async_timeout("short"))
                 await closing_task
                 self.assertEqual(await asyncio.to_thread(count_records, archive.path), 1)
                 await backup.async_post_backup(hass)
@@ -112,8 +113,8 @@ class BackupReleaseTests(unittest.IsolatedAsyncioTestCase):
                         self.assertEqual(await asyncio.to_thread(count_records, archive.path), 0)
                         # HA may have removed the entry before its post-hook.
                         hass.config_entries.async_entries = lambda domain: []
-                        await asyncio.wait_for(backup.async_post_backup(hass), 1)
-                        await asyncio.wait_for(closing, 1)
+                        await asyncio.wait_for(backup.async_post_backup(hass), async_timeout("short"))
+                        await asyncio.wait_for(closing, async_timeout("short"))
                         self.assertEqual(await asyncio.to_thread(count_records, archive.path), 1)
                 finally:
                     gate.set()

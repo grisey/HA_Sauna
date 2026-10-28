@@ -6,7 +6,7 @@ import unittest
 from copy import deepcopy
 
 from test_cooling import at, controller
-from test_foundation import event
+from test_foundation import bindings, event, parameters, selected_occupancy
 
 from custom_components.ha_sauna.archive import plain
 from custom_components.ha_sauna.core.defaults import section
@@ -15,26 +15,78 @@ from custom_components.ha_sauna.core.presence import binary_presence
 from custom_components.ha_sauna.core.timeline import Kind
 from custom_components.ha_sauna.log import SaunaLog
 from custom_components.ha_sauna.presentation import (
-    configuration_message, fault_message, public_phase_projection,
+    configuration_message, fault_message, historical_measurement_context,
+    public_measurement, public_phase_projection,
     public_session, public_state,
 )
 
 
 class PresentationTests(unittest.TestCase):
+    def test_history_context_exposes_only_original_roles_and_validity(self):
+        configuration = {"bindings": bindings().as_dict(), "parameters": parameters().as_dict()}
+        session = {"configuration": configuration, "measurement_ttl_seconds": 99999}
+        before = deepcopy(session)
+        context = historical_measurement_context(session)
+        self.assertEqual(context["sensor_timeout_seconds"],
+                         configuration["parameters"]["sensor_timeout_seconds"])
+        self.assertEqual(context["regulation_position"], "upper")
+        self.assertIn("upper_temperature", context["roles"])
+        public = public_session(session)
+        self.assertEqual(public["measurement_context"], context)
+        self.assertEqual(public_session(public), public)
+        self.assertNotIn("configuration", public)
+        for source in configuration["bindings"].values():
+            if source:
+                self.assertNotIn(source, json.dumps(public))
+        self.assertEqual(session, before)
+        for ttl in (None, True, -1, float("nan"), "60"):
+            with self.subTest(ttl=ttl):
+                altered = deepcopy(session)
+                altered["configuration"]["parameters"]["sensor_timeout_seconds"] = ttl
+                self.assertIsNone(historical_measurement_context(altered))
+        self.assertIsNone(historical_measurement_context({"measurement_ttl_seconds": 60}))
+        partial = deepcopy(session)
+        del partial["configuration"]["bindings"]["upper_temperature"]
+        self.assertIsNone(historical_measurement_context(partial))
+        lower = deepcopy(session)
+        del lower["configuration"]["bindings"]["upper_temperature"]
+        del lower["configuration"]["bindings"]["upper_humidity"]
+        self.assertEqual(historical_measurement_context(lower)["regulation_position"], "lower")
+
+    def test_public_measurement_proves_exact_saved_binding_without_source_identity(self):
+        configuration = {"bindings": bindings().as_dict()}
+        source = configuration["bindings"]["upper_temperature"]
+        original = {"position": "upper", "quantity": "temperature", "value": 60,
+                    "received_at": at(1).isoformat(), "source": source}
+        before = deepcopy(original)
+        public = public_measurement(original, configuration=configuration)
+        self.assertTrue(public["source_matches_binding"])
+        self.assertNotIn("source", public)
+        self.assertNotIn(source, json.dumps(public))
+        for change in ({"source": source + "_different"}, {"source": None},
+                       {"position": "lower"}, {"quantity": "humidity"}):
+            with self.subTest(change=change):
+                self.assertFalse(public_measurement(
+                    {**original, **change}, configuration=configuration,
+                )["source_matches_binding"])
+        self.assertNotIn("source_matches_binding", public_measurement({
+            **original, "source_matches_binding": True,
+        }))
+        self.assertEqual(original, before)
+
     def test_direct_presence_public_ids_preserve_live_archive_and_phase_references(self):
         sauna = controller()
-        sauna.presence_source = "ha_presence"
-        sauna.presence_entity = "binary_sensor.private_presence"
+        presence_entity = "binary_sensor.private_presence"
         sauna.process(event("entry-open", Kind.DOOR_OPEN, 1))
-        sauna.observe_direct_presence(binary_presence(
-            sauna.presence_entity, "on", at(2), at(2),
-        ), at(2))
+        sauna.consume_occupancy_input(selected_occupancy(binary_presence(
+            presence_entity, "on", at(2), at(2),
+        ), at(2)))
         sauna.process(event("entry-close", Kind.DOOR_CLOSE, 3))
         active = plain(sauna.session)
         public_active = public_session(active)
         raw_gang = active["timeline"]["active"]
         public_gang = public_active["timeline"]["active"]
-        self.assertIn(sauna.presence_entity, raw_gang["gang_id"])
+        self.assertIn(presence_entity, raw_gang["gang_id"])
         self.assertNotEqual(public_gang["gang_id"], raw_gang["gang_id"])
         recognition = next(
             item for item in public_active["timeline"]["processed"]
@@ -47,14 +99,14 @@ class PresentationTests(unittest.TestCase):
         self.assertEqual(public_gang["recognition_kind"], raw_gang["recognition_kind"])
 
         sauna.process(event("exit-open", Kind.DOOR_OPEN, 5))
-        sauna.observe_direct_presence(binary_presence(
-            sauna.presence_entity, "off", at(6), at(6),
-        ), at(6))
+        sauna.consume_occupancy_input(selected_occupancy(binary_presence(
+            presence_entity, "off", at(6), at(6),
+        ), at(6)))
         sauna.process(event("exit-ventilation", Kind.VENTILATION, 6.5))
         sauna.process(event("exit-close", Kind.DOOR_CLOSE, 7))
         sauna.report_contactor(False, at(8))
         raw = plain(sauna.session)
-        raw["configuration"] = {"bindings": {"presence": sauna.presence_entity}}
+        raw["configuration"] = {"bindings": {"presence": presence_entity}}
         projection = plain(sauna.phase_projection(at(9)))
         before = deepcopy(raw)
         public = public_session(raw)
@@ -73,19 +125,19 @@ class PresentationTests(unittest.TestCase):
         self.assertEqual({item["source_id"] for item in public_projection["intervals"]
                           if item["source_id"]}, {completed["gang_id"]})
         self.assertNotIn("configuration", public)
-        self.assertNotIn(sauna.presence_entity, json.dumps([public, public_projection]))
+        self.assertNotIn(presence_entity, json.dumps([public, public_projection]))
         self.assertEqual(public_session(public), public)
         self.assertEqual(raw, before)
 
         state = public_state({
             "configuration": raw["configuration"], "parameters": [], "measurements": [],
-            "presence": {"entity_id": sauna.presence_entity},
+            "presence": {"entity_id": presence_entity},
             "session": active, "last_session": raw, "phase_projection": projection,
         })
         self.assertEqual(state["session"], public_active)
         self.assertEqual(state["last_session"], public)
         self.assertEqual(state["phase_projection"], public_projection)
-        self.assertNotIn(sauna.presence_entity, json.dumps(state))
+        self.assertNotIn(presence_entity, json.dumps(state))
 
     def test_public_session_keeps_session_gap_control_token_and_empty_state(self):
         sauna = controller()
@@ -156,13 +208,14 @@ class PresentationTests(unittest.TestCase):
         catalog = section("parameters")
         expected_steps = set()
         for area in frontend["settings_groups"]:
-            if area.get("surface", "panel") != "integration":
-                continue
             members = [
                 item for item in catalog
                 if item["settings_group"] == area["id"]
+                and item["configuration_surface"] == "integration"
                 and item["minimum"] != item["maximum"]
             ]
+            if not members:
+                continue
             with self.subTest(area=area["id"]):
                 self.assertEqual(steps[area["id"]]["title"], area["label"])
                 self.assertEqual(
@@ -182,7 +235,8 @@ class PresentationTests(unittest.TestCase):
                     self.assertEqual(steps[step_id]["title"], subgroup["label"])
                     self.assertEqual(
                         steps[step_id]["data"],
-                        {item["key"]: item["label"] for item in fields},
+                        {item["key"]: item["label"] for item in fields}
+                        | {"settings_action": "Aktion"},
                     )
                     self.assertEqual(
                         steps[step_id]["data_description"],

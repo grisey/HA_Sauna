@@ -9,6 +9,8 @@ from datetime import datetime, timedelta
 from math import isfinite
 
 from homeassistant.components import persistent_notification
+from homeassistant.components.light import ATTR_TRANSITION, LightEntityFeature
+from homeassistant.const import ATTR_SUPPORTED_FEATURES
 from homeassistant.core import Context
 from homeassistant.helpers.event import (
     async_track_state_change_event,
@@ -18,13 +20,23 @@ from homeassistant.helpers.event import (
 from .archive import plain
 from .bindings import ROLE_BY_KEY
 from .core import power
-from .core.button import NATIVE_BUTTON_EVENTS
+from .core.input_handoff import (
+    ContactorFeedbackInput,
+    HeatingFeedbackInput,
+    InputTiming,
+    PowerFeedbackInput,
+    TemperatureInput,
+)
 from .core.light import normal_brightness
 from .core.light_control import (
-    light_phase, light_plan, select_light, validate_light_selection,
+    light_phase,
+    light_plan,
+    select_light,
+    validate_light_selection,
 )
 from .core.light_output import LightOutput, LightQuantizer
 from .core.models import Measurement, Position, Quantity
+from .core.moisture import KELVIN_OFFSET_C
 from .core.timeline import Door, Kind
 from .core.warmup import (
     HeatingProgressEpisode,
@@ -58,9 +70,13 @@ class HADevice:
         self._button_event_types = None
         self.source_received_at = {}
         self.measurements = {}
+        self.packet_roles = set()
         self.last_valid_temperature = None
         self.last_valid_lower_temperature = None
-        self.warmup = WarmupEstimate(self.values["warmup_estimation_minutes"] * 60)
+        self.warmup = WarmupEstimate(
+            self.values["warmup_estimation_minutes"] * 60,
+            parameters=runtime.configuration.parameters,
+        )
         self._warmup_key = None
         self._warmup_target = None
         self._warmup_started_at = None
@@ -128,7 +144,18 @@ class HADevice:
                 role, state, state.last_reported if state else now, initial=True
             )
 
+        from .sht_samples import start_sample_sources
+        connect_samples = await start_sample_sources(self)
+
         async def changed(event):
+            # Discovery can arrive after HA startup. Resolve ownership before
+            # consuming that publisher's first scalar state report.
+            if connect_samples and any(
+                role not in self.packet_roles and entity == event.data["entity_id"]
+                and role in {"upper_temperature", "upper_humidity", "lower_temperature", "lower_humidity"}
+                for role, entity in self.bindings.items()
+            ):
+                await connect_samples()
             await self.runtime.device_input(event)
 
         entities = [entity for role, entity in self.bindings.items()
@@ -143,12 +170,15 @@ class HADevice:
         await self.send(False, now, force=True)
 
     def ingest(self, role, state, received_at, *, initial=False, defer_archive=False):
+        if role in self.packet_roles and not initial:
+            return None
         self.states[role] = state
         if role == "control_input" and state is not None:
             event_types = state.attributes.get("event_types")
             if (
-                isinstance(event_types, (list, tuple)) and event_types
+                isinstance(event_types, (list, tuple))
                 and all(isinstance(value, str) for value in event_types)
+                and (event_types or state.state not in ("unknown", "unavailable"))
             ):
                 self._button_event_types = tuple(event_types)
         self.source_received_at[role] = received_at
@@ -177,7 +207,7 @@ class HADevice:
                         value = None
                     elif quantity == "humidity" and not 0 <= value <= 100:
                         value = None
-                    elif quantity == "temperature" and value <= -273.15:
+                    elif quantity == "temperature" and value <= -KELVIN_OFFSET_C:
                         value = None
                 except (ValueError, TypeError):
                     value = None
@@ -188,34 +218,9 @@ class HADevice:
                 state.state if state else "unavailable",
                 self.bindings[role],
                 received_at,
+                original_id="ha-report:" + getattr(state, "last_reported", received_at).isoformat(),
             )
-            self.measurements[role] = m
-            if (
-                self._heating_progress_key is not None
-                and quantity == "temperature"
-                and m.source == self._heating_progress_key[2]
-                and (value is None or value >= self._heating_progress_key[3])
-            ):
-                self._reset_heating_progress()
-            self.runtime.log.debug(
-                "measurement",
-                "Messwert %s: %s; empfangen: %s.",
-                role,
-                value,
-                received_at,
-            )
-            if role == "upper_temperature" and value is not None:
-                self.last_valid_temperature = m
-            elif role == "lower_temperature" and value is not None:
-                self.last_valid_lower_temperature = m
-            session = self.runtime.session
-            if self.runtime.archive and not initial and not defer_archive:
-                self.runtime.archive.append(
-                    "measurement", received_at, m, session.session_id if session else None
-                )
-            if self.runtime.detector and not initial:
-                self.runtime.detector.accept(m)
-            return m
+            return self.ingest_measurement(m, initial=initial, defer_archive=defer_archive)
         elif self.runtime.archive and self.runtime.session and not initial:
             self.runtime.archive.append(
                 "source_state",
@@ -228,6 +233,41 @@ class HADevice:
                 },
                 self.runtime.session.session_id,
             )
+
+    def ingest_measurement(self, m, *, initial=False, defer_archive=False):
+        """One normalized owner for scalar and physical-packet consumers."""
+        role = f"{m.position.value}_{m.quantity.value}"
+        quantity, value, received_at = m.quantity.value, m.value, m.received_at
+        if self.bindings.get(role) != m.source:
+            raise ValueError("Measurement source differs from the bound role")
+        self.source_received_at[role] = received_at
+        self.measurements[role] = m
+        if (
+            self._heating_progress_key is not None
+            and quantity == "temperature"
+            and m.source == self._heating_progress_key[2]
+            and (value is None or value >= self._heating_progress_key[3])
+        ):
+            self._reset_heating_progress()
+        self.runtime.log.debug(
+            "measurement",
+            "Messwert %s: %s; empfangen: %s.",
+            role,
+            value,
+            received_at,
+        )
+        if role == "upper_temperature" and value is not None:
+            self.last_valid_temperature = m
+        elif role == "lower_temperature" and value is not None:
+            self.last_valid_lower_temperature = m
+        session = self.runtime.session
+        if self.runtime.archive and not initial and not defer_archive:
+            self.runtime.archive.append(
+                "measurement", received_at, m, session.session_id if session else None
+            )
+        if self.runtime.detector and not initial:
+            self.runtime.detector.accept(m)
+        return m
 
     def _archive_illuminance(self, at, *, snapshot=False):
         """Keep the original light reading separate from regulation measurements."""
@@ -257,31 +297,28 @@ class HADevice:
             self._archive_illuminance(at, snapshot=True)
 
     @property
+    def button_event_types(self):
+        """Last reported input capabilities, retained across source outages."""
+        return self._button_event_types
+
+    @property
     def available_button_session_gestures(self):
-        possible = self.runtime.configuration.available_button_session_gestures
-        if not possible:
-            return ()
-        if not self.bindings["control_input"].startswith("event."):
-            return possible
-        if self._button_event_types is None:
-            # Keep the saved choice during startup; do not invent device capabilities.
-            return (self.runtime.configuration.button_session_gesture,)
-        reported = {NATIVE_BUTTON_EVENTS.get(value) for value in self._button_event_types}
-        return tuple(gesture for gesture in possible if gesture in reported)
+        return self.runtime.configuration_model.button.session_gestures
 
     def physical_action(self, event):
         if event.data["entity_id"] != self.bindings["control_input"]:
             return None
+        button = self.runtime.configuration_model.button
         old, new = event.data.get("old_state"), event.data.get("new_state")
         source = new if new is not None else old
         if (
-            self.runtime.configuration.control_input_mode == "button"
+            button.input_kind == "event"
             and source is not None and source.domain == "event"
             and (new is None or new.state in ("unknown", "unavailable"))
         ):
             return "unavailable"
         if (
-            self.runtime.configuration.control_input_mode == "button"
+            button.input_kind == "binary"
             and source is not None
             and source.domain == "binary_sensor"
         ):
@@ -322,21 +359,11 @@ class HADevice:
         self.last_input_event = new.state
         self.last_input_occurred_at = occurred
         event_type = new.attributes.get("event_type")
-        if self.runtime.configuration.control_input_mode == "button":
-            native = NATIVE_BUTTON_EVENTS.get(event_type)
-            if native is not None:
-                return native
-            selected = self.runtime.configuration.button_event_type
-            return "short" if selected and event_type == selected else None
-        selected = self.runtime.configuration.button_event_type
-        if selected:
-            if event_type != selected:
-                return None
-        elif event_type is not None and event_type not in ("single_push", "single"):
-            # Shelly meldet Drücken, Loslassen und die fertige Klickauswertung.
-            # Nur die kurze Klickauswertung umschalten, niemals dreifach.
-            return None
-        return not self.runtime.controller.automatic_operation_enabled
+        action = button.action_for_event(event_type)
+        return (
+            not self.runtime.controller.automatic_operation_enabled
+            if action == "toggle" else action
+        )
 
     def binary_state(self, role):
         state = self.states.get(role)
@@ -403,16 +430,44 @@ class HADevice:
         observation = self.heating_observation = self.observe_heating(at)
         if self.contactor_feedback() is not True:
             self._reset_heating_progress()
-        controller.report_contactor(self.contactor_feedback(), at)
+        contactor_received_at = self.source_received_at.get("heater")
+        controller.consume_contactor_feedback_input(ContactorFeedbackInput(
+            contactor=self.contactor_feedback(),
+            timing=InputTiming(
+                effective_at=contactor_received_at,
+                received_at=contactor_received_at,
+                first_usable_at=None,
+                evaluated_at=at,
+            ),
+        ))
         controller.report_fallback_heating(self.observe_fallback_heating()[1], at)
-        controller.report_power(
-            observation["power_w"],
-            self.source_received_at["heater_power"] + timedelta(seconds=timeout)
-            if self.source_received_at.get("heater_power") and timeout
-            else None,
-            at,
-        )
-        controller.report_heating(observation["heating"], at)
+        power_received_at = self.source_received_at.get("heater_power")
+        controller.consume_power_feedback_input(PowerFeedbackInput(
+            power_w=observation["power_w"],
+            valid_until=power_received_at + timedelta(seconds=timeout)
+            if power_received_at and timeout else None,
+            timing=InputTiming(
+                effective_at=power_received_at,
+                received_at=power_received_at,
+                first_usable_at=None,
+                evaluated_at=at,
+            ),
+        ))
+        heating_role = {
+            "power": "heater_power",
+            "independent_feedback": "heater_feedback",
+            "contactor": "heater",
+        }.get(observation["source"])
+        heating_received_at = self.source_received_at.get(heating_role)
+        controller.consume_heating_feedback_input(HeatingFeedbackInput(
+            heating=observation["heating"],
+            timing=InputTiming(
+                effective_at=heating_received_at,
+                received_at=heating_received_at,
+                first_usable_at=None,
+                evaluated_at=at,
+            ),
+        ))
         observation_key = (
             controller.session.session_id if controller.session else None,
             observation["source"],
@@ -484,7 +539,9 @@ class HADevice:
             self._reset_heating_progress()
             self._heating_progress_key = key
             self._heating_progress_started_at = now
-            self._heating_progress = HeatingProgressEpisode(window, now)
+            self._heating_progress = HeatingProgressEpisode(
+                window, now, parameters=self.runtime.configuration.parameters
+            )
         self._load_heating_response(key)
         self._heating_progress.startup_delay_seconds = self._heating_response_delay
         if measurement.received_at < self._heating_progress_started_at or (
@@ -550,7 +607,10 @@ class HADevice:
                     archive.heating_response_history,
                     source, position.value, heater_source, timeout,
                 )
-                delay = await asyncio.to_thread(historical_heating_delay, episodes, window)
+                delay = await asyncio.to_thread(
+                    historical_heating_delay, episodes, window,
+                    parameters=self.runtime.configuration.parameters,
+                )
                 if self.runtime.closed or key != self._heating_response_key:
                     return
                 self._heating_response_delay = delay
@@ -589,7 +649,7 @@ class HADevice:
         if (
             measurement is None
             or timeout is None
-            or (age := (now - measurement.received_at).total_seconds()) < 0
+            or (age := (now - measurement.freshness_at).total_seconds()) < 0
             or age > timeout
         ):
             return None
@@ -606,7 +666,7 @@ class HADevice:
 
     def regulation_valid_until(self, measurement):
         """Use the selected measurement's existing freshness deadline."""
-        return (measurement.received_at + timedelta(seconds=self.values["sensor_timeout_seconds"])
+        return (measurement.freshness_at + timedelta(seconds=self.values["sensor_timeout_seconds"])
                 if measurement is not None else None)
 
     def _refresh_warmup(self, now):
@@ -715,6 +775,7 @@ class HADevice:
                         historical_warmup_rate,
                         history["measurements"],
                         minimum_observation_seconds=minimum_observation,
+                        parameters=self.runtime.configuration.parameters,
                     )
                     result = history["session_id"], rate
                 else:
@@ -811,7 +872,7 @@ class HADevice:
         timeout = self.values.get("sensor_timeout_seconds")
         result = {}
         for role, measurement in self.measurements.items():
-            age = max(0, (now - measurement.received_at).total_seconds())
+            age = max(0, (now - measurement.freshness_at).total_seconds())
             state = (
                 "unavailable"
                 if measurement.value is None
@@ -835,9 +896,17 @@ class HADevice:
         # Ein kurz fehlendes Paket verwirft einen noch gültigen Messwert nicht.
         # Wenn die obere Höhe ausfällt, führt die frische untere Messung dieselbe
         # Regelung ohne Mittelung oder erfundenen Höhenoffset fort.
-        controller.set_temperature(
-            temperature, now, valid_until=self.regulation_valid_until(regulation),
-        )
+        controller.consume_temperature_input(TemperatureInput(
+            value=temperature,
+            valid_until=self.regulation_valid_until(regulation),
+            timing=InputTiming(
+                effective_at=(regulation.measured_at or regulation.received_at
+                              if regulation is not None else None),
+                received_at=regulation.received_at if regulation is not None else None,
+                first_usable_at=None,
+                evaluated_at=now,
+            ),
+        ))
         self.report_received_feedback(now)
         contactor = self.contactor_feedback()
         problems = set()
@@ -973,7 +1042,6 @@ class HADevice:
         if self.command is not heat or self.command_at is None:
             self.command, self.command_at = heat, now
         self.last_sent_at = now
-        self.runtime._report_detector_heating(now)
         self.runtime.log.info(
             "heater_command",
             "Schaltbefehl an Heizschütz: %s.",
@@ -1029,7 +1097,6 @@ class HADevice:
             self.fault_since.pop("heater_service_unavailable", None)
         elif self.command_error_at is None:
             self.command_error_at = self.runtime._clock()
-        self.runtime._report_detector_heating(self.runtime._clock())
         self.runtime.log.change(
             "heater_command_error",
             error,
@@ -1122,11 +1189,17 @@ class HADevice:
         # Planer dabei seinen laufenden Übergang oder Override verliert.
         self.light_output.parameters = self.runtime.configuration.parameters
         if self.runtime.controller.control_mode == "manual":
-            self.light_output.keep_manual()
+            self.light_output.keep_manual(at=now)
+            self.runtime.record_manual_light_changes(
+                self.light_output.drain_manual_changes(),
+            )
         if (
             self.runtime.controller.control_mode == "automatic"
             and self.light_output.expire_manual(now)
         ):
+            self.runtime.record_manual_light_changes(
+                self.light_output.drain_manual_changes(),
+            )
             self.runtime.log.info(
                 "light_override_expired",
                 "Manuelle Lichtwahl abgelaufen; Licht folgt wieder der Automatik.",
@@ -1154,6 +1227,9 @@ class HADevice:
         plan = light_plan(
             self.light_output, self.runtime.controller, now, actual,
             self.normal_light_brightness(),
+        )
+        self.runtime.record_manual_light_changes(
+            self.light_output.drain_manual_changes(),
         )
         # Kurve und Istwert behalten ihre Genauigkeit. Nur die gemeinsame
         # Befehlsgrundlage für Dienst, Echo und Archiv wird quantisiert.
@@ -1577,6 +1653,15 @@ class HADevice:
         if service == "turn_on":
             data["brightness_pct"] = brightness
         state_before = self.hass.states.get(entity_id)
+        supported = (
+            state_before.attributes.get(ATTR_SUPPORTED_FEATURES, 0)
+            if state_before is not None else 0
+        )
+        if isinstance(supported, int) and supported & LightEntityFeature.TRANSITION:
+            # LightOutput already interpolates ordinary changes. Taster
+            # feedback uses an immediate command on the same output path.
+            # Neither may inherit a second fade from the actor or HA profile.
+            data[ATTR_TRANSITION] = 0
         error = None
         task, expectation = None, None
         context = Context()
@@ -1598,6 +1683,7 @@ class HADevice:
                         "phase": phase,
                         "service": service,
                         "brightness_pct": brightness,
+                        "transition_seconds": data.get(ATTR_TRANSITION),
                         "ends_at": ends_at,
                     },
                     session_id,
@@ -1821,6 +1907,9 @@ class HADevice:
             self.light_output, self.runtime.controller, value, now,
             self.normal_light_brightness(),
         )
+        self.runtime.record_manual_light_changes(
+            self.light_output.drain_manual_changes(), selection={"value": value},
+        )
         self._light_override_dirty = True
 
     @property
@@ -1871,12 +1960,16 @@ class HADevice:
         ):
             self._button_press_light = None
 
-    def begin_button_hold_light(self, session_id, *, starting=False):
+    def begin_button_hold_light(self, session_id, *, starting=False, at=None):
         """Mark acknowledgement for regular output after the heater command."""
         self._button_press_light = None
         self._button_hold_session_id = session_id
         self._button_hold_starting = starting
-        self.light_output.return_to_automatic()
+        now = self.runtime._clock() if at is None else at
+        self.light_output.return_to_automatic(at=now)
+        self.runtime.record_manual_light_changes(
+            self.light_output.drain_manual_changes(),
+        )
 
     async def show_button_hold_light(self, now, session_id):
         """Keep the long-press acknowledgement above all normal phases."""

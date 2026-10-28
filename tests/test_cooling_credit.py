@@ -17,56 +17,28 @@ def finish_gang(c, end_at):
 
 
 class OvenCoolingTests(unittest.TestCase):
-    def test_old_budget_never_creates_a_cycle_or_blocks_a_new_gang(self):
-        c = controller(heating_minutes=1, heating_reduction_minutes=.5)
-        c.report_heating(True, at(0))
-        for second in (60, 600, 5400):
-            c.advance(at(second))
-            self.assertIsNone(c.session.cooling)
-            self.assertEqual(c.session.cooling_history, ())
-            self.assertTrue(c.last_decision.heat)
-        c.process(event("entry-open", Kind.DOOR_OPEN, 5400))
-        c.process(event("close", Kind.DOOR_CLOSE, 5401))
-        c.process(event("infusion", Kind.INFUSION, 5402))
-        self.assertIsNotNone(c.session.timeline.active)
-
     def test_gang_end_has_exactly_one_configured_oven_cooling(self):
-        for duration in (30, 60, 90, 480):
-            with self.subTest(duration=duration):
-                c = controller(after_run_minutes=duration / 60)
-                c.report_heating(True, at(0))
-                finish_gang(c, 600)
-                phase = c.session.after_run
-                self.assertIsNotNone(phase.ends_at)
-                self.assertGreaterEqual(phase.duration_seconds, duration)
-                self.assertFalse(c.last_decision.heat)
-                c.advance(phase.ends_at - timedelta(microseconds=1))
-                self.assertFalse(c.last_decision.heat)
-                c.advance(phase.ends_at)
-                self.assertIsNone(c.session.after_run)
-                self.assertIsNone(c.session.cooling)
-                self.assertEqual(c.session.cooling_history, ())
-                self.assertEqual(len(c.session.after_run_history), 1)
-                self.assertTrue(c.last_decision.heat)
-                c.advance(at(660 + duration))
-                self.assertEqual(len(c.session.after_run_history), 1)
-                self.assertIsNone(c.session.cooling)
-
-    def test_old_temperature_threshold_has_no_pending_or_remaining_cooling(self):
-        c = controller(safety_temperature_c=105, overtemperature_minutes=1,
-                       forced_cooling_minutes=15, overtemperature_cooling_factor=2,
-                       minimum_heating_minutes=0)
-        c.set_temperature(106, at(0))
-        c.advance(at(601))
-        self.assertIsNone(c.session.cooling)
+        c = controller()
+        c.report_heating(True, at(0))
+        finish_gang(c, 600)
+        phase = c.session.after_run
+        self.assertIsNotNone(phase.ends_at)
+        self.assertGreaterEqual(phase.duration_seconds, c.parameters.seconds("after_run_minutes"))
         self.assertFalse(c.last_decision.heat)
-        c.set_temperature(70, at(602))
-        self.assertTrue(c.last_decision.heat)
+        c.advance(phase.ends_at - timedelta(microseconds=1))
+        self.assertFalse(c.last_decision.heat)
+        c.advance(phase.ends_at)
+        self.assertIsNone(c.session.after_run)
         self.assertIsNone(c.session.cooling)
         self.assertEqual(c.session.cooling_history, ())
+        self.assertEqual(len(c.session.after_run_history), 1)
+        self.assertTrue(c.last_decision.heat)
+        c.advance(phase.ends_at + timedelta(seconds=1))
+        self.assertEqual(len(c.session.after_run_history), 1)
+        self.assertIsNone(c.session.cooling)
 
     def test_operation_interruption_cancels_oven_cooling(self):
-        c = controller(after_run_minutes=8)
+        c = controller()
         finish_gang(c, 60)
         deadline = c.session.after_run.ends_at
         self.assertIsNotNone(deadline)

@@ -1,3 +1,4 @@
+const { panelFixture: fixturePanel } = require("./catalog_fixture.cjs");
 const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const test = require("node:test");
@@ -11,7 +12,7 @@ vm.runInNewContext(fs.readFileSync("custom_components/ha_sauna/panel.js", "utf8"
 function fixture(options) {
   const heading = { textContent: "Sauna" },
     select = { options, hidden: options.length < 2 },
-    panel = Object.assign(Object.create(Panel.prototype), {
+    panel = Object.assign(fixturePanel(Panel), {
       entry: options[0]?.value,
       $: (selector) => ({ "#instance": select, "#instance-title": heading })[selector],
       reconcileControlCommands() {},

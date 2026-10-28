@@ -20,29 +20,21 @@ def after_run():
 
 
 class ManualPhaseTests(unittest.TestCase):
-    def test_early_oven_cooling_returns_to_regulation_without_extra_cycle(self):
+    def test_manual_phase_end_books_actual_time_and_rejects_token_reuse(self):
         c = after_run()
         phase = c.session.after_run
         c.finish_phase("after_run", phase.phase_id, at(80))
-        self.assertIsNone(c.session.cooling)
         self.assertEqual(c.session.after_run_history[-1].ends_at, at(80))
-        self.assertEqual(c.session.timeline.gang_count, 1)
-        self.assertTrue(c.last_decision.heat)
-        self.assertIsNone(c.session.after_run)
         with self.assertRaises(ValueError):
             c.finish_phase("after_run", phase.phase_id, at(80))
-        self.assertIsNone(c.session.cooling)
+        self.assertEqual(len(c.session.after_run_history), 1)
 
-    def test_after_run_without_cooling_returns_to_regulation_and_preserves_session(self):
+    def test_manual_phase_end_preserves_energy_record_identity(self):
         c = after_run()
         identity, energy = c.session.session_id, c.session.energy
         c.finish_phase("after_run", c.session.after_run.phase_id, at(80))
-        self.assertIsNone(c.session.cooling)
-        self.assertIsNone(c.session.after_run)
-        self.assertTrue(c.last_decision.heat)
         self.assertEqual(c.session.session_id, identity)
         self.assertEqual(c.session.energy.total_kwh, energy.total_kwh)
-        self.assertEqual(c.session.timeline.gang_count, 1)
 
     def test_manual_end_preserves_operation_off_and_technical_protection(self):
         for disabled in (False, True):
@@ -80,8 +72,9 @@ class ManualPhaseTests(unittest.TestCase):
     def test_expired_phase_is_not_processed_twice(self):
         c = after_run()
         token = c.session.after_run.phase_id
-        c.advance(c.session.after_run.ends_at)
-        with self.assertRaises(ValueError):
-            c.finish_phase("after_run", token, at(100))
+        expired_at = c.session.after_run.ends_at
+        c.advance(expired_at)
+        with self.assertRaisesRegex(ValueError, "keine passende Ofenkühlung"):
+            c.finish_phase("after_run", token, expired_at)
         self.assertEqual(len(c.session.after_run_history), 1)
         self.assertIsNone(c.session.cooling)

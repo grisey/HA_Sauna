@@ -7,10 +7,7 @@ from test_foundation import T0, event
 from test_presence_regressions import START, _runtime
 
 from custom_components.ha_sauna.core.controller import Controller
-from custom_components.ha_sauna.core.presence import (
-    ProxyPresenceSource,
-    binary_presence,
-)
+from custom_components.ha_sauna.core.presence import binary_presence
 from custom_components.ha_sauna.core.timeline import Door, Event, Kind
 
 
@@ -23,24 +20,20 @@ class GangTemperatureTests(unittest.TestCase):
             (None, False), (float("nan"), False), (float("inf"), False), (True, False),
         ):
             for kind in (Kind.PERSON_STRONG, Kind.PERSON_WEAK, Kind.INFUSION):
-                for proxy in ((False, True) if kind != Kind.INFUSION else (False,)):
-                    with self.subTest(temperature=temperature, kind=kind, proxy=proxy):
-                        c = Controller(parameters)
-                        c.set_temperature(temperature, T0)
-                        c.set_operation(True, T0, session_id="s")
-                        c.process(event("entry-open", Kind.DOOR_OPEN, 1))
-                        c.process(event("close", Kind.DOOR_CLOSE, 1))
-                        signal = event("signal", kind, 2)
-                        self.assertEqual(c.recognition_allowed(kind), admitted)
-                        result = (
-                            c.process_presence(ProxyPresenceSource.present(signal), signal)
-                            if proxy else c.process(signal)
-                        )
-                        self.assertEqual(result.changed, admitted)
-                        self.assertEqual(c.session.timeline.active is not None, admitted)
-                        if not admitted:
-                            self.assertFalse(c.regulation_inputs.gang_heat_demand)
-                            self.assertEqual(c.session.timeline.gang_count, 0)
+                with self.subTest(temperature=temperature, kind=kind):
+                    c = Controller(parameters)
+                    c.set_temperature(temperature, T0)
+                    c.set_operation(True, T0, session_id="s")
+                    c.process(event("entry-open", Kind.DOOR_OPEN, 1))
+                    c.process(event("close", Kind.DOOR_CLOSE, 1))
+                    signal = event("signal", kind, 2)
+                    self.assertEqual(c.recognition_allowed(kind), admitted)
+                    result = c.process(signal)
+                    self.assertEqual(result.changed, admitted)
+                    self.assertEqual(c.session.timeline.active is not None, admitted)
+                    if not admitted:
+                        self.assertFalse(c.regulation_inputs.gang_heat_demand)
+                        self.assertEqual(c.session.timeline.gang_count, 0)
 
     def test_cold_entry_starts_when_temperature_and_new_evidence_are_available(self):
         for kind in (Kind.PERSON_STRONG, Kind.PERSON_WEAK, Kind.INFUSION):

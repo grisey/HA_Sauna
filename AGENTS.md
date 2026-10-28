@@ -46,7 +46,7 @@ deterministische Serialisierung.
 [Bedienhandlungen und Betriebsart](docs/bedienung.md) ·
 [Tasterwirkungen](docs/bedienung.md) ·
 [Archiv, Backup und Wiederherstellung](docs/speicherung.md) ·
-[Sitzung und Neustart](docs/bedienung.md#ausschalten-oder-sofort-beenden)
+[Sitzung und Neustart](docs/bedienung.md#ausschalten-und-lichtnachlauf-beenden)
 
 Das Referenzprogramm und seine Parameter unter `candidate/` bilden einen
 eingefrorenen Reproduktionsstand. Änderungen daran erfolgen in einem

@@ -3,7 +3,7 @@
 import unittest
 from datetime import UTC, datetime, timedelta
 
-from harness import create_sauna, start_hass
+from harness import advance_with_fresh_sources, create_sauna, start_hass
 from homeassistant.components.switch import SwitchEntity
 from homeassistant.setup import async_setup_component
 
@@ -49,13 +49,6 @@ class DoorHeatRegressionTests(unittest.IsolatedAsyncioTestCase):
                 "heater": self.heater.entity_id,
                 "heater_feedback": "binary_sensor.door_heat_actual",
             },
-            parameter_overrides={
-                "target_temperature_c": 80,
-                "minimum_heating_minutes": 10,
-                "manual_override_minutes": 1,
-                "sensor_timeout_seconds": 1200,
-                "feedback_timeout_seconds": 2,
-            },
         )
         self.runtime = self.entry.runtime_data
         self.now = datetime.now(UTC)
@@ -75,6 +68,12 @@ class DoorHeatRegressionTests(unittest.IsolatedAsyncioTestCase):
             Event(name, self.runtime.session.session_id, kind, self.now, self.now)
         )
         await self.hass.async_block_till_done()
+
+    async def advance(self, target):
+        await advance_with_fresh_sources(
+            self.hass, self.runtime, target,
+            lambda at: setattr(self, "now", at),
+        )
 
     async def feedback(self, value):
         self.hass.states.async_set("binary_sensor.door_heat_actual", value)
@@ -116,8 +115,9 @@ class DoorHeatRegressionTests(unittest.IsolatedAsyncioTestCase):
         await self.runtime.set_heater_override(False)
         await self.feedback("on")  # late physical feedback cannot revive it
         self.heater.calls.clear()
-        self.now += timedelta(seconds=61)
-        await self.runtime.tick()
+        await self.advance(self.now + timedelta(
+            seconds=self.runtime.configuration.parameters.seconds("manual_override_minutes") + 1
+        ))
         await self.hass.async_block_till_done()
         self.assertNotIn(True, self.heater.calls)
 
@@ -135,17 +135,18 @@ class DoorHeatRegressionTests(unittest.IsolatedAsyncioTestCase):
         self.now = origin + timedelta(seconds=10)
         await self.feedback("on")
         self.assertFalse(self.runtime.controller.regulation_inputs.temporary_door_heat)
-        await self.event("second-open", Kind.DOOR_OPEN, seconds=290)
+        minimum = self.runtime.configuration.parameters.seconds("minimum_heating_minutes")
+        confirmed_at = self.now
+        await self.advance(confirmed_at + timedelta(seconds=minimum / 2))
+        await self.event("second-open", Kind.DOOR_OPEN)
         await self.event("second-close", Kind.DOOR_CLOSE)
-        self.now = origin + timedelta(seconds=610, microseconds=-1)
-        await self.runtime.tick()
+        await self.advance(confirmed_at + timedelta(seconds=minimum, microseconds=-1))
         await self.hass.async_block_till_done()
         self.assertEqual(
             self.runtime.controller.last_decision.reason, "minimum_heating"
         )
         self.assertTrue(self.heater.is_on)
-        self.now = origin + timedelta(seconds=610)
-        await self.runtime.tick()
+        await self.advance(confirmed_at + timedelta(seconds=minimum))
         await self.hass.async_block_till_done()
         self.assertEqual(
             self.runtime.controller.last_decision.reason, "temperature_reached"
@@ -163,8 +164,9 @@ class DoorHeatRegressionTests(unittest.IsolatedAsyncioTestCase):
         await self.hass.async_block_till_done()
         self.assertTrue(self.heater.is_on)
         await self.runtime.set_heater_override(False)
-        self.now += timedelta(seconds=61)
-        await self.runtime.tick()
+        await self.advance(self.now + timedelta(
+            seconds=self.runtime.configuration.parameters.seconds("manual_override_minutes") + 1
+        ))
         await self.event("late-close", Kind.DOOR_CLOSE)
         self.assertFalse(self.runtime.controller.regulation_inputs.temporary_door_heat)
 

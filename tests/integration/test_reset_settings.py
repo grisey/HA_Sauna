@@ -42,7 +42,7 @@ class ResetSettingsTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(result["success"])
         self.assertEqual(result["parameters"], defaults)
         await self.hass.async_block_till_done()
-        self.assertEqual(self.entry.options["parameters"], defaults)
+        self.assertEqual(self.entry.options["parameters"], Parameters({}).as_options())
         self.assertEqual(self.entry.options["bindings"], original_bindings)
         self.assertEqual(self.entry.options["control_input_mode"], "button")
         self.assertEqual(self.entry.options["button_event_type"], "custom_press")

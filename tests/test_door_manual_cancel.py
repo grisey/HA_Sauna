@@ -8,6 +8,7 @@ from custom_components.ha_sauna.core.parameters import Parameters
 from custom_components.ha_sauna.core.timeline import Event, Kind
 
 T0 = datetime(2026, 9, 26, tzinfo=UTC)
+OVERRIDE = Parameters({}).seconds("manual_override_minutes")
 
 
 def at(seconds):
@@ -19,9 +20,6 @@ def controller(session_id):
         Parameters(
             {
                 "target_temperature_c": 80,
-                "readiness_offset_c": 5,
-                "readiness_hysteresis_c": 3,
-                "manual_override_minutes": 1,
             }
         )
     )
@@ -43,7 +41,7 @@ class ManualDoorCancelTests(unittest.TestCase):
         event(value, "close", Kind.DOOR_CLOSE, 2)
         self.assertTrue(value.regulation_inputs.temporary_door_heat)
         value.set_heater_override(False, at(3))
-        value.advance(at(63))
+        value.advance(at(3 + OVERRIDE))
         self.assertFalse(value.regulation_inputs.temporary_door_heat)
         self.assertEqual(value.last_decision.reason, "temperature_reached")
 
@@ -51,8 +49,8 @@ class ManualDoorCancelTests(unittest.TestCase):
         value = controller("open")
         event(value, "open", Kind.DOOR_OPEN, 1)
         value.set_heater_override(False, at(2))
-        value.advance(at(62))
-        event(value, "late-close", Kind.DOOR_CLOSE, 63)
+        value.advance(at(2 + OVERRIDE))
+        event(value, "late-close", Kind.DOOR_CLOSE, 3 + OVERRIDE)
         self.assertFalse(value.regulation_inputs.temporary_door_heat)
         self.assertFalse(value.last_decision.heat)
 
@@ -70,7 +68,7 @@ class ManualDoorCancelTests(unittest.TestCase):
                 if automatic_return:
                     value.set_heater_override(None, at(6))
                 else:
-                    value.advance(at(64))
+                    value.advance(at(4 + OVERRIDE))
                 self.assertFalse(value.regulation_inputs.temporary_door_heat)
                 self.assertFalse(value.last_decision.heat)
 
@@ -79,25 +77,25 @@ class ManualDoorCancelTests(unittest.TestCase):
         event(value, "open", Kind.DOOR_OPEN, 1)
         event(value, "close", Kind.DOOR_CLOSE, 2)
         value.set_heater_override(False, at(3))
-        value.advance(at(63))
-        value.set_temperature(70, at(64))
+        value.advance(at(3 + OVERRIDE))
+        value.set_temperature(70, at(4 + OVERRIDE))
         self.assertTrue(value.last_decision.heat)
         self.assertFalse(value.regulation_inputs.temporary_door_heat)
 
     def test_fresh_cycle_and_live_gang_work_after_override(self):
         value = controller("fresh")
         value.set_heater_override(False, at(1))
-        value.advance(at(61))
-        event(value, "fresh-open", Kind.DOOR_OPEN, 62)
-        event(value, "fresh-close", Kind.DOOR_CLOSE, 63)
+        value.advance(at(1 + OVERRIDE))
+        event(value, "fresh-open", Kind.DOOR_OPEN, 2 + OVERRIDE)
+        event(value, "fresh-close", Kind.DOOR_CLOSE, 3 + OVERRIDE)
         self.assertEqual(value.last_decision.reason, "temporary_door_heat")
 
         other = controller("gang")
         other.set_heater_override(False, at(1))
-        other.advance(at(61))
-        event(other, "entry-open", Kind.DOOR_OPEN, 61)
-        event(other, "close", Kind.DOOR_CLOSE, 62)
-        event(other, "person", Kind.PERSON_STRONG, 63)
+        other.advance(at(1 + OVERRIDE))
+        event(other, "entry-open", Kind.DOOR_OPEN, 1 + OVERRIDE)
+        event(other, "close", Kind.DOOR_CLOSE, 2 + OVERRIDE)
+        event(other, "person", Kind.PERSON_STRONG, 3 + OVERRIDE)
         self.assertEqual(other.last_decision.reason, "gang_heat_demand")
 
 

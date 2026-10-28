@@ -23,9 +23,6 @@ def controller(*, feedback=False, contactor=False):
         Parameters(
             {
                 "target_temperature_c": 80,
-                "readiness_offset_c": 3,
-                "readiness_hysteresis_c": 3,
-                "minimum_heating_minutes": 10,
             }
         )
     )
@@ -62,9 +59,9 @@ class DoorHeatingFeedbackTests(unittest.TestCase):
         suitable_close(value)
         value.report_heating(True, at(100))
         self.assertFalse(value.regulation_inputs.temporary_door_heat)
-        value.advance(at(699))
+        value.advance(at(100 + value.parameters.seconds("minimum_heating_minutes") - 1))
         self.assertEqual(value.last_decision.reason, "minimum_heating")
-        value.advance(at(700))
+        value.advance(at(100 + value.parameters.seconds("minimum_heating_minutes")))
         self.assertEqual(value.last_decision.reason, "temperature_reached")
 
     def test_both_feedback_orders_and_repetition_do_not_stale_or_extend(self):
@@ -75,7 +72,7 @@ class DoorHeatingFeedbackTests(unittest.TestCase):
         self.assertTrue(first.regulation_inputs.temporary_door_heat)
         first.report_heating(True, at(4))
         first.report_heating(True, at(5))
-        first.advance(at(604))
+        first.advance(at(4 + first.parameters.seconds("minimum_heating_minutes")))
         self.assertEqual(first.last_decision.reason, "temperature_reached")
 
         # Heating first: transfer the pending request immediately, without
@@ -87,9 +84,9 @@ class DoorHeatingFeedbackTests(unittest.TestCase):
         second.report_contactor(True, at(4))
         second.report_heating(True, at(5))
         self.assertEqual(second.session.heating.intervals[-1].started_at, at(3))
-        second.advance(at(602.999999))
+        second.advance(at(3 + second.parameters.seconds("minimum_heating_minutes") - .000001))
         self.assertTrue(second.last_decision.heat)
-        second.advance(at(603))
+        second.advance(at(3 + second.parameters.seconds("minimum_heating_minutes")))
         self.assertEqual(second.last_decision.reason, "temperature_reached")
 
     def test_existing_confirmed_run_keeps_original_start(self):

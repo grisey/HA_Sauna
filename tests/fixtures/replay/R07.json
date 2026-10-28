@@ -1,0 +1,57 @@
+{
+  "schema_version": 1,
+  "id": "R07",
+  "kind": "measurement_recording",
+  "title": "Vierkanalige Messaufzeichnung mit einem Abschnitt",
+  "duration_s": 16995.398302,
+  "configuration": {
+    "parameter_source": "current_catalog"
+  },
+  "initial_state": {},
+  "samples_file": "R07.samples.jsonl.gz",
+  "samples_sha256": "a3a77c1997bd97fcd7ed4fcf376f9d58dcc00b97b20b79381b1f107f75e7288a",
+  "samples_count": 52236,
+  "actions": [],
+  "expectations": [],
+  "recording_sections": [
+    {
+      "id": "R07-S01",
+      "start_s": 0.0,
+      "archived_end_s": 16995.398302,
+      "first_sample_s": 0.423735,
+      "last_sample_s": 16994.899571,
+      "samples_count": 52236
+    }
+  ],
+  "source": {
+    "kind": "measured",
+    "timestamp_basis": "received; relative to one common group origin at microsecond resolution",
+    "transformations": [
+      "Subtract one common recording origin from all original received timestamps",
+      "Replace physical source identifiers with functional roles",
+      "Order by original received time and numeric original record id for equal timestamps",
+      "Retain all original numeric values and their multiplicity; no interpolation or smoothing",
+      "Keep original section gaps and measurements received after the stored section endpoint",
+      "Exclude initial snapshots, historical actions, actuator outputs and historical detector results"
+    ],
+    "channel_counts": {
+      "lower_humidity": 13987,
+      "lower_temperature": 12095,
+      "upper_humidity": 13899,
+      "upper_temperature": 12255
+    },
+    "largest_climate_message_gap_s": {
+      "upper_temperature": 8.405412,
+      "upper_humidity": 6.305396,
+      "lower_temperature": 8.407904,
+      "lower_humidity": 6.305494
+    },
+    "limitations": [
+      "No independently assigned human event labels or historical input actions are included; no detection success rate is asserted.",
+      "This is an observed climate-input replay; unchanged measurements do not predict physical consequences of changed controller outputs.",
+      "The source was examined during prior inventory work and is not an untouched blind holdout.",
+      "Empty initial_state declares no preceding measurement; the first received sample of each role remains its first original measurement.",
+      "Section boundaries and unobserved gaps do not establish historical operation changes or runtime restarts."
+    ]
+  }
+}

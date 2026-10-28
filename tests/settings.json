@@ -1,0 +1,166 @@
+{
+  "schema_version": 1,
+  "description": "Exclusive defaults for test infrastructure and synthetic input data. Product settings are read from the product catalogue; independent acceptance criteria stay in their tests.",
+  "runner": {
+    "operating_system": "ubuntu-latest",
+    "python_core": "3.13",
+    "python_ha": "3.14.2",
+    "prettier": "3.6.2",
+    "ruff": "0.17.0",
+    "artifact_retention_days": 7,
+    "ui_base_ref": "origin/codex/sauna-development"
+  },
+  "browser": {
+    "engine": "chromium",
+    "headless": true,
+    "device_scale_factor": 2,
+    "viewports": {
+      "desktop": {
+        "width": 1440,
+        "height": 1080
+      },
+      "history": {
+        "width": 1440,
+        "height": 1100
+      },
+      "tablet": {
+        "width": 1120,
+        "height": 1000
+      },
+      "mobile": {
+        "width": 390,
+        "height": 844
+      }
+    },
+    "timeouts_ms": {
+      "bootstrap": 60000,
+      "loading": 30000,
+      "update": 15000,
+      "interaction": 10000,
+      "short": 5000,
+      "performance": 120000,
+      "render": 1500
+    },
+    "poll_ms": 10,
+    "render_poll_ms": 4,
+    "settle_frames": 3,
+    "settle_ms": 50,
+    "cursor_observation_ms": 150,
+    "event_timeout_s": 10,
+    "auth_token_seconds": 1800,
+    "observer_yield_seconds": 0.5,
+    "inflight_probe_seconds": 0.25,
+    "listener_yield_seconds": 0.1,
+    "idle_observation_ms": 400,
+    "touch_observation_ms": 20
+  },
+  "asyncio": {
+    "timeouts_s": {
+      "short": 1,
+      "writer": 2,
+      "service": 3,
+      "background": 5,
+      "reload": 10
+    },
+    "scheduler_grace_s": 0.05
+  },
+  "fixtures": {
+    "ha": {
+      "latitude": 0,
+      "longitude": 0,
+      "elevation": 0,
+      "timezone": "UTC",
+      "host": "127.0.0.1",
+      "seed_measurement": 25
+    },
+    "transport": {
+      "light_service_delay_s": 0.035,
+      "measurement_interval_s": 0.003,
+      "load_lead_s": 0.1
+    },
+    "session": {
+      "origin": "2000-01-01T12:00:00+00:00",
+      "sun_day_elevation": 10,
+      "sun_night_elevation": -10,
+      "initial_light_percent": 0,
+      "feedback_mode": "simulated_acknowledgement",
+      "configuration_defaults": {
+        "presence_source": "ha_presence",
+        "control_input_mode": "button",
+        "control_mode": "automatic",
+        "program_mode": "constant",
+        "button_program": "constant",
+        "button_session_gesture": "long",
+        "button_input_kind": "event",
+        "button_event_types": [
+          "btn_down",
+          "btn_up",
+          "single_push",
+          "long_push",
+          "double_push",
+          "triple_push"
+        ]
+      }
+    },
+    "history": {
+      "origin": "2032-01-01T08:00:00Z",
+      "duration_seconds": 14400,
+      "positions": [
+        "upper",
+        "lower"
+      ],
+      "quantities": [
+        "temperature",
+        "humidity"
+      ],
+      "source_offset_ms": 103,
+      "measurement_lag_ms": 71,
+      "temperature": 72,
+      "humidity": 28,
+      "lower_offset": -5,
+      "wave_period_seconds": 47,
+      "wave_amplitude": 3,
+      "page_size": 1000,
+      "samples_per_tick": 2,
+      "heating_seconds": 300,
+      "normal_light": 25,
+      "outer_height_px": 960,
+      "outer_tail_px": 600,
+      "delayed_response_ms": 100,
+      "accept_updates": 3,
+      "profile_updates": 20,
+      "detail_updates": 5,
+      "late_sample_seconds": 7200.5,
+      "late_temperature": 90,
+      "interaction_steps": 24,
+      "tick_every": 4,
+      "detail_duration_seconds": 1200,
+      "detail_trace_step_seconds": 5,
+      "detail_selected_seconds": 305,
+      "detail_event_seconds": 300,
+      "lifecycle_duration_seconds": 750,
+      "lifecycle_response_delay_ms": 35
+    },
+    "archive": {
+      "duration_seconds": 21600,
+      "sample_interval_seconds": 2,
+      "background_records": 250000,
+      "background_age_days": 30,
+      "background_temperature": 19.125,
+      "background_padding_chars": 640,
+      "source_padding_chars": 256,
+      "missing_every_seconds": 997,
+      "value_base": 40.125,
+      "value_period": 101,
+      "value_divisor": 8,
+      "gangs": 12,
+      "gang_start_seconds": 1800,
+      "gang_end_seconds": 2400,
+      "gang_spacing_seconds": 1500,
+      "power_w": 9000,
+      "heater_feedback_seconds": 60,
+      "heater_cycle_seconds": 120,
+      "session_revision_seconds": 30
+    }
+  }
+}

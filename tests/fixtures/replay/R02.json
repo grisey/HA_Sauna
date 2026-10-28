@@ -1,0 +1,444 @@
+{
+  "schema_version": 1,
+  "id": "R02",
+  "kind": "real_session",
+  "title": "Automatik mit Solländerung und unterschiedlich verzögerter Abwesenheit",
+  "duration_s": 18964.802149,
+  "configuration": {
+    "presence_source": "ha_presence",
+    "control_mode": "automatic",
+    "parameters": {
+      "target_temperature_c": 60,
+      "final_temperature_c": 80,
+      "temperature_gangs": 3,
+      "button_hold_seconds": 2.0,
+      "session_gap_minutes": 15.0,
+      "manual_override_minutes": 10.0,
+      "standard_temperature_c": 90,
+      "sauna_min_temperature_c": 60.0,
+      "readiness_offset_c": 1.0,
+      "readiness_hysteresis_c": 1.0,
+      "minimum_heating_minutes": 10.0,
+      "thermostat_cooldown_minutes": 5.0,
+      "feedback_timeout_seconds": 10.0,
+      "fault_confirmation_seconds": 60.0,
+      "warmup_estimation_minutes": 5.0,
+      "after_run_minutes": 5.0,
+      "oven_cooling_max_minutes": 15.0,
+      "oven_cooling_heat_idle_ratio": 2.0,
+      "oven_cooling_half_life_minutes": 15.0,
+      "power_heating_threshold_w": 50.0,
+      "nominal_power_kw": 4.5,
+      "heat_reset_minutes": 10.0,
+      "sensor_timeout_seconds": 180.0,
+      "grid_seconds": 1,
+      "median_seconds": 5,
+      "door_window_seconds": 8,
+      "door_humidity_seconds": 10,
+      "door_open_slope": -1.8,
+      "door_open_drop_c": 1.0,
+      "door_open_humidity_upper": 0.45,
+      "door_open_humidity_lower": 0.3,
+      "door_open_hold_seconds": 2,
+      "door_heating_slope": -0.8,
+      "door_heating_hold_seconds": 5,
+      "door_close_slope": 0.15,
+      "door_close_hold_seconds": 3,
+      "person_step_seconds": 5,
+      "strong_window_seconds": 60,
+      "weak_window_seconds": 120,
+      "strong_humidity_upper": 0.5,
+      "strong_humidity_lower": 0.5,
+      "strong_hold_seconds": 10,
+      "weak_humidity_upper": 0.14,
+      "weak_humidity_lower": 0.14,
+      "weak_hold_seconds": 30,
+      "infusion_window_seconds": 10,
+      "infusion_humidity": 2.0,
+      "infusion_hold_seconds": 3,
+      "confirmation_minutes": 12.0,
+      "vent_baseline_seconds": 60,
+      "vent_drop_upper": 3.0,
+      "vent_drop_lower": 3.0,
+      "vent_absolute_humidity_loss_percent": 30.0,
+      "vent_hold_seconds": 60,
+      "light_brightness_scale": 255,
+      "light_reference_temperature_c": 30.0,
+      "cooling_brightness_percent": 5.0,
+      "operation_brightness_percent": 45.0,
+      "night_brightness_percent": 30.0,
+      "after_run_brightness_percent": 10.0,
+      "session_light_brightness_percent": 50.0,
+      "light_transition_seconds": 30.0,
+      "light_output_hysteresis_percent": 0.1,
+      "preset_start_c": 70,
+      "preset_step_c": 5.0,
+      "preset_count": 6
+    },
+    "control_input_mode": "button",
+    "button_input_kind": "event",
+    "button_event_types": [
+      "btn_down",
+      "btn_up",
+      "single_push",
+      "double_push",
+      "triple_push",
+      "long_push"
+    ],
+    "button_session_gesture": "long",
+    "button_program": "constant",
+    "program": {
+      "mode": "progressive",
+      "start_c": 60,
+      "end_c": 80,
+      "gangs": 3
+    }
+  },
+  "initial_state": {
+    "presence": {
+      "value": true,
+      "reported_age_s": 825.542043
+    },
+    "upper_temperature": {
+      "value": 32.2,
+      "reported_age_s": 0.351241
+    },
+    "upper_humidity": {
+      "value": 22.1,
+      "reported_age_s": 0.344372
+    },
+    "lower_temperature": {
+      "value": 27.85,
+      "reported_age_s": 0.327049
+    },
+    "lower_humidity": {
+      "value": 27.79,
+      "reported_age_s": 0.32019
+    },
+    "heater_feedback": {
+      "value": false,
+      "reported_age_s": 297.372399
+    },
+    "light_feedback": {
+      "value": {
+        "on": true,
+        "brightness": null
+      },
+      "reported_age_s": 44.600418
+    }
+  },
+  "feedback_mode": "simulated_acknowledgement",
+  "samples_file": "R02.samples.jsonl.gz",
+  "samples_sha256": "d6b71f486865a5c16b753843a9e24dc4403bbed8042146ae5dcd90c52151f8e3",
+  "samples_count": 58214,
+  "observed_outputs_file": "R02.observed-outputs.jsonl.gz",
+  "observed_outputs_sha256": "49c2c2bfc4c5a6110da9c3b429cd21df3764ad1da51e2592ae46866c2798dee2",
+  "observed_outputs_count": 3012,
+  "actions": [
+    {
+      "t": 0.0,
+      "name": "start",
+      "args": {}
+    },
+    {
+      "t": 9.12537,
+      "name": "set_heater",
+      "args": {
+        "value": false
+      }
+    },
+    {
+      "t": 16.425875,
+      "name": "set_heater",
+      "args": {
+        "value": true
+      }
+    },
+    {
+      "t": 20.193572,
+      "name": "set_heater",
+      "args": {
+        "value": null
+      }
+    },
+    {
+      "t": 27.222658,
+      "name": "set_temperature",
+      "args": {
+        "value": 70
+      }
+    },
+    {
+      "t": 42.497454,
+      "name": "select_program",
+      "args": {
+        "mode": "constant",
+        "start_c": 95
+      }
+    },
+    {
+      "t": 338.860548,
+      "name": "select_program",
+      "args": {
+        "mode": "progressive",
+        "start_c": 60,
+        "end_c": 80,
+        "gangs": 3
+      }
+    },
+    {
+      "t": 3607.345615,
+      "name": "select_program",
+      "args": {
+        "mode": "progressive",
+        "start_c": 85,
+        "end_c": 100,
+        "gangs": 3
+      }
+    },
+    {
+      "t": 4321.048475,
+      "name": "stop",
+      "args": {}
+    },
+    {
+      "t": 4326.926778,
+      "name": "start",
+      "args": {}
+    },
+    {
+      "t": 4331.127196,
+      "name": "stop",
+      "args": {}
+    },
+    {
+      "t": 4339.394399,
+      "name": "start",
+      "args": {}
+    },
+    {
+      "t": 4349.908734,
+      "name": "set_light",
+      "args": {
+        "value": false
+      }
+    },
+    {
+      "t": 4359.13204,
+      "name": "set_light",
+      "args": {
+        "value": null
+      }
+    },
+    {
+      "t": 4366.052073,
+      "name": "set_light",
+      "args": {
+        "value": 96
+      }
+    },
+    {
+      "t": 4369.681756,
+      "name": "set_light",
+      "args": {
+        "value": 19
+      }
+    },
+    {
+      "t": 4375.908354,
+      "name": "set_light",
+      "args": {
+        "value": 1
+      }
+    },
+    {
+      "t": 9657.544776,
+      "name": "set_heater",
+      "args": {
+        "value": false
+      }
+    },
+    {
+      "t": 18017.155076,
+      "name": "button",
+      "args": {
+        "event": "btn_down"
+      }
+    },
+    {
+      "t": 18017.348503,
+      "name": "button",
+      "args": {
+        "event": "btn_up"
+      }
+    },
+    {
+      "t": 18017.655513,
+      "name": "button",
+      "args": {
+        "event": "single_push"
+      }
+    },
+    {
+      "t": 18061.250086,
+      "name": "button",
+      "args": {
+        "event": "btn_down"
+      }
+    },
+    {
+      "t": 18062.257931,
+      "name": "button",
+      "args": {
+        "event": "long_push"
+      }
+    },
+    {
+      "t": 18064.079238,
+      "name": "button",
+      "args": {
+        "event": "btn_up"
+      }
+    }
+  ],
+  "expectations": [
+    {
+      "id": "A01-preparation",
+      "values": {
+        "active_gang": false,
+        "operation_enabled": true
+      },
+      "reason": "Die anfänglichen Schalt- und Temperaturänderungen wurden vom Nutzer als Bedienversuche vor dem ersten Gang bestätigt.",
+      "at_s": 64.802149
+    },
+    {
+      "id": "A02-ready-at-low-target",
+      "values": {
+        "ready": true,
+        "active_gang": false,
+        "target_temperature_c": 60
+      },
+      "reason": "Das zuerst gewählte Ziel von 60 °C ist anhand der gemessenen Temperatur erreicht.",
+      "at_s": 2224.802149
+    },
+    {
+      "id": "A03-higher-target-heats",
+      "values": {
+        "ready": false,
+        "phase": "aufheizen",
+        "target_temperature_c": 85
+      },
+      "reason": "Die gewählte Erhöhung von 60 auf 85 °C bei rund 59,9 °C muss Bereitschaft beenden und Aufheizen anzeigen.",
+      "at_s": 3608.802149
+    },
+    {
+      "id": "A04-first-stay",
+      "values": {
+        "active_gang": true,
+        "gang_heat_demand": true
+      },
+      "reason": "Der danach vom Nutzer ausdrücklich beendete erste Gang war ein realer Aufenthalt.",
+      "at_s": 7504.802149
+    },
+    {
+      "id": "A05-delayed-absence-ends",
+      "values": {
+        "active_gang": false,
+        "gang_heat_demand": false,
+        "cooling_active": true,
+        "heater_request": false
+      },
+      "reason": "Nutzerbestätigter Austritt und Durchlüften; die echte Abwesenheitsmeldung kommt erst nach dem thermischen Türschluss. Sie beendet den Gang trotzdem.",
+      "at_s": 8535.802149
+    },
+    {
+      "id": "A06-no-new-stay-from-open-close",
+      "values": {
+        "active_gang": false
+      },
+      "reason": "Der Nutzer öffnet außen nochmals für ungefähr eine Minute; das ist kein weiterer Saunagang.",
+      "at_s": 10084.802149
+    },
+    {
+      "id": "A07-second-stay",
+      "values": {
+        "active_gang": true
+      },
+      "reason": "Ein weiterer Saunagang wurde vorab angekündigt und anschließend ausdrücklich als beendet bestätigt.",
+      "at_s": 12304.802149
+    },
+    {
+      "id": "A08-second-exit",
+      "values": {
+        "active_gang": false,
+        "gang_heat_demand": false,
+        "gang_count": 2
+      },
+      "reason": "Der zweite bestätigte Austritt bleibt trotz kurzer ON/OFF-Präsenzfolge beendet. Meldungswechsel sind keine zusätzlichen Aufenthalte.",
+      "at_s": 13204.802149
+    },
+    {
+      "id": "A09-native-long-stop",
+      "values": {
+        "operation_enabled": false,
+        "heater_request": false,
+        "active_gang": false
+      },
+      "reason": "Der native lange Tastendruck zum Ausschalten wurde samt Loslassen aufgezeichnet.",
+      "at_s": 18069.802149
+    },
+    {
+      "id": "A10-after-run-ended",
+      "values": {
+        "operation_enabled": false,
+        "recording": false,
+        "light_after_run": false,
+        "retained_sessions": 1
+      },
+      "reason": "Der separate Lichtnachlauf ist bis zur belegten Licht-AUS-Rückmeldung enthalten; Aus-Phase allein gilt nicht als Abschlussbeleg. Die beiden vom Nutzer bestätigten Gänge machen diese eine Sitzung speicherwürdig.",
+      "at_s": 18964.802149
+    }
+  ],
+  "coverage": [
+    "Zielerhöhung nach Bereitschaft",
+    "Verspätete Abwesenheit nach Türschluss",
+    "Zweiter bestätigter Ausgang mit kurzen Präsenzwechseln",
+    "Native Tastergeste und vollständiger Lichtnachlauf"
+  ],
+  "source": {
+    "kind": "measured",
+    "timestamp_basis": "received; separate reported_age_s only when the source supplied it",
+    "transformations": [
+      "Subtract the recording origin from timestamps",
+      "Replace physical source identifiers with functional roles",
+      "Retain measured values and message order; no interpolation, smoothing or generated climate samples",
+      "Exclude previously detected events, old phases, old gang decisions and heater commands"
+    ],
+    "source_sha256": [
+      "a9e9093108b066cd4274373fe748dabedb9889d5c8ad0ded780a9e95d96cd8b2"
+    ],
+    "boundaries": "Recording begin through explicit operation stop and the available complete after-run; manual ends after confirmed heater OFF before the next distinct start.",
+    "channel_counts": {
+      "lower_humidity": 15527,
+      "lower_temperature": 13518,
+      "presence": 16,
+      "upper_humidity": 15414,
+      "upper_temperature": 13739
+    },
+    "largest_climate_message_gap_s": {
+      "upper_temperature": 8.40743,
+      "upper_humidity": 7.355684,
+      "lower_temperature": 9.458462,
+      "lower_humidity": 5.282991
+    },
+    "limitations": [
+      "A confirming actuator stub acknowledges new commands. The historical feedback is isolated in observed_outputs_file for diagnosis; it cannot acknowledge a changed command.",
+      "The unchanged real climate input is not a physical counterfactual simulation after the corrected controller changes a heater command. Physical consequence curves are covered by the separately constructed session scenarios.",
+      "A measured brightness acknowledgement does not measure the physical fade of the lamp.",
+      "Human entry/exit times are only asserted at the resolution established by the user's account; old detector timestamps are not ground truth.",
+      "After the first delayed-absence exit the historical heater remains ON because of the known old fault. A corrected OFF request is expected, but the historical temperature trajectory is not a counterfactual model of that OFF request.",
+      "The light was already ON at the recording boundary. Its initial brightness was not stored; that missing brightness remains unknown, rather than being guessed from the first post-command acknowledgement."
+    ],
+    "counterfactual_from_s": 8534.562308
+  }
+}

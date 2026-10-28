@@ -1,6 +1,11 @@
 "use strict";
+const { panelFixture: fixturePanel } = require("./catalog_fixture.cjs");
 
 const assert = require("node:assert/strict");
+const {
+  parameterValues: fixtureValues,
+  parameterDefinition: fixtureDefinition,
+} = require("./catalog_fixture.cjs");
 const fs = require("node:fs");
 const test = require("node:test");
 const vm = require("node:vm");
@@ -31,11 +36,11 @@ const session = {
   timeline: { session_started_at: iso(0), processed: [], completed: [] },
 };
 const panel = () =>
-  Object.assign(Object.create(Panel.prototype), {
+  Object.assign(fixturePanel(Panel), {
     shown: { session, records: [] },
     state: {
       now: iso(3600),
-      configuration: { parameters: { sensor_timeout_seconds: 5 } },
+      configuration: { parameters: fixtureValues() },
     },
     $: () => null,
     scheduleHistoryRender: () => {},
@@ -90,29 +95,46 @@ test("overview handles remain bounded and synchronous zoom retains its anchor", 
   assert.equal(p.window[1] - p.window[0], width / 2);
 });
 
-test("gesture ownership captures the overview pointer and defers rendering until movement", () => {
+test("chart panning captures its owning pointer and keeps the starting viewport during growth", () => {
   const p = panel();
-  p.window = [10, 20];
-  const invalidations = [];
-  p.historyChart = {
-    interaction: { invalidateGeometry: (...args) => invalidations.push(args) },
+  p.window = [Date.parse(iso(900)), Date.parse(iso(2700))];
+  const invalidations = [],
+    captures = [];
+  const geometry = {
+    rects: { surface: { left: 10, top: 0, width: 800, height: 320 } },
   };
-  const captures = [];
-  const svg = { setPointerCapture: (pointerId) => captures.push(pointerId) };
+  const svg = { setPointerCapture: (id) => captures.push(id), matches: () => false };
+  p.historyChart = {
+    domain: p.historyDomain(),
+    model: { start: p.window[0], end: p.window[1], left: 0, right: 1200, width: 1200 },
+    interaction: {
+      invalidateGeometry: (...args) => invalidations.push(args),
+      readGeometry: () => geometry,
+    },
+  };
   const event = {
     pointerId: 7,
-    target: { dataset: { historyHandle: "start" }, closest: () => null },
-    preventDefault: () => (event.prevented = true),
     clientX: 100,
+    clientY: 10,
+    preventDefault() {
+      this.prevented = true;
+    },
   };
-  p.overviewFraction = () => 0.25;
-  p.beginHistoryGesture(event, svg);
-  assert.equal(event.prevented, true);
+  p.beginChartPointer(event, svg);
   assert.deepEqual(captures, [7]);
   assert.deepEqual(invalidations, [["geometry", false]]);
-  assert.equal(p.historyGesture.pointerId, 7);
-  assert.equal(p.historyGesture.kind, "start");
-  assert.equal(p.historyGesture.fraction, 0.25);
+  p.updateChartPointer({ ...event, pointerId: 9, clientX: 140 });
+  assert.equal(
+    p.window[0],
+    Date.parse(iso(900)),
+    "another pointer cannot move the viewport",
+  );
+  p.updateChartPointer({ ...event, clientX: 140 });
+  assert.equal(p.window[0], Date.parse(iso(810)));
+  assert.equal(p.window[1], Date.parse(iso(2610)));
+  p.endChartPointer({ ...event, clientX: 140, type: "pointerup" });
+  assert.equal(p.historyValueSelection, null, "a pan cannot become a point selection");
+  assert.equal(p.historyInputSnapshot, null);
 });
 
 test("a cursor frame preserves the existing chart object and interaction nodes", () => {
@@ -171,7 +193,11 @@ test("the history heading and timeline revisions remain independent of samples",
   assert.equal(p.historyTitle(session), "Letzte Sitzung");
   p.selected = "archive-1";
   p.sessions = [{ session_id: "archive-1", started_at: iso(10) }];
-  assert.match(p.historyTitle({ timeline: {} }), /^Sitzung vom /);
+  assert.equal(p.historyTitle({ timeline: {} }), p.sessionLabel(p.sessions[0]));
+  assert.doesNotMatch(
+    p.historyTitle({ timeline: {} }),
+    /Sitzung vom|beendet|Ohne Startzeit/,
+  );
 
   const live = {
     ...session,
@@ -216,7 +242,7 @@ test("pointer-owned pinch suppresses duplicate Safari gesture zoom", () => {
 test("a retargeted WebKit gesture resolves its chart through the composed path", () => {
   const p = panel();
   const svg = {
-    matches: (selector) => selector === "svg.session-chart",
+    matches: (selector) => selector.split(", ").includes("svg.session-chart"),
     getBoundingClientRect: () => ({ left: 10, width: 800 }),
   };
   const factors = [];
@@ -251,13 +277,13 @@ test("explicit navigation during a periodic refresh queues one fresh read", asyn
   let releaseFirst;
   let stateReads = 0;
   const firstState = new Promise((resolve) => (releaseFirst = resolve));
-  const p = Object.assign(Object.create(Panel.prototype), {
+  const p = Object.assign(fixturePanel(Panel), {
     entry: "entry",
     generation: 0,
     isConnected: true,
     shadowRoot: { activeElement: null },
     api: async (path) => {
-      if (path !== "/entry/state") throw Error(path);
+      if (path !== "/entry/state?include_catalog=false") throw Error(path);
       stateReads++;
       return stateReads === 1 ? firstState : {};
     },

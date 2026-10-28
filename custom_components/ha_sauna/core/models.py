@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timedelta
 from enum import StrEnum
 from math import isfinite
 
@@ -23,6 +23,27 @@ class Quantity(StrEnum):
 
 
 @dataclass(frozen=True)
+class SampleIdentity:
+    """Physical sensor read, independent of transport and wall-clock changes."""
+
+    sensor_id: str
+    boot_id: str
+    sample_id: int
+    monotonic_ns: int
+
+    def __post_init__(self):
+        if (not isinstance(self.sensor_id, str) or not self.sensor_id
+                or not isinstance(self.boot_id, str) or not self.boot_id
+                or type(self.sample_id) is not int or self.sample_id < 1
+                or type(self.monotonic_ns) is not int or self.monotonic_ns < 0):
+            raise ValueError("Physical sample needs sensor, boot, positive ID and monotonic time")
+
+    @property
+    def identity(self):
+        return self.sensor_id, self.boot_id, self.sample_id
+
+
+@dataclass(frozen=True)
 class Measurement:
     """Normalisierter Eingang; Originalwert und Herkunft bleiben daneben erhalten.
 
@@ -37,6 +58,8 @@ class Measurement:
     source: str
     received_at: datetime
     measured_at: datetime | None = None
+    sample: SampleIdentity | None = None
+    original_id: str | None = None
 
     def __post_init__(self) -> None:
         if not isinstance(self.position, Position) or not isinstance(
@@ -56,6 +79,58 @@ class Measurement:
         object.__setattr__(self, "received_at", utc(self.received_at))
         if self.measured_at is not None:
             object.__setattr__(self, "measured_at", utc(self.measured_at))
+        if self.sample is not None:
+            if not isinstance(self.sample, SampleIdentity):
+                raise ValueError("Sample metadata must describe one physical read")
+            if self.value is not None and self.measured_at is None:
+                raise ValueError("A successful physical sample needs its measurement time")
+        if self.original_id is not None and (not isinstance(self.original_id, str) or not self.original_id):
+            raise ValueError("An archival original identity must be nonempty text")
+
+    @classmethod
+    def from_payload(cls, payload, *, original_id=None):
+        """Read current and legacy archive originals through the same contract."""
+        return cls(
+            Position(payload["position"]), Quantity(payload["quantity"]),
+            payload["value"], payload["raw_value"], payload["source"],
+            datetime.fromisoformat(payload["received_at"]),
+            datetime.fromisoformat(payload["measured_at"]) if payload.get("measured_at") else None,
+            SampleIdentity(**payload["sample"]) if payload.get("sample") is not None else None,
+            payload.get("original_id") or original_id,
+        )
+
+    @property
+    def source_identity(self):
+        return (self.source, self.sample.sensor_id, self.sample.boot_id) if self.sample else (self.source,)
+
+    @property
+    def freshness_at(self):
+        """Control freshness; independent of whether an original is evidence."""
+        return (min(self.received_at, self.measured_at)
+                if self.sample is not None and self.measured_at else self.received_at)
+
+
+@dataclass(frozen=True)
+class MeasurementBatch:
+    """Originals made available together, without rewriting their own times."""
+
+    measurements: tuple[Measurement, ...]
+    observed_at: datetime
+
+    def __post_init__(self):
+        object.__setattr__(self, "measurements", tuple(self.measurements))
+        object.__setattr__(self, "observed_at", utc(self.observed_at))
+        if any(m.received_at > self.observed_at for m in self.measurements):
+            raise ValueError("A batch cannot be observed before its originals arrived")
+
+    def __iter__(self):
+        return iter(self.measurements)
+
+    def __len__(self):
+        return len(self.measurements)
+
+    def __getitem__(self, index):
+        return self.measurements[index]
 
 
 @dataclass(frozen=True)
@@ -84,6 +159,19 @@ class HeatingInterval:
 
 
 @dataclass(frozen=True)
+class HeatingStateMark:
+    """Vom Heizzeitbesitzer wirksam übernommene Rückmeldung."""
+
+    at: datetime
+    heating: bool | None
+
+    def __post_init__(self) -> None:
+        if self.heating is not None and not isinstance(self.heating, bool):
+            raise ValueError("Heizrückmeldung muss wahr, falsch oder unbekannt sein")
+        object.__setattr__(self, "at", utc(self.at))
+
+
+@dataclass(frozen=True)
 class HeatingTime:
     """Tatsächlich rückgemeldete Heizintervalle und lokale Zeitführung."""
 
@@ -93,6 +181,7 @@ class HeatingTime:
     off_since: datetime | None = None
     last_reset_at: datetime | None = None
     intervals: tuple[HeatingInterval, ...] = ()
+    state_history: tuple[HeatingStateMark, ...] = ()
 
     def __post_init__(self) -> None:
         if (
@@ -102,6 +191,18 @@ class HeatingTime:
             or self.elapsed_seconds < 0
         ):
             raise ValueError("Heizzeit muss endlich und nicht negativ sein")
+        if not isinstance(self.state_history, tuple):
+            raise ValueError("Heizverlauf benötigt Heizrückmeldungen als Tupel")
+
+
+@dataclass(frozen=True)
+class EnergyInterval:
+    """Zeitlich begrenzter Abrechnungsbeitrag mit unveränderter Herkunft."""
+
+    started_at: datetime
+    ended_at: datetime
+    source: str
+    power_kw: float | None
 
 
 @dataclass(frozen=True)
@@ -112,6 +213,7 @@ class Energy:
     estimated_seconds: float = 0.0
     unknown_seconds: float = 0.0
     accounted_at: datetime | None = None
+    intervals: tuple[EnergyInterval, ...] = ()
 
     @property
     def total_kwh(self):
@@ -151,6 +253,9 @@ class TimedPhase:
     pending_start: bool = False
     requested_at: datetime | None = None
     cooling_calculation: OvenCoolingResult | None = None
+    # Proxy evidence caps this same phase; original duration and factual OFF
+    # accounting stay intact, even when the minimum has already elapsed.
+    minimum_duration_requested: bool = False
 
     def __post_init__(self) -> None:
         # Ältere Aufrufer kannten nur Start und Ende. Die Dauer wird einmal
@@ -181,8 +286,17 @@ class TimedPhase:
             raise ValueError("Phasenzeit darf ihre Dauer nicht überschreiten")
 
     @property
+    def required_seconds(self) -> float:
+        if self.minimum_duration_requested and self.cooling_calculation is not None:
+            minimum = timedelta(
+                minutes=self.cooling_calculation.base_minutes
+            ).total_seconds()
+            return min(self.duration_seconds, minimum)
+        return self.duration_seconds
+
+    @property
     def remaining_seconds(self) -> float:
-        return max(0.0, self.duration_seconds - self.elapsed_seconds)
+        return max(0.0, self.required_seconds - self.elapsed_seconds)
 
 
 @dataclass(frozen=True)
@@ -212,6 +326,23 @@ class CoolingCycle:
 class ThermostatState:
     demand: bool = False
     cooldown_until: datetime | None = None
+
+
+@dataclass(frozen=True)
+class TemperatureTargetMark:
+    """Zum Zeitpunkt wirksamer Sollwert des bestehenden Sitzungsbesitzers."""
+
+    at: datetime
+    target_c: float | None
+
+    def __post_init__(self) -> None:
+        if self.target_c is not None and (
+            isinstance(self.target_c, bool)
+            or not isinstance(self.target_c, (int, float))
+            or not isfinite(self.target_c)
+        ):
+            raise ValueError("Solltemperatur muss endlich oder unbekannt sein")
+        object.__setattr__(self, "at", utc(self.at))
 
 
 @dataclass(frozen=True)
@@ -246,8 +377,11 @@ class Session:
     next_gang_temperature_blocked_by: str | None = None
     active_gang_temperature_c: float | None = None
     active_gang_temperature_id: str | None = None
+    target_history: tuple[TemperatureTargetMark, ...] = ()
 
     def __post_init__(self) -> None:
+        if not isinstance(self.target_history, tuple):
+            raise ValueError("Sollverlauf benötigt Sollwertmarken als Tupel")
         purposes = set()
         for deadline in self.deadlines:
             if deadline.session_id != self.session_id:

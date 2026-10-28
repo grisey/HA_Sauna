@@ -1,8 +1,10 @@
-"""The accepted candidate stays unchanged; raw records remain local."""
+"""Integrity of the frozen historical reference, not a product-behaviour oracle.
+
+Current measured acceptance lives in tests/sessions and has required bundled
+inputs. The historical archive CLI is retained in candidate/ unchanged.
+"""
 import hashlib
-import importlib.util
 import json
-import os
 from pathlib import Path
 import unittest
 
@@ -26,22 +28,6 @@ class CandidateIntegrityTests(unittest.TestCase):
                 self.assertEqual(result["infusion_background_positive_seconds"], 0)
                 self.assertEqual(len(result["gangs"]), 4)
                 self.assertTrue(all(g["lead_to_infusion_s"] > 0 for g in result["gangs"]))
-
-
-@unittest.skipUnless(os.environ.get("SAUNA_RECORDER_ARCHIVE"), "privater Recorderexport nicht angegeben")
-class RecorderReplayTests(unittest.TestCase):
-    def test_full_replay_matches_original(self):
-        source = Path(os.environ["SAUNA_RECORDER_ARCHIVE"])
-        self.assertEqual(hashlib.sha256(source.read_bytes()).hexdigest(), PROVENANCE["source_sha256"])
-        spec = importlib.util.spec_from_file_location("sauna_candidate", ROOT / "candidate/replay.py")
-        module = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(module)
-        parameters = json.loads((ROOT / "candidate/parameter.json").read_text(encoding="utf-8"))
-        result = module.main(source, parameters, tests=True)
-        # A caller may keep the same archive under a different local filename.
-        result["source"] = PROVENANCE["source_archive"]
-        encoded = (json.dumps(result, ensure_ascii=False, indent=2, allow_nan=False) + "\n").encode()
-        self.assertEqual(hashlib.sha256(encoded).hexdigest(), PROVENANCE["full_replay_result_sha256"])
 
 
 if __name__ == "__main__":

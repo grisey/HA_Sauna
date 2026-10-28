@@ -78,9 +78,19 @@ def select_light(output, controller, value, now, normal):
     if value is not None and after_run is not None and now >= after_run.ends_at:
         output.finish_automatic()
     if value is None:
-        output.return_to_automatic()
+        output.return_to_automatic(at=now)
     else:
         brightness = (output.parameters.values["session_light_brightness_percent"]
                       if value is True else 0 if value is False
                       else normal if value == "normal" else value)
-        output.set_manual(brightness, phase_key=phase_key, ends_at=ends_at)
+        session = controller.session
+        if session is not None:
+            session_id = session.session_id
+        elif phase_key[0] == "session_light":
+            session_id = after_run.session_id
+        else:
+            session_id = None
+        output.set_manual(
+            brightness, phase_key=phase_key, ends_at=ends_at, at=now,
+            session_id=session_id,
+        )

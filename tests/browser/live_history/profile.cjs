@@ -1,26 +1,29 @@
+const { settings } = require("../../settings_fixture.cjs");
+const { catalog: fixtureCatalog } = require("../../catalog_fixture.cjs");
 // Current-panel load and live-render profile with native browser pointer input.
 const fs = require("node:fs"),
   path = require("node:path"),
   assert = require("node:assert/strict");
 const { webkit, chromium } = require("playwright");
 const root = process.cwd();
+const defaults = structuredClone(fixtureCatalog);
 const output =
   process.env.HISTORY_EVIDENCE ||
   path.join(require("node:os").tmpdir(), "ha-sauna-live-history");
 let runningBrowser;
 fs.mkdirSync(output, { recursive: true });
 (async () => {
-  const engine = process.env.ENGINE || "webkit";
+  const engine = process.env.ENGINE || settings.browser.engine;
   const browser = await (engine === "webkit" ? webkit : chromium).launch({
-    headless: true,
+    headless: settings.browser.headless,
     ...(engine === "chromium" && process.env.CHROMIUM_EXECUTABLE
       ? { executablePath: process.env.CHROMIUM_EXECUTABLE }
       : {}),
   });
   runningBrowser = browser;
   const page = await browser.newPage({
-    viewport: { width: 1440, height: 1100 },
-    deviceScaleFactor: 2,
+    viewport: settings.browser.viewports.history,
+    deviceScaleFactor: settings.browser.device_scale_factor,
   });
   const errors = [];
   page.on("pageerror", (error) => errors.push(String(error)));
@@ -30,13 +33,16 @@ fs.mkdirSync(output, { recursive: true });
   await page.addScriptTag({
     path: path.join(root, "custom_components/ha_sauna/panel.js"),
   });
+  await page.evaluate((value) => {
+    window.testSettings = value;
+  }, settings);
   await page.addScriptTag({
     path: path.join(root, "tests/browser/live_history/fixture.js"),
   });
-  await page.evaluate(async () => {
-    window.f = await installHistoryFixture();
+  await page.evaluate(async (defaults) => {
+    window.f = await installHistoryFixture({ defaults });
     f.assertClean();
-    f.setDelay(100);
+    f.setDelay(f.inputs.delayed_response_ms);
     f.reset();
     window.profile = {
       ticks: [],
@@ -60,9 +66,9 @@ fs.mkdirSync(output, { recursive: true });
         return original.apply(this, args);
       };
     }
-  });
+  }, defaults);
   const surface = page.locator("ha-sauna-panel").locator("svg.session-chart");
-  for (let index = 0; index < 20; index++) {
+  for (let index = 0; index < settings.fixtures.history.profile_updates; index++) {
     const box = await surface.boundingBox();
     await page.mouse.move(
       box.x + box.width * (0.3 + index / 50),
@@ -79,7 +85,8 @@ fs.mkdirSync(output, { recursive: true });
     profile.liveCounts = { ...f.counts };
     profile.liveMeasurements = structuredClone(f.measurements);
   });
-  await page.locator("ha-sauna-panel").locator('[data-action="zoom-in"]').click();
+  await surface.focus();
+  await surface.press("+");
   await page.evaluate(async () => {
     await f.settle();
     f.reset();
@@ -115,7 +122,16 @@ fs.mkdirSync(output, { recursive: true });
     };
   });
   assert.deepEqual(errors, []);
-  assert.equal(result.records, 57600 + 20 * 8);
+  assert.equal(
+    result.records,
+    settings.fixtures.history.duration_seconds *
+      settings.fixtures.history.positions.length *
+      settings.fixtures.history.quantities.length +
+      settings.fixtures.history.profile_updates *
+        settings.fixtures.history.samples_per_tick *
+        settings.fixtures.history.positions.length *
+        settings.fixtures.history.quantities.length,
+  );
   assert.ok(Object.values(result.identity).every(Boolean));
   assert.equal(result.phaseCounts["curves.buildMainPath"] || 0, 0);
   assert.match(result.tooltip, /Temperatur:.*°C/);

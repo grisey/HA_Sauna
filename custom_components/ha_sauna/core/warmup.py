@@ -5,9 +5,11 @@ from __future__ import annotations
 from datetime import datetime, timedelta
 from math import isclose, isfinite, sqrt
 
+from .parameters import Parameters
+
 
 def historical_warmup_rate(
-    points: object, *, minimum_observation_seconds: float
+    points: object, *, minimum_observation_seconds: float, parameters=None
 ) -> float | None:
     """Return a robust average rise from one completed initial warm-up.
 
@@ -39,14 +41,18 @@ def historical_warmup_rate(
         if valid and received_at <= valid[-1][0]:
             return None
         valid.append((received_at, float(temperature_c)))
-    return _stable_rate(valid, float(minimum_observation_seconds))
+    return _stable_rate(
+        valid, float(minimum_observation_seconds),
+        parameters if parameters is not None else Parameters({}),
+    )
 
 
 def _stable_rate(
-    points: list[tuple[datetime, float]], minimum_span_seconds: float
+    points: list[tuple[datetime, float]], minimum_span_seconds: float, parameters: Parameters
 ) -> float | None:
     """Calculate one stable rate in linear time from already valid points."""
-    if len(points) < 3:
+    values = parameters.values
+    if len(points) < values["warmup_minimum_points"]:
         return None
     first, last = points[0], points[-1]
     span = (last[0] - first[0]).total_seconds()
@@ -77,7 +83,7 @@ def _stable_rate(
     # A useful ETA needs a rise that is stronger than the wobble around
     # its fitted line. This leaves a quantized, gradually increasing series
     # intact while a plateau remains indistinguishable from noise.
-    if trend_rise <= 2 * residual_rms:
+    if trend_rise <= values["warmup_noise_rise_ratio"] * residual_rms:
         return None
     # Do not let an older rise mask a current cooling run. Once the latest
     # maximum has been followed by enough reports to form a trend, that
@@ -87,7 +93,7 @@ def _stable_rate(
         index for index, (_, value) in enumerate(points) if value == maximum
     )
     recent = points[latest_peak:]
-    if len(recent) >= 3:
+    if len(recent) >= values["warmup_minimum_points"]:
         recent_times = [(at - recent[0][0]).total_seconds() for at, _ in recent]
         recent_mean_time = sum(recent_times) / len(recent_times)
         recent_mean_temperature = sum(value for _, value in recent) / len(recent)
@@ -105,13 +111,13 @@ def _stable_rate(
         )
         if recent_slope <= 0:
             return None
-    # A local fall that consumes at least half of the fitted rise is an
+    # A local fall beyond the configured share of the fitted rise is an
     # interruption of the warm-up (for example an open door), even if
     # older values would still make the full-window regression positive.
     largest_drop = max(
         (left[1] - right[1] for left, right in zip(points, points[1:])), default=0.0
     )
-    if 2 * largest_drop > trend_rise:
+    if largest_drop > values["warmup_drop_rise_ratio"] * trend_rise:
         return None
     return slope
 
@@ -119,19 +125,22 @@ def _stable_rate(
 class HeatingProgress:
     """Signed observations, independent of ETA fit quality or historical rates."""
 
-    def __init__(self, window_seconds: float) -> None:
-        self.trend = WarmupTrend(window_seconds)
+    def __init__(self, window_seconds: float, *, parameters=None) -> None:
+        self.trend = WarmupTrend(window_seconds, parameters=parameters)
 
     def accept(self, received_at: datetime, temperature_c: float):
         previous = self.trend.observations
         previous_at = previous[-1][0] if previous else None
         self.trend.accept(received_at, temperature_c)
         points = self.trend.observations
-        if len(points) < 3 or points[-1][0] != received_at or points[-1][0] == previous_at:
+        if (
+            len(points) < self.trend.parameters.values["warmup_minimum_points"]
+            or points[-1][0] != received_at or points[-1][0] == previous_at
+        ):
             return None
         span = (points[-1][0] - points[0][0]).total_seconds()
         # Match the existing temperature analysis' minimum evidence span.
-        if span < self.trend.window_seconds / 2:
+        if span < self.trend.window_seconds * self.trend.parameters.values["warmup_minimum_span_ratio"]:
             return None
         times = [(at - points[0][0]).total_seconds() for at, _ in points]
         mean_time = sum(times) / len(times)
@@ -150,12 +159,12 @@ class HeatingProgress:
         }
 
 
-def historical_heating_delay(episodes, window_seconds):
+def historical_heating_delay(episodes, window_seconds, *, parameters=None):
     """Largest observed ON-to-positive-response delay, never a default timer."""
     delays = []
     for episode in episodes:
         started_at, ended_at = episode["started_at"], episode["ended_at"]
-        progress = HeatingProgress(window_seconds)
+        progress = HeatingProgress(window_seconds, parameters=parameters)
         for received_at, temperature_c in episode["measurements"]:
             evidence = progress.accept(received_at, temperature_c)
             if received_at < started_at:
@@ -171,12 +180,13 @@ def historical_heating_delay(episodes, window_seconds):
 class HeatingProgressEpisode:
     """Observe startup first, then a fresh analysis window for stagnation."""
 
-    def __init__(self, window_seconds, started_at):
+    def __init__(self, window_seconds, started_at, *, parameters=None):
         self.window_seconds = window_seconds
         self.started_at = started_at
         self.startup_delay_seconds = None
         self.response_at = None
-        self.progress = HeatingProgress(window_seconds)
+        self.parameters = parameters if parameters is not None else Parameters({})
+        self.progress = HeatingProgress(window_seconds, parameters=self.parameters)
         self._analysis_started_at = None
 
     def accept(self, received_at, temperature_c):
@@ -190,7 +200,7 @@ class HeatingProgressEpisode:
             boundary = min(boundary, self.response_at) if boundary else self.response_at
         if self._analysis_started_at is None and boundary is not None and received_at >= boundary:
             # No startup samples are lent to the post-startup comparison.
-            self.progress = HeatingProgress(self.window_seconds)
+            self.progress = HeatingProgress(self.window_seconds, parameters=self.parameters)
             self._analysis_started_at = received_at
         evidence = self.progress.accept(received_at, temperature_c)
         if evidence is None:
@@ -214,7 +224,7 @@ class WarmupTrend:
     dagegen schon.
     """
 
-    def __init__(self, window_seconds: float) -> None:
+    def __init__(self, window_seconds: float, *, parameters=None) -> None:
         if (
             not isinstance(window_seconds, (int, float))
             or not isfinite(window_seconds)
@@ -222,6 +232,7 @@ class WarmupTrend:
         ):
             raise ValueError("window_seconds must be positive")
         self.window_seconds = float(window_seconds)
+        self.parameters = parameters if parameters is not None else Parameters({})
         self._points: list[tuple[datetime, float]] = []
         self._accepted_rate: float | None = None
         self._accepted_at: datetime | None = None
@@ -256,7 +267,11 @@ class WarmupTrend:
             del self._points[:first]
         # The display samples this cached, accepted fit. It changes only when
         # a genuinely new upper measurement arrives, never on UI refreshes.
-        self._accepted_rate = _stable_rate(self._points, self.window_seconds / 2)
+        self._accepted_rate = _stable_rate(
+            self._points,
+            self.window_seconds * self.parameters.values["warmup_minimum_span_ratio"],
+            self.parameters,
+        )
         self._accepted_at = received_at
 
     def rate(
@@ -301,7 +316,7 @@ class WarmupEstimate:
     eine Korrektur der Restzeit beeinflussen.
     """
 
-    def __init__(self, window_seconds: float) -> None:
+    def __init__(self, window_seconds: float, *, parameters=None) -> None:
         if (
             not isinstance(window_seconds, (int, float))
             or isinstance(window_seconds, bool)
@@ -310,7 +325,8 @@ class WarmupEstimate:
         ):
             raise ValueError("window_seconds must be positive")
         self.window_seconds = float(window_seconds)
-        self.trend = WarmupTrend(self.window_seconds)
+        self.parameters = parameters if parameters is not None else Parameters({})
+        self.trend = WarmupTrend(self.window_seconds, parameters=self.parameters)
         self.reset()
 
     def reset(self) -> None:
@@ -411,7 +427,10 @@ class WarmupEstimate:
             if previous_at is not None
             else 0.0
         )
-        weight = min(1.0, max(0.0, elapsed / self.window_seconds))
+        weight = min(1.0, max(
+            0.0,
+            elapsed / (self.window_seconds * self.parameters.values["warmup_smoothing_window_ratio"]),
+        ))
         # Count the real elapsed time before reconciling predictions.  Thus a
         # constant, accurate heat-up remains an accurate countdown instead of
         # acquiring one full window of display delay.
@@ -438,7 +457,8 @@ class WarmupEstimate:
             self._remaining_seconds = min(self._remaining_seconds, reconciled)
             return
         if live_rate >= self._reference_live_rate or isclose(
-            live_rate, self._reference_live_rate, rel_tol=1e-9
+            live_rate, self._reference_live_rate,
+            rel_tol=self.parameters.values["warmup_rate_relative_tolerance"],
         ):
             self._reference_live_rate = live_rate
             self._slower_since = None
@@ -458,15 +478,15 @@ class WarmupEstimate:
             self._remaining_seconds = min(self._remaining_seconds, reconciled)
             return
         slower_span = (received_at - self._slower_since).total_seconds()
-        if slower_span < self.window_seconds:
+        if slower_span < self.window_seconds * self.parameters.values["warmup_slow_confirmation_window_ratio"]:
             # Before a slower rate is established, only suppress a genuine
             # upward correction.  A less steep descent or a standstill is
             # already reflected by ``reconciled`` when it remains below the
             # previous displayed value.
             self._remaining_seconds = min(self._remaining_seconds, reconciled)
             return
-        # The lower measured rate has survived a complete live window.  Move
-        # towards its ETA only as fresh reports arrive, over that same window.
+        # The lower measured rate has survived the configured confirmation
+        # interval. Reconcile only when fresh reports arrive.
         self._remaining_seconds = reconciled
         # Future slowdowns must establish their own evidence against this
         # accepted rate; the historical faster reference is now superseded.
@@ -492,7 +512,7 @@ class WarmupEstimate:
             and self._temperature_c < self._target_c
             and fit_reference_at is not None
             and (self._accepted_at - fit_reference_at).total_seconds()
-            > self.window_seconds
+            > self.window_seconds * self.parameters.values["warmup_fit_grace_window_ratio"]
         ):
             # The sensor may be fresh while the rate supporting the ETA is
             # not.  Do not keep counting down a historical or cached fit
@@ -528,7 +548,12 @@ class WarmupEstimate:
             return historical_rate
         if historical_rate is None or self._fit_started_at is None:
             return rate_from_live
-        share = min(1.0, max(0.0, self._stable_fit_seconds / self.window_seconds))
+        share = min(1.0, max(
+            0.0,
+            self._stable_fit_seconds / (
+                self.window_seconds * self.parameters.values["warmup_history_blend_window_ratio"]
+            ),
+        ))
         return historical_rate * (1.0 - share) + rate_from_live * share
 
     def _invalidate(self) -> None:

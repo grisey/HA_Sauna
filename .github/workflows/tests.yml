@@ -3,33 +3,98 @@ on:
   push:
     branches: [main]
   pull_request:
+  workflow_dispatch:
+    inputs:
+      checks:
+        description: 'Comma-separated checks: core,ha,browser,sessions; empty runs all'
+        type: string
+        default: ''
+      core_tests:
+        description: 'Optional comma-separated core unittest names: test_module.Class.test_method; skips panel tests'
+        type: string
+        default: ''
+      session_cases:
+        description: 'Optional comma-separated manifest IDs for sessions, e.g. G02-proxy,R03'
+        type: string
+        default: ''
+      integration_tests:
+        description: 'Optional comma-separated integration unittest names: test_module.Class.test_method'
+        type: string
+        default: ''
+      ha_tests:
+        description: 'Optional comma-separated HA adapter unittest names: test_module.Class.test_method'
+        type: string
+        default: ''
 permissions:
   contents: read
 concurrency:
-  group: tests-${{ github.workflow }}-${{ github.ref }}
+  group: tests-${{ github.workflow }}-${{ github.ref }}-${{ inputs.checks || 'all' }}
   cancel-in-progress: true
 jobs:
+  configuration:
+    # Bootstrap on the GitHub-hosted Linux provider; all run settings come from the catalogue.
+    runs-on: ubuntu-latest
+    outputs:
+      settings: ${{ steps.catalog.outputs.settings }}
+      browser: ${{ steps.catalog.outputs.browser }}
+      cases: ${{ steps.catalog.outputs.cases }}
+      checks: ${{ steps.catalog.outputs.checks }}
+      core_tests: ${{ steps.catalog.outputs.core_tests }}
+      integration_tests: ${{ steps.catalog.outputs.integration_tests }}
+      ha_tests: ${{ steps.catalog.outputs.ha_tests }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Dispatch-Auswahl prüfen
+        run: python -m unittest discover -s tests -p test_ci_settings.py -v
+      - id: catalog
+        run: python tests/ci_settings.py outputs
+        env:
+          SAUNA_TEST_CHECKS: ${{ inputs.checks }}
+          SAUNA_CORE_TESTS: ${{ inputs.core_tests }}
+          SAUNA_SESSION_CASES: ${{ inputs.session_cases }}
+          SAUNA_INTEGRATION_TESTS: ${{ inputs.integration_tests }}
+          SAUNA_HA_TESTS: ${{ inputs.ha_tests }}
   core:
-    runs-on: ubuntu-latest
-    timeout-minutes: 3
+    needs: configuration
+    if: ${{ contains(fromJSON(needs.configuration.outputs.checks), 'core') }}
+    runs-on: ${{ fromJSON(needs.configuration.outputs.settings).operating_system }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 2
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
-          python-version: '3.13'
-      - run: python -m unittest discover -s tests -v
-        timeout-minutes: 2
-      - run: node --test tests/panel_*.test.js
-        timeout-minutes: 2
+          python-version: ${{ fromJSON(needs.configuration.outputs.settings).python_core }}
+      - run: python tests/ci_settings.py install-core
+      - name: Fachkern prüfen
+        run: |
+          python tests/ci_process.py "$SAUNA_CORE_EVIDENCE" python tests/ci_settings.py core
+        env:
+          SAUNA_CORE_TESTS: ${{ inputs.core_tests }}
+          SAUNA_CORE_EVIDENCE: ${{ runner.temp }}/ha-sauna-core
+          SAUNA_PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+      - run: python tests/ci_process.py "${{ runner.temp }}/ha-sauna-core/panel" node --test tests/panel_*.test.js
+        if: ${{ !cancelled() && needs.configuration.outputs.core_tests == '[]' }}
+      - name: Fachkernprozess sichern
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: core-tests
+          path: ${{ runner.temp }}/ha-sauna-core
+          if-no-files-found: error
+          retention-days: ${{ fromJSON(needs.configuration.outputs.settings).artifact_retention_days }}
   ha:
-    runs-on: ubuntu-latest
-    timeout-minutes: 5
+    needs: configuration
+    if: ${{ contains(fromJSON(needs.configuration.outputs.checks), 'ha') }}
+    runs-on: ${{ fromJSON(needs.configuration.outputs.settings).operating_system }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 2
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
-          python-version: '3.14.2'
-      - run: python -m pip install 'homeassistant==2026.10.0' 'securetar==2026.4.1' 'cronsim==2.7'
+          python-version: ${{ fromJSON(needs.configuration.outputs.settings).python_ha }}
+      - run: python tests/ci_settings.py install-ha
       - name: Versionsformat für Home Assistant und HACS prüfen
         run: |
           python - <<'PY'
@@ -42,38 +107,109 @@ jobs:
           assert version.valid, f"Ungültige Version: {version}"
           print(f"Version: {version}; Format: {version.strategy.value}; Beta: {version.beta}")
           PY
-      - run: python -m unittest discover -s tests/ha -v
-        timeout-minutes: 2
+      - name: HA-Adapter prüfen
+        id: ha_adapter
+        if: ${{ needs.configuration.outputs.ha_tests != '[]' || needs.configuration.outputs.integration_tests == '[]' }}
+        run: |
+          python tests/ci_process.py "$SAUNA_HA_EVIDENCE" python tests/ci_settings.py ha
         env:
           HA_TEST_REQUIRED: '1'
-      - run: python -m unittest discover -s tests/integration -v
+          SAUNA_HA_TESTS: ${{ inputs.ha_tests }}
+          SAUNA_HA_EVIDENCE: ${{ runner.temp }}/ha-sauna-adapter
+          SAUNA_PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+      - name: HA-Integration prüfen
+        if: ${{ !cancelled() && (needs.configuration.outputs.integration_tests != '[]' || needs.configuration.outputs.ha_tests == '[]') }}
+        run: |
+          python tests/ci_process.py "$SAUNA_INTEGRATION_EVIDENCE" python tests/ci_settings.py integration
         env:
           HA_TEST_REQUIRED: '1'
-  browser:
-    runs-on: ubuntu-latest
-    timeout-minutes: 12
+          SAUNA_INTEGRATION_TESTS: ${{ inputs.integration_tests }}
+          SAUNA_INTEGRATION_EVIDENCE: ${{ runner.temp }}/ha-sauna-integration
+          SAUNA_PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          HA_SAUNA_HANDOFF_EVIDENCE: ${{ runner.temp }}/ha-sauna-system-forms
+      - name: HA-Adapterprozess sichern
+        if: ${{ always() && (needs.configuration.outputs.ha_tests != '[]' || needs.configuration.outputs.integration_tests == '[]') }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: ha-adapter-tests
+          path: ${{ runner.temp }}/ha-sauna-adapter
+          if-no-files-found: error
+          retention-days: ${{ fromJSON(needs.configuration.outputs.settings).artifact_retention_days }}
+      - name: HA-Integrationsprozess sichern
+        if: ${{ always() && (needs.configuration.outputs.integration_tests != '[]' || needs.configuration.outputs.ha_tests == '[]') }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: ha-integration-tests
+          path: ${{ runner.temp }}/ha-sauna-integration
+          if-no-files-found: error
+          retention-days: ${{ fromJSON(needs.configuration.outputs.settings).artifact_retention_days }}
+      - name: Vollständige Systemformen aus isolierter HA-Testfixture sichern
+        if: ${{ always() && (needs.configuration.outputs.integration_tests != '[]' || needs.configuration.outputs.ha_tests == '[]') && (inputs.integration_tests == '' || contains(fromJSON(needs.configuration.outputs.integration_tests), 'test_panel_api.PanelAPITests.test_direct_presence_ids_are_private_in_live_and_archived_public_responses')) }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: ha-system-forms
+          path: ${{ runner.temp }}/ha-sauna-system-forms
+          if-no-files-found: error
+          retention-days: ${{ fromJSON(needs.configuration.outputs.settings).artifact_retention_days }}
+  sessions:
+    needs: configuration
+    if: ${{ contains(fromJSON(needs.configuration.outputs.checks), 'sessions') }}
+    runs-on: ${{ fromJSON(needs.configuration.outputs.settings).operating_system }}
+    strategy:
+      fail-fast: false
+      matrix:
+        case: ${{ fromJSON(needs.configuration.outputs.cases) }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 2
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
-          python-version: '3.14.2'
+          python-version: ${{ fromJSON(needs.configuration.outputs.settings).python_ha }}
+      - run: python tests/ci_settings.py install-ha
+      - name: Vollständige Sitzungen und gebundene Realdaten-Replays
+        run: |
+          python tests/ci_process.py "$SAUNA_SESSION_EVIDENCE" python -m unittest discover -s tests/sessions -v
+        env:
+          HA_TEST_REQUIRED: '1'
+          TMPDIR: /dev/shm
+          SAUNA_SESSION_CASE: ${{ matrix.case }}
+          SAUNA_SESSION_EVIDENCE: ${{ runner.temp }}/ha-sauna-sessions
+          SAUNA_PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+      - name: Gebundene Sitzungsbewertungen sichern
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: session-${{ matrix.case }}
+          path: ${{ runner.temp }}/ha-sauna-sessions
+          if-no-files-found: error
+          retention-days: ${{ fromJSON(needs.configuration.outputs.settings).artifact_retention_days }}
+  browser:
+    needs: configuration
+    if: ${{ contains(fromJSON(needs.configuration.outputs.checks), 'browser') }}
+    runs-on: ${{ fromJSON(needs.configuration.outputs.settings).operating_system }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 2
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: ${{ fromJSON(needs.configuration.outputs.settings).python_ha }}
       - run: python -m pip install -r tests/browser/requirements.txt
       - name: Kompressionsbackend prüfen
         run: |
           python -m pip check
           python - <<'PY'
-          from importlib.metadata import version
           from isal import isal_zlib
           import aiohttp_fast_zlib
           from aiohttp.compression_utils import ZLibBackend
 
-          assert version("isal") == "1.8.0"
           assert aiohttp_fast_zlib.best_zlib is isal_zlib
           aiohttp_fast_zlib.enable()
           assert ZLibBackend.name == isal_zlib.__name__
           print(f"Kompressionsbackend: {ZLibBackend.name}")
           PY
-      - run: python -m playwright install --with-deps chromium
+      - run: python -m playwright install --with-deps ${{ fromJSON(needs.configuration.outputs.browser).engine }}
       - name: Node-Browserwerkzeuge vorbereiten
         run: |
           python - <<'PY'
@@ -91,25 +227,26 @@ jobs:
               output.write(f"NODE_PATH={runtime / 'node_modules'}\n")
           PY
       - name: Sitzungsverlauf – Browserinteraktionen
-        run: node tests/browser/live_history/accept.cjs
-        timeout-minutes: 2
+        run: python tests/ci_process.py "${{ runner.temp }}/ha-sauna-browser/processes/accept" node tests/browser/live_history/accept.cjs
         env:
-          ENGINE: chromium
+          ENGINE: ${{ fromJSON(needs.configuration.outputs.browser).engine }}
           HISTORY_EVIDENCE: ${{ runner.temp }}/ha-sauna-browser/live-history
       - name: Sitzungsverlauf – Lade- und Aktualisierungsmessung
-        run: node tests/browser/live_history/profile.cjs
-        timeout-minutes: 2
+        run: python tests/ci_process.py "${{ runner.temp }}/ha-sauna-browser/processes/profile" node tests/browser/live_history/profile.cjs
         env:
-          ENGINE: chromium
+          ENGINE: ${{ fromJSON(needs.configuration.outputs.browser).engine }}
           HISTORY_EVIDENCE: ${{ runner.temp }}/ha-sauna-browser/live-history
-      - name: Sitzungsverlauf – Zoom und Nachträge
-        run: node tests/browser/live_history/interaction.cjs
-        timeout-minutes: 2
+      - name: Detailansicht – Zustandserhalt und Marker
+        run: python tests/ci_process.py "${{ runner.temp }}/ha-sauna-browser/processes/details" node tests/browser/live_history/details.cjs
         env:
-          ENGINE: chromium
+          ENGINE: ${{ fromJSON(needs.configuration.outputs.browser).engine }}
+          DETAILS_EVIDENCE: ${{ runner.temp }}/ha-sauna-browser/details
+      - name: Sitzungsverlauf – Zoom und Nachträge
+        run: python tests/ci_process.py "${{ runner.temp }}/ha-sauna-browser/processes/interaction" node tests/browser/live_history/interaction.cjs
+        env:
+          ENGINE: ${{ fromJSON(needs.configuration.outputs.browser).engine }}
           INTERACTION_EVIDENCE: ${{ runner.temp }}/ha-sauna-browser/live-history/interaction.json
-      - run: python -u tests/browser/run.py
-        timeout-minutes: 8
+      - run: python tests/ci_process.py "${{ runner.temp }}/ha-sauna-browser/processes/python-browser" python -u tests/browser/run.py
         env:
           HA_TEST_REQUIRED: '1'
           HA_SAUNA_BROWSER_ARTIFACT_DIR: ${{ runner.temp }}/ha-sauna-browser
@@ -120,4 +257,4 @@ jobs:
           name: browser-views
           path: ${{ runner.temp }}/ha-sauna-browser
           if-no-files-found: ignore
-          retention-days: 7
+          retention-days: ${{ fromJSON(needs.configuration.outputs.settings).artifact_retention_days }}

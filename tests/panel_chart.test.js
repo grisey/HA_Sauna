@@ -1,17 +1,42 @@
+const { panelFixture: fixturePanel } = require("./catalog_fixture.cjs");
 // Runs without Home Assistant or a browser. The retained renderer receives a
 // prepared historyModel; FakeCanvas is functional coverage, not a timing claim.
 const assert = require("node:assert/strict");
+const {
+  parameterValues: fixtureValues,
+  parameterDefinition: fixtureDefinition,
+} = require("./catalog_fixture.cjs");
 const fs = require("node:fs");
-const appearanceCatalog = JSON.parse(
-  fs.readFileSync("custom_components/ha_sauna/defaults.json", "utf8"),
+const appearanceCatalog = structuredClone(
+  require("./catalog_fixture.cjs").catalog,
 ).appearance;
 const color = (id) =>
   appearanceCatalog.colors.find((item) => item.id === id).default.toLowerCase();
 const curveStyles = {
-  "upper:temperature": { stroke: color("series_temperature") },
-  "lower:temperature": { stroke: color("series_temperature") },
-  "upper:humidity": { stroke: color("series_humidity") },
-  "lower:humidity": { stroke: color("series_humidity") },
+  "upper:temperature": {
+    stroke: color("series_temperature"),
+    lineWidth: appearanceCatalog.preferences.chart_curve_width_px.default,
+    globalAlpha: 1,
+    lineDash: [],
+  },
+  "lower:temperature": {
+    stroke: color("series_temperature"),
+    lineWidth: appearanceCatalog.preferences.chart_curve_width_px.default,
+    globalAlpha: 1,
+    lineDash: [],
+  },
+  "upper:humidity": {
+    stroke: color("series_humidity"),
+    lineWidth: appearanceCatalog.preferences.chart_curve_width_px.default,
+    globalAlpha: 1,
+    lineDash: [],
+  },
+  "lower:humidity": {
+    stroke: color("series_humidity"),
+    lineWidth: appearanceCatalog.preferences.chart_curve_width_px.default,
+    globalAlpha: 1,
+    lineDash: [],
+  },
 };
 const vm = require("node:vm");
 
@@ -97,17 +122,17 @@ const record = (second, value, quantity = "temperature", position = "upper") => 
 });
 const session = (seconds = 30) => ({
   ended_at: iso(seconds),
-  configuration: { parameters: { sensor_timeout_seconds: 5 } },
+  configuration: { parameters: fixtureValues() },
   timeline: { session_started_at: iso(0), processed: [], completed: [] },
   heating: { intervals: [] },
 });
 const panel = (seconds, records, positions = ["upper"]) =>
-  Object.assign(Object.create(Panel.prototype), {
+  Object.assign(fixturePanel(Panel), {
     positions: new Set(positions),
     window: [base, base + seconds * 1000],
     state: {
       now: iso(seconds),
-      configuration: { parameters: { sensor_timeout_seconds: 5 } },
+      configuration: { parameters: fixtureValues() },
     },
     shown: { records, session: session(seconds) },
   });
@@ -147,10 +172,17 @@ const draw = (model) => {
 
 // TTL intervals and null observations do not interrupt the user-facing curve.
 {
-  const records = [record(0, 70), record(1, 71), record(20, 72), record(21, 73)];
-  const p = panel(30, records);
+  const afterTimeout = fixtureValues().sensor_timeout_seconds + 2;
+  const duration = afterTimeout + 2;
+  const records = [
+    record(0, 70),
+    record(1, 71),
+    record(afterTimeout, 72),
+    record(afterTimeout + 1, 73),
+  ];
+  const p = panel(duration, records);
   assert.equal(
-    draw(modelFor(p, records, 30))
+    draw(modelFor(p, records, duration))
       .curves.mainPaths.get("upper:temperature")
       .path.commands.filter(([kind]) => kind === "M").length,
     1,
@@ -173,11 +205,13 @@ const draw = (model) => {
   assert.equal(p.nearestMeasurement("upper", "temperature", base).value, 70);
   assert.equal(p.nearestMeasurement("upper", "temperature", base + 20_000).value, 72);
   assert.equal(p.nearestMeasurement("upper", "temperature", base + 16_000).value, 72);
-  const stalePanel = panel(30, [record(0, 70)]);
+  const ttl = fixtureValues().sensor_timeout_seconds * 1000;
+  const queryTime = base + ttl + 1000;
+  const stalePanel = panel(ttl / 1000 + 2, [record(0, 70)]);
   stalePanel.historyIndex(stalePanel.shown.records);
-  const stale = stalePanel.nearestMeasurement("upper", "temperature", base + 15_000);
+  const stale = stalePanel.nearestMeasurement("upper", "temperature", queryTime);
   assert.ok(
-    Math.abs(stale.time - (base + 15_000)) > 5_000,
+    Math.abs(stale.time - queryTime) > ttl,
     "tooltip callers can reject a raw value outside its TTL",
   );
 }

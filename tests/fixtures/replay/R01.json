@@ -1,0 +1,287 @@
+{
+  "schema_version": 1,
+  "id": "R01",
+  "kind": "real_session",
+  "title": "Zwei Aufenthalte mit indirekter Erkennung",
+  "duration_s": 14340.934567,
+  "configuration": {
+    "presence_source": "proxy",
+    "control_mode": "automatic",
+    "parameters": {
+      "session_gap_minutes": 15.0,
+      "confirmation_minutes": 12.0,
+      "heat_reset_minutes": 10.0,
+      "thermostat_cooldown_minutes": 5.0,
+      "minimum_heating_minutes": 10.0,
+      "after_run_minutes": 8.0,
+      "oven_cooling_max_minutes": 15.0,
+      "oven_cooling_half_life_minutes": 15.0,
+      "oven_cooling_heat_idle_ratio": 2.0,
+      "readiness_offset_c": 3.0,
+      "readiness_hysteresis_c": 3.0,
+      "warmup_estimation_minutes": 5.0,
+      "sauna_min_temperature_c": 60.0,
+      "preset_start_c": 75.0,
+      "preset_step_c": 5.0,
+      "preset_count": 6,
+      "target_temperature_c": 90,
+      "final_temperature_c": 90.0,
+      "temperature_gangs": 3,
+      "fault_confirmation_seconds": 60.0,
+      "sensor_timeout_seconds": 180.0,
+      "feedback_timeout_seconds": 10.0,
+      "power_heating_threshold_w": 50.0,
+      "manual_override_minutes": 10.0,
+      "nominal_power_kw": 4.5,
+      "button_hold_seconds": 2.0,
+      "light_reference_temperature_c": 30.0,
+      "light_transition_seconds": 30.0,
+      "light_brightness_scale": 255,
+      "night_brightness_percent": 25.0,
+      "operation_brightness_percent": 40.0,
+      "after_run_brightness_percent": 15.0,
+      "cooling_brightness_percent": 5.0,
+      "session_light_brightness_percent": 50.0,
+      "grid_seconds": 1,
+      "median_seconds": 5,
+      "door_window_seconds": 8,
+      "door_humidity_seconds": 10,
+      "door_open_slope": -1.8,
+      "door_open_humidity_upper": 0.45,
+      "door_open_humidity_lower": 0.3,
+      "door_open_hold_seconds": 2,
+      "door_heating_slope": -0.8,
+      "door_heating_hold_seconds": 5,
+      "door_close_slope": 0.15,
+      "door_close_hold_seconds": 3,
+      "vent_baseline_seconds": 60,
+      "vent_hold_seconds": 60,
+      "vent_drop_upper": 3.0,
+      "vent_drop_lower": 3.0,
+      "vent_absolute_humidity_loss_percent": 30.0,
+      "person_step_seconds": 5,
+      "strong_window_seconds": 60,
+      "strong_humidity_upper": 0.5,
+      "strong_humidity_lower": 0.5,
+      "strong_hold_seconds": 10,
+      "weak_window_seconds": 120,
+      "weak_humidity_upper": 0.14,
+      "weak_humidity_lower": 0.14,
+      "weak_hold_seconds": 30,
+      "infusion_window_seconds": 10,
+      "infusion_humidity": 2.0,
+      "infusion_hold_seconds": 3
+    },
+    "control_input_mode": "button",
+    "button_input_kind": "event",
+    "button_event_types": [
+      "btn_down",
+      "btn_up",
+      "single_push",
+      "double_push",
+      "triple_push",
+      "long_push"
+    ],
+    "button_session_gesture": "long",
+    "button_program": "constant",
+    "program": {
+      "mode": "constant",
+      "start_c": 90
+    },
+    "initial_light_percent": 0
+  },
+  "initial_state": {
+    "upper_temperature": {
+      "value": 22.07,
+      "reported_age_s": 0.869726
+    },
+    "upper_humidity": {
+      "value": 49.4,
+      "reported_age_s": 0.857343
+    },
+    "lower_temperature": {
+      "value": 22.0,
+      "reported_age_s": 0.84535
+    },
+    "lower_humidity": {
+      "value": 49.84,
+      "reported_age_s": 0.836309
+    },
+    "heater_feedback": {
+      "value": false,
+      "reported_age_s": 245313.821391
+    },
+    "light_feedback": {
+      "value": {
+        "on": false,
+        "brightness": null
+      },
+      "reported_age_s": 245311.288038
+    }
+  },
+  "feedback_mode": "simulated_acknowledgement",
+  "samples_file": "R01.samples.jsonl.gz",
+  "samples_sha256": "055b78ed47edc3c019b5161a3a26a5d141dd25b31ce9b9718b39cc935db2c49c",
+  "samples_count": 44251,
+  "observed_outputs_file": "R01.observed-outputs.jsonl.gz",
+  "observed_outputs_sha256": "b3a23673cbba28094d781f9dc201456e96b9d744e0c988cd2f9409e6b4d9b548",
+  "observed_outputs_count": 2794,
+  "actions": [
+    {
+      "t": 0.0,
+      "name": "start",
+      "args": {}
+    },
+    {
+      "t": 2008.178008,
+      "name": "select_program",
+      "args": {
+        "mode": "progressive",
+        "start_c": 70,
+        "end_c": 90,
+        "gangs": 2
+      }
+    },
+    {
+      "t": 5000.011968,
+      "name": "finish_cooling",
+      "args": {}
+    },
+    {
+      "t": 9885.947586,
+      "name": "select_program",
+      "args": {
+        "mode": "constant",
+        "start_c": 100
+      }
+    },
+    {
+      "t": 13440.831504,
+      "name": "stop",
+      "args": {}
+    }
+  ],
+  "expectations": [
+    {
+      "id": "P01-session-start",
+      "values": {
+        "operation_enabled": true,
+        "recording": true,
+        "active_gang": false
+      },
+      "reason": "Kaltstart vor den beiden benannten Aufenthalten; Erwärmen ist kein Saunagang.",
+      "at_s": 5.284567
+    },
+    {
+      "id": "P02-first-stay",
+      "values": {
+        "active_gang": true
+      },
+      "reason": "Die erste vom Nutzer benannte Nutzung endet ungefähr 80 Minuten nach dem Start. Der Beginn ist nicht minutengenau benannt.",
+      "between_s": [
+        3544.284567,
+        4744.284567
+      ],
+      "eventually": true
+    },
+    {
+      "id": "P03-first-exit",
+      "values": {
+        "active_gang": false,
+        "gang_count": 1
+      },
+      "reason": "Der Nutzer bestätigt den ersten Austritt mit Lüften um rund 80 Minuten. Zehn Minuten später darf dieser Gang nicht weiterlaufen.",
+      "at_s": 5344.284567
+    },
+    {
+      "id": "P04-second-stay",
+      "values": {
+        "active_gang": true
+      },
+      "reason": "Zweiter ausdrücklich benannter Aufenthalt bei geschlossener Tür; kurze Messschwankungen sind Verwirbelungen.",
+      "between_s": [
+        7744.284567,
+        9244.284567
+      ],
+      "eventually": true
+    },
+    {
+      "id": "P05-two-exits",
+      "values": {
+        "gang_count": 2,
+        "gang_confirmation": {
+          "one_of": [
+            null,
+            "provisional"
+          ]
+        },
+        "cooling_active": true,
+        "cooling_duration_s": 480.0,
+        "heater_request": false
+      },
+      "reason": "Genau zwei reale Aufenthalte und Austritte sind durch den Nutzer bestätigt. Der danach gemessene Feuchteanstieg ist kein Beleg für einen dritten bestätigten Aufenthalt. Die neue Nutzerregel lässt eine unbestätigte Proxyvermutung zu und begrenzt bei einem solchen Personenbeleg die laufende Kühlung auf ihre Mindestgesamtdauer. Am Prüfzeitpunkt ist deren bestätigte AUS-Zeit noch nicht vollständig; der Ofen muss ausgeschaltet bleiben. Ob dabei kein oder ein vorläufiger Gang geführt wird, wird ausdrücklich nicht als menschliche Anwesenheit bewertet.",
+      "at_s": 9844.284567
+    },
+    {
+      "id": "P06-stopped",
+      "values": {
+        "operation_enabled": false,
+        "heater_request": false
+      },
+      "reason": "Bewusstes Ausschalten beendet die Heizanforderung.",
+      "at_s": 13445.284567
+    },
+    {
+      "id": "P07-complete",
+      "values": {
+        "operation_enabled": false,
+        "recording": false,
+        "active_gang": false,
+        "light_after_run": false,
+        "retained_sessions": 1
+      },
+      "reason": "Die vollständige Aufzeichnung umfasst das belegte Ausschalten und das Ende der Sitzungsfrist. Die beiden vom Nutzer bestätigten Aufenthalte gehören zu einer einzigen dauerhaft gespeicherten Sitzung.",
+      "at_s": 14340.934567
+    }
+  ],
+  "coverage": [
+    "Heizen aus kaltem Zustand",
+    "Zwei nutzerbestätigte Aufenthalte und Lüftungsausgänge",
+    "Verwirbelungen bei geschlossener Tür",
+    "Ofeneigener Thermostat bei hohem Ziel"
+  ],
+  "source": {
+    "kind": "measured",
+    "timestamp_basis": "received; separate reported_age_s only when the source supplied it",
+    "transformations": [
+      "Subtract the recording origin from timestamps",
+      "Replace physical source identifiers with functional roles",
+      "Retain measured values and message order; no interpolation, smoothing or generated climate samples",
+      "Exclude previously detected events, old phases, old gang decisions and heater commands"
+    ],
+    "source_sha256": [
+      "a9e9093108b066cd4274373fe748dabedb9889d5c8ad0ded780a9e95d96cd8b2"
+    ],
+    "boundaries": "Recording begin through explicit operation stop and the available complete after-run; manual ends after confirmed heater OFF before the next distinct start.",
+    "channel_counts": {
+      "lower_humidity": 11856,
+      "lower_temperature": 10181,
+      "upper_humidity": 11805,
+      "upper_temperature": 10409
+    },
+    "largest_climate_message_gap_s": {
+      "upper_temperature": 7.354861,
+      "upper_humidity": 6.338902,
+      "lower_temperature": 6.320773,
+      "lower_humidity": 7.329385
+    },
+    "limitations": [
+      "A confirming actuator stub acknowledges new commands. The historical feedback is isolated in observed_outputs_file for diagnosis; it cannot acknowledge a changed command.",
+      "The unchanged real climate input is not a physical counterfactual simulation after the corrected controller changes a heater command. Physical consequence curves are covered by the separately constructed session scenarios.",
+      "A measured brightness acknowledgement does not measure the physical fade of the lamp.",
+      "Human entry/exit times are only asserted at the resolution established by the user's account; old detector timestamps are not ground truth.",
+      "No direct presence sensor reports exist in this recording. None are invented. Its old single-push start is represented as the recorded session start; current native single-push semantics are covered by the manual and constructed-session tests.",
+      "Following the second human-confirmed exit, both measured absolute humidities rise during the empty-room recovery. This can supply a provisional proxy person signal; it is not independent evidence of a third human stay. The current user rule explicitly caps cooling at the minimum on such a signal. P05 therefore forbids a confirmed third gang and checks minimum cooling without requiring or forbidding the provisional hypothesis itself."
+    ]
+  }
+}

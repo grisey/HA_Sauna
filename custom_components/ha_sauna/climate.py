@@ -8,7 +8,8 @@ from homeassistant.components.climate import (
 )
 from homeassistant.const import UnitOfTemperature
 
-from .core.defaults import section
+from .core.configuration_model import temperature_control
+from .core.notification_recipients import ActorRef
 from .core.parameters import BY_KEY
 from .entity import SaunaEntity
 from .settings import async_set_entity_parameter
@@ -32,10 +33,13 @@ class SaunaThermostat(SaunaEntity, ClimateEntity):
         | ClimateEntityFeature.TURN_OFF
     )
     _attr_max_temp = BY_KEY["target_temperature_c"].maximum
-    _attr_target_temperature_step = section("frontend")["climate_temperature_step_c"]
 
     def __init__(self, entry):
         super().__init__(entry, "thermostat")
+
+    @property
+    def target_temperature_step(self):
+        return self.runtime.configuration.parameters.values["climate_temperature_step_c"]
 
     @property
     def hvac_mode(self):
@@ -67,12 +71,16 @@ class SaunaThermostat(SaunaEntity, ClimateEntity):
 
     @property
     def target_temperature(self):
-        return self.runtime.controller.target_temperature
+        return temperature_control(self.runtime.controller).value
 
     @property
     def extra_state_attributes(self):
         values = self.runtime.configuration.parameters.values
+        target = temperature_control(self.runtime.controller)
         return {
+            "target_scope": target.scope,
+            "current_target_temperature": target.current_target,
+            "next_gang_temperature": target.next_target,
             "thermostat_target": self.runtime.controller.thermostat_target,
             "thermostat_restart_temperature": self.runtime.controller.thermostat_restart_temperature,
             "readiness_offset": values["readiness_offset_c"],
@@ -86,9 +94,14 @@ class SaunaThermostat(SaunaEntity, ClimateEntity):
         if hvac_mode not in self.hvac_modes:
             raise ValueError("Unbekannter Betriebsmodus")
         if self.runtime.controller.control_mode == "manual":
-            await self.runtime.set_heater_override(hvac_mode == HVACMode.HEAT)
+            await self.runtime.set_heater_override(
+                hvac_mode == HVACMode.HEAT, actor=ActorRef(self._context.user_id, "ha_context"),
+            )
         else:
-            await self.runtime.set_operation(hvac_mode == HVACMode.HEAT)
+            await self.runtime.set_operation(
+                hvac_mode == HVACMode.HEAT,
+                actor=ActorRef(self._context.user_id, "ha_context"),
+            )
 
     async def async_turn_on(self):
         await self.async_set_hvac_mode(HVACMode.HEAT)
@@ -98,5 +111,6 @@ class SaunaThermostat(SaunaEntity, ClimateEntity):
 
     async def async_set_temperature(self, **kwargs):
         await async_set_entity_parameter(
-            self.hass, self.entry, "target_temperature_c", kwargs["temperature"]
+            self.hass, self.entry, "target_temperature_c", kwargs["temperature"],
+            actor=ActorRef(self._context.user_id, "ha_context"),
         )

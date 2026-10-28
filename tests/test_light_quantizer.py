@@ -10,11 +10,8 @@ from custom_components.ha_sauna.core.parameters import Parameters
 
 class LightQuantizerTests(unittest.TestCase):
     def setUp(self):
-        self.parameters = Parameters({
-            "light_output_hysteresis_percent": 0.1,
-            "cooling_brightness_percent": 5,
-            "light_reference_temperature_c": 30,
-        })
+        self.parameters = Parameters({})
+        self.margin = self.parameters.values["light_output_hysteresis_percent"]
         self.quantizer = LightQuantizer()
 
     def output(self, value, *, automatic=True):
@@ -24,10 +21,11 @@ class LightQuantizerTests(unittest.TestCase):
         )
 
     def test_boundary_noise_does_not_repeat_neighboring_commands(self):
-        targets = [
-            phase_target("aufheizen", temperature, 80, self.parameters, 40)
-            for temperature in (73.56, 73.58) * 5
-        ]
+        # Boundary input belongs to the quantizer. Light-curve consumption is
+        # covered in test_light_curve, not used to manufacture this oracle.
+        midpoint = 35.5
+        epsilon = min(self.margin / 2, .01)
+        targets = [midpoint - epsilon, midpoint + epsilon] * 5
         self.assertEqual([round(value) for value in targets], [35, 36] * 5)
         self.assertEqual([self.output(value) for value in targets], [35] * 10)
         # Auch aus der höheren Stufe bleibt derselbe Messbereich ruhig.
@@ -36,7 +34,8 @@ class LightQuantizerTests(unittest.TestCase):
 
     def test_sustained_change_crosses_both_hysteresis_boundaries(self):
         self.assertEqual(
-            [self.output(value) for value in (35, 35.55, 35.61, 35.45, 35.39)],
+            [self.output(value) for value in (35, 35.5 + self.margin / 2, 35.5 + self.margin + .01,
+                                                    35.5 - self.margin / 2, 35.5 - self.margin - .01)],
             [35, 35, 36, 36, 35],
         )
 

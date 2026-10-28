@@ -3,7 +3,7 @@
 import unittest
 from datetime import UTC, datetime, timedelta
 
-from harness import create_sauna, start_hass
+from harness import advance_with_fresh_sources, create_sauna, start_hass
 from homeassistant.components.switch import SwitchEntity
 from homeassistant.setup import async_setup_component
 
@@ -49,11 +49,6 @@ class EntryContextIntegrationTests(unittest.IsolatedAsyncioTestCase):
                 "heater": self.heater.entity_id,
                 "heater_feedback": "binary_sensor.entry_context_actual_heat",
             },
-            parameter_overrides={
-                "target_temperature_c": 80,
-                "sensor_timeout_seconds": 1800,
-                "feedback_timeout_seconds": 2,
-            },
         )
         self.runtime = self.entry.runtime_data
         self.base = datetime.now(UTC)
@@ -69,7 +64,10 @@ class EntryContextIntegrationTests(unittest.IsolatedAsyncioTestCase):
         self.heater.calls.clear()
 
     async def event(self, event_id, kind, detected, *, effective=None):
-        self.now = self.base + timedelta(seconds=detected)
+        await advance_with_fresh_sources(
+            self.hass, self.runtime, self.base + timedelta(seconds=detected),
+            lambda at: setattr(self, "now", at),
+        )
         return await self.runtime.receive(
             Event(
                 event_id,
