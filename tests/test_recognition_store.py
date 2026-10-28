@@ -32,14 +32,28 @@ class RecognitionLearningTests(unittest.TestCase):
         self.assertEqual(learning.current_parameters(), shipped_parameters())
         self.assertIn("exchange", shipped_evidence())
 
-    def test_finished_session_adds_evidence_and_a_new_estimate(self):
+    def test_shipped_evidence_holds_no_measured_courses(self):
+        evidence = shipped_evidence()
+        for name in ("close_form", "open_form"):
+            self.assertEqual(evidence[name], [])
+            pooled = evidence[f"{name}_pooled"]
+            self.assertGreater(pooled["events"], 0)
+            for grid in pooled["grids"]:
+                self.assertEqual(len(grid), len(grid[0]))         # a residual surface over the rate grid
+        self.assertNotIn("_courses", evidence)
+
+    def test_finished_session_adds_evidence_and_the_estimate_follows_on_request(self):
         learning = RecognitionLearning()
         self.assertTrue(learning.add_session("s1", self.recognizer))
         self.assertEqual(len(learning.sessions), 1)
+        # the session only adds evidence; the quantities change when the estimate is requested
+        self.assertEqual(learning.pending, 1)
+        self.assertEqual(learning.current_parameters(), shipped_parameters())
         self.assertTrue(any(e[1] == Kind.INFUSION.value for e in learning.sessions[0]["events"]))
         params = learning.estimate()
         self.assertEqual(params["channels"], ["Tu", "Tl", "Au", "Al"])
         self.assertIs(learning.current_parameters(), params)
+        self.assertEqual(learning.pending, 0)
         # the same session replaces its evidence instead of counting twice
         learning.add_session("s1", self.recognizer)
         self.assertEqual(len(learning.sessions), 1)
@@ -52,6 +66,7 @@ class RecognitionLearningTests(unittest.TestCase):
         self.assertEqual(learning.find_event(kind=Kind.INFUSION, at=at), infusion[0])
         before = learning.estimate()["prior"]
         learning.feedback(infusion[0], "reject")
+        self.assertEqual(learning.pending, 1)
         after = learning.estimate()["prior"]
         self.assertIn(infusion[0], learning.rejected)
         self.assertNotEqual(before, after)
@@ -66,6 +81,7 @@ class RecognitionLearningTests(unittest.TestCase):
         learning.add_session("s1", self.recognizer)
         restored = RecognitionLearning(json.loads(json.dumps(learning.as_dict())))
         self.assertEqual(restored.sessions, learning.sessions)
+        self.assertEqual(restored.pending, learning.pending)
         self.assertIsNone(restored.find_event(event_id="unknown"))
 
     def test_a_single_position_does_not_learn(self):

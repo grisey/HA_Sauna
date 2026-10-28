@@ -129,7 +129,7 @@ HA-Aktualisierungszeit bleiben getrennt.
 | --- | --- |
 | Solltemperaturen | Gemeinsame Grenzen für direkte Wahl, Programme und Tastervorgabe. Eingaben und Zwischenstufen werden auf ganze Grad gerundet; ab einem halben Grad aufwärts. |
 | Helligkeitsskala | Muss dem konfigurierten Maximalwert des Lichtgeräts entsprechen, damit eigene Befehle und Geräterückmeldungen zusammenpassen. |
-| Erkennung | Ohne einstellbare Schwellen: Die Größen des Zustandsmodells stammen aus bewerteten Aufzeichnungen und werden nach jeder Sitzung nachgelernt ([Erkennung](erkennung.md#gelernte-größen-und-nachlernen)). Gespeicherte Werte der früheren Kurvenerkennung bleiben lesbar, wirken aber nicht. |
+| Erkennung | Ohne einstellbare Schwellen: Die Größen des Zustandsmodells stammen aus bewerteten Aufzeichnungen und werden auf Anforderung aus den gesammelten Sitzungsbelegen nachgelernt ([Erkennung](erkennung.md#gelernte-größen-und-nachlernen)). Gespeicherte Werte der früheren Kurvenerkennung bleiben lesbar, wirken aber nicht. |
 | Höchstalter der Messwerte | Muss die regulären Meldeabstände der jeweiligen Quelle abdecken. |
 | Sonnenstand für das Licht | Der Nachtgrenzwert muss unter dem Tagesgrenzwert liegen; dazwischen wird die Helligkeit überblendet. |
 | Aufheizschätzung | Mindestzahl und Zeitraum der Messpunkte, Rausch- und Abfallgrenzen sowie Glättungs- und Bestätigungszeiträume bestimmen, wann und wie eine verbleibende Aufheizzeit ausgewiesen wird. |

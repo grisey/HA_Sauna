@@ -66,6 +66,13 @@ Abklingen → zu/offen/Aufguss und Erholung → zu/offen/Aufguss. Alle anderen
 für einen Messabstand folgt aus den gelernten Raten über das
 Matrixexponential.
 
+Die Erkennung folgt dem Ablauf in der Kabine: Zu Beginn einer Sitzung ist nur
+eine Türöffnung möglich. Ein Aufguss braucht jemanden in der Kabine und ist
+erst nach der ersten bestätigten Türöffnung möglich; weil eine offene Tür nur
+über das Schließen weitergeht, liegt er immer nach einem Schließen. Lüften
+und Durchlüften werden nur während einer offenen Tür geprüft, das Abflachen
+eines Abklingens nur im Abklingen.
+
 Ein Ereignis hat eine Ursache für alle Kanäle: eine Tür, eine Dampfquelle.
 Deshalb sind die Ereignisgrößen der Kanäle beim Beginn und in ihrer zeitlichen
 Wanderung korreliert, und der Zustand aller Kanäle wird gemeinsam geschätzt.
@@ -109,25 +116,50 @@ wird ebenso entschieden.
 
 | Ereignis | Zustand |
 | --- | --- |
-| Tür auf | Beginn des Zustands offen |
+| Tür auf | Beginn des Zustands offen, zusätzlich durch die Öffnungsform belegt (siehe unten) |
 | Tür zu | Übergang aus offen in die Erholung (die Temperatur steigt wieder), in einen Aufguss oder in das Abklingen; bei ausgeschaltetem Ofen auch in die geschlossene, abkühlende Kabine |
 | Aufguss | Beginn des Zustands Aufguss |
 | Aufgussende | Ende von Aufguss und Abklingen zusammen; öffnet sich vorher die Tür, endet der Aufguss mit der Öffnung |
 
-Der Zeitpunkt von Tür zu ist der Knick, an dem der Temperaturabfall der
-offenen Tür endet. Die Bestätigung des Übergangs bleibt die Entscheidung; sie
-liegt danach. Bei der Bestätigung wird die gelernte Vergleichsform des
-Schließens an die Temperaturkanäle von der Öffnung bis zum aktuellen
-Messschritt gelegt:
+Eine Öffnung wird in zwei Stufen bestätigt. Das Zustandsmodell liefert den
+Kandidaten und seinen Zeitpunkt (Beginn des Zustands offen, 150 : 1). Gemeldet
+wird die Öffnung erst, wenn auch die gelernte Öffnungsform sie zeigt: Die
+Steigung der geschlossenen Kabine läuft weiter, ab dem Knick kommt der Abfall
+der offenen Tür hinzu, der mit der Rate `k` einsetzt und mit der Rate `p`
+nachlässt. Belegt ist das Öffnen, wenn in beiden Temperaturkanälen dieser
+zusätzliche Abfall mit der Wahrscheinlichkeit 150/151 vorliegt. Die
+Unsicherheit folgt aus der Restabweichung, bezogen auf die Zahl unabhängiger
+Messwerte. Vor dem Knick zählt die Kabine höchstens so lange, wie im Mittel
+kein Heizwechsel kommt (gelernte Rate zu → Heizwechsel), und nicht vor dem
+letzten Ereignis. Die Feuchte zählt hier nicht: Vor einem Austritt fällt sie
+oft schon aus dem Abklingen, und beim Eintritt steigt die untere Feuchte
+kurz an. Endet die Episode, bevor die Form das Öffnen zeigt, gilt sie nicht
+als Öffnung; weder Tür auf noch Tür zu wird gemeldet. Der Zeitpunkt bleibt
+der Kandidat; die Meldung folgt kausal danach.
+
+Der Zeitpunkt von Tür zu ist der Knick, an dem der Abfall der offenen Tür
+endet. Die Bestätigung des Übergangs bleibt die Entscheidung und löst die
+Steuerung aus; sie liegt danach. Bei der Bestätigung wird die gelernte
+Vergleichsform des Schließens an alle Kanäle (Temperatur und Feuchte oben und
+unten) gelegt:
 `y = a − s·(e^(p·(t_k − t)) − 1)/p` vor dem Knick `t_k` (offene Tür, der
 Abfall wird mit der Rate `p` langsamer) und
 `y = a + e·u + (s − e)·(1 − e^(−k·u))/k` mit `u = t − t_k` danach (die
-Steigung geht mit der Rate `k` stetig in die Erholung über). Die Raten `k`
-und `p` sind je Kanal fest gelernt; angepasst werden nur Niveau, Steigungen
-und `t_k`. Gewählt wird der Knick mit der kleinsten Restquadratsumme, an dem
-die Temperatur vorher fällt (`s < 0`) und danach wieder steigt (`e ≥ 0`).
-Ohne gelernte Form oder ohne solchen Knick (etwa beim Abkühlen ohne Heizung)
-gilt der erste Schritt des Übergangs.
+Steigung geht mit der Rate `k` stetig in die Steigung `e` der geschlossenen
+Kabine über). Die Raten `k` und `p` sind je Kanal fest gelernt; angepasst
+werden nur Niveau, Steigungen und der gemeinsame Knick `t_k`.
+
+Der Vergleich beginnt beim Öffnen, bei einer gelüfteten Öffnung beim letzten
+bestätigten Lüften oder Durchlüften. Er endet beim aktuellen Messschritt oder
+dort, wo nach dem Schließen schon eine neue Öffnung oder ein Aufguss beginnt
+(der Zustand ist an einem Schritt die wahrscheinlichste Erklärung). Gewählt
+wird der Knick mit der kleinsten Restquadratsumme, an dem die Temperatur
+vorher fällt (`s < 0`) und danach wieder steigt (`e ≥ 0`). War der Ofen
+während der ganzen Öffnung als aus gemeldet, wird keine Erholung erwartet;
+dann genügt, dass der Temperaturabfall langsamer wird (`e > s`). Ein
+Ausschalten erst während der Öffnung ändert das nicht: Steine und Wände
+halten die Wärme, die Temperatur steigt nach dem Schließen trotzdem. Ohne
+gelernte Form oder ohne solchen Knick gilt der erste Schritt des Übergangs.
 
 Ohne Heizung gibt es nach dem Schließen keine Erholung. Deshalb endet eine
 Öffnung bei ausgeschaltetem Ofen auch in den Zustand zu oder Heizwechsel; bei
@@ -200,20 +232,25 @@ Verwendet werden Sitzungen ohne Türöffnung während eines Gangs.
 | Normale Steigungen der geschlossenen Kabine | Steigungen ruhiger Minuten fern von Ereignissen: Mittel, Streuung, Rückkehrzeit |
 | Feuchtedifferenz oben − unten | Student-t je bezeichnetem Zustand; Korrelationszeit aus der Autokorrelation um den Median des Zustands |
 | Student-t-Formen | Innovationen je bezeichnetem Zustand |
-| Vergleichsform des Schließens | Je bezeichnetem Schließen und Temperaturkanal die Raten `k`, `p` mit der kleinsten Restquadratsumme (Fenster von der Öffnung bis gleich lange nach dem Schließen, höchstens bis zum nächsten Ereignis); gelernt wird der Median über alle Schließen |
+| Vergleichsform des Schließens | Je Kanal die Raten `k`, `p` mit der kleinsten Summe der Restquadrate über alle bezeichneten Schließungen (Fenster ab Öffnen bzw. letztem Lüften bis gleich lange nach dem Schließen, höchstens bis zum nächsten Ereignis). Untypisch heißt eine Schließung, die mit eigenen Raten mit dem Verhältnis 150 : 1 besser erklärt ist; sie wird genannt, nicht ausgeschlossen |
+| Vergleichsform des Öffnens | Wie beim Schließen, je Kanal gemeinsam über alle bezeichneten Öffnungen (Fenster so lange vor dem Öffnen, wie die offene Tür bis zum Schließen oder Lüften dauert, nicht vor dem vorigen Ereignis) |
 
 Nach jeder abgeschlossenen Sitzung mit beiden Messpositionen zieht die
 Integration aus deren Messwerten und eigenen bestätigten Erkennungen neue
-Belege und schätzt die Größen neu; die Rechnung läuft im Hintergrund. Die Belege der Lernaufzeichnungen bleiben
-als Startwissen erhalten; die Belege der letzten 40 Sitzungen ergänzen sie.
-Die neuen Größen gelten ab der nächsten Sitzung. Der Lernstand liegt im
-Home-Assistant-Speicher der Instanz.
+Belege. Neu geschätzt werden die Größen erst mit der Aktion **Erkennung
+nachlernen** (`ha_sauna.recognition_learn`); die Rechnung läuft im
+Hintergrund und darf dauern. Die Belege der Lernaufzeichnungen bleiben als
+Startwissen erhalten; die Belege der letzten 40 Sitzungen ergänzen sie. Die
+neuen Größen gelten ab der nächsten Sitzung. Der Lernstand liegt im
+Home-Assistant-Speicher der Instanz. Die Antwort der Aktion nennt die Zahl
+der seit dem letzten Nachlernen hinzugekommenen Sitzungen und Rückmeldungen,
+der gespeicherten Sitzungen und der abgelehnten Ereignisse.
 
 Die Aktion **Rückmeldung zur Erkennung** (`ha_sauna.recognition_feedback`)
 lehnt ein erkanntes Ereignis ab (`reject`) oder hebt die Ablehnung auf
 (`confirm`). Angegeben wird die Ereigniskennung oder Ereignisart und Zeitpunkt;
 gewählt wird dann das nächstgelegene Ereignis dieser Art. Abgelehnte
-Ereignisse fließen nicht mehr in das Lernen ein. Was als Tür, Lüften oder
+Ereignisse fließen mit dem nächsten Nachlernen nicht mehr in das Lernen ein. Was als Tür, Lüften oder
 Aufguss gilt, lernt die Integration nicht selbständig; dafür ist diese
 Rückmeldung vorgesehen.
 

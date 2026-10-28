@@ -553,6 +553,7 @@ class SaunaRuntime:
         self.recognition_finished = None
         self.recognition_learning = None
         self.recognition_feedback = None
+        self.recognition_relearn = None
         self._archive_signature = None
         self._saved_decisions = 0
         self._saved_manual_heater_ends = 0

@@ -55,7 +55,7 @@ forget_notification:
 
 recognition_feedback:
   name: Rückmeldung zur Erkennung
-  description: Lehnt ein erkanntes Ereignis für das Nachlernen ab oder hebt die Ablehnung auf. Angabe über die Ereigniskennung oder über Art und Zeit (nächstes Ereignis dieser Art).
+  description: Lehnt ein erkanntes Ereignis für das Nachlernen ab oder hebt die Ablehnung auf. Angabe über die Ereigniskennung oder über Art und Zeit (nächstes Ereignis dieser Art). Wirksam mit dem nächsten Nachlernen.
   fields:
     entry_id:
       name: Sauna-Instanz
@@ -93,3 +93,13 @@ recognition_feedback:
       name: Sitzung
       selector:
         text:
+recognition_learn:
+  name: Erkennung nachlernen
+  description: Schätzt die Erkennungsgrößen aus Startwissen, gespeicherten Sitzungsbelegen und Rückmeldungen neu. Die neuen Größen gelten ab der nächsten Sitzung.
+  fields:
+    entry_id:
+      name: Sauna-Instanz
+      required: true
+      selector:
+        config_entry:
+          integration: ha_sauna

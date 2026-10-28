@@ -277,6 +277,8 @@ class InfusionEndRecognitionTests(unittest.TestCase):
             recognizer.accept(m)
             recognizer.advance(m.received_at - timedelta.resolution, on_detection=delivered.append,
                                on_infusion_update=updates.append)
+            if recognizer._model is not None:
+                recognizer._model.infusion_possible = True   # someone entered before this excerpt
         recognizer.advance(synthetic.T0 + timedelta(seconds=float(t[-1])), on_detection=delivered.append,
                            on_infusion_update=updates.append)
         return delivered, updates

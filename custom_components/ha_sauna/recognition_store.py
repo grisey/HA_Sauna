@@ -1,12 +1,12 @@
 """Nachlernen der Erkennung: gelernte Größen, Sitzungsbelege und Rückmeldungen.
 
 Nach jeder abgeschlossenen Sitzung zieht ``RecognitionLearning`` aus deren
-Messwerten und eigenen Erkennungen Belege (``recognition_learning``) und
-schätzt die Modellgrößen neu: Belege der mitgelieferten Lernaufzeichnungen
-bleiben als Startwissen erhalten, die jüngsten Sitzungen ergänzen sie.
-Eine Rückmeldung „abgelehnt“ nimmt die Belege eines Ereignisses heraus,
-„bestätigt“ hebt eine Ablehnung auf.  Neue Größen gelten ab der nächsten
-Sitzung.
+Messwerten und eigenen Erkennungen Belege (``recognition_learning``).  Eine
+Rückmeldung „abgelehnt“ nimmt die Belege eines Ereignisses heraus,
+„bestätigt“ hebt eine Ablehnung auf.  Neu geschätzt werden die Modellgrößen
+erst auf Anforderung (Aktion „Erkennung nachlernen“): Belege der
+mitgelieferten Lernaufzeichnungen bleiben als Startwissen erhalten, die
+jüngsten Sitzungen ergänzen sie.  Neue Größen gelten ab der nächsten Sitzung.
 """
 
 from __future__ import annotations
@@ -34,6 +34,7 @@ class RecognitionLearning:
         self.rejected: set[str] = set(data.get("rejected", []))
         self.parameters: dict | None = data.get("parameters")
         self.outside: dict | None = data.get("outside")
+        self.pending: int = int(data.get("pending", 0))   # sessions and feedback since the last estimate
 
     def as_dict(self) -> dict:
         return {
@@ -41,6 +42,7 @@ class RecognitionLearning:
             "rejected": sorted(self.rejected),
             "parameters": self.parameters,
             "outside": self.outside,
+            "pending": self.pending,
         }
 
     def current_parameters(self) -> dict:
@@ -65,6 +67,7 @@ class RecognitionLearning:
         self.sessions = [s for s in self.sessions if s["session"] != session_id]
         self.sessions.append({"session": session_id, "events": events, "evidence": learning.compact(evidence)})
         self.sessions = self.sessions[-SESSION_LIMIT:]
+        self.pending += 1
         return True
 
     def estimate(self) -> dict:
@@ -72,6 +75,7 @@ class RecognitionLearning:
         evidence = learning.merge_evidence(shipped_evidence(), *[s["evidence"] for s in self.sessions])
         params = learning.estimate(evidence, base=shipped_parameters(), rejected=frozenset(self.rejected))
         self.parameters = params
+        self.pending = 0
         return params
 
     def find_event(self, *, event_id=None, kind=None, at=None, session_id=None) -> str | None:
@@ -99,10 +103,11 @@ class RecognitionLearning:
             self.rejected.discard(event_id)
         else:
             raise ValueError("Rückmeldung muss reject oder confirm sein")
+        self.pending += 1
 
 
 async def async_setup_recognition_learning(hass, entry, runtime) -> RecognitionLearning:
-    """Lernstand laden, an die Laufzeit binden und das Nachlernen nach jeder Sitzung einplanen."""
+    """Lernstand laden und an die Laufzeit binden: Belege nach jeder Sitzung, Schätzung auf Anforderung."""
     from homeassistant.helpers.storage import Store
 
     store = Store(hass, STORAGE_VERSION, f"ha_sauna.recognition.{entry.entry_id}")
@@ -125,21 +130,32 @@ async def async_setup_recognition_learning(hass, entry, runtime) -> RecognitionL
 
     def learn(session_id, recognizer):
         def work():
-            if not state.add_session(session_id, recognizer):
-                return False
-            state.estimate()
-            return True
+            return state.add_session(session_id, recognizer)
 
-        hass.async_create_background_task(update(work), f"ha_sauna recognition learning {session_id}")
+        hass.async_create_background_task(update(work), f"ha_sauna recognition evidence {session_id}")
 
     async def feedback(event_id, verdict):
         def work():
             state.feedback(event_id, verdict)
-            state.estimate()
             return True
 
         await update(work)
 
+    async def relearn() -> dict:
+        """Modellgrößen aus allen Belegen neu schätzen (gilt ab der nächsten Sitzung)."""
+        summary = {}
+
+        def work():
+            summary["changes"] = state.pending
+            state.estimate()
+            summary["sessions"] = len(state.sessions)
+            summary["rejected"] = len(state.rejected)
+            return True
+
+        await update(work)
+        return summary
+
     runtime.recognition_finished = learn
     runtime.recognition_feedback = feedback
+    runtime.recognition_relearn = relearn
     return state

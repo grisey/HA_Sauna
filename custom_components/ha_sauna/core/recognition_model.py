@@ -118,7 +118,8 @@ class ModelParameters:
     drift_sd: np.ndarray    #   Streuung
     drift_tau: np.ndarray   #   und Rückkehrzeit (s); unendlich = freie Wanderung
     qlam: float             # Wanderung des Austauschkoeffizienten (log) bei offener Tür
-    close_form: tuple = ()  # Vergleichsform des Schließens: (k, p) je Kanal, None ohne gelernte Form
+    close_form: tuple = ()   # Vergleichsform des Schließens: (k, p) je Kanal, None ohne gelernte Form
+    open_form: tuple = ()    # Vergleichsform des Öffnens: (k, p) je Kanal, None ohne gelernte Form
 
     @classmethod
     def from_dict(cls, data: dict, channels: tuple[str, ...] = CHANNELS) -> ModelParameters:
@@ -152,8 +153,10 @@ class ModelParameters:
             drift_tau=(np.array([math.inf if v is None else float(v) for v in data["drift_tau"]])[index]
                        if "drift_tau" in data else np.full(len(index), math.inf)),
             qlam=float(data["qlam"]),
-            close_form=(tuple(None if data["close_form"][i] is None else tuple(data["close_form"][i]) for i in index)
-                        if data.get("close_form") else (None,) * len(index)),
+            close_form=(tuple(None if data["close_form"]["rates"][i] is None else tuple(data["close_form"]["rates"][i])
+                              for i in index) if data.get("close_form") else (None,) * len(index)),
+            open_form=(tuple(None if data["open_form"]["rates"][i] is None else tuple(data["open_form"]["rates"][i])
+                             for i in index) if data.get("open_form") else (None,) * len(index)),
         )
 
 
@@ -172,15 +175,64 @@ def closing_basis(u, k: float, p: float) -> np.ndarray:
     return np.column_stack([np.ones_like(u), np.where(after, g, h), np.where(after, u - g, 0.0)])
 
 
-def closing_kink(t, y, candidates, rates) -> float | None:
-    """Zeitpunkt des Schließens: Knick, an dem der Abfall der offenen Tür endet.
+def opening_basis(u, k: float, p: float) -> np.ndarray:
+    """Vergleichsform des Öffnens zur Zeit ``u`` relativ zum Knick.
 
-    ``y`` hat eine Spalte je Temperaturkanal, ``rates`` je Kanal die gelernten
-    Raten ``(k, p)`` der Vergleichsform (``closing_basis``).  Gesucht ist unter
-    ``candidates`` der gemeinsame Knick mit der kleinsten, je Kanal auf seine
-    Streuung bezogenen Restquadratsumme, an dem die Temperatur vorher fällt und
-    danach wieder steigt (Erholung bei laufender Heizung).  Liefert ``None``
-    ohne solchen Knick.
+    Die Steigung ``e`` der geschlossenen Kabine läuft weiter; ab dem Knick kommt
+    der Abfall der offenen Tür hinzu: Er setzt mit der Rate ``k`` ein, seine
+    Steigung ``s`` lässt mit der Rate ``p`` nach.  Spalten: Niveau, ``e``, ``s``.
+    """
+    u = np.asarray(u, float)
+    v = np.maximum(u, 0)
+    fall = -np.expm1(-p * v) / p + np.expm1(-(p + k) * v) / (p + k)
+    return np.column_stack([np.ones_like(u), u, fall])
+
+
+def _phi(z: float) -> float:
+    return 0.5 * (1 + math.erf(z / math.sqrt(2)))
+
+
+def opening_evident(t, y, kink: float, rates, ratio: float) -> bool:
+    """Ist das Öffnen am ``kink`` mit dem Verhältnis ``ratio`` belegt?
+
+    Je Spalte von ``y`` (Temperaturkanäle) wird die gelernte Öffnungsform
+    (``opening_basis``) angepasst; belegt ist das Öffnen, wenn in jedem Kanal der
+    zusätzliche Abfall ab dem Knick (``s < 0``) die Wahrscheinlichkeit
+    ``ratio / (1 + ratio)`` hat.  Die Unsicherheit folgt aus der
+    Restabweichung, bezogen auf die Zahl unabhängiger Messwerte (Autokorrelation
+    ersten Grades).
+    """
+    t = np.asarray(t, float)
+    y = np.asarray(y, float).reshape(len(t), -1)
+    u = t - kink
+    if min((u < 0).sum(), (u >= 0).sum()) < 4:
+        return False
+    need = ratio / (1 + ratio)
+    for column, (k, p) in enumerate(rates):
+        basis = opening_basis(u, k, p)
+        coef, *_ = np.linalg.lstsq(basis, y[:, column], rcond=None)
+        r = y[:, column] - basis @ coef
+        n = len(r)
+        rho = float(np.corrcoef(r[:-1], r[1:])[0, 1]) if n > 4 and r.std() > 0 else 0.0
+        rho = min(max(rho, 0.0), 0.999)
+        effective = max(n * (1 - rho) / (1 + rho), 1.0)
+        s2 = float(r @ r) / max(n - 3, 1) * n / effective
+        cov = s2 * np.linalg.pinv(basis.T @ basis)
+        sd = math.sqrt(max(cov[2, 2], 1e-30))
+        if _phi(-coef[2] / sd) < need:
+            return False
+    return True
+
+
+def closing_kink(t, y, candidates, rates, temperature, *, recovery: bool = True) -> float | None:
+    """Zeitpunkt des Schließens: gemeinsamer Knick aller Kanäle mit der gelernten Vergleichsform.
+
+    ``y`` hat eine Spalte je Kanal, ``rates`` je Kanal die gelernten Raten ``(k, p)``
+    der Form (``closing_basis``), ``temperature`` kennzeichnet die Temperaturkanäle.
+    Gesucht ist unter ``candidates`` der Knick mit der kleinsten, je Kanal auf seine
+    Streuung bezogenen Restquadratsumme, an dem die Temperatur vorher fällt und danach
+    wieder steigt (``recovery``: heißer Ofen) oder ohne Erholung zumindest langsamer
+    fällt.  Liefert ``None`` ohne solchen Knick.
     """
     t = np.asarray(t, float)
     y = np.asarray(y, float).reshape(len(t), -1)
@@ -193,8 +245,10 @@ def closing_kink(t, y, candidates, rates) -> float | None:
         for column, (k, p) in enumerate(rates):
             basis = closing_basis(t - c, k, p)
             coef, *_ = np.linalg.lstsq(basis, y[:, column], rcond=None)
-            if coef[1] >= 0 or coef[2] < 0:        # no falling open door or no recovery: no closing here
-                break
+            if temperature[column]:
+                ends = coef[2] >= 0 if recovery else coef[2] > coef[1]
+                if coef[1] >= 0 or not ends:           # no falling open door or no end of the fall: no closing here
+                    break
             total += float(((basis @ coef - y[:, column]) ** 2).sum()) / scale[column]
         else:
             if best is None or total < best[0]:
@@ -306,6 +360,7 @@ class StateModel:
         self.mu[CLOSED] = 1 - (NM - 1) * 1e-6
         self.lik = np.zeros(NM)
         self.T = np.eye(NM)
+        self.infusion_possible = True                  # False: no infusion yet (nobody has entered the cabin)
         self.log_evidence = 0.0
         self.last_standardised = np.zeros((NM, c))
 
@@ -404,6 +459,12 @@ class StateModel:
         n = self.n
         iL, ir, iz, iW = self.iL, self.ir, self.iz, self.iW
         T = self.transition(dt)
+        if not self.infusion_possible:
+            T = T.copy()
+            T[:, INFUSION] = 0.0
+            T[INFUSION] = 0.0
+            T[INFUSION, CLOSED] = 1.0                  # the start weight of the infusion state goes to closed
+            T /= T.sum(axis=1, keepdims=True)
         prior_mode = self.mu @ T
         weights = (T * self.mu[:, None]) / np.maximum(prior_mode[None, :], 1e-300)
         X, PP = self._sources()

@@ -27,7 +27,7 @@ import numpy as np
 from .timeline import Kind
 from .recognition_model import (
     ALLOWED, CHANNELS, CLOSED, DECAY, INFUSION, MODES, NM, OPEN, RECOVERY, SHIFT,
-    ModelParameters, StateModel, closing_basis, is_humidity, partner_temperature, saturation_humidity,
+    ModelParameters, StateModel, closing_basis, is_humidity, opening_basis, partner_temperature, saturation_humidity,
 )
 
 INNOVATION_BINS = np.concatenate([[0.0], np.geomspace(0.05, 60.0, 59)])
@@ -212,18 +212,119 @@ def exchange_uncertainty(tt, y, excess0, lam, beta) -> float:
     return math.sqrt(variance / information)
 
 
-def fit_close_form(u, y) -> tuple[float, float]:
-    """Raten ``(k, p)`` der Vergleichsform des Schließens (``closing_basis``) mit der
-    kleinsten Restquadratsumme auf ``CLOSE_RATE_GRID``; ``u`` relativ zum Schließen."""
-    best = None
-    for k in CLOSE_RATE_GRID:
-        for p in CLOSE_RATE_GRID:
-            basis = closing_basis(u, k, p)
-            coef, *_ = np.linalg.lstsq(basis, y, rcond=None)
-            sse = float(((basis @ coef - y) ** 2).sum())
-            if best is None or sse < best[0]:
-                best = (sse, float(k), float(p))
-    return best[1], best[2]
+def _grid_sse(u, ys, basis=closing_basis) -> list:
+    """Restquadratsummen einer Übergangsform (``basis``) auf ``CLOSE_RATE_GRID`` × ``CLOSE_RATE_GRID``
+    (Zeilen ``k``, Spalten ``p``) für mehrere Verläufe ``ys`` zur selben Zeitachse ``u``, jeweils
+    bezogen auf die Streuung des Verlaufs.  Die Form wird je Rasterpunkt einmal gebildet; die
+    Ausgleichsrechnung läuft für alle Punkte einer Zeile gemeinsam (Normalgleichungen)."""
+    u = np.asarray(u, float)
+    ys = [np.asarray(y, float) - float(np.mean(y)) for y in ys]      # the form has a level: centring keeps precision
+    grid = CLOSE_RATE_GRID
+    out = [np.empty((len(grid), len(grid))) for _ in ys]
+    for a, k in enumerate(grid):
+        stack = np.stack([basis(u, k, p) for p in grid])                 # (p, n, columns)
+        gram_inv = np.linalg.pinv(np.einsum("gni,gnj->gij", stack, stack))
+        for y, sse in zip(ys, out):
+            proj = np.einsum("gni,n->gi", stack, y)
+            coef = np.einsum("gij,gj->gi", gram_inv, proj)
+            sse[a] = np.maximum(float(y @ y) - np.einsum("gi,gi->g", coef, proj), 0.0)
+    return [sse / max(float(y.var()), 1e-12) for y, sse in zip(ys, out)]
+
+
+def _effective_count(u, y, k: float, p: float, basis=closing_basis) -> float:
+    """Zahl unabhängiger Messwerte der Restabweichung (Autokorrelation ersten Grades)."""
+    basis = basis(np.asarray(u, float), k, p)
+    y = np.asarray(y, float)
+    coef, *_ = np.linalg.lstsq(basis, y, rcond=None)
+    e = y - basis @ coef
+    rho = float(np.corrcoef(e[:-1], e[1:])[0, 1]) if len(e) > 3 and e.std() > 0 else 0.0
+    rho = min(max(rho, 0.0), 0.999)
+    return len(e) * (1 - rho) / (1 + rho)
+
+
+def _add_pooled(a: dict | None, b: dict | None) -> dict | None:
+    """Summe zweier zusammengefasster Restflächen (je Kanal ein Raster, ``None``: Kanal ohne Ereignisse)."""
+    if not b:
+        return a
+    if not a:
+        return {"grids": [None if g is None else [list(r) for r in g] for g in b["grids"]], "events": b["events"]}
+    grids = []
+    for x, y in zip(a["grids"], b["grids"]):
+        grids.append(y if x is None else x if y is None else (np.asarray(x) + np.asarray(y)).tolist())
+    return {"grids": grids, "events": a["events"] + b["events"]}
+
+
+def pool_forms(evidence: dict, rejected=frozenset()) -> None:
+    """Verläufe der Übergangsformen durch ihre summierte Restfläche ersetzen (Startwissen ohne Messverläufe)."""
+    c = len(evidence["channels"])
+    for name, basis in (("close_form", closing_basis), ("open_form", opening_basis)):
+        surfaces = _event_surfaces(evidence.get(name, []), rejected, basis)
+        if surfaces:
+            grids = [None] * c
+            for grid in surfaces.values():
+                for i, g in grid.items():
+                    grids[i] = g if grids[i] is None else grids[i] + g
+            pooled = {"grids": [None if g is None else g.tolist() for g in grids], "events": len(surfaces)}
+            evidence[f"{name}_pooled"] = _add_pooled(evidence.get(f"{name}_pooled"), pooled)
+        evidence[name] = []
+
+
+def _event_surfaces(rows, rejected, basis) -> dict:
+    """Restflächen je Ereignis und Kanal aus den Verläufen."""
+    items: dict = {}
+    for i, u, y, source, key in rows:
+        if not _rejected(source, rejected):
+            items.setdefault(key, {})[i] = (u, y)
+    sse = {}
+    for key, courses in items.items():
+        channels = sorted(courses)
+        u = courses[channels[0]][0]
+        if all(courses[i][0] == u for i in channels):                 # one time axis for the event
+            grids = _grid_sse(u, [courses[i][1] for i in channels], basis)
+        else:
+            grids = [_grid_sse(courses[i][0], [courses[i][1]], basis)[0] for i in channels]
+        sse[key] = dict(zip(channels, grids))
+    return sse
+
+
+def close_form(rows, c: int, ratio: float, rejected=frozenset(), basis=closing_basis,
+               pooled: dict | None = None) -> dict | None:
+    """Vergleichsform eines Übergangs (``basis``: Schließen oder Öffnen), gemeinsam über alle Ereignisse gelernt.
+
+    Je Kanal die Raten ``(k, p)`` mit der kleinsten Summe der Restquadrate über alle
+    Ereignisse: aus den Verläufen ``rows`` und der zusammengefassten Restfläche
+    ``pooled`` bereits reduzierter Ereignisse.  Untypisch heißt ein Ereignis aus
+    ``rows``, das mit eigenen Raten mit dem Verhältnis ``ratio`` besser erklärt ist
+    als mit der gemeinsamen Form (Rauschen aus der Restabweichung seiner eigenen
+    Anpassung); es wird nur genannt.
+    """
+    sse = _event_surfaces(rows, rejected, basis)
+    events = len(sse) + (pooled["events"] if pooled else 0)
+    if not events:
+        return None
+    rates = {}
+    for i in range(c):
+        grids = [sse[key][i] for key in sse if i in sse[key]]
+        if pooled and pooled["grids"][i] is not None:
+            grids.append(np.asarray(pooled["grids"][i]))
+        if grids:
+            rates[i] = np.unravel_index(int(np.argmin(np.sum(grids, axis=0))), grids[0].shape)
+    courses = {}
+    for i, u, y, source, key in rows:
+        courses.setdefault(key, {})[i] = (u, y)
+    atypical = []
+    for key in sorted(sse):
+        log_ratio = 0.0
+        for i, grid in sse[key].items():
+            own = np.unravel_index(int(np.argmin(grid)), grid.shape)
+            n = _effective_count(*courses[key][i], float(CLOSE_RATE_GRID[own[0]]), float(CLOSE_RATE_GRID[own[1]]),
+                                 basis)
+            log_ratio += 0.5 * n * math.log(max(float(grid[rates[i]]), 1e-300) / max(float(grid.min()), 1e-300))
+        if log_ratio > math.log(ratio):
+            atypical.append(key)
+    return {"rates": [[float(CLOSE_RATE_GRID[rates[i][0]]), float(CLOSE_RATE_GRID[rates[i][1]])]
+                      if i in rates else None for i in range(c)],
+            "closings": events, "atypical": atypical}
 
 
 def population(values, errors=None):
@@ -288,6 +389,9 @@ def empty_evidence(channels=CHANNELS) -> dict:
         "jumps": [],
         "drift": [],
         "close_form": [],
+        "open_form": [],
+        "close_form_pooled": None,   # summed residual surfaces of events already reduced (no courses)
+        "open_form_pooled": None,
         "counts": [[0.0] * NM for _ in range(NM)],
         "occupancy": [0.0] * NM,
         "innovations": [[[0] * (len(INNOVATION_BINS)) for _ in range(c)] for _ in MODES],
@@ -333,6 +437,9 @@ def merge_evidence(*items: dict) -> dict:
         out["jumps"] += ev["jumps"]
         out["drift"] += ev.get("drift", [])
         out["close_form"] += ev.get("close_form", [])
+        out["open_form"] += ev.get("open_form", [])
+        for name in ("close_form_pooled", "open_form_pooled"):
+            out[name] = _add_pooled(out[name], ev.get(name))
         for j in range(NM):
             if "strat_hist" in ev:
                 out["strat_hist"][j] = [a + b for a, b in zip(out["strat_hist"][j], ev["strat_hist"][j])]
@@ -370,7 +477,7 @@ def _labels_to_modes(t, y, channels, labels, win, dt, normal_sd=None):
                 found["doors"].append((source, at, close, r0, m))
                 found["segments"].append((OPEN, at, close, r0, source))
             if item.get("close"):
-                found["closings"].append((source, at, close, nxt))
+                found["closings"].append((source, at, close, nxt, item))
                 recovery_end = nxt - close
                 for i in range(c):
                     r_ref = r0[i] if is_humidity(channels[i]) else 0.0   # temperature: the recovery is the rate
@@ -493,17 +600,36 @@ def collect_evidence(times, values, channels, labels, *, outside=None, exclude=(
             if close - at >= 3 * win and not is_humidity(channels[i]):
                 ev["beta"].append([i, float(fit_exchange(tt, yy, excess0)[1]), source])
             ev["_courses"].append([i, tt, yy, excess0, source, key])
-    # closing form: rates of the best fit at the labelled closing, per temperature channel; window from the
-    # opening to as long after the closing (at most to the next event)
-    for source, at, close, nxt in found["closings"]:
-        m = (t >= at) & (t <= min(nxt, close + (close - at)))
+    # closing form: the course of every channel around every labelled closing; a ventilated opening from its
+    # last phase (ventilated, exchanged), otherwise from the opening, to as long after the closing (at most to
+    # the next event)
+    for source, at, close, nxt, item in found["closings"]:
+        phases = [v for v in (item.get("ventilated"), item.get("exchanged")) if v is not None and v < close]
+        start = max(phases) if phases else at
+        m = (t >= start) & (t <= min(nxt, close + (close - start)))
         u = t[m] - close
-        if (u < 0).sum() < 5 or (u >= 0).sum() < 10:
+        if min((u < 0).sum(), (u >= 0).sum()) < 3:
             continue
         for i in range(c):
-            if not is_humidity(channels[i]):
-                k, p = fit_close_form(u, y[m, i])
-                ev["close_form"].append([i, math.log(k), math.log(p), source, f"{session}@{at:.1f}"])
+            ev["close_form"].append([i, np.round(u, 1).tolist(), np.round(y[m, i], 3).tolist(), source,
+                                     f"{session}@{at:.1f}"])
+    # opening form: the course of every channel around every labelled opening, from as long before it as the
+    # open door lasts (not before the previous event) until it closes or is ventilated
+    marks = sorted([d["open"] for d in labels.get("doors", [])] + [d["close"] for d in labels.get("doors", [])
+                   if d.get("close")] + [x["t"] if isinstance(x, dict) else x for x in labels.get("infusions", [])])
+    for door in labels.get("doors", []):
+        if not door.get("close"):
+            continue
+        at = door["open"]
+        end = min(v for v in (door["close"], door.get("ventilated")) if v is not None)
+        previous = max([m for m in marks if m < at - 1] + [float(t[0])])
+        m = (t >= max(previous, at - (end - at))) & (t <= end)
+        u = t[m] - at
+        if min((u < 0).sum(), (u >= 0).sum()) < 3:
+            continue
+        for i in range(c):
+            ev["open_form"].append([i, np.round(u, 1).tolist(), np.round(y[m, i], 3).tolist(),
+                                    door.get("source", ""), f"{session}@{at:.1f}"])
     for name in ("recovery", "infusion", "decay", "decay_slope"):
         for i, value, source, at in found[name]:
             ev["prior"].setdefault(name, []).append([i, float(value), source, f"{session}@{at:.1f}"])
@@ -1001,13 +1127,15 @@ def estimate(evidence: dict, *, base: dict, rejected=frozenset()) -> dict:
     rates[SHIFT, CLOSED] = 1.0 / (float(np.median(dts)) if dts else 1.0)
     params["rates"] = rates.tolist()
     params["strat"] = stratification(evidence)
-    # closing form: median rates over the closings (robust against single outliers)
-    form = []
-    for i in range(c):
-        rows = [(k, p) for j, k, p, s, key in evidence.get("close_form", []) if j == i and not _rejected(s, rejected)]
-        form.append([math.exp(float(np.median([r[0] for r in rows]))), math.exp(float(np.median([r[1] for r in rows])))]
-                    if len(rows) >= 3 else None)
-    params["close_form"] = form
+    # closing form, learned together over all closings
+    ratio = float((base.get("decision") or {}).get("evidence_ratio", 150.0))
+    form = close_form(evidence.get("close_form", []), c, ratio, rejected, pooled=evidence.get("close_form_pooled"))
+    if form is not None:
+        params["close_form"] = form
+    form = close_form(evidence.get("open_form", []), c, ratio, rejected, opening_basis,
+                      pooled=evidence.get("open_form_pooled"))
+    if form is not None:
+        params["open_form"] = form
     hist = np.asarray(evidence["innovations"], float)
     nu = np.asarray(base["nu"], float).copy()
     nus = np.asarray(base["nus"], float).copy()

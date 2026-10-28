@@ -17,6 +17,7 @@ und Bestätigungszeitpunkt (``detected_at``):
 
 from __future__ import annotations
 
+import bisect
 import math
 from collections import OrderedDict, deque
 from dataclasses import dataclass, field
@@ -28,7 +29,7 @@ from .models import Measurement, Position, Quantity
 from .moisture import absolute_humidity
 from .recognition_model import (
     CHANNELS, CLOSED, DECAY, INFUSION, NM, OPEN, RECOVERY, SHIFT, ModelParameters, StateModel, closing_kink,
-    is_humidity,
+    is_humidity, opening_evident,
 )
 from .timeline import DoorCloseEvidence, InfusionEnd, Kind, utc
 
@@ -401,6 +402,7 @@ class ClimateRecognizer:
         self._held_end: InfusionEnd | None = None
         self.updates: list[InfusionUpdate] = []
         self._open: _OpenDoor | None = None
+        self._unconfirmed: tuple | None = None    # (step, probability) of an opening the form does not yet show
         self._grid_t: list = []          # seconds since origin for every model step
         self._grid_y: list = []          # channel values of every model step
         self._grid_rh: list = []         # relative humidity of the clock position
@@ -552,6 +554,7 @@ class ClimateRecognizer:
             # the state starts at the newest values; the drift from the slope of the start samples
             drift, drift_var = _start_drift(np.asarray(self._outside_t), np.asarray(self._outside))
             self._model = StateModel(self.model_parameters, y, self.outside, drift=drift, drift_var=drift_var)
+            self._model.infusion_possible = False      # an infusion needs someone inside: only after an opening
             self._last_time = at
             return []
         dt = (at - self._last_time).total_seconds()
@@ -606,6 +609,8 @@ class ClimateRecognizer:
         floor = min(self._door.floor, self._infusion.floor, self._steam.floor)
         if self._open is not None:
             floor = min(floor, self._open.start)
+        if self._unconfirmed is not None:                 # an opening the form may still confirm
+            floor = min(floor, self._unconfirmed[0])
         while self._buffer and self._buffer[0][0] < floor and len(self._buffer) > 1:
             self._buffer.popleft()
 
@@ -679,40 +684,97 @@ class ClimateRecognizer:
         for what, index, confirmed in self._door.scan(self._post, self._post_base, ratio, cooling):
             self._explain(Kind.DOOR_OPEN if what == "start" else Kind.DOOR_CLOSE, index, confirmed, (OPEN,), at,
                           what == "start")
-            effective = min(self._index_time(index), at)
             p_open = float(self._posterior(index)[OPEN])
             if what == "start":
-                self._separations.append(index)       # an opening also separates infusions
-                self._open = _OpenDoor(start=index, confirmed=self._steps - 1, next_check=index)
-                out.append(Detection(Kind.DOOR_OPEN, effective, at, self.channels, trace_at=at, probability=p_open))
+                self._unconfirmed = (index, p_open)
+                out.extend(self._confirm_opening(at, self._steps - 1))
                 continue
-            effective = min(self._closing_time(self._open.start if self._open else None, index), at)
+            if self._unconfirmed is not None:
+                out.extend(self._confirm_opening(at, index))   # the form up to the closing decides
+            if self._unconfirmed is not None:
+                self.decisions.append({"event": "door_open_rejected", "effective_at":
+                                       self._index_time(self._unconfirmed[0]).isoformat(),
+                                       "decided_at": at.isoformat(), "reason": "opening_form"})
+                self._unconfirmed = None
+                continue
+            effective = min(self._closing_time(self._open, index), at)
             self._open = None
             evidence = DoorCloseEvidence(effective, at)
             out.append(Detection(Kind.DOOR_CLOSE, effective, at, self.channels, trace_at=at,
                                  door_close_evidence=evidence, probability=1 - p_open))
             out.extend(self._release_held(effective, at))
+        if self._unconfirmed is not None and self._door.inside:
+            out.extend(self._confirm_opening(at, self._steps - 1))
         if self._held and not self._door_pending():
             out.extend(self._release_held(None, at))      # the opening was not confirmed
         return out
 
-    def _closing_time(self, start: int | None, index: int) -> datetime:
-        """Zeitpunkt des Schließens: Knick am Ende des Abfalls der offenen Tür.
+    def _confirm_opening(self, at: datetime, through: int) -> list:
+        """Bestätigung eines Öffnungskandidaten durch die gelernte Öffnungsform.
 
-        Die Bestätigung (Beginn der Erholung bei ``index``) bleibt die Entscheidung;
-        ihr Zeitpunkt ist der Knick der gelernten Vergleichsform (``closing_kink``)
-        in den Temperaturkanälen, bestimmt über die Messschritte von der Öffnung
-        bis zum aktuellen Schritt.  Ohne gelernte Form oder ohne Knick mit
-        anschließender Erholung gilt ``index``.
+        Der Kandidat (Zeitpunkt aus dem Zustandsmodell) gilt als Öffnung, sobald der
+        Temperaturabfall nach ihm mit dem Evidenzverhältnis steiler ist als davor
+        (``opening_evident``), verglichen über die Messschritte bis ``through``.
+        Davor zählt die Kabine höchstens so lange, wie im Mittel kein Heizwechsel
+        kommt (gelernte Rate zu → Heizwechsel), und nicht vor dem letzten Ereignis.
+        Ohne gelernte Form gilt der Kandidat sofort.
+        """
+        index, p_open = self._unconfirmed
+        form = self.model_parameters.open_form
+        columns = [i for i, c in enumerate(self.channels) if not is_humidity(c) and form and form[i] is not None]
+        if columns:
+            kink = self._grid_t[index]
+            rate = float(self.model_parameters.rates[CLOSED, SHIFT])
+            start = kink - (1.0 / rate if rate > 0 else math.inf)
+            for detection in reversed(self.detections):  # not before the previous event
+                previous = (detection.effective_at - self.origin).total_seconds()
+                if previous < kink:
+                    start = max(start, previous)
+                    break
+            first = bisect.bisect_left(self._grid_t, start)
+            t = np.asarray(self._grid_t[first:through + 1])
+            y = np.asarray(self._grid_y[first:through + 1])[:, columns]
+            if not opening_evident(t, y, kink, [form[i] for i in columns], self.decision.evidence_ratio):
+                return []
+            self.decisions.append({"event": "door_open_form", "effective_at": self._index_time(index).isoformat(),
+                                   "decided_at": at.isoformat(), "steps_to_decision": through - index})
+        self._unconfirmed = None
+        self._separations.append(index)                   # an opening also separates infusions
+        self._open = _OpenDoor(start=index, confirmed=self._steps - 1, next_check=index)
+        if self._model is not None:
+            self._model.infusion_possible = True
+        effective = min(self._index_time(index), at)
+        return [Detection(Kind.DOOR_OPEN, effective, at, self.channels, trace_at=at, probability=p_open)]
+
+    def _closing_time(self, door: _OpenDoor | None, index: int) -> datetime:
+        """Zeitpunkt des Schließens: gemeinsamer Knick aller Kanäle mit der gelernten Vergleichsform.
+
+        Die Bestätigung (Beginn des Übergangs bei ``index``) bleibt die Entscheidung;
+        ihr Zeitpunkt ist der Knick (``closing_kink``).  Der Vergleich beginnt beim
+        Öffnen, bei einer gelüfteten Öffnung beim letzten bestätigten Lüften bzw.
+        Durchlüften, und endet beim aktuellen Schritt oder am Beginn einer neuen
+        Öffnung oder eines Aufgusses.  Eine Erholung wird erwartet, außer der Ofen
+        war während der ganzen Öffnung als aus gemeldet.  Ohne gelernte Form oder
+        ohne passenden Knick gilt ``index``.
         """
         fallback = self._index_time(index)
         form = self.model_parameters.close_form
-        columns = [i for i, c in enumerate(self.channels) if not is_humidity(c) and form[i] is not None]
-        if start is None or start >= index or not columns:
+        columns = [i for i in range(len(self.channels)) if form and form[i] is not None]
+        if door is None or door.start >= index or not columns:
             return fallback
-        t = np.asarray(self._grid_t[start:])
-        y = np.asarray(self._grid_y[start:])[:, columns]
-        kink = closing_kink(t, y, t[t <= self._grid_t[index]], [form[i] for i in columns])
+        phases = [p[0] for p in (door.ventilated, door.exchanged) if p is not None and p[0] < index]
+        start = max(phases) if phases else door.start
+        end = self._steps - 1
+        for step in range(index + 1, self._steps):        # a new opening or an infusion ends the comparison
+            post = self._posterior(step)
+            if post is not None and int(np.argmax(post)) in (OPEN, INFUSION):
+                end = step
+                break
+        recovery = not all(self._heater_off(range(door.start, index + 1)))
+        t = np.asarray(self._grid_t[start:end + 1])
+        y = np.asarray(self._grid_y[start:end + 1])[:, columns]
+        kink = closing_kink(t, y, t[t <= self._grid_t[index]], [form[i] for i in columns],
+                            [not is_humidity(self.channels[i]) for i in columns], recovery=recovery)
         return fallback if kink is None else self.origin + timedelta(seconds=kink)
 
     def _release_held(self, closed_at: datetime | None, at: datetime) -> list:
