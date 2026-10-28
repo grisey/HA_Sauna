@@ -2,7 +2,9 @@
 
 ``recognition_parameters.json`` entsteht mit ``tools/recognition_learn.py``.
 Es enthält die Modellgrößen und die Belege der Lernaufzeichnungen; die Belege
-sind Startwissen für das Nachlernen und enthalten keine Messverläufe.
+sind Startwissen für das Nachlernen.  Für die Vergleichsformen von Öffnen und
+Schließen enthalten sie die Messverläufe um die bezeichneten Übergänge (aus
+den Aufzeichnungen, ohne personenbezogene Daten; zur Aufnahme freigegeben).
 """
 
 from __future__ import annotations

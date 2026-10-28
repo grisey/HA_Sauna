@@ -242,33 +242,6 @@ def _effective_count(u, y, k: float, p: float, basis=closing_basis) -> float:
     return len(e) * (1 - rho) / (1 + rho)
 
 
-def _add_pooled(a: dict | None, b: dict | None) -> dict | None:
-    """Summe zweier zusammengefasster Restflächen (je Kanal ein Raster, ``None``: Kanal ohne Ereignisse)."""
-    if not b:
-        return a
-    if not a:
-        return {"grids": [None if g is None else [list(r) for r in g] for g in b["grids"]], "events": b["events"]}
-    grids = []
-    for x, y in zip(a["grids"], b["grids"]):
-        grids.append(y if x is None else x if y is None else (np.asarray(x) + np.asarray(y)).tolist())
-    return {"grids": grids, "events": a["events"] + b["events"]}
-
-
-def pool_forms(evidence: dict, rejected=frozenset()) -> None:
-    """Verläufe der Übergangsformen durch ihre summierte Restfläche ersetzen (Startwissen ohne Messverläufe)."""
-    c = len(evidence["channels"])
-    for name, basis in (("close_form", closing_basis), ("open_form", opening_basis)):
-        surfaces = _event_surfaces(evidence.get(name, []), rejected, basis)
-        if surfaces:
-            grids = [None] * c
-            for grid in surfaces.values():
-                for i, g in grid.items():
-                    grids[i] = g if grids[i] is None else grids[i] + g
-            pooled = {"grids": [None if g is None else g.tolist() for g in grids], "events": len(surfaces)}
-            evidence[f"{name}_pooled"] = _add_pooled(evidence.get(f"{name}_pooled"), pooled)
-        evidence[name] = []
-
-
 def _event_surfaces(rows, rejected, basis) -> dict:
     """Restflächen je Ereignis und Kanal aus den Verläufen."""
     items: dict = {}
@@ -287,26 +260,21 @@ def _event_surfaces(rows, rejected, basis) -> dict:
     return sse
 
 
-def close_form(rows, c: int, ratio: float, rejected=frozenset(), basis=closing_basis,
-               pooled: dict | None = None) -> dict | None:
+def close_form(rows, c: int, ratio: float, rejected=frozenset(), basis=closing_basis) -> dict | None:
     """Vergleichsform eines Übergangs (``basis``: Schließen oder Öffnen), gemeinsam über alle Ereignisse gelernt.
 
     Je Kanal die Raten ``(k, p)`` mit der kleinsten Summe der Restquadrate über alle
-    Ereignisse: aus den Verläufen ``rows`` und der zusammengefassten Restfläche
-    ``pooled`` bereits reduzierter Ereignisse.  Untypisch heißt ein Ereignis aus
-    ``rows``, das mit eigenen Raten mit dem Verhältnis ``ratio`` besser erklärt ist
+    Ereignisse (Verläufe ``rows``).  Untypisch heißt ein Ereignis, das mit eigenen Raten mit dem Verhältnis ``ratio`` besser erklärt ist
     als mit der gemeinsamen Form (Rauschen aus der Restabweichung seiner eigenen
     Anpassung); es wird nur genannt.
     """
     sse = _event_surfaces(rows, rejected, basis)
-    events = len(sse) + (pooled["events"] if pooled else 0)
+    events = len(sse)
     if not events:
         return None
     rates = {}
     for i in range(c):
         grids = [sse[key][i] for key in sse if i in sse[key]]
-        if pooled and pooled["grids"][i] is not None:
-            grids.append(np.asarray(pooled["grids"][i]))
         if grids:
             rates[i] = np.unravel_index(int(np.argmin(np.sum(grids, axis=0))), grids[0].shape)
     courses = {}
@@ -390,8 +358,6 @@ def empty_evidence(channels=CHANNELS) -> dict:
         "drift": [],
         "close_form": [],
         "open_form": [],
-        "close_form_pooled": None,   # summed residual surfaces of events already reduced (no courses)
-        "open_form_pooled": None,
         "counts": [[0.0] * NM for _ in range(NM)],
         "occupancy": [0.0] * NM,
         "innovations": [[[0] * (len(INNOVATION_BINS)) for _ in range(c)] for _ in MODES],
@@ -438,8 +404,6 @@ def merge_evidence(*items: dict) -> dict:
         out["drift"] += ev.get("drift", [])
         out["close_form"] += ev.get("close_form", [])
         out["open_form"] += ev.get("open_form", [])
-        for name in ("close_form_pooled", "open_form_pooled"):
-            out[name] = _add_pooled(out[name], ev.get(name))
         for j in range(NM):
             if "strat_hist" in ev:
                 out["strat_hist"][j] = [a + b for a, b in zip(out["strat_hist"][j], ev["strat_hist"][j])]
@@ -1129,11 +1093,10 @@ def estimate(evidence: dict, *, base: dict, rejected=frozenset()) -> dict:
     params["strat"] = stratification(evidence)
     # closing form, learned together over all closings
     ratio = float((base.get("decision") or {}).get("evidence_ratio", 150.0))
-    form = close_form(evidence.get("close_form", []), c, ratio, rejected, pooled=evidence.get("close_form_pooled"))
+    form = close_form(evidence.get("close_form", []), c, ratio, rejected)
     if form is not None:
         params["close_form"] = form
-    form = close_form(evidence.get("open_form", []), c, ratio, rejected, opening_basis,
-                      pooled=evidence.get("open_form_pooled"))
+    form = close_form(evidence.get("open_form", []), c, ratio, rejected, opening_basis)
     if form is not None:
         params["open_form"] = form
     hist = np.asarray(evidence["innovations"], float)

@@ -32,16 +32,6 @@ class RecognitionLearningTests(unittest.TestCase):
         self.assertEqual(learning.current_parameters(), shipped_parameters())
         self.assertIn("exchange", shipped_evidence())
 
-    def test_shipped_evidence_holds_no_measured_courses(self):
-        evidence = shipped_evidence()
-        for name in ("close_form", "open_form"):
-            self.assertEqual(evidence[name], [])
-            pooled = evidence[f"{name}_pooled"]
-            self.assertGreater(pooled["events"], 0)
-            for grid in pooled["grids"]:
-                self.assertEqual(len(grid), len(grid[0]))         # a residual surface over the rate grid
-        self.assertNotIn("_courses", evidence)
-
     def test_finished_session_adds_evidence_and_the_estimate_follows_on_request(self):
         learning = RecognitionLearning()
         self.assertTrue(learning.add_session("s1", self.recognizer))
