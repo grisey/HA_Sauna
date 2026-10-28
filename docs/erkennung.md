@@ -121,7 +121,7 @@ wird ebenso entschieden.
 | Ereignis | Zustand |
 | --- | --- |
 | Tür auf | Beginn des Zustands offen, zusätzlich durch die Öffnungsform belegt (siehe unten) |
-| Tür zu | Übergang aus offen in die Erholung (die Temperatur steigt wieder), in einen Aufguss oder in das Abklingen; bei ausgeschaltetem Ofen auch in die geschlossene, abkühlende Kabine |
+| Tür zu | Übergang aus offen in die Erholung (die Temperatur steigt wieder), in einen Aufguss oder in das Abklingen; bei länger ausgeschaltetem Ofen auch in die geschlossene, abkühlende Kabine |
 | Aufguss | Beginn des Zustands Aufguss |
 | Aufgussende | Ende von Aufguss und Abklingen zusammen; öffnet sich vorher die Tür, endet der Aufguss mit der Öffnung |
 
@@ -159,16 +159,18 @@ dort, wo nach dem Schließen schon eine neue Öffnung oder ein Aufguss beginnt
 (der Zustand ist an einem Schritt die wahrscheinlichste Erklärung). Gewählt
 wird der Knick mit der kleinsten Restquadratsumme, an dem die Temperatur
 vorher fällt (`s < 0`) und danach wieder steigt (`e ≥ 0`). War der Ofen
-während der ganzen Öffnung als aus gemeldet, wird keine Erholung erwartet;
-dann genügt, dass der Temperaturabfall langsamer wird (`e > s`). Ein
-Ausschalten erst während der Öffnung ändert das nicht: Steine und Wände
-halten die Wärme, die Temperatur steigt nach dem Schließen trotzdem. Ohne
+während der ganzen Öffnung aus (im Sinne des folgenden Absatzes), wird keine
+Erholung erwartet; dann genügt, dass der Temperaturabfall langsamer wird
+(`e > s`). Ohne
 gelernte Form oder ohne solchen Knick gilt der erste Schritt des Übergangs.
 
 Ohne Heizung gibt es nach dem Schließen keine Erholung. Deshalb endet eine
 Öffnung bei ausgeschaltetem Ofen auch in den Zustand zu oder Heizwechsel; bei
 heizendem Ofen nicht, damit ein Ausschlag mitten in einer Öffnung sie nicht
-teilt.
+teilt. Nach dem Ausschalten heizen Steine und Wände weiter: Als aus gilt der
+Ofen erst, wenn er so lange als aus gemeldet ist wie die gelernte
+Rückkehrzeit der Grunddrift der Temperatur (die Zeit, in der eine Änderung
+der Heizwirkung in der geschlossenen Kabine nachwirkt).
 
 Mehrere Güsse gehören zu einem Aufguss, solange das Abklingen des vorigen
 Gusses nicht erkennbar abgeflacht ist. Abgeflacht heißt: Die Feuchtesteigung

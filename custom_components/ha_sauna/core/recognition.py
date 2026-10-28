@@ -657,14 +657,24 @@ class ClimateRecognizer:
         self._heating.append((sec, on))
 
     def _heater_off(self, steps) -> list:
-        """Per buffered step: True when the heater was reported off at its time."""
+        """Per buffered step: True when the heater is off long enough for the cabin to cool.
+
+        After switching off, walls and stones keep heating the cabin; the heater counts as off only once
+        it has been reported off for the learned return time of the temperature drift (the time the
+        heating effect persists in the closed cabin).
+        """
         if not self._heating:
             return [False] * len(steps)
+        p = self.model_parameters
+        temperature = [i for i, c in enumerate(self.channels) if not is_humidity(c)]
+        taus = [float(p.drift_tau[i]) for i in temperature if math.isfinite(float(p.drift_tau[i]))]
+        persist = max(taus) if taus else 0.0
         times = [h[0] for h in self._heating]
         out = []
         for step in steps:
-            k = int(np.searchsorted(times, self._grid_t[step], side="right")) - 1
-            out.append(k >= 0 and self._heating[k][1] is False)
+            at = self._grid_t[step]
+            k = int(np.searchsorted(times, at, side="right")) - 1
+            out.append(k >= 0 and self._heating[k][1] is False and at - self._heating[k][0] >= persist)
         return out
 
     def _door_pending(self) -> bool:

@@ -353,6 +353,17 @@ class RecognizerTests(unittest.TestCase):
         door = _OpenDoor(start=0, confirmed=5)
         self.assertAlmostEqual((cold._closing_time(door, 80) - T0).total_seconds(), 120.0, delta=4.0)
 
+    def test_a_heater_switched_off_shortly_before_still_heats_the_cabin(self):
+        # walls and stones keep heating after switching off: the cooling cabin counts only after the learned
+        # return time of the temperature drift
+        params = parameters()
+        params["drift_tau"] = [600.0, 600.0, None, None]
+        recognizer = ClimateRecognizer(params, T0)
+        recognizer._grid_t = [0.0, 300.0, 900.0]
+        recognizer.report_heating(T0, True)
+        recognizer.report_heating(T0 + timedelta(seconds=100), False)
+        self.assertEqual(recognizer._heater_off([0, 1, 2]), [False, False, True])
+
     def test_a_new_opening_or_an_infusion_ends_the_comparison(self):
         # closing at 120 s, recovery confirmed at 160 s, then the cabin changes again at 200 s
         t = np.arange(0.0, 260.0, 2.0)
