@@ -411,6 +411,30 @@ class RecognizerTests(unittest.TestCase):
         self.assertEqual(form["atypical"], ["S@odd"])
         self.assertEqual(form["closings"], 4)
 
+    def test_recognition_starts_in_hot_operation(self):
+        # the cabin heats up from 80 °C: an opening while it is below the minimum temperature is not recognised
+        t, y = cabin(n=1100, door=(700.0, 900.0), seed=4)
+        y[:, :2] += 0.01 * t[:, None]
+        items = measurements(t, y)
+
+        def run(hot_from):
+            recognizer = ClimateRecognizer(parameters(), T0, outside=ROOM_AIR, hot_from=hot_from)
+            for m in items:
+                recognizer.accept(m)
+            recognizer.advance(items[-1].received_at)
+            return recognizer
+
+        cold = run(92.0)
+        self.assertNotIn(Kind.DOOR_OPEN, [d.kind for d in cold.detections])
+        start = [d for d in cold.decisions if d["event"] == "hot_operation"]
+        self.assertEqual(len(start), 1)
+        self.assertGreaterEqual(start[0]["temperature"], 92.0)
+        self.assertGreaterEqual(cold._grid_t[0], (cold.hot_at - T0).total_seconds())
+        self.assertGreater((cold.hot_at - T0).total_seconds(), 900.0)
+        hot = run(81.0)                                        # reached before the opening
+        self.assertLess((hot.hot_at - T0).total_seconds(), 700.0)
+        self.assertIn(Kind.DOOR_OPEN, [d.kind for d in hot.detections])
+
     def test_no_infusion_before_anyone_entered(self):
         # until an opening is confirmed nobody is inside: the infusion state cannot be entered
         t, y = cabin(n=600, infusion=600.0)

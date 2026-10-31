@@ -681,6 +681,7 @@ class SaunaRuntime:
                 ),
                 observer=observed,
                 outside=self._outside_air(),
+                hot_from=self.controller.parameters.values["sauna_min_temperature_c"],
             )
             if self.session
             else None

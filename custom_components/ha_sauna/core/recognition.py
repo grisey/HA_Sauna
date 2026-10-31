@@ -363,8 +363,13 @@ class ClimateRecognizer:
     """Messwerte annehmen, Zustandsmodell fortschreiben, Ereignisse liefern."""
 
     def __init__(self, parameters: dict, origin: datetime, *, positions=(Position.UPPER, Position.LOWER),
-                 observer=None, keep_record: bool = True, evaluate: bool = True, outside=None):
+                 observer=None, keep_record: bool = True, evaluate: bool = True, outside=None,
+                 hot_from: float | None = None):
         self.origin = utc(origin)
+        # the recognition runs in hot operation: from the first step whose temperature at the clock position
+        # reaches the minimum temperature of a sauna gang (None: from the start)
+        self.hot_from = hot_from
+        self.hot_at: datetime | None = None
         self.positions = tuple(Position(p) for p in positions)
         channels = tuple(c for c in CHANNELS if CHANNEL_SOURCES[c][0] in self.positions)
         if not channels:
@@ -540,6 +545,14 @@ class ClimateRecognizer:
             self._last_time = at
             return []
         if self._model is None:
+            if self.hot_at is None:
+                clock_t = self.channels.index("Tu" if self.clock_position is Position.UPPER else "Tl")
+                if self.hot_from is not None and y[clock_t] < self.hot_from:
+                    self._last_time = at
+                    return []                 # heating up: no recognition before hot operation
+                self.hot_at = at
+                self.decisions.append({"event": "hot_operation", "decided_at": at.isoformat(),
+                                       "temperature": round(float(y[clock_t]), 2), "minimum": self.hot_from})
             # the drift at the start: slope of the first 30 samples; the state starts at the newest values
             self._start.append(y)
             self._start_t.append(sec)
