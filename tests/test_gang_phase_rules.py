@@ -7,11 +7,16 @@ Abgeleitete Gangereignisse werden nicht als Testeingang vorgegeben.
 from dataclasses import replace
 import unittest
 
-from test_cooling import at, controller
-from test_foundation import event, selected_occupancy
+from test_cooling import at, controller as plain_controller
+from test_foundation import event, selected_occupancy, ideal_presence
 
 from custom_components.ha_sauna.core.presence import binary_presence
 from custom_components.ha_sauna.core.timeline import DoorCloseEvidence, Event, Kind
+
+
+def controller(**overrides):
+    """Gang control with the sharply timed presence sensor."""
+    return ideal_presence(plain_controller(**overrides))
 
 
 class GangPhaseRulesTests(unittest.TestCase):
@@ -208,12 +213,12 @@ class GangPhaseRulesTests(unittest.TestCase):
                 self.leave_for_ventilation()
                 phase = self.c.session.after_run
                 self.presence("on", 8)
-                self.presence(state, 11)
                 self.c.process(Event(
                     "delayed-return-close", "s", Kind.DOOR_CLOSE,
                     at(9), at(12), trace_at=at(10),
                     door_close_evidence=DoorCloseEvidence(at(9), at(10)),
                 ))
+                self.presence(state, 13)
                 self.assertIsNotNone(self.c.session.timeline.active)
                 self.assertEqual(self.c.session.timeline.active.recognition_kind,
                                  Kind.PRESENCE_CONFIRMED)

@@ -1,11 +1,11 @@
-"""Sensoranwesenheit während eines belegten Türschlusskandidaten."""
+"""Präsenzverlauf nach dem Türschluss: Haltezeit, Aufenthalt, Unterbrechungen."""
 
 from dataclasses import replace
 import unittest
 from unittest.mock import patch
 
-from test_cooling import at, controller
-from test_foundation import event, selected_occupancy
+from test_cooling import at, controller as plain_controller
+from test_foundation import event, selected_occupancy, ideal_presence
 from test_presence_handover import (
     ENTITY,
     RECOVERY,
@@ -24,6 +24,11 @@ from custom_components.ha_sauna.core.timeline import (
     Event,
     Kind,
 )
+
+
+def controller(**overrides):
+    """Gang control with the sharply timed presence sensor."""
+    return ideal_presence(plain_controller(**overrides))
 
 
 def close_event(
@@ -98,37 +103,72 @@ class DurablePresenceControllerTests(unittest.TestCase):
             self.c.session.timeline.active.recognition_kind, Kind.PRESENCE_CONFIRMED,
         )
 
-    def test_interruptions_inside_the_candidate_cannot_be_healed_by_later_on(self):
-        for interrupted in ("off", "unknown", "unavailable"):
-            with self.subTest(interrupted=interrupted):
-                self.setUp()
+    def learned(self):
+        """The shipped sensor times: hold of seconds, stays of many minutes."""
+        self.c = plain_controller()
+        self.c.set_temperature(self.c.parameters.values["sauna_min_temperature_c"], at(0))
+        self.c.process(event("open", Kind.DOOR_OPEN, 1))
+
+    def test_presence_outlasting_the_sensor_hold_establishes_the_stay(self):
+        self.learned()
+        self.presence("on", 2)
+        self.c.process(close_event())
+        self.c.advance(at(40))
+        self.assert_no_entry()
+        self.c.advance(at(60))
+        gang = self.c.session.timeline.active
+        self.assertIsNotNone(gang)
+        self.assertEqual(gang.started_at, at(3))
+        self.assertGreater(gang.detected_at, at(40))
+        self.assertEqual(gang.recognition_kind, Kind.PRESENCE_CONFIRMED)
+
+    def test_presence_ending_within_the_sensor_hold_is_no_entry(self):
+        for absent_at in (8, 13, 25):
+            with self.subTest(absent_at=absent_at):
+                self.learned()
                 self.presence("on", 2)
-                self.presence(interrupted, 4)
-                self.presence("on", 5)
                 self.c.process(close_event())
-                self.c.advance(at(8))
+                self.presence("off", absent_at)
+                self.c.advance(at(1800))
+                self.assert_no_entry()
+                self.assertIs(self.c._presence_verdicts["close"][0], False)
+
+    def test_unobserved_presence_after_the_closing_does_not_establish_a_stay(self):
+        for interrupted in ("unknown", "unavailable"):
+            with self.subTest(interrupted=interrupted):
+                self.learned()
+                self.presence("on", 2)
+                self.c.process(close_event())
+                self.presence(interrupted, 10)
+                self.presence("on", 20)
+                self.c.advance(at(1800))
                 self.assert_no_entry()
 
-    def test_proxy_source_interrupts_sensor_coverage_until_a_new_closing_candidate(self):
+    def test_proxy_source_interrupts_the_presence_section_until_a_new_closing(self):
+        self.learned()
         self.presence("on", 2)
         proxy = selected_occupancy(binary_presence(ENTITY, "on", at(2), at(4)), at(4))
         self.c.consume_occupancy_input(replace(proxy, qualified_presence=False, report_id="proxy"))
         self.presence("on", 5)
         self.c.process(close_event())
+        self.c.advance(at(600))
         self.assert_no_entry()
-        self.c.process(event("new-open", Kind.DOOR_OPEN, 8))
-        self.c.process(close_event(candidate=9, confirmed=10, received=11, key="new-close"))
+        self.c.process(event("new-open", Kind.DOOR_OPEN, 700))
+        self.c.process(close_event(candidate=701, confirmed=702, received=703, key="new-close"))
+        self.c.advance(at(760))
         self.assertIsNotNone(self.c.session.timeline.active)
         self.assertEqual(self.c.session.timeline.active.start_source_event_id, "new-close")
 
-    def test_absence_at_confirmation_does_not_prove_continued_presence(self):
+    def test_absence_soon_after_the_closing_does_not_prove_continued_presence(self):
+        self.learned()
         self.presence("on", 2)
         self.presence("off", 6)
         self.c.process(close_event())
         self.presence("on", 8)
+        self.c.advance(at(1800))
         self.assert_no_entry()
 
-    def test_open_door_history_trimming_keeps_the_whole_candidate_interval(self):
+    def test_open_door_history_trimming_keeps_the_presence_at_the_closing(self):
         for interrupted in (False, True):
             with self.subTest(interrupted=interrupted):
                 self.setUp()
@@ -138,10 +178,9 @@ class DurablePresenceControllerTests(unittest.TestCase):
                     self.presence("on", 5)
                 self.c.discard_recognition_context_before(at(5.5))
                 self.c.process(close_event())
-                if interrupted:
-                    self.assert_no_entry()
-                else:
-                    self.assertIsNotNone(self.c.session.timeline.active)
+                gang = self.c.session.timeline.active
+                self.assertIsNotNone(gang)
+                self.assertEqual(gang.start_source_event_id, "close")
 
     def test_late_received_on_uses_its_original_state_time(self):
         self.c.process(close_event())
@@ -228,7 +267,7 @@ class DurablePresenceControllerTests(unittest.TestCase):
                 else:
                     self.assert_no_entry()
 
-    def test_closed_off_cannot_supply_absence_to_the_next_opening(self):
+    def test_absence_before_the_opening_counts_only_from_the_opening(self):
         self.presence("on", 2)
         self.c.process(close_event())
         gang_id = self.c.session.timeline.active.gang_id
@@ -238,23 +277,20 @@ class DurablePresenceControllerTests(unittest.TestCase):
         self.assertEqual(self.c.session.timeline.completed, ())
         self.assertIsNone(self.c.session.after_run)
 
-        # OFF before the actual new opening cannot prove an exit through it.
+        # The absence continues through the new opening: the person may have left.
         self.c.process(event("exit-open", Kind.DOOR_OPEN, 10))
+        self.c.advance(at(10.5))
         self.assertEqual(self.c.session.timeline.active.gang_id, gang_id)
-        self.c.process(event("exit-ventilation", Kind.VENTILATION, 11))
-        self.assertEqual(self.c.session.timeline.active.gang_id, gang_id)
-        self.assertEqual(self.c.session.timeline.completed, ())
         self.assertIsNone(self.c.session.after_run)
-        self.presence("on", 12)
-        self.presence("off", 13)
+        self.c.advance(at(11))
         self.assertIsNone(self.c.session.timeline.active)
         self.assertEqual(self.c.session.timeline.gang_count, 1)
         self.assertEqual(self.c.session.timeline.completed[0].gang_id, gang_id)
-        self.assertEqual(self.c.session.timeline.completed[0].ended_at, at(13))
-        self.assertEqual(self.c.session.after_run.requested_at, at(13))
+        self.assertEqual(self.c.session.timeline.completed[0].ended_at, at(10))
+        self.assertEqual(self.c.session.after_run.requested_at, at(11))
 
     def test_late_opening_uses_absence_after_its_own_effective_time(self):
-        for absent_at in (10, 11):
+        for absent_at, decided, ended in ((10, 12, 10), (11, 13, 13)):
             with self.subTest(absent_at=absent_at):
                 self.setUp()
                 self.presence("on", 2)
@@ -269,11 +305,13 @@ class DurablePresenceControllerTests(unittest.TestCase):
                 self.c.process(Event(
                     "late-exit-open", "s", Kind.DOOR_OPEN, at(10), at(12),
                 ))
-                self.assertEqual(self.c.session.timeline.active.gang_id, gang_id)
-                self.c.process(event("exit-ventilation", Kind.VENTILATION, 13))
+                if absent_at == 11:
+                    self.assertEqual(self.c.session.timeline.active.gang_id, gang_id)
+                    self.c.process(event("exit-ventilation", Kind.VENTILATION, 13))
                 self.assertIsNone(self.c.session.timeline.active)
                 self.assertEqual(self.c.session.timeline.gang_count, 1)
-                self.assertEqual(self.c.session.timeline.completed[0].ended_at, at(13))
+                self.assertEqual(self.c.session.timeline.completed[0].ended_at, at(ended))
+                self.assertEqual(self.c.session.after_run.requested_at, at(decided))
 
     def test_completed_exit_absence_cannot_finish_the_following_occupied_stay(self):
         self.presence("on", 2)
@@ -294,15 +332,16 @@ class DurablePresenceControllerTests(unittest.TestCase):
         self.assertIsNone(self.c.session.after_run)
 
         self.c.process(event("second-exit-open", Kind.DOOR_OPEN, 16))
-        self.c.process(event("second-exit-vent", Kind.VENTILATION, 17))
+        self.c.advance(at(17))
         self.assertEqual(self.c.session.timeline.active.gang_id, second.gang_id)
         self.assertEqual(self.c.session.timeline.gang_count, 1)
         self.assertIsNone(self.c.session.after_run)
         self.presence("off", 18)
+        self.c.advance(at(20))
         self.assertIsNone(self.c.session.timeline.active)
         self.assertEqual(self.c.session.timeline.gang_count, 2)
         self.assertEqual(self.c.session.timeline.completed[-1].gang_id, second.gang_id)
-        self.assertEqual(self.c.session.timeline.completed[-1].ended_at, at(18))
+        self.assertEqual(self.c.session.timeline.completed[-1].ended_at, at(16))
 
     def test_old_entry_cannot_fill_an_empty_return_or_poison_a_later_valid_one(self):
         self.presence("on", 2)

@@ -6,7 +6,7 @@ from collections.abc import Callable
 from contextlib import contextmanager
 from dataclasses import dataclass, replace
 from datetime import datetime, timedelta
-from math import isfinite
+from math import isfinite, log
 from uuid import uuid4
 
 from . import energy, heating, thermostat
@@ -34,6 +34,7 @@ from .models import (
 )
 from .oven_cooling import calculate_oven_cooling
 from .parameters import LIVE_TEMPERATURE_KEYS, Parameters
+from .presence_evidence import PresenceTiming, occupancy_log_ratio
 from .temperature_program import TemperatureProgram
 from .temporary_door_heat import TemporaryDoorHeatState
 from .temporary_door_heat import advance as advance_door_heat
@@ -107,6 +108,10 @@ class Controller:
         self._direct_presence_coverage_breaks = []
         self._direct_presence_catchup = 0
         self._presence_entry: PresenceEntry | None = None
+        # Decided door operations (closing or opening ID): verdict and decision time.
+        self._presence_verdicts: dict[str, tuple[bool, datetime]] = {}
+        self.presence_timing: PresenceTiming | None = None
+        self.presence_evidence_ratio = 150.0
         self.parameters = parameters
         self.program_mode = program_mode
         self.control_mode = control_mode
@@ -668,6 +673,7 @@ class Controller:
         at = utc(at)
         self._recognition_gates = []
         self._presence_entry = None
+        self._presence_verdicts = {}
         self._gang_temperature_gates = [
             (at, self._gang_temperature_blocked(at), self._gang_temperature_input()[1])
         ]
@@ -1077,7 +1083,9 @@ class Controller:
             )
         if not person_evidence_qualified and (
             event.kind in (Kind.PERSON_STRONG, Kind.PERSON_WEAK)
-            or (event.kind == Kind.INFUSION and previous.timeline.active is None)
+            or (event.kind == Kind.INFUSION and previous.timeline.active is None
+                and not self._presence_at_closing(
+                    previous.timeline, event.booking_at, departure=False))
         ):
             blocked = "person_evidence_unqualified"
         if blocked:
@@ -1137,7 +1145,10 @@ class Controller:
         if previous.timeline.active is None and timeline.active is not None:
             self._presence_entry = None
             if (self.control_mode == "automatic"
-                    and timeline.active.recognition_kind == Kind.PRESENCE_CONFIRMED):
+                    and (timeline.active.recognition_kind == Kind.PRESENCE_CONFIRMED
+                         or (self.direct_presence is not None
+                             and self.direct_presence.qualified_presence
+                             and timeline.active.confirmation == Confirmation.CONFIRMED))):
                 # The accepted entry proves occupancy behind the closed door.
                 # A departure requires a new opening.
                 self._abort_after_run(at)
@@ -1763,97 +1774,150 @@ class Controller:
             self._evaluate(at)
         return True
 
-    def _presence_across_closing(self, closure, at):
-        """Sensor ON from this candidate through its confirmation and onward.
+    def set_presence_parameters(self, parameters: dict) -> None:
+        """Learned sensor times and evidence ratio for the next decisions."""
+        self.presence_timing = PresenceTiming.from_parameters(parameters)
+        self.presence_evidence_ratio = float(
+            (parameters.get("decision") or {}).get("evidence_ratio", 150.0)
+        )
 
-        Unchanged ON covers the interval without an additional message or
-        arbitrary holding period. Once proven, occupancy is bound to this
-        closed door until another opening permits a departure.
+    def _presence_model(self):
+        if self.presence_timing is None:
+            from ..recognition_parameters import shipped_parameters
+
+            self.set_presence_parameters(shipped_parameters())
+        return self.presence_timing, log(self.presence_evidence_ratio)
+
+    def _presence_states(self, at):
+        """Received sensor states as (seconds, present/absent/unknown).
+
+        A report counts from its first usability. A coverage break or an
+        unusable report is unknown; the evidence of a door operation ends there.
         """
-        proof = closure.door_close_evidence
-        if proof is None:
-            return None
-        history = [report for report in self._direct_presence_history
-                   if report.timing.effective_at is not None
-                   and report.timing.received_at is not None
-                   and report.timing.received_at <= self._received_at(at)]
-        start = next((index for index in range(len(history) - 1, -1, -1)
-                      if history[index].timing.effective_at <= proof.candidate_at), None)
-        if start is None:
-            return None
-        report = history[start]
-        usable_at = report.timing.first_usable_at or report.timing.effective_at
-        if (not report.available or not report.qualified_presence
-                or report.occupancy != "present" or usable_at > proof.candidate_at):
-            return None
-        breaks = [stamp for stamp in self._direct_presence_coverage_breaks
-                  if max(report.timing.effective_at, usable_at) <= stamp]
-        for item in history[start + 1:]:
-            if (not item.available or not item.qualified_presence
-                    or item.occupancy != "present"):
-                breaks.append(item.timing.effective_at)
-            elif (item.timing.first_usable_at is not None
-                  and item.timing.first_usable_at > proof.candidate_at):
-                breaks.append(item.timing.first_usable_at)
-        if breaks and min(breaks) <= proof.confirmed_at:
-            return None
-        return report
+        received = self._received_at(at)
+        marks = []
+        for report in self._direct_presence_history:
+            timing = report.timing
+            if (timing.effective_at is None or timing.received_at is None
+                    or timing.received_at > received):
+                continue
+            usable = max(timing.effective_at, timing.first_usable_at or timing.effective_at)
+            state = (None if not report.available or not report.qualified_presence
+                     else True if report.occupancy == "present"
+                     else False if report.occupancy == "absent" else None)
+            marks.append((usable.timestamp(), state))
+        marks.extend((stamp.timestamp(), None) for stamp in self._direct_presence_coverage_breaks
+                     if stamp <= at)
+        marks.sort(key=lambda item: item[0])
+        return marks
 
-    def _presence_close_fallback(self, timeline, at):
-        """No sustained sensor occupancy at a new close, before ventilation."""
-        close_at = timeline.presence_close_exit_at()
-        current = self.direct_presence
-        if (close_at is None or current is None or not current.qualified_presence
-                or not current.available or current.occupancy not in ("present", "absent")):
-            return None
-        closure = timeline.anchor
+    @staticmethod
+    def _closing_candidate(closure):
         proof = closure.door_close_evidence
-        report = next((item for item in reversed(self._direct_presence_history)
-                       if item.timing.effective_at is not None
-                       and item.timing.effective_at <= proof.confirmed_at
-                       and item.timing.received_at is not None
-                       and item.timing.received_at <= self._received_at(at)), None)
-        if (report is None or not report.available or not report.qualified_presence
-                or report.occupancy not in ("present", "absent")
-                or (report.occupancy == "absent"
-                    and report.timing.effective_at < timeline.closed_opening.effective_at)
-                or (report.timing.first_usable_at is not None
-                    and report.timing.first_usable_at > proof.candidate_at)
-                or self._presence_across_closing(closure, at) is not None):
+        return proof.candidate_at if proof is not None else closure.effective_at
+
+    def _presence_at_closing(self, timeline, at, *, departure=True):
+        """Sensor operation with presence at the unused closing: the entry criterion.
+
+        A closing whose presence was already decided as empty does not qualify.
+        ``departure`` requires the absence after an exit opening of the same
+        door operation; an infusion proves the stay without it.
+        """
+        current = self.direct_presence
+        if (current is None or not current.qualified_presence
+                or not timeline.entry_cycle_available
+                or self._presence_verdict(timeline.anchor.event_id, at) is False):
+            return False
+        begin = self._closing_candidate(timeline.anchor).timestamp()
+        states = self._presence_states(at)
+        state = None
+        for when, value in states:
+            if when > begin:
+                break
+            state = value
+        if state is not True:
+            return False
+        # Ventilation of this door operation ended the gang. Presence that
+        # lasted through the whole operation belongs to the departing person;
+        # a new entry needs the absence seen after the exit opening.
+        ended = timeline.completed[-1] if timeline.completed else None
+        opening = timeline.closed_opening
+        if (departure and ended is not None and ended.end_reason == "ventilation"
+                and ended.ended_at is not None
+                and ended.ended_at >= opening.effective_at):
+            since = opening.effective_at.timestamp()
+            return any(since <= when <= begin and value is False for when, value in states)
+        return True
+
+    def _occupancy_ratio(self, start, close, at, *, through=None):
+        """Evidence of the states received by ``at`` up to ``through`` (default ``at``)."""
+        timing, _ = self._presence_model()
+        return occupancy_log_ratio(
+            timing, self._presence_states(at), start=start.timestamp(),
+            at=(through or at).timestamp(),
+            close=close.timestamp() if close is not None else None,
+        )
+
+    def _presence_verdict(self, operation_id, at):
+        """A decided door operation keeps its verdict against later sensor states.
+
+        A report received later but valid before the decision reopens it when
+        the evidence up to the decision no longer reaches the ratio.
+        """
+        decided = self._presence_verdicts.get(operation_id)
+        if decided is None:
             return None
-        return report
+        verdict, decided_at = decided
+        session = self._session
+        timeline = session.timeline if session is not None else None
+        if timeline is None:
+            return verdict
+        if timeline.active is None:
+            start = close = self._closing_candidate(timeline.anchor) if (
+                timeline.anchor is not None and timeline.anchor.event_id == operation_id
+            ) else None
+        else:
+            opening = timeline.exit_opening
+            start = opening.effective_at if (
+                opening is not None and opening.event_id == operation_id) else None
+            close = (self._closing_candidate(timeline.anchor)
+                     if start is not None and timeline.door == Door.CLOSED
+                     and timeline.anchor is not None else None)
+        if start is None:
+            return verdict
+        _, threshold = self._presence_model()
+        ratio = self._occupancy_ratio(start, close, at, through=min(at, decided_at))
+        if (ratio >= threshold) if verdict else (ratio <= -threshold):
+            return verdict
+        del self._presence_verdicts[operation_id]
+        return None
+
+    def _presence_report(self, at):
+        received = self._received_at(at)
+        return next((report for report in reversed(self._direct_presence_history)
+                     if report.timing.received_at is not None
+                     and report.timing.received_at <= received), None)
 
     def _reconcile_direct_presence(self, at, *, entry_event=None):
-        """Observe entry independently of its temperature admission.
+        """Decide occupancy after a door operation from the sensor history.
 
-        Sensor presence across the closing candidate and its confirmation
-        establishes a stay; its entry can wait for the minimum temperature.
-        A running gang instead uses absence and ventilation of its exit opening;
-        neither temperature nor a heater phase can prevent that completion.
+        Entry: presence at the closing is required. The stay is established
+        once its presence outlasts the sensor's learned hold time far enough
+        for the evidence ratio; the gang then begins at the closing and may
+        still wait for the minimum temperature. Exit: after a new opening, the
+        sensor history decides between a stay and an empty cabin; an empty
+        cabin ends the gang at that opening. Absence without a new opening
+        never ends a gang, and a stay once established for an opening is not
+        revisited by later absence.
         """
         session = self._session
         if entry_event is not None:
             self._presence_entry = None
-        closure = (
-            session.timeline.anchor
-            if session is not None and session.timeline.active is None
-            and session.timeline.entry_cycle_available else None
-        )
-        if closure is not None:
-            entry = self._presence_entry
-            report = (entry.presence if entry is not None
-                      and entry.closure.event_id == closure.event_id
-                      else self._presence_across_closing(closure, at))
-        else:
-            report = self._direct_presence_history[-1] if self._direct_presence_history else None
-        if (session is None or not session.operation_enabled or report is None
-                or not report.available or not report.qualified_presence
-                or report.timing.effective_at is None or report.timing.received_at is None
-                or report.timing.received_at > self._received_at(at)
-                or (closure is not None and report.timing.first_usable_at is not None
-                    and report.timing.first_usable_at > closure.confirmation_at)):
-            if session is None or not session.operation_enabled:
-                self._presence_entry = None
+        if session is None or not session.operation_enabled:
+            self._presence_entry = None
+            return False
+        current = self.direct_presence
+        if current is None or not current.qualified_presence:
             return False
         t = session.timeline
         opening = t.opening if t.door == Door.OPEN else t.closed_opening
@@ -1861,48 +1925,48 @@ class Controller:
                 or self.recognition_context_at(opening.effective_at)[1] is not None
                 or not self._recognition_context_current(opening.effective_at)):
             return False
+        _, threshold = self._presence_model()
         if t.active is None:
-            # The sensor must cover the whole retained closing candidate.
-            # A late ON cannot turn an earlier interrupted interval into a stay.
-            if (closure is not None
-                    and report.occupancy == "present"):
-                self._presence_entry = PresenceEntry(closure, report)
+            if not t.entry_cycle_available:
+                return False
+            closure = t.anchor
             entry = self._presence_entry
-            if (entry is None or not t.entry_cycle_available
-                    or entry.closure.event_id != t.anchor.event_id
-                    or self._gang_start_blocked(session)):
+            if entry is not None and entry.closure.event_id != closure.event_id:
+                self._presence_entry = entry = None
+            if entry is None:
+                if self._presence_verdict(closure.event_id, at) is not None:
+                    return False
+                candidate = self._closing_candidate(closure)
+                if (closure.door_close_evidence is None or at < candidate
+                        or not self._presence_at_closing(t, at)):
+                    return False
+                ratio = self._occupancy_ratio(candidate, candidate, at)
+                if ratio <= -threshold:
+                    self._presence_verdicts[closure.event_id] = (False, at)
+                    return False
+                if ratio < threshold:
+                    return False
+                self._presence_entry = entry = PresenceEntry(closure, self._presence_report(at))
+            if self._gang_start_blocked(session):
                 return False
             effective = self._gang_entry_start_at(t)
-            kind = Kind.PRESENCE_CONFIRMED
-            source, report = entry.closure, entry.presence
+            kind, source, report = Kind.PRESENCE_CONFIRMED, entry.closure, entry.presence
         else:
-            # Absence belongs to this exit opening. ON pulses while the door
-            # remains open do not erase the observed departure; a new stay is
-            # established by continuous sensor presence across the next
-            # closing candidate and its confirmation.
-            history = [item for item in self._direct_presence_history
-                       if item.timing.effective_at is not None
-                       and item.timing.received_at is not None
-                       and item.timing.received_at <= self._received_at(at)]
-            absence = next((item for item in reversed(history)
-                            if item.available and item.occupancy == "absent"
-                            and item.timing.effective_at >= opening.effective_at), None)
-            if self._direct_presence_catchup:
+            if (t.exit_opening is None or self._direct_presence_catchup
+                    or self._presence_verdict(opening.event_id, at) is not None):
                 return False
-            effective = (t.presence_exit_at(max(
-                absence.timing.effective_at,
-                absence.timing.first_usable_at or absence.timing.effective_at,
-            )) if absence is not None else None)
-            if effective is not None:
-                report = absence
-                kind, source = Kind.PRESENCE_ENDED, opening
-            else:
-                report = self._presence_close_fallback(t, at)
-                if report is None:
-                    return False
-                effective = t.presence_close_exit_at()
-                kind, source = Kind.PRESENCE_CLOSE_ENDED, t.anchor
-        if effective > at:
+            close = (self._closing_candidate(t.anchor)
+                     if t.door == Door.CLOSED and t.anchor is not None else None)
+            ratio = self._occupancy_ratio(opening.effective_at, close, at)
+            if ratio >= threshold:
+                self._presence_verdicts[opening.event_id] = (True, at)
+                return False
+            if ratio > -threshold:
+                return False
+            report = self._presence_report(at)
+            effective = opening.effective_at
+            kind, source = Kind.PRESENCE_ENDED, opening
+        if report is None or effective is None or effective > at:
             return False
         self.process(Event(
             f"{kind.value}:{source.event_id}:{report.report_id}", session.session_id,

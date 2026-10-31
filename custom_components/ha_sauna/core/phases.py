@@ -55,6 +55,10 @@ def project_session(session, now, *, physical_gangs=True) -> PhaseProjection:
     overlays = []
     gang_intervals = ({item["gang_id"]: item for item in project_gang_intervals(timeline)}
                       if physical_gangs else {})
+    # A gang may end retrospectively at its exit opening. The operating phase
+    # stays a gang until that end was booked.
+    bookings = {_get(item, "event_id"): _get(item, "booking_at") or _get(item, "detected_at")
+                for item in _get(timeline, "processed", ())}
     retracted = {_get(g, "gang_id") for g in _get(timeline, "retracted", ())}
     for gang in (*_get(timeline, "completed", ()), *([_get(timeline, "active")] if _get(timeline, "active") else [])):
         if _get(gang, "gang_id") in retracted:
@@ -68,9 +72,12 @@ def project_session(session, now, *, physical_gangs=True) -> PhaseProjection:
         )
         if not complete:
             notes.append("gang_door_bounds_incomplete")
+        gang_end = _time(physical_end or _get(gang, "ended_at") or end)
+        booked = bookings.get(_get(gang, "end_event_id"))
+        if booked is not None and _get(gang, "ended_at") is not None:
+            gang_end = max(gang_end, _time(booked))
         overlays.append((
-            _time(physical_start or _get(gang, "started_at")),
-            _time(physical_end or _get(gang, "ended_at") or end),
+            _time(physical_start or _get(gang, "started_at")), gang_end,
             "saunagang", _get(gang, "gang_id"), complete,
         ))
     if retracted:

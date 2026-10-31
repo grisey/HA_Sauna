@@ -671,6 +671,13 @@ class SaunaRuntime:
                         error,
                     )
 
+        if self.session:
+            parameters = self.recognition_parameters
+            if "presence" not in parameters:
+                from .recognition_parameters import shipped_parameters
+
+                parameters = shipped_parameters()
+            self.controller.set_presence_parameters(parameters)
         self.detector = (
             ClimateRecognizer(
                 self.recognition_parameters,

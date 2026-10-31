@@ -8,8 +8,8 @@ from types import SimpleNamespace
 import unittest
 from unittest.mock import AsyncMock, Mock, patch
 
-from test_cooling import at, controller
-from test_foundation import bindings, event, parameters
+from test_cooling import at, controller as plain_controller
+from test_foundation import bindings, event, parameters, ideal_presence
 
 from custom_components.ha_sauna.bindings import Bindings
 from custom_components.ha_sauna.archive import plain
@@ -18,6 +18,11 @@ from custom_components.ha_sauna.core.recognition import Detection
 from custom_components.ha_sauna.core.presence import binary_presence
 from custom_components.ha_sauna.core.timeline import Confirmation, Event, Kind
 from custom_components.ha_sauna.runtime import Configuration, SaunaRuntime
+
+
+def controller(**overrides):
+    """Gang control with the sharply timed presence sensor."""
+    return ideal_presence(plain_controller(**overrides))
 
 
 ENTITY = "binary_sensor.presence"
@@ -38,6 +43,7 @@ class PresenceRuntimeProbe:
             ),
             clock=lambda: self.clock[0],
         )
+        ideal_presence(self.runtime)
         self.runtime.controller.set_temperature(70, at(0))
         self.runtime.controller.set_operation(True, at(0), session_id="s")
 
@@ -99,6 +105,7 @@ def runtime_with_clock(clock):
         ),
         clock=lambda: clock[0],
     )
+    ideal_presence(runtime)
     minimum = runtime.configuration.parameters.values["sauna_min_temperature_c"]
     runtime.controller.set_temperature(minimum, at(0))
     runtime.controller.set_operation(True, at(0), session_id="s")
@@ -372,7 +379,7 @@ class PresenceHandoverTests(unittest.TestCase):
         self.assertEqual(completed.gang_id, original.gang_id)
         self.assertEqual(completed.infusion_events, original.infusion_events)
         self.assertEqual(completed.ended_at, at(returned + 2))
-        self.assertEqual(completed.end_reason, "presence_exit")
+        self.assertEqual(completed.end_reason, "ventilation")
         self.assertIn(
             event("exit-ventilation", Kind.VENTILATION, returned + 2),
             c.session.timeline.processed,

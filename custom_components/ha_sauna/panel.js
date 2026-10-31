@@ -416,7 +416,7 @@ const events = {
   operation_off: "Betrieb ausgeschaltet",
   confirmation_expired: "Vorläufigen Gang aufgehoben",
   presence_confirmed: "Gangbeginn · Präsenz nach Türvorgang",
-  presence_ended: "Gangende · Abwesenheit und Durchlüften",
+  presence_ended: "Gangende · leere Kabine nach Austrittsöffnung",
   presence_close_ended: "Gangende · Türschluss ohne dauerhafte Anwesenheit",
 };
 const historyEventMarkerKinds = new Set(["door_open", "door_close", "infusion"]);
@@ -9981,8 +9981,8 @@ class SaunaPanel extends HTMLElement {
             {
               door_open: "Türöffnung erkannt",
               door_close: "Türschluss erkannt",
-              presence_confirmed: "Türvorgang abgeschlossen · Präsenz belegt",
-              presence_ended: "Austrittsöffnung · Abwesenheit und Durchlüften belegt",
+              presence_confirmed: "Türschluss mit Anwesenheit · Aufenthalt belegt",
+              presence_ended: "Austrittsöffnung · leere Kabine belegt",
               presence_close_ended: "Türschluss · keine dauerhafte Sensoranwesenheit",
               infusion: "Feuchteanstieg erkannt",
             }[e.kind] ||

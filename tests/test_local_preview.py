@@ -384,7 +384,8 @@ class LocalPreviewTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             self.preview.action("/preview/finish_phase", body)
         self.assertEqual(len(self.preview.c.session.after_run_history), 1)
-        for action in ("door_open", "on", "door_close", "door_open", "off"):
+        # The stay is established once presence outlasts the sensor's hold time.
+        for action in ("door_open", "on", "door_close", "step", "door_open", "off"):
             self.preview.action("/simulate", {"action": action})
         self.assertIsNotNone(self.preview.c.session.timeline.active)
         self.assertIsNone(self.preview.c.session.after_run)

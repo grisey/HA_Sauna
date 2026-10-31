@@ -1,25 +1,39 @@
-"""Sensor-Gangende beim bestätigten Türschluss ohne belegte Dauerpräsenz."""
+"""Sensor-Gangende: Lüften oder leere Kabine nach der Austrittsöffnung."""
 
 import unittest
 
-from test_cooling import at, controller
+from test_cooling import at
+from test_cooling import controller as plain_controller
 from test_durable_presence import close_event
-from test_foundation import event, selected_occupancy
-from test_presence_handover import ENTITY, RECOVERY, PresenceRuntimeProbe, fallback, report
+from test_foundation import event, ideal_presence, selected_occupancy
+from test_presence_handover import (
+    ENTITY,
+    RECOVERY,
+    PresenceRuntimeProbe,
+    fallback,
+    report,
+)
 
 from custom_components.ha_sauna.core.presence import binary_presence
 from custom_components.ha_sauna.core.timeline import Confirmation, Kind
 
 
-class PresenceCloseFallbackTests(unittest.TestCase):
-    def setUp(self):
-        self.c = controller()
+def controller(**overrides):
+    """Gang control with the sharply timed presence sensor."""
+    return ideal_presence(plain_controller(**overrides))
+
+
+class PresenceExitTests(unittest.TestCase):
+    def setUp(self, *, learned=False):
+        self.c = plain_controller() if learned else controller()
         self.c.set_temperature(
             self.c.parameters.values["sauna_min_temperature_c"], at(0),
         )
         self.c.process(event("entry-open", Kind.DOOR_OPEN, 1))
         self.presence("on", 2)
         self.c.process(close_event())
+        if learned:
+            self.c.advance(at(60))
         self.assertIsNotNone(self.c.session.timeline.active)
         self.gang_id = self.c.session.timeline.active.gang_id
         self.assertEqual(
@@ -39,101 +53,122 @@ class PresenceCloseFallbackTests(unittest.TestCase):
         self.assertEqual(self.c.session.timeline.completed, ())
         self.assertIsNone(self.c.session.after_run)
 
-    def assert_ended_once(self, second, *, ending=Kind.PRESENCE_CLOSE_ENDED):
+    def assert_ended_once(self, decided, ended, *, ending=Kind.PRESENCE_ENDED):
         self.assertIsNone(self.c.session.timeline.active)
         self.assertEqual(self.c.session.timeline.gang_count, 1)
         self.assertEqual(len(self.c.session.timeline.completed), 1)
         gang = self.c.session.timeline.completed[0]
         self.assertEqual(gang.gang_id, self.gang_id)
-        self.assertEqual(gang.ended_at, at(second))
+        self.assertEqual(gang.ended_at, at(ended))
         self.assertEqual(
             gang.end_reason,
-            "presence_close" if ending == Kind.PRESENCE_CLOSE_ENDED else "presence_exit",
+            "presence_exit" if ending == Kind.PRESENCE_ENDED else "ventilation",
         )
         end_event = next(
             item for item in self.c.session.timeline.processed
             if item.event_id == gang.end_event_id
         )
         self.assertEqual(end_event.kind, ending)
-        self.assertEqual(end_event.booking_at, at(second))
-        self.assertEqual(self.c.session.after_run.requested_at, at(second))
+        self.assertEqual(end_event.booking_at, at(decided))
+        self.assertEqual(self.c.session.after_run.requested_at, at(decided))
         self.assertEqual(self.c.phase, "nachlauf")
         self.assertFalse(self.c.last_decision.heat)
         self.assertEqual(sum(
             item.kind == "gang_ended" for item in self.c.consumer_events
         ), 1)
-        phases = self.c.phase_projection(at(second + 1)).intervals
+        # The operating phase remains the gang until its end was decided.
+        phases = self.c.phase_projection(at(decided + 1)).intervals
         gang_phase = next(
             item for item in reversed(phases)
             if item.phase == "saunagang" and item.source_id == self.gang_id
         )
         cooling_phase = next(item for item in phases if item.phase == "nachlauf")
         self.assertTrue(gang_phase.complete)
-        self.assertEqual(gang_phase.ended_at, at(second))
+        self.assertEqual(gang_phase.ended_at, at(decided))
         self.assertEqual(cooling_phase.started_at, gang_phase.ended_at)
 
     def test_absence_without_a_new_opening_does_not_end_the_gang(self):
         self.presence("off", 8)
-        self.c.advance(at(9))
+        self.c.advance(at(900))
         self.assert_still_running()
         with self.assertRaises(ValueError):
             self.c.process(close_event(
-                candidate=10, confirmed=12, received=13, key="unpaired-close",
+                candidate=910, confirmed=912, received=913, key="unpaired-close",
             ))
         self.assert_still_running()
 
-    def test_new_opening_and_absence_wait_for_the_confirmed_closure(self):
+    def test_absence_after_the_opening_ends_the_gang_at_the_opening(self):
         self.c.process(event("exit-open", Kind.DOOR_OPEN, 8))
         self.presence("off", 9)
-        self.c.advance(at(12))
+        self.c.advance(at(9.5))
         self.assert_still_running()
-        closure = close_event(
-            candidate=10, confirmed=12, received=13, key="exit-close",
-        )
-        self.c.process(closure)
-        self.assert_ended_once(13)
+        self.c.advance(at(12))
+        self.assert_ended_once(12, 8)
         self.assertFalse(any(
             item.kind == Kind.VENTILATION for item in self.c.session.timeline.processed
         ))
+        closure = close_event(candidate=10, confirmed=12, received=13, key="exit-close")
+        self.c.process(closure)
         self.assertFalse(self.c.process(closure).changed)
         self.c.advance(at(14))
-        self.assert_ended_once(13)
+        self.assert_ended_once(12, 8)
 
-    def test_continuous_on_prevents_fallback_without_another_sensor_report(self):
+    def test_presence_at_the_closing_keeps_the_stay_without_another_report(self):
         original_report = self.c.direct_presence.report_id
         self.c.process(event("exit-open", Kind.DOOR_OPEN, 8))
         self.c.process(close_event(
             candidate=10, confirmed=12, received=13, key="occupied-close",
         ))
+        self.c.advance(at(900))
         self.assert_still_running()
         self.assertEqual(self.c.direct_presence.report_id, original_report)
         self.assertEqual(sum(
             item.kind == "gang_confirmed" for item in self.c.consumer_events
         ), 1)
 
-    def test_short_on_during_the_door_operation_is_not_durable_presence(self):
+    def test_later_absence_cannot_undo_an_established_stay(self):
+        self.c.process(event("exit-open", Kind.DOOR_OPEN, 8))
+        self.c.process(close_event(
+            candidate=10, confirmed=12, received=13, key="occupied-close",
+        ))
+        self.presence("off", 20)
+        self.c.advance(at(4000))
+        self.assert_still_running()
+
+    def test_short_presence_during_the_door_operation_is_no_stay(self):
         for changes in (
             (("off", 9), ("on", 10.5), ("off", 11.5)),
-            (("off", 9), ("on", 11)),
+            (("off", 9), ("on", 10.5)),
         ):
             with self.subTest(changes=changes):
-                self.setUp()
-                self.c.process(event("exit-open", Kind.DOOR_OPEN, 8))
+                self.setUp(learned=True)
+                self.c.process(event("exit-open", Kind.DOOR_OPEN, 68))
                 for state, second in changes:
-                    self.presence(state, second)
+                    self.presence(state, second + 60)
                 self.assert_still_running()
                 self.c.process(close_event(
-                    candidate=10, confirmed=12, received=13, key="brief-visit-close",
+                    candidate=70, confirmed=72, received=73, key="brief-visit-close",
                 ))
-                self.assert_ended_once(13)
+                self.assert_ended_once(73, 68)
 
-    def test_interrupted_on_during_confirmation_ends_at_closure_booking(self):
+    def test_learned_hold_after_the_exit_closing_ends_the_gang_at_the_opening(self):
+        self.setUp(learned=True)
+        self.c.process(event("exit-open", Kind.DOOR_OPEN, 100))
+        self.c.process(close_event(candidate=110, confirmed=112, received=113, key="exit-close"))
+        self.presence("off", 118)
+        self.c.advance(at(200))
+        self.assert_still_running()
+        self.c.advance(at(1200))
+        self.assert_ended_once(1200, 100)
+        self.assertIn("exit-close", self.c.session.timeline.rejected_start_sources)
+
+    def test_presence_ending_right_after_the_exit_closing_is_the_sensor_hold(self):
         self.c.process(event("exit-open", Kind.DOOR_OPEN, 8))
         self.presence("off", 11)
         self.c.process(close_event(
             candidate=10, confirmed=12, received=15, key="delayed-exit-close",
         ))
-        self.assert_ended_once(15)
+        self.assert_ended_once(15, 8)
 
     def test_unknown_or_unavailable_sensor_does_not_prove_an_exit(self):
         for missing in ("unknown", "unavailable"):
@@ -144,14 +179,14 @@ class PresenceCloseFallbackTests(unittest.TestCase):
                 self.c.process(close_event(
                     candidate=10, confirmed=12, received=13, key="unknown-close",
                 ))
-                self.c.advance(at(14))
+                self.c.advance(at(900))
                 self.assert_still_running()
 
     def test_closure_does_not_end_again_after_ventilation_already_finished(self):
         self.c.process(event("exit-open", Kind.DOOR_OPEN, 8))
         self.presence("off", 9)
-        self.c.process(event("exit-vent", Kind.VENTILATION, 10))
-        self.assert_ended_once(10, ending=Kind.PRESENCE_ENDED)
+        self.c.process(event("exit-vent", Kind.VENTILATION, 9.5))
+        self.assert_ended_once(9.5, 9.5, ending=Kind.VENTILATION)
         cooling_id = self.c.session.after_run.phase_id
         closure = close_event(
             candidate=12, confirmed=14, received=15, key="after-vent-close",
@@ -159,18 +194,45 @@ class PresenceCloseFallbackTests(unittest.TestCase):
         self.c.process(closure)
         self.assertFalse(self.c.process(closure).changed)
         self.c.advance(at(16))
-        self.assert_ended_once(10, ending=Kind.PRESENCE_ENDED)
+        self.assert_ended_once(9.5, 9.5, ending=Kind.VENTILATION)
         self.assertEqual(self.c.session.after_run.phase_id, cooling_id)
 
-    def test_fallback_does_not_need_the_minimum_temperature_again(self):
+    def test_presence_through_the_ventilated_exit_belongs_to_the_departing_person(self):
+        self.c.process(event("exit-open", Kind.DOOR_OPEN, 8))
+        self.c.process(event("exit-vent", Kind.VENTILATION, 9))
+        self.assert_ended_once(9, 9, ending=Kind.VENTILATION)
+        self.c.process(close_event(candidate=10, confirmed=12, received=13, key="exit-close"))
+        # The sensor reports the departure only well after the closing.
+        self.presence("off", 140)
+        self.c.advance(at(900))
+        self.assertIsNone(self.c.session.timeline.active)
+        self.assertEqual(self.c.session.timeline.gang_count, 1)
+        self.assertFalse(any(
+            item.kind == Kind.PRESENCE_CONFIRMED and item.effective_at > at(3)
+            for item in self.c.session.timeline.processed
+        ))
+
+    def test_return_after_the_seen_departure_starts_a_new_stay(self):
+        self.c.process(event("exit-open", Kind.DOOR_OPEN, 8))
+        self.c.process(event("exit-vent", Kind.VENTILATION, 9))
+        self.presence("off", 9.5)
+        self.presence("on", 11)
+        self.c.process(close_event(candidate=12, confirmed=13, received=14, key="return-close"))
+        gang = self.c.session.timeline.active
+        self.assertIsNotNone(gang)
+        self.assertNotEqual(gang.gang_id, self.gang_id)
+        self.assertEqual(gang.start_source_event_id, "return-close")
+        self.assertEqual(gang.started_at, at(12))
+
+    def test_exit_does_not_need_the_minimum_temperature_again(self):
         self.c.process(event("exit-open", Kind.DOOR_OPEN, 8))
         self.presence("off", 9)
         minimum = self.c.parameters.values["sauna_min_temperature_c"]
-        self.c.set_temperature(minimum - 1, at(10))
+        self.c.set_temperature(minimum - 1, at(9.2))
         self.c.process(close_event(
             candidate=10, confirmed=12, received=13, key="cold-exit-close",
         ))
-        self.assert_ended_once(13)
+        self.assert_ended_once(13, 8)
 
     def test_empty_door_operation_without_a_gang_creates_no_completion(self):
         c = controller()
@@ -178,13 +240,14 @@ class PresenceCloseFallbackTests(unittest.TestCase):
         absence = binary_presence(ENTITY, "off", at(2), at(2))
         c.consume_occupancy_input(selected_occupancy(absence, at(2)))
         c.process(close_event())
+        c.advance(at(900))
         self.assertIsNone(c.session.timeline.active)
         self.assertEqual(c.session.timeline.completed, ())
         self.assertIsNone(c.session.after_run)
         self.assertFalse(any(item.kind == "gang_ended" for item in c.consumer_events))
 
 
-class ProxyCloseFallbackExclusionTests(unittest.TestCase):
+class ProxyExitTests(unittest.TestCase):
     def test_proxy_uses_person_confirmation_and_ventilation_without_sensor_presence(self):
         for confirmed in (False, True):
             with self.subTest(confirmed=confirmed):
@@ -225,7 +288,7 @@ class ProxyCloseFallbackExclusionTests(unittest.TestCase):
                     self.assertEqual(probe.session.timeline.retracted[0].gang_id, gang_id)
                     self.assertIsNone(probe.session.after_run)
 
-    def test_external_sensor_off_does_not_enable_fallback_in_selected_proxy_mode(self):
+    def test_external_sensor_off_does_not_end_a_gang_in_selected_proxy_mode(self):
         probe = PresenceRuntimeProbe(presence_source="proxy")
         probe.set_temperature(
             probe.parameters.values["sauna_min_temperature_c"], at(0),
@@ -239,6 +302,7 @@ class ProxyCloseFallbackExclusionTests(unittest.TestCase):
         probe.process(close_event(
             candidate=10, confirmed=12, received=13, key="exit-close",
         ))
+        probe.advance(at(900))
         self.assertEqual(probe.presence_source, "proxy")
         self.assertEqual(probe.session.timeline.active.gang_id, gang_id)
         self.assertEqual(probe.session.timeline.completed, ())
@@ -265,7 +329,7 @@ class PresenceExitSourceChangeTests(unittest.TestCase):
         self.assertEqual(completed.end_reason, "ventilation")
         self.assertEqual(probe.session.timeline.gang_count, 1)
 
-    def test_recovered_sensor_requires_absence_for_a_gang_started_in_proxy_mode(self):
+    def test_recovered_sensor_ends_a_proxy_gang_by_absence_after_its_opening(self):
         probe = PresenceRuntimeProbe()
         switched = fallback(probe)
         for key, kind, offset in (
@@ -281,12 +345,12 @@ class PresenceExitSourceChangeTests(unittest.TestCase):
         returned = switched + 6 + probe.parameters.values[RECOVERY]
         probe.advance_presence_source(at(returned))
         self.assertEqual(probe.presence_source, "ha_presence")
-        probe.process(event("exit-vent", Kind.VENTILATION, returned + 1))
         self.assertEqual(probe.session.timeline.active, original)
-        report(probe, "off", returned + 2)
+        report(probe, "off", returned + 1)
+        probe.advance(at(returned + 4))
         self.assertIsNone(probe.session.timeline.active)
         completed = probe.session.timeline.completed[0]
         self.assertEqual(completed.gang_id, original.gang_id)
         self.assertEqual(completed.recognition_kind, Kind.PERSON_STRONG)
         self.assertEqual(completed.end_reason, "presence_exit")
-        self.assertEqual(completed.ended_at, at(returned + 2))
+        self.assertEqual(completed.ended_at, at(switched + 5))

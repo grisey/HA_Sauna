@@ -215,7 +215,8 @@ mindestens 20 Messschritte.
 Der Zeitpunkt der Stufe ist der Knick.
 
 Lüften und Durchgelüftet sind Eigenschaften der Türöffnung. Ob sie einen Gang
-beenden, entscheidet das [Gangmodell](gangmodell.md).
+beenden, entscheidet das [Gangmodell](gangmodell.md). Dort sind auch die
+gelernten Zeiten eines Präsenzsensors beschrieben.
 
 ## Gelernte Größen und Nachlernen
 

@@ -56,6 +56,29 @@ def event(key, kind, seconds, session="s"):
                  if kind == Kind.DOOR_CLOSE else None)
 
 
+# A sharply timed presence sensor: its hold time is far below one second and a
+# dropout ends within about a second. Presence at a closing establishes the
+# stay at once, and absence after an opening proves an empty cabin within two
+# seconds. Tests of the learned sensor times use the shipped parameters.
+IDEAL_PRESENCE = {
+    "presence": {
+        "hold": [1.0, 0.1], "stay": [8.2, 1.0], "dropout": [0.0, 0.2], "vacancy": [11.5, 1.0],
+    },
+    "decision": {"evidence_ratio": 150.0},
+}
+
+
+def ideal_presence(target):
+    """Use the sharply timed sensor in a controller or a runtime."""
+    controller = getattr(target, "controller", target)
+    controller.set_presence_parameters(IDEAL_PRESENCE)
+    if controller is not target:
+        from custom_components.ha_sauna.recognition_parameters import shipped_parameters
+
+        target.recognition_parameters = {**shipped_parameters(), **IDEAL_PRESENCE}
+    return target
+
+
 def selected_occupancy(report, evaluated_at):
     """Pass an already selected report across the source-free control boundary."""
     return OccupancyInput(
