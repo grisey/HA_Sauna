@@ -127,7 +127,7 @@ wird ebenso entschieden.
 | Ereignis | Zustand |
 | --- | --- |
 | Tür auf | Beginn des Zustands offen, zusätzlich durch die Öffnungsform belegt (siehe unten) |
-| Tür zu | Übergang aus offen in die Erholung (die Temperatur steigt wieder), in einen Aufguss oder in das Abklingen; bei länger ausgeschaltetem Ofen auch in die geschlossene, abkühlende Kabine |
+| Tür zu | Ende des Zustands offen: Übergang in einen Zustand der geschlossenen Kabine (Erholung, zu, Heizwechsel) oder in Aufguss bzw. Abklingen |
 | Aufguss | Beginn des Zustands Aufguss |
 | Aufgussende | Ende von Aufguss und Abklingen zusammen; öffnet sich vorher die Tür, endet der Aufguss mit der Öffnung |
 
@@ -170,13 +170,14 @@ Erholung erwartet; dann genügt, dass der Temperaturabfall langsamer wird
 (`e > s`). Ohne
 gelernte Form oder ohne solchen Knick gilt der erste Schritt des Übergangs.
 
-Ohne Heizung gibt es nach dem Schließen keine Erholung. Deshalb endet eine
-Öffnung bei ausgeschaltetem Ofen auch in den Zustand zu oder Heizwechsel; bei
-heizendem Ofen nicht, damit ein Ausschlag mitten in einer Öffnung sie nicht
-teilt. Nach dem Ausschalten heizen Steine und Wände weiter: Als aus gilt der
-Ofen erst, wenn er so lange als aus gemeldet ist wie die gelernte
-Rückkehrzeit der Grunddrift der Temperatur (die Zeit, in der eine Änderung
-der Heizwirkung in der geschlossenen Kabine nachwirkt).
+Nach dem Schließen steigt die Temperatur nicht immer wieder an: beim Aufheizen
+läuft der Anstieg mit der Heizsteigung weiter, bei kurz zuvor ausgeschaltetem
+oder gerade eingeschaltetem Ofen fällt sie langsam weiter. Die Öffnung endet
+deshalb in jeden Zustand der geschlossenen Kabine. Für die Vergleichsform des
+Schließens gilt der Ofen erst als aus, wenn er so lange als aus gemeldet ist
+wie die gelernte Rückkehrzeit der Grunddrift der Temperatur (die Zeit, in der
+eine Änderung der Heizwirkung in der geschlossenen Kabine nachwirkt); bis
+dahin heizen Steine und Wände weiter.
 
 Mehrere Güsse gehören zu einem Aufguss, solange das Abklingen des vorigen
 Gusses nicht erkennbar abgeflacht ist. Abgeflacht heißt: Die Feuchtesteigung

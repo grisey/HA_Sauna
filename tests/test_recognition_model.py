@@ -411,6 +411,29 @@ class RecognizerTests(unittest.TestCase):
         self.assertEqual(form["atypical"], ["S@odd"])
         self.assertEqual(form["closings"], 4)
 
+    def test_a_closing_without_recovery_ends_the_opening(self):
+        # R05 99:21–99:33: the heater was switched off shortly before; after the short opening the cabin keeps
+        # cooling slowly instead of recovering.  The opening ends into the closed cabin all the same.
+        root = Path(__file__).resolve().parent
+        params = json.loads((root.parent / "custom_components/ha_sauna/recognition_parameters.json").read_text())
+        roles = {"upper_temperature": (Position.UPPER, Quantity.TEMPERATURE),
+                 "upper_humidity": (Position.UPPER, Quantity.HUMIDITY),
+                 "lower_temperature": (Position.LOWER, Quantity.TEMPERATURE),
+                 "lower_humidity": (Position.LOWER, Quantity.HUMIDITY)}
+        recognizer = ClimateRecognizer(params, T0)
+        for line in gzip.open(root / "fixtures/replay/R05.samples.jsonl.gz"):
+            row = json.loads(line)
+            if row["role"] not in roles or not 85 * 60 <= row["t"] <= 105 * 60:
+                continue
+            at = T0 + timedelta(seconds=row["t"])
+            recognizer.accept(Measurement(*roles[row["role"]], float(row["value"]), str(row["value"]), "s", at))
+            recognizer.advance(at - timedelta.resolution)
+        times = [((d.kind, (d.effective_at - T0).total_seconds())) for d in recognizer.detections]
+        opened = [t for kind, t in times if kind is Kind.DOOR_OPEN and abs(t - (99 * 60 + 21)) <= 30]
+        closed = [t for kind, t in times if kind is Kind.DOOR_CLOSE and t > opened[0]]
+        self.assertTrue(closed)
+        self.assertLessEqual(abs(closed[0] - (99 * 60 + 33)), 30)
+
     def test_recognition_starts_in_hot_operation(self):
         # the cabin heats up from 80 °C: an opening while it is below the minimum temperature is not recognised
         t, y = cabin(n=1100, door=(700.0, 900.0), seed=4)

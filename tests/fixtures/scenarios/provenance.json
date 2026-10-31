@@ -119,19 +119,19 @@
     },
     {
       "id": "I03",
-      "duration_s": 10447.079,
+      "duration_s": 10431.416,
       "human_stays": 2,
       "evaluations": 17,
       "climate_file": "I03.measurements.json",
-      "climate_sha256": "b8dc1f710ba93237f89f8d218094539221fb55e42ce3f8f238d96d2bbc5cd25c"
+      "climate_sha256": "208ea75dbf0a9a67d96ec954b609b1b24357102ca748ba20ba5230aca0a0eef8"
     },
     {
       "id": "I04",
-      "duration_s": 9578.942,
+      "duration_s": 9525.018,
       "human_stays": 2,
       "evaluations": 10,
       "climate_file": "I04.measurements.json",
-      "climate_sha256": "eec59277c7308b07a6c8d8f262ac322899f0850f4770b97fc1bfd42ff844ebd3"
+      "climate_sha256": "07289fde394206abaefda0c0f183714980b426a7f1a2b2bba4c53bd026f87c97"
     },
     {
       "id": "I05-proxy",

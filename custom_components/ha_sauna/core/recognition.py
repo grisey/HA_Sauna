@@ -398,7 +398,7 @@ class ClimateRecognizer:
         self._last_time: datetime | None = None
         self._steps = 0
         self._buffer: deque = deque()                         # (step, filtered mu, lik, T) of undecided steps
-        self._door = _Track((OPEN,), exits=(RECOVERY, INFUSION, DECAY))   # a closing: recovery sets in (or steam)
+        self._door = _Track((OPEN,))                       # a closing: any state of the closed cabin
         self._infusion = _Track((INFUSION,))
         self._steam = _Track((INFUSION, DECAY))                # infusion rise and decay together
         self._pour: int | None = None                         # start step of the latest pour
@@ -699,9 +699,7 @@ class ClimateRecognizer:
         if self.record is not None:
             self.record.door_prob.append((self._steps - 1, float(self._post[-1][OPEN])))
         out: list = []
-        steps = range(self._post_base, self._post_base + len(self._post))
-        cooling = [(CLOSED, SHIFT) if off else () for off in self._heater_off(steps)]
-        for what, index, confirmed in self._door.scan(self._post, self._post_base, ratio, cooling):
+        for what, index, confirmed in self._door.scan(self._post, self._post_base, ratio):
             self._explain(Kind.DOOR_OPEN if what == "start" else Kind.DOOR_CLOSE, index, confirmed, (OPEN,), at,
                           what == "start")
             p_open = float(self._posterior(index)[OPEN])

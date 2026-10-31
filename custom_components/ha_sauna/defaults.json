@@ -93,7 +93,7 @@
       "allow_zero": false,
       "optional": false,
       "maximum": 100,
-      "default": 60,
+      "default": 50,
       "minimum": null,
       "integer": false,
       "description": "Untergrenze für die Solltemperatur. Ein neuer Saunagang kann erst beginnen, wenn eine gültige Temperaturmessung diesen Wert erreicht.",
