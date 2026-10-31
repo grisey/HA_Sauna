@@ -30,9 +30,7 @@ wirksame Präsenzquelle.
 
 ## Eintritt, Aufenthalt und Verlassen
 
-Türöffnung und Türschluss werden ab dem heißen Betrieb erkannt, also ab dem ersten
-Erreichen der Mindesttemperatur in der Sitzung ([Erkennung](erkennung.md)); danach auch
-unterhalb der Mindesttemperatur.
+Türöffnung und Türschluss werden unabhängig von der Mindesttemperatur erkannt.
 Der initiale Türzustand ist geschlossen; er ersetzt keine beobachtete Öffnung.
 
 | Situation | Gangerkennung |

@@ -16,12 +16,6 @@ kennt weder Sitzung noch Gang; sie erhält Messwerte und die Rückmeldung, ob
 der Ofen heizt, und liefert Ereignisse mit physikalischem Zeitpunkt und
 Bestätigungszeitpunkt.
 
-Die Erkennung arbeitet im heißen Betrieb: Sie beginnt mit dem ersten
-Messschritt, dessen Temperatur (Takt der Auswertung, siehe Messkanäle) die
-Mindesttemperatur erreicht, ab der ein Saunagang beginnen kann. Türvorgänge
-beim Aufheizen davor werden nicht erkannt. Beginn, Temperatur und
-Mindesttemperatur stehen im Entscheidungsprotokoll (`hot_operation`).
-
 ## Messkanäle
 
 Je Messposition (oben, unten) gehen Temperatur und die daraus und aus der
