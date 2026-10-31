@@ -8,7 +8,9 @@ im Betrieb; Gangmodell, Steuerung und Nachlauf bleiben unverändert.  Die
 Schützrückmeldung folgt der Heizanforderung.  Ohne ``--presence`` gilt das
 Proxyverfahren (Erkennung aus Temperatur und Feuchte); mit ``--presence``
 erreichen aufgezeichnete Präsenzmeldungen (Rolle ``presence``) die Laufzeit
-als Präsenzsensor, sofern die Aufzeichnung ihn verwendet.  Ergebnis je
+als Präsenzsensor, sofern die Aufzeichnung ihn verwendet.  Mit
+``--heater recorded`` folgt die Schützrückmeldung dem aufgezeichneten
+Schützzustand (Rolle ``heater``) statt der Heizanforderung.  Ergebnis je
 Aufzeichnung: erkannte Ereignisse, gebuchte und abgelehnte Ereignisse,
 Gänge.
 """
@@ -53,12 +55,16 @@ def iso(at):
 PRESENCE = "binary_sensor.praesenz"
 
 
-async def replay(case_dir: Path, parameters: dict | None, *, presence: bool = False):
+async def replay(case_dir: Path, parameters: dict | None, *, presence: bool = False, heater: str = "demand"):
     case = json.loads((case_dir / "case.json").read_text())
     rows = [json.loads(line) for line in gzip.open(case_dir / "samples.jsonl.gz")]
     rows.sort(key=lambda r: r["t"])
     direct = (presence and (case.get("configuration") or {}).get("presence_source") == "ha_presence"
               and any(r["role"] == "presence" for r in rows))
+    recorded_heater = [(r["t"], r["value"]) for r in rows if r["role"] == "heater" and isinstance(r["value"], bool)]
+    if heater == "recorded" and not recorded_heater:
+        raise ValueError(f"{case_dir.name}: keine aufgezeichnete Schützrückmeldung")
+    heater_state = [None]
     actions = case.get("actions") or case.get("bound_actions") or []
     switches = sorted((a["t"], a["name"] == "start") for a in actions if a["name"] in ("start", "stop"))
     if not switches:
@@ -99,6 +105,10 @@ async def replay(case_dir: Path, parameters: dict | None, *, presence: bool = Fa
         while index < len(rows) and rows[index]["t"] <= second:
             r = rows[index]
             index += 1
+            if r["role"] == "heater":
+                if isinstance(r["value"], bool):
+                    heater_state[0] = r["value"]
+                continue
             if direct and r["role"] == "presence" and isinstance(r["value"], bool):
                 at = ORIGIN + timedelta(seconds=r["t"])
                 reports.append(binary_presence(PRESENCE, "on" if r["value"] else "off", at, at))
@@ -131,7 +141,10 @@ async def replay(case_dir: Path, parameters: dict | None, *, presence: bool = Fa
             for m in latest.values():
                 runtime.detector.accept(m)
         if c.session is not None:
-            demand = bool(c.last_decision and c.last_decision.heat)
+            if heater == "recorded":
+                demand = heater_state[0]
+            else:
+                demand = bool(c.last_decision and c.last_decision.heat)
             c.report_contactor(demand, now[0])
             c.report_heating(demand, now[0])
             sessions[c.session.session_id] = c.session
@@ -161,12 +174,15 @@ def main():
     ap.add_argument("--out", required=True)
     ap.add_argument("--presence", action="store_true",
                     help="aufgezeichnete Präsenzmeldungen verwenden, wenn die Aufzeichnung den Sensor nutzt")
+    ap.add_argument("--heater", choices=("demand", "recorded"), default="demand",
+                    help="Schützrückmeldung aus der Heizanforderung oder aus der Aufzeichnung")
     ap.add_argument("recordings", nargs="+")
     args = ap.parse_args()
     parameters = json.loads(Path(args.params).read_text()) if args.params else None
     out = {}
     for name in args.recordings:
-        out[name] = asyncio.run(replay(Path(args.data) / name, parameters, presence=args.presence))
+        out[name] = asyncio.run(replay(Path(args.data) / name, parameters, presence=args.presence,
+                                       heater=args.heater))
         g = out[name]["gangs"]
         print(name, "Gänge", len([x for x in g if x["confirmation"] == "confirmed"]),
               "verworfen", len(out[name]["retracted"]), "abgelehnt", len(out[name]["rejected"]), flush=True)
