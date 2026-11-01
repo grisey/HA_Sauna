@@ -9,7 +9,7 @@
 | Home-Assistant-Integrationskonfiguration | **Daten und Laufzeit**: Messkontext vor und nach archivierten Sitzungen. |
 | Sauna-Panel → **Einstellungen** | **Programme und Start**: Programmbibliothek sowie Taster- und Startvorgaben. |
 | Sauna-Panel → **Einstellungen** | **Darstellung**: Instrumente, Farben, Diagramme, Aktualisierung, Bedienung, Seitengrößen und Gestaltung sowie konstante Temperaturen der Schnellwahl. |
-| Sauna-Panel → **Einstellungen** | **Daten und Wartung**: Archiv, Protokollierung und Zurücksetzen. |
+| Sauna-Panel → **Einstellungen** | **Daten und Wartung**: Archiv, [Lernsitzungen](erkennung.md#gelernte-größen-und-nachlernen), Protokollierung und Zurücksetzen. |
 | Sauna-Panel → **Einstellungen** | **Persönlich**: Sauna als Startseite des aktuellen Home-Assistant-Profils. |
 | Sauna-Panel → Steuerung | Aktuelle Temperaturwahl und vorübergehende Ofen- oder Lichtwahl. |
 
@@ -129,7 +129,7 @@ HA-Aktualisierungszeit bleiben getrennt.
 | --- | --- |
 | Solltemperaturen | Gemeinsame Grenzen für direkte Wahl, Programme und Tastervorgabe. Eingaben und Zwischenstufen werden auf ganze Grad gerundet; ab einem halben Grad aufwärts. |
 | Helligkeitsskala | Muss dem konfigurierten Maximalwert des Lichtgeräts entsprechen, damit eigene Befehle und Geräterückmeldungen zusammenpassen. |
-| Erkennung | Ohne einstellbare Schwellen: Die Größen des Zustandsmodells stammen aus bewerteten Aufzeichnungen und werden auf Anforderung aus den gesammelten Sitzungsbelegen nachgelernt ([Erkennung](erkennung.md#gelernte-größen-und-nachlernen)). Gespeicherte Werte der früheren Kurvenerkennung bleiben lesbar, wirken aber nicht. |
+| Erkennung | Ohne einstellbare Schwellen: Die Größen des Zustandsmodells stammen aus bewerteten Aufzeichnungen und werden auf Anforderung aus den Belegen freigegebener Sitzungen nachgelernt ([Erkennung](erkennung.md#gelernte-größen-und-nachlernen)). Gespeicherte Werte der früheren Kurvenerkennung bleiben lesbar, wirken aber nicht. |
 | Höchstalter der Messwerte | Muss die regulären Meldeabstände der jeweiligen Quelle abdecken. |
 | Sonnenstand für das Licht | Der Nachtgrenzwert muss unter dem Tagesgrenzwert liegen; dazwischen wird die Helligkeit überblendet. |
 | Aufheizschätzung | Mindestzahl und Zeitraum der Messpunkte, Rausch- und Abfallgrenzen sowie Glättungs- und Bestätigungszeiträume bestimmen, wann und wie eine verbleibende Aufheizzeit ausgewiesen wird. |

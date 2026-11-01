@@ -5674,6 +5674,8 @@ class SaunaPanel extends HTMLElement {
         this.archiveRevision = undefined;
         this.archiveAdminSessions = null;
         this.archiveDeletePending = null;
+        this.recognitionSessions = null;
+        this.recognitionSessionsMessage = "";
         this.historyLoad = null;
         this.shown = null;
         this.chartDataIndex = null;
@@ -14942,7 +14944,7 @@ class SaunaPanel extends HTMLElement {
       const contents = {
         programs: `<div class="card settings-programs"><h2>Programme</h2><div id="program-library"></div></div><div class="card"><h2>Start über Taster oder Betriebsschalter</h2><div id="button-settings"></div></div>`,
         appearance: admin ? this.appearanceSettingsMarkup() : "",
-        maintenance: `<div class="card"><h2>Sitzungsarchiv ${this.infoButton("archive-retention", "Gespeicherte Sitzungen", "Nur Sitzungen mit bestätigtem Saunagang bleiben im Archiv.")}</h2><button class="confirm" data-action="export">Archiv als ZIP herunterladen</button><div id="archive-management"></div></div><div class="card"><h2>Protokollierung ${this.infoButton("logging", "Protokollumfang", "Home-Assistant-Protokoll, unabhängig vom Sitzungsarchiv. Betriebsereignisse enthalten auch Fehler und Warnungen; Diagnose ergänzt Messwerte und Erkennungsprüfungen.")}</h2><div class="row"><label for="log-level">Umfang</label><select id="log-level"><option value="ERROR">Fehler</option><option value="INFO">Betriebsereignisse</option><option value="DEBUG">Detaillierte Diagnose</option></select><button data-action="logging" class="confirm">Übernehmen</button></div><a href="/config/logs">Home-Assistant-Protokoll öffnen</a></div><div class="card"><h2>Standards und Werkseinstellungen</h2><p>Vorschau für alle gespeicherten Felder einschließlich ausgeblendeter Einstellungen. Programmbibliothek und Gerätezuordnung werden in ihren eigenen Bereichen verwaltet.</p>${this.standardMenuButton({ all: true }, "Standards für alle Bereiche")}</div>`,
+        maintenance: `<div class="card"><h2>Sitzungsarchiv ${this.infoButton("archive-retention", "Gespeicherte Sitzungen", "Nur Sitzungen mit bestätigtem Saunagang bleiben im Archiv.")}</h2><button class="confirm" data-action="export">Archiv als ZIP herunterladen</button><div id="archive-management"></div></div><div class="card"><h2>Lernsitzungen ${this.infoButton("recognition-learning", "Freigabe für das Nachlernen", "Nach jeder Sitzung werden Lernbelege der Erkennung gespeichert, zunächst nicht freigegeben. Nur freigegebene Sitzungen gehen in die Aktion „Erkennung nachlernen“ ein.")}</h2><div id="recognition-learning"></div></div><div class="card"><h2>Protokollierung ${this.infoButton("logging", "Protokollumfang", "Home-Assistant-Protokoll, unabhängig vom Sitzungsarchiv. Betriebsereignisse enthalten auch Fehler und Warnungen; Diagnose ergänzt Messwerte und Erkennungsprüfungen.")}</h2><div class="row"><label for="log-level">Umfang</label><select id="log-level"><option value="ERROR">Fehler</option><option value="INFO">Betriebsereignisse</option><option value="DEBUG">Detaillierte Diagnose</option></select><button data-action="logging" class="confirm">Übernehmen</button></div><a href="/config/logs">Home-Assistant-Protokoll öffnen</a></div><div class="card"><h2>Standards und Werkseinstellungen</h2><p>Vorschau für alle gespeicherten Felder einschließlich ausgeblendeter Einstellungen. Programmbibliothek und Gerätezuordnung werden in ihren eigenen Bereichen verwaltet.</p>${this.standardMenuButton({ all: true }, "Standards für alle Bereiche")}</div>`,
         personal: `<div class="card"><h2>Persönliche Startseite ${this.infoButton("start-page", "Gültigkeit der Startseite", "Gilt nur für das aktuelle Home-Assistant-Profil.")}</h2><button data-action="default-page" class="confirm">Als Startseite festlegen</button><p id="start-page-status" class="muted" role="status"></p></div>`,
       };
       this.$("#settings").innerHTML =
@@ -14979,6 +14981,7 @@ class SaunaPanel extends HTMLElement {
       this.drawAppearanceStatus();
       this.syncAppearanceEditor();
       this.drawArchiveManagement();
+      this.drawRecognitionLearning();
     }
     this.renderProgramLibrary();
     this.drawButtonProgram();
@@ -15053,6 +15056,57 @@ class SaunaPanel extends HTMLElement {
     } finally {
       this.archiveAdminBusy = false;
       this.drawArchiveManagement();
+    }
+  }
+  drawRecognitionLearning() {
+    if (!this.state?.permissions?.admin || !this.$("#recognition-learning")) return;
+    const busy = this.recognitionSessionsBusy ? "disabled" : "",
+      sessions = this.recognitionSessions,
+      label = (session) =>
+        session.started_at
+          ? `Sitzung vom ${esc(this.when(session.started_at))}`
+          : `Sitzung ${esc(session.session_id)}`;
+    this.updateMarkup(
+      "#recognition-learning",
+      `<div class="row"><button data-action="learning-list" ${busy}>Lernsitzungen anzeigen</button></div>${sessions ? (sessions.length ? sessions.map((session) => `<div class="row"><span>${label(session)}: ${esc(session.door_openings)} Türöffnungen, ${esc(session.infusions)} Aufgüsse, ${session.released ? "freigegeben" : "nicht freigegeben"}</span><button data-action="learning-${session.released ? "withdraw" : "release"}:${esc(encodeURIComponent(session.session_id))}" ${busy}>${session.released ? "Freigabe zurücknehmen" : "Freigeben"}</button></div>`).join("") : "<p>Keine gespeicherten Lernbelege.</p>") : ""}<p role="status">${esc(this.recognitionSessionsMessage || "")}</p>`,
+    );
+  }
+  async loadRecognitionSessions() {
+    if (!this.state?.permissions?.admin || this.recognitionSessionsBusy) return;
+    const entry = this.entry,
+      generation = this.generation;
+    this.recognitionSessionsBusy = true;
+    this.recognitionSessionsMessage = "";
+    this.drawRecognitionLearning();
+    try {
+      const sessions = await this.api(`/${entry}/recognition/sessions`);
+      if (entry === this.entry && generation === this.generation)
+        this.recognitionSessions = sessions;
+    } finally {
+      this.recognitionSessionsBusy = false;
+      this.drawRecognitionLearning();
+    }
+  }
+  async releaseRecognitionSession(sessionId, released) {
+    if (!this.state?.permissions?.admin || this.recognitionSessionsBusy) return;
+    const entry = this.entry,
+      generation = this.generation;
+    this.recognitionSessionsBusy = true;
+    this.drawRecognitionLearning();
+    try {
+      const sessions = await this.api(`/${entry}/recognition/sessions`, "POST", {
+        session_id: sessionId,
+        released,
+      });
+      if (entry === this.entry && generation === this.generation) {
+        this.recognitionSessions = sessions;
+        this.recognitionSessionsMessage = released
+          ? "Sitzung für das Nachlernen freigegeben."
+          : "Freigabe zurückgenommen.";
+      }
+    } finally {
+      this.recognitionSessionsBusy = false;
+      this.drawRecognitionLearning();
     }
   }
   async eraseArchive() {
@@ -16055,6 +16109,21 @@ class SaunaPanel extends HTMLElement {
           ) || null;
       }
       this.drawArchiveManagement();
+      return;
+    }
+    if (action.startsWith("learning-")) {
+      if (!this.state?.permissions?.admin) return;
+      if (action === "learning-list") return this.loadRecognitionSessions();
+      if (action.startsWith("learning-release:"))
+        return this.releaseRecognitionSession(
+          decodeURIComponent(action.slice(17)),
+          true,
+        );
+      if (action.startsWith("learning-withdraw:"))
+        return this.releaseRecognitionSession(
+          decodeURIComponent(action.slice(18)),
+          false,
+        );
       return;
     }
     if (!this.state) return;

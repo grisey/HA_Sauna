@@ -244,14 +244,34 @@ Verwendet werden Sitzungen ohne Türöffnung während eines Gangs.
 
 Nach jeder abgeschlossenen Sitzung mit beiden Messpositionen zieht die
 Integration aus deren Messwerten und eigenen bestätigten Erkennungen neue
-Belege. Neu geschätzt werden die Größen erst mit der Aktion **Erkennung
+Belege. Gespeichert werden die Belege der letzten 40 Sitzungen, jeweils mit
+dem Status „nicht freigegeben“. In eine Neuschätzung gehen neben den Belegen
+der Lernaufzeichnungen nur ausdrücklich freigegebene Sitzungen ein.
+
+Die Freigabe gilt je Sitzung und lässt sich zurücknehmen:
+
+- Panel: **Einstellungen → Daten und Wartung → Lernsitzungen**. Die Liste
+  nennt je gespeicherter Sitzung Beginn, erkannte Türöffnungen und Aufgüsse
+  sowie den Status.
+- Aktion **Sitzung für das Nachlernen freigeben**
+  (`ha_sauna.recognition_release`) mit Sitzungskennung und `released`
+  (`true` freigeben, `false` zurücknehmen).
+
+Beide Wege verlangen das Bedienrecht am Betriebsschalter der Instanz; der
+Bereich **Daten und Wartung** im Panel steht Administratoren zur Verfügung.
+Erzeugt dieselbe Sitzung erneut Belege, ersetzen sie die gespeicherten und
+sind wieder nicht freigegeben. Belege eines Lernstands ohne Status gelten als
+nicht freigegeben.
+
+Neu geschätzt werden die Größen erst mit der Aktion **Erkennung
 nachlernen** (`ha_sauna.recognition_learn`); die Rechnung läuft im
 Hintergrund und darf dauern. Die Belege der Lernaufzeichnungen bleiben als
-Startwissen erhalten; die Belege der letzten 40 Sitzungen ergänzen sie. Die
-neuen Größen gelten ab der nächsten Sitzung. Der Lernstand liegt im
+Startwissen erhalten; die freigegebenen Sitzungen ergänzen sie. Die neuen
+Größen gelten ab der nächsten Sitzung. Der Lernstand liegt im
 Home-Assistant-Speicher der Instanz. Die Antwort der Aktion nennt die Zahl
-der seit dem letzten Nachlernen hinzugekommenen Sitzungen und Rückmeldungen,
-der gespeicherten Sitzungen und der abgelehnten Ereignisse.
+der seit dem letzten Nachlernen hinzugekommenen Sitzungen, Freigaben,
+Rücknahmen und Rückmeldungen, der gespeicherten und der freigegebenen
+Sitzungen und der abgelehnten Ereignisse.
 
 Die Aktion **Rückmeldung zur Erkennung** (`ha_sauna.recognition_feedback`)
 lehnt ein erkanntes Ereignis ab (`reject`) oder hebt die Ablehnung auf

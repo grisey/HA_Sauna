@@ -547,13 +547,15 @@ class SaunaRuntime:
         self._detector_session = None
         self._detector_infusion_events: dict[int, tuple[Detection, str]] = {}
         # Learned recognition quantities; ``recognition_finished`` receives every
-        # finished session's recognizer (session id, recognizer) for learning.
+        # finished session's recognizer (session id, recognizer) for learning
+        # evidence, which only enters an estimate after an explicit release.
         self._recognition_parameters = None
         # outside air of the sauna for the recognition: () -> {"temperature", "absolute_humidity"} or None
         self.outside_air = None
         self.recognition_finished = None
         self.recognition_learning = None
         self.recognition_feedback = None
+        self.recognition_release = None
         self.recognition_relearn = None
         self._archive_signature = None
         self._saved_decisions = 0

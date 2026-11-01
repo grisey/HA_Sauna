@@ -1064,6 +1064,42 @@ class ExportView(HomeAssistantView):
             await asyncio.to_thread(path.unlink, missing_ok=True)
 
 
+class RecognitionSessionsView(HomeAssistantView):
+    """Sessions with stored learning evidence and their release for relearning."""
+
+    url = "/api/ha_sauna/{entry_id}/recognition/sessions"
+    name = "api:ha_sauna:recognition:sessions"
+    requires_auth = True
+
+    async def get(self, request, entry_id):
+        require_control(request, entry_id)
+        runtime = runtime_for(request.app[KEY_HASS], entry_id)
+        if runtime.recognition_learning is None:
+            raise web.HTTPServiceUnavailable()
+        return self.json(runtime.recognition_learning.overview())
+
+    async def post(self, request, entry_id):
+        # Same permission boundary as the recognition_release action.
+        require_control(request, entry_id)
+        body = await json_body(request)
+        if not (
+            isinstance(body, dict)
+            and set(body) == {"session_id", "released"}
+            and isinstance(body["session_id"], str)
+            and body["session_id"]
+            and isinstance(body["released"], bool)
+        ):
+            raise web.HTTPBadRequest(text="session_id und released sind erforderlich.")
+        runtime = runtime_for(request.app[KEY_HASS], entry_id)
+        if runtime.recognition_release is None:
+            raise web.HTTPServiceUnavailable()
+        try:
+            await runtime.recognition_release(body["session_id"], body["released"])
+        except KeyError as error:
+            raise web.HTTPNotFound() from error
+        return self.json(runtime.recognition_learning.overview())
+
+
 def register(hass):
     data = hass.data.setdefault(DOMAIN, {})
     if data.get("api_registered"):
@@ -1089,4 +1125,5 @@ def register(hass):
     hass.http.register_view(LightView)
     hass.http.register_view(HeaterView)
     hass.http.register_view(LoggingView)
+    hass.http.register_view(RecognitionSessionsView)
     data["api_registered"] = True
