@@ -7,9 +7,9 @@ Verfahren aus Temperatur und Feuchte.
 | Erkennung | Aus Temperatur und Feuchte | Mit Präsenzsensor |
 | --- | --- | --- |
 | Türöffnung und Türschluss | Zustandsmodell der Kabine | Dasselbe Zustandsmodell |
-| Anwesenheit | Keine eigenen Personensignale; der erste Aufguss nach einem Eintritt eröffnet den Gang | Belegungszustand der zugeordneten Entität |
-| Aufguss | Eröffnet oder ergänzt den Gang | Erfassung im bereits bestätigten Gang |
-| Lüften und Durchgelüftet | Kurvenform der Feuchte während der offenen Tür; Nachweis für das Gangende | Bestandteil derselben Austrittsöffnung; zusammen mit deren Abwesenheitsnachweis Beleg für das Gangende |
+| Anwesenheit | Keine eigenen Personensignale; der erste Aufguss nach einem Eintritt eröffnet den Gang | Belegungszustand der zugeordneten Entität beim Türschluss; eröffnet einen vorläufigen Gang |
+| Aufguss | Eröffnet oder ergänzt den Gang | Bestätigt den vorläufigen Gang oder ergänzt ihn |
+| Lüften und Durchgelüftet | Kurvenform der Feuchte während der offenen Tür; Nachweis für das Gangende | Dasselbe |
 
 Die Übergangsregeln beschreibt die [Gangerkennung](gangmodell.md). Die Erkennung
 kennt weder Sitzung noch Gang; sie erhält Messwerte und die Rückmeldung, ob
@@ -215,8 +215,7 @@ mindestens 20 Messschritte.
 Der Zeitpunkt der Stufe ist der Knick.
 
 Lüften und Durchgelüftet sind Eigenschaften der Türöffnung. Ob sie einen Gang
-beenden, entscheidet das [Gangmodell](gangmodell.md). Dort sind auch die
-gelernten Zeiten eines Präsenzsensors beschrieben.
+beenden, entscheidet das [Gangmodell](gangmodell.md).
 
 ## Gelernte Größen und Nachlernen
 

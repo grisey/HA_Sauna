@@ -6,7 +6,7 @@ import unittest
 from copy import deepcopy
 
 from test_cooling import at, controller
-from test_foundation import bindings, event, ideal_presence, parameters, selected_occupancy
+from test_foundation import bindings, event, parameters, selected_occupancy
 
 from custom_components.ha_sauna.archive import plain
 from custom_components.ha_sauna.core.defaults import section
@@ -75,13 +75,14 @@ class PresentationTests(unittest.TestCase):
         self.assertEqual(original, before)
 
     def test_direct_presence_public_ids_preserve_live_archive_and_phase_references(self):
-        sauna = ideal_presence(controller())
+        sauna = controller()
         presence_entity = "binary_sensor.private_presence"
         sauna.process(event("entry-open", Kind.DOOR_OPEN, 1))
         sauna.consume_occupancy_input(selected_occupancy(binary_presence(
             presence_entity, "on", at(2), at(2),
         ), at(2)))
         sauna.process(event("entry-close", Kind.DOOR_CLOSE, 3))
+        sauna.process(event("water", Kind.INFUSION, 4))
         active = plain(sauna.session)
         public_active = public_session(active)
         raw_gang = active["timeline"]["active"]
@@ -90,7 +91,7 @@ class PresentationTests(unittest.TestCase):
         self.assertNotEqual(public_gang["gang_id"], raw_gang["gang_id"])
         recognition = next(
             item for item in public_active["timeline"]["processed"]
-            if item["kind"] == Kind.PRESENCE_CONFIRMED
+            if item["kind"] == Kind.PRESENCE_ENTRY
         )
         self.assertEqual(public_gang["recognition_event_id"], recognition["event_id"])
         self.assertEqual(public_gang["start_source_event_id"], "entry-close")
@@ -102,7 +103,7 @@ class PresentationTests(unittest.TestCase):
         sauna.consume_occupancy_input(selected_occupancy(binary_presence(
             presence_entity, "off", at(6), at(6),
         ), at(6)))
-        sauna.process(event("exit-close", Kind.DOOR_CLOSE, 7))
+        sauna.process(event("exit-ventilation", Kind.VENTILATION, 7))
         sauna.report_contactor(False, at(8))
         self.assertIsNone(sauna.session.timeline.active)
         raw = plain(sauna.session)
@@ -114,7 +115,7 @@ class PresentationTests(unittest.TestCase):
         self.assertEqual(completed["gang_id"], public_gang["gang_id"])
         self.assertEqual(completed["recognition_event_id"], recognition["event_id"])
         end = next(item for item in public["timeline"]["processed"]
-                   if item["kind"] == Kind.PRESENCE_ENDED)
+                   if item["kind"] == Kind.VENTILATION)
         self.assertEqual(completed["end_event_id"], end["event_id"])
         self.assertNotEqual(end["event_id"], recognition["event_id"])
         self.assertEqual(public["after_run"]["phase_id"], completed["gang_id"])

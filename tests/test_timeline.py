@@ -8,8 +8,8 @@ from pathlib import Path
 import tempfile
 import unittest
 
-from test_cooling import at, controller as plain_controller
-from test_foundation import bindings, event, selected_occupancy, ideal_presence
+from test_cooling import at, controller
+from test_foundation import bindings, event, selected_occupancy
 
 from custom_components.ha_sauna.archive import Archive, plain
 from custom_components.ha_sauna.core.presence import binary_presence
@@ -17,11 +17,6 @@ from custom_components.ha_sauna.core.timeline import (
     Confirmation, Door, Event, Kind, Timeline, UnresolvedTransition, apply,
     active_gang_duration_seconds, project_door_cycles, project_gang_intervals,
 )
-
-
-def controller(**overrides):
-    """Gang control with the sharply timed presence sensor."""
-    return ideal_presence(plain_controller(**overrides))
 
 
 def t(clock):
@@ -196,33 +191,47 @@ class TimelineTests(unittest.TestCase):
         closed = apply(state, e("exit-close", Kind.DOOR_CLOSE, "21:16:20"))
         self.assertTrue(closed.entry_cycle_available)
 
-    def test_empty_cabin_ends_the_gang_at_its_exit_opening(self):
-        for closed in (False, True):
-            with self.subTest(closed=closed):
-                state = self.direct_exit(closed=closed)
-                self.assertEqual(state.exit_opening.event_id, "exit-open")
-                ended = apply(state, e("absence", Kind.PRESENCE_ENDED,
-                                       "21:23:00", effective="21:16:10"))
-                self.assertIsNone(ended.active)
-                self.assertEqual(ended.gang_count, 1)
-                self.assertEqual(ended.completed[0].ended_at, t("21:16:10"))
-                self.assertEqual(ended.completed[0].end_reason, "presence_exit")
-                self.assertFalse(ended.entry_cycle_available)
-                self.assertIn("exit-open", ended.rejected_start_sources)
-                if closed:
-                    self.assertIn("exit-close", ended.rejected_start_sources)
+    def test_presence_entry_opens_a_provisional_gang_at_the_closing(self):
+        state = apply(self.closed, e("present", Kind.PRESENCE_ENTRY, "21:15:55"))
+        gang = state.active
+        self.assertEqual(gang.recognition_kind, Kind.PRESENCE_ENTRY)
+        self.assertEqual(gang.confirmation, Confirmation.PROVISIONAL)
+        self.assertEqual(gang.started_at, t("21:15:51"))
+        self.assertFalse(state.entry_cycle_available)
+        confirmed = apply(state, e("water", Kind.INFUSION, "21:20:00"))
+        self.assertEqual(confirmed.active.gang_id, gang.gang_id)
+        self.assertEqual(confirmed.active.confirmation, Confirmation.CONFIRMED)
+        opened = apply(state, e("exit-open", Kind.DOOR_OPEN, "21:21:00"))
+        retracted = apply(opened, e("exit-vent", Kind.VENTILATION, "21:21:30"))
+        self.assertIsNone(retracted.active)
+        self.assertEqual(retracted.retracted, (gang,))
+        self.assertEqual(retracted.gang_count, 0)
 
-    def test_empty_cabin_needs_the_time_of_a_new_exit_opening(self):
-        state = self.direct_exit(closed=True)
-        for effective in ("21:16:09", "21:16:15", "21:16:20"):
-            with self.subTest(effective=effective):
-                with self.assertRaises(ValueError):
-                    apply(state, e("absence", Kind.PRESENCE_ENDED, "21:17:00",
-                                   effective=effective))
-        entry = apply(self.closed, e("present", Kind.PRESENCE_CONFIRMED, "21:15:51"))
-        self.assertIsNone(entry.exit_opening)
+    def test_later_presence_entry_replaces_only_an_unconfirmed_presence_gang(self):
+        state = apply(self.closed, e("present", Kind.PRESENCE_ENTRY, "21:15:55"))
+        first = state.active
+
+        def reentry(state):
+            state = apply(state, e("next-open", Kind.DOOR_OPEN, "21:17:00"))
+            state = apply(state, e("next-close", Kind.DOOR_CLOSE, "21:17:10"))
+            return apply(state, e("present-again", Kind.PRESENCE_ENTRY, "21:17:12"))
+
+        replaced = reentry(state)
+        self.assertNotEqual(replaced.active.gang_id, first.gang_id)
+        self.assertEqual(replaced.active.started_at, t("21:17:10"))
+        self.assertEqual(replaced.active.start_source_event_id, "next-close")
+        self.assertEqual(replaced.retracted, (first,))
+        confirmed = apply(state, e("water", Kind.INFUSION, "21:16:30"))
+        kept = reentry(confirmed)
+        self.assertEqual(kept.active.gang_id, first.gang_id)
+        self.assertEqual(kept.retracted, ())
+
+    def test_presence_entry_needs_a_complete_new_door_operation(self):
         with self.assertRaises(ValueError):
-            apply(entry, e("absence", Kind.PRESENCE_ENDED, "21:17:00", effective="21:15:51"))
+            apply(self.empty, e("present", Kind.PRESENCE_ENTRY, "21:15:55"))
+        opened = apply(self.closed, e("open", Kind.DOOR_OPEN, "21:16:00"))
+        with self.assertRaises(ValueError):
+            apply(opened, e("present", Kind.PRESENCE_ENTRY, "21:16:05"))
 
     def test_exit_ventilation_rejects_original_time_before_opening(self):
         state = self.direct_exit(closed=False)
@@ -239,17 +248,15 @@ class TimelineTests(unittest.TestCase):
                                "21:16:23", effective="21:16:20"))
         self.assertIsNone(state.exit_ventilation)
 
-    def test_new_opening_replaces_the_exit_opening(self):
+    def test_new_opening_discards_the_previous_exit_ventilation(self):
         state = self.direct_exit(closed=True)
         state = apply(state, e("next-open", Kind.DOOR_OPEN, "21:16:30"))
         self.assertIsNone(state.exit_ventilation)
         self.assertIsNone(state.preparation)
         self.assertIsNone(state.open_ventilation)
-        with self.assertRaises(ValueError):
-            apply(state, e("old", Kind.PRESENCE_ENDED, "21:16:31", effective="21:16:10"))
-        ended = apply(state, e("current", Kind.PRESENCE_ENDED, "21:16:33", effective="21:16:30"))
+        ended = apply(state, e("next-vent", Kind.VENTILATION, "21:16:40"))
         self.assertIsNone(ended.active)
-        self.assertEqual(ended.completed[0].ended_at, t("21:16:30"))
+        self.assertEqual(ended.completed[0].end_event_id, "next-vent")
 
     def test_exit_ventilation_needs_the_corresponding_opening(self):
         for door in (Door.OPEN, Door.CLOSED, Door.UNKNOWN):
@@ -821,7 +828,7 @@ class DoorCycleProjectionTests(unittest.IsolatedAsyncioTestCase):
                 self.assert_fresh_projection(payload, expected)
         self.assertEqual(plain(c.session.timeline), original)
 
-    async def test_delayed_direct_absence_links_exit_to_its_opening_after_door_close(self):
+    async def test_sensor_entry_and_ventilated_exit_link_their_door_cycles(self):
         c = controller()
         c.process(event("o1", Kind.DOOR_OPEN, 1))
         c.consume_occupancy_input(selected_occupancy(
@@ -830,45 +837,31 @@ class DoorCycleProjectionTests(unittest.IsolatedAsyncioTestCase):
         c.process(event("c1", Kind.DOOR_CLOSE, 2))
         g1 = c.session.timeline.active
         self.assertEqual(g1.started_at, at(2))
-        self.assertEqual(g1.recognition_kind, Kind.PRESENCE_CONFIRMED)
-        self.assertEqual(g1.confirmation, Confirmation.CONFIRMED)
+        self.assertEqual(g1.recognition_kind, Kind.PRESENCE_ENTRY)
+        self.assertEqual(g1.confirmation, Confirmation.PROVISIONAL)
+        c.process(event("w1", Kind.INFUSION, 3), person_evidence_qualified=False)
+        self.assertEqual(c.session.timeline.active.confirmation, Confirmation.CONFIRMED)
         for source in (
             event("o2", Kind.DOOR_OPEN, 4),
+            event("v2", Kind.VENTILATION, 5),
             event("c2", Kind.DOOR_CLOSE, 6),
         ):
             c.process(source)
-        self.assertEqual(c.session.timeline.active.gang_id, g1.gang_id)
-        self.assertEqual(c.session.timeline.completed, ())
-        self.assertIsNone(c.session.after_run)
-
-        absence = binary_presence("binary_sensor.presence", "off", at(5.5), at(8))
-        self.assertTrue(c.consume_occupancy_input(selected_occupancy(absence, at(8))))
         timeline = c.session.timeline
         self.assertIsNone(timeline.active)
-        self.assertEqual(len(timeline.completed), 1)
         ended = timeline.completed[0]
-        end_events = [e for e in timeline.processed if e.kind == Kind.PRESENCE_ENDED]
-        self.assertEqual(len(end_events), 1)
-        end = end_events[0]
-        self.assertEqual(end.effective_at, at(4))
-        self.assertEqual(end.detected_at, absence.received_at)
-        self.assertEqual(end.booking_at, at(8))
         self.assertEqual(ended.gang_id, g1.gang_id)
-        self.assertEqual(ended.end_event_id, end.event_id)
-        self.assertEqual(ended.end_reason, "presence_exit")
-        self.assertEqual(ended.ended_at, at(4))
+        self.assertEqual(ended.end_reason, "ventilation")
+        self.assertEqual(ended.ended_at, at(5))
         self.assertEqual(timeline.gang_count, 1)
-        self.assertEqual(c.session.after_run.requested_at, at(8))
         expected = [self.cycle(
             "o1", "c1", 1, 2, role="entry", gang_id=g1.gang_id,
             links=({"gang_id": g1.gang_id, "role": "entry"},),
         ), self.cycle(
             "o2", "c2", 4, 6, role="exit", gang_id=g1.gang_id,
             links=({"gang_id": g1.gang_id, "role": "exit"},),
+            ventilation=(5, "v2"),
         )]
-        self.assert_object_and_plain(c.session, expected)
-        self.assertFalse(c.consume_occupancy_input(selected_occupancy(absence, at(8))))
-        self.assertEqual(c.session.timeline, timeline)
         self.assert_object_and_plain(c.session, expected)
 
     async def test_retracted_provisional_cycle_has_no_gang_roles(self):

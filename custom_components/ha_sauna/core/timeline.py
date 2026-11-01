@@ -30,6 +30,7 @@ class Kind(StrEnum):
     VENTILATION_COMPLETE = "ventilation_complete"
     OPERATION_OFF = "operation_off"
     CONFIRMATION_EXPIRED = "confirmation_expired"
+    PRESENCE_ENTRY = "presence_entry"
     PRESENCE_CONFIRMED = "presence_confirmed"
     PRESENCE_ENDED = "presence_ended"
     PRESENCE_CLOSE_ENDED = "presence_close_ended"
@@ -246,15 +247,6 @@ class Timeline:
         )
 
     @property
-    def exit_opening(self) -> Event | None:
-        """Opening of the current door operation once it follows the gang's start."""
-        opening = self.opening if self.door == Door.OPEN else self.closed_opening
-        if (self.active is None or opening is None
-                or opening.effective_at <= self.active.started_at):
-            return None
-        return opening
-
-    @property
     def gang_count(self) -> int:
         return sum(g.confirmation == Confirmation.CONFIRMED for g in self.completed)
 
@@ -330,11 +322,10 @@ def project_gang_intervals(timeline: Timeline | Mapping, *, door_cycles=None) ->
 
     Der zugeordnete Eintritt mit erfüllten Startbedingungen liefert den Beginn.
     Die Austrittsöffnung allein beendet den Gang nicht. Ihr bestätigtes
-    Durchlüften liefert den Abschluss; im Sensorbetrieb auch die nach ihr
-    belegte leere Kabine, dann mit dem Zeitpunkt der Öffnung. Betrieb-AUS
-    und fehlende Altarchivquellen erzeugen keinen Lüftungsnachweis. Alle
-    Türbezüge behalten die Mehrdeutigkeitsprüfung der gemeinsamen
-    Türzyklusprojektion.
+    Durchlüften liefert den Abschluss. Präsenzabschlüsse früherer Fassungen
+    bleiben in gespeicherten Abläufen lesbar. Betrieb-AUS und fehlende
+    Altarchivquellen erzeugen keinen Lüftungsnachweis. Alle Türbezüge behalten
+    die Mehrdeutigkeitsprüfung der gemeinsamen Türzyklusprojektion.
     """
     get = _projection_value
     cycles = project_door_cycles(timeline) if door_cycles is None else door_cycles
@@ -532,8 +523,7 @@ def project_door_cycles(timeline: Timeline | Mapping) -> list[dict]:
                     and episode["ventilation_at"] is None):
                 exit_cycles[event_id] = current
         elif current is not None and kind == Kind.PRESENCE_ENDED:
-            # Das Präsenzende darf nach dem Schluss entschieden werden; es
-            # gehört zur damals aktuellen Öffnung und trägt deren Zeitpunkt.
+            # Frühere Präsenzabschlüsse; nur noch in gespeicherten Abläufen.
             if evidence[current]["started_at"] <= at:
                 exit_cycles[event_id] = current
 
@@ -680,15 +670,23 @@ def apply(
                 *state.rejected_start_sources, event.event_id,
             ))
     elif event.kind in (Kind.PERSON_STRONG, Kind.PERSON_WEAK, Kind.INFUSION,
-                        Kind.PRESENCE_CONFIRMED):
+                        Kind.PRESENCE_ENTRY, Kind.PRESENCE_CONFIRMED):
         if state.door != Door.CLOSED:
             raise ValueError("Gangerkennung benötigt einen geschlossenen Türzustand")
-        if event.kind == Kind.PRESENCE_CONFIRMED and (
+        if event.kind in (Kind.PRESENCE_ENTRY, Kind.PRESENCE_CONFIRMED) and (
             state.closed_opening is None or state.anchor is None
             or state.anchor.event_id == state.resolved_presence_close_id
         ):
             raise ValueError("Direkte Präsenz benötigt eine vollständige neue Türepisode")
         gang = state.active
+        if (gang is not None and event.kind == Kind.PRESENCE_ENTRY
+                and gang.confirmation == Confirmation.PROVISIONAL
+                and gang.recognition_kind == Kind.PRESENCE_ENTRY):
+            # Like an infusion in the proxy method, the first infusion confirms
+            # the stay of the last entry before it: a later closing with
+            # presence replaces the unconfirmed conjecture.
+            result = replace(result, retracted=state.retracted + (gang,))
+            gang = None
         if gang is None:
             if not state.entry_cycle_available:
                 raise ValueError("Gangstart benötigt eine vollständige neue Türepisode")
@@ -725,22 +723,8 @@ def apply(
                 infusions=gang.infusions + (Infusion(event.event_id),),
             )
         result = replace(result, active=gang)
-        if event.kind == Kind.PRESENCE_CONFIRMED:
+        if event.kind in (Kind.PRESENCE_ENTRY, Kind.PRESENCE_CONFIRMED):
             result = replace(result, resolved_presence_close_id=state.anchor.event_id)
-    elif event.kind == Kind.PRESENCE_ENDED:
-        opening = state.exit_opening
-        if opening is None or event.effective_at != opening.effective_at:
-            raise ValueError("Gangende benötigt Abwesenheit nach einer neuen Austrittsöffnung")
-        # The gang ends at the exit opening. A closing already observed in this
-        # door operation belongs to the exit: nobody stayed inside.
-        finished = replace(state.active, ended_at=event.effective_at,
-                           end_event_id=event.event_id, end_reason="presence_exit")
-        closing = ((state.anchor.event_id,)
-                   if state.door == Door.CLOSED and state.anchor is not None else ())
-        result = replace(state, active=None, completed=state.completed + (finished,),
-                         rejected_start_sources=(*state.rejected_start_sources,
-                                                 opening.event_id, *closing),
-                         resolved_presence_close_id=state.resolved_presence_close_id)
     elif event.kind == Kind.VENTILATION:
         if state.door != Door.OPEN:
             raise ValueError("Durchlüftungsbestätigung benötigt eine offene Episode")

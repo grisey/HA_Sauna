@@ -7,16 +7,11 @@ Abgeleitete Gangereignisse werden nicht als Testeingang vorgegeben.
 from dataclasses import replace
 import unittest
 
-from test_cooling import at, controller as plain_controller
-from test_foundation import event, selected_occupancy, ideal_presence
+from test_cooling import at, controller
+from test_foundation import event, selected_occupancy
 
 from custom_components.ha_sauna.core.presence import binary_presence
 from custom_components.ha_sauna.core.timeline import DoorCloseEvidence, Event, Kind
-
-
-def controller(**overrides):
-    """Gang control with the sharply timed presence sensor."""
-    return ideal_presence(plain_controller(**overrides))
 
 
 class GangPhaseRulesTests(unittest.TestCase):
@@ -36,6 +31,8 @@ class GangPhaseRulesTests(unittest.TestCase):
         self.presence("on", 1)
         self.door(Kind.DOOR_OPEN, 2)
         self.door(Kind.DOOR_CLOSE, 3)
+        if self.c.session.timeline.active is not None:
+            self.door(Kind.INFUSION, 4)
 
     def leave_for_ventilation(self):
         self.door(Kind.DOOR_OPEN, 5)
@@ -55,7 +52,11 @@ class GangPhaseRulesTests(unittest.TestCase):
         gang = self.c.session.timeline.active
         self.assertEqual(gang.started_at, at(9))
         self.assertEqual(gang.start_source_event_id, "door_close:9")
-        self.assertEqual(self.c.session.after_run_history[-1].ends_at, at(9))
+        # The provisional gang keeps the cooling; its confirmation ends it.
+        self.assertEqual(self.c.session.after_run.phase_id, cooling.phase_id)
+        self.door(Kind.INFUSION, 10)
+        self.assertIsNone(self.c.session.after_run)
+        self.assertEqual(self.c.session.after_run_history[-1].ends_at, at(10))
         self.assertIsNone(self.c.session.last_completed_oven_cooling_at)
 
     def test_cooling_continues_until_return_also_reaches_minimum(self):
@@ -69,8 +70,10 @@ class GangPhaseRulesTests(unittest.TestCase):
         self.assertEqual(self.c.session.after_run.phase_id, cooling.phase_id)
         self.c.set_temperature(self.minimum, at(11))
         self.assertEqual(self.c.session.timeline.active.started_at, at(11))
+        self.assertEqual(self.c.session.after_run.phase_id, cooling.phase_id)
+        self.door(Kind.INFUSION, 12)
         self.assertIsNone(self.c.session.after_run)
-        self.assertEqual(self.c.session.after_run_history[-1].ends_at, at(11))
+        self.assertEqual(self.c.session.after_run_history[-1].ends_at, at(12))
 
     def test_an_empty_closure_cannot_become_entry_when_presence_arrives_later(self):
         self.c.set_temperature(self.minimum - 1, at(0))
@@ -117,6 +120,7 @@ class GangPhaseRulesTests(unittest.TestCase):
         self.presence("on", 8)
         self.door(Kind.DOOR_CLOSE, 9)
         self.assertIsNotNone(self.c.session.timeline.active)
+        self.door(Kind.INFUSION, 10)
         self.assertIsNone(self.c.session.after_run)
         self.assertFalse(self.c.last_decision.heat)
         self.assertIn("heater_service_unavailable", self.c.protection)
@@ -205,7 +209,7 @@ class GangPhaseRulesTests(unittest.TestCase):
         self.assertEqual(repeated.elapsed_seconds, (at(12) - at(7)).total_seconds())
         self.assertEqual(self.c.last_decision.reason, "after_run")
 
-    def test_proven_return_close_ends_cooling_despite_later_presence_report(self):
+    def test_confirmed_return_ends_cooling_despite_later_presence_report(self):
         for state in ("off", "unknown", "unavailable"):
             with self.subTest(state=state):
                 self.setUp()
@@ -221,13 +225,14 @@ class GangPhaseRulesTests(unittest.TestCase):
                 self.presence(state, 13)
                 self.assertIsNotNone(self.c.session.timeline.active)
                 self.assertEqual(self.c.session.timeline.active.recognition_kind,
-                                 Kind.PRESENCE_CONFIRMED)
+                                 Kind.PRESENCE_ENTRY)
                 self.assertEqual(self.c.session.timeline.active.started_at, at(9))
+                self.assertEqual(self.c.session.after_run.phase_id, phase.phase_id)
+                self.door(Kind.INFUSION, 14)
                 self.assertIsNone(self.c.session.after_run)
                 completed = self.c.session.after_run_history[-1]
                 self.assertEqual(completed.phase_id, phase.phase_id)
-                self.assertEqual(completed.ends_at, at(12))
-                self.assertFalse(completed.minimum_duration_requested)
+                self.assertEqual(completed.ends_at, at(14))
 
     def test_return_without_closing_proof_keeps_cooling(self):
         self.enter()

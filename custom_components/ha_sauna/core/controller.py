@@ -6,7 +6,7 @@ from collections.abc import Callable
 from contextlib import contextmanager
 from dataclasses import dataclass, replace
 from datetime import datetime, timedelta
-from math import isfinite, log
+from math import isfinite
 from uuid import uuid4
 
 from . import energy, heating, thermostat
@@ -34,7 +34,6 @@ from .models import (
 )
 from .oven_cooling import calculate_oven_cooling
 from .parameters import LIVE_TEMPERATURE_KEYS, Parameters
-from .presence_evidence import PresenceTiming, occupancy_log_ratio
 from .temperature_program import TemperatureProgram
 from .temporary_door_heat import TemporaryDoorHeatState
 from .temporary_door_heat import advance as advance_door_heat
@@ -42,7 +41,12 @@ from .timeline import (
     Confirmation, Door, Event, InfusionEnd, Kind, apply, update_infusion_end, utc,
 )
 
-GANG_SIGNALS = (Kind.PERSON_STRONG, Kind.PERSON_WEAK, Kind.INFUSION, Kind.PRESENCE_CONFIRMED)
+GANG_SIGNALS = (
+    Kind.PERSON_STRONG, Kind.PERSON_WEAK, Kind.INFUSION, Kind.PRESENCE_ENTRY,
+    Kind.PRESENCE_CONFIRMED,
+)
+# Gang signals of a direct presence sensor.
+DIRECT_SIGNALS = (Kind.PRESENCE_ENTRY, Kind.PRESENCE_CONFIRMED)
 PROGRAM_MODES = frozenset(("constant", "progressive"))
 CONTROL_MODES = frozenset(("automatic", "manual"))
 
@@ -106,12 +110,7 @@ class Controller:
         self.direct_presence: OccupancyInput | None = None
         self._direct_presence_history = []
         self._direct_presence_coverage_breaks = []
-        self._direct_presence_catchup = 0
         self._presence_entry: PresenceEntry | None = None
-        # Decided door operations (closing or opening ID): verdict and decision time.
-        self._presence_verdicts: dict[str, tuple[bool, datetime]] = {}
-        self.presence_timing: PresenceTiming | None = None
-        self.presence_evidence_ratio = 150.0
         self.parameters = parameters
         self.program_mode = program_mode
         self.control_mode = control_mode
@@ -221,15 +220,6 @@ class Controller:
         if callable(received_at):
             received_at = utc(received_at())
         return max(at, received_at or at)
-
-    @contextmanager
-    def direct_presence_catchup(self):
-        """Resolve an exit only after queued inputs and the new report agree."""
-        self._direct_presence_catchup += 1
-        try:
-            yield
-        finally:
-            self._direct_presence_catchup -= 1
 
     def _record_recognition_gate(self, at):
         """Remember only admission results booked by this leading controller."""
@@ -673,7 +663,6 @@ class Controller:
         at = utc(at)
         self._recognition_gates = []
         self._presence_entry = None
-        self._presence_verdicts = {}
         self._gang_temperature_gates = [
             (at, self._gang_temperature_blocked(at), self._gang_temperature_input()[1])
         ]
@@ -1103,7 +1092,8 @@ class Controller:
                                 if self.direct_presence is not None else None),
             gang_start_at=(self._gang_entry_start_at(previous.timeline)
                            if event.kind in GANG_SIGNALS
-                           and previous.timeline.active is None else None),
+                           and (previous.timeline.active is None
+                                or event.kind == Kind.PRESENCE_ENTRY) else None),
         )
         if (observed_blocked is not None or not context_current) and event.kind in (
             Kind.DOOR_CLOSE, Kind.VENTILATION
@@ -1142,16 +1132,25 @@ class Controller:
     def _apply_timeline_transition(self, previous, timeline, at, *, operation_off=False):
         """Apply gang effects from the leading timeline transition."""
         self._session = replace(previous, timeline=timeline)
-        if previous.timeline.active is None and timeline.active is not None:
+        replaced = (timeline.active is not None
+                    and (previous.timeline.active is None
+                         or previous.timeline.active.gang_id != timeline.active.gang_id))
+        if replaced:
             self._presence_entry = None
-            if (self.control_mode == "automatic"
-                    and (timeline.active.recognition_kind == Kind.PRESENCE_CONFIRMED
-                         or (self.direct_presence is not None
-                             and self.direct_presence.qualified_presence
-                             and timeline.active.confirmation == Confirmation.CONFIRMED))):
-                # The accepted entry proves occupancy behind the closed door.
-                # A departure requires a new opening.
-                self._abort_after_run(at)
+        confirmed = (
+            timeline.active is not None
+            and timeline.active.confirmation == Confirmation.CONFIRMED
+            and (previous.timeline.active is None
+                 or previous.timeline.active.gang_id != timeline.active.gang_id
+                 or previous.timeline.active.confirmation == Confirmation.PROVISIONAL)
+        )
+        if (confirmed and self.control_mode == "automatic"
+                and (timeline.active.recognition_kind in DIRECT_SIGNALS
+                     or (self.direct_presence is not None
+                         and self.direct_presence.qualified_presence))):
+            # The confirmed stay proves occupancy behind the closed door.
+            # A departure requires a new opening.
+            self._abort_after_run(at)
         if (previous.active_gang_temperature_id is not None
                 and (timeline.active is None
                      or timeline.active.gang_id != previous.active_gang_temperature_id)):
@@ -1189,7 +1188,7 @@ class Controller:
             self._clear_readiness()
         if active is None or active.confirmation == Confirmation.CONFIRMED:
             self._cancel("confirmation")
-        elif previous.timeline.active is None:
+        elif replaced:
             self._schedule(
                 "confirmation",
                 self._gang_control_start_at(timeline)
@@ -1664,7 +1663,7 @@ class Controller:
         return ControlInputs(
             gang_heat_demand=bool(
                 "gang_heat" in causes and session and session.timeline.active
-                and (session.timeline.active.recognition_kind != Kind.PRESENCE_CONFIRMED or (
+                and (session.timeline.active.recognition_kind not in DIRECT_SIGNALS or (
                     self.direct_presence is not None and self.direct_presence.available
                     and self.direct_presence.qualified_presence
                     and self.direct_presence.occupancy != "unknown"
@@ -1774,20 +1773,6 @@ class Controller:
             self._evaluate(at)
         return True
 
-    def set_presence_parameters(self, parameters: dict) -> None:
-        """Learned sensor times and evidence ratio for the next decisions."""
-        self.presence_timing = PresenceTiming.from_parameters(parameters)
-        self.presence_evidence_ratio = float(
-            (parameters.get("decision") or {}).get("evidence_ratio", 150.0)
-        )
-
-    def _presence_model(self):
-        if self.presence_timing is None:
-            from ..recognition_parameters import shipped_parameters
-
-            self.set_presence_parameters(shipped_parameters())
-        return self.presence_timing, log(self.presence_evidence_ratio)
-
     def _presence_states(self, at):
         """Received sensor states as (seconds, present/absent/unknown).
 
@@ -1819,14 +1804,12 @@ class Controller:
     def _presence_at_closing(self, timeline, at, *, departure=True):
         """Sensor operation with presence at the unused closing: the entry criterion.
 
-        A closing whose presence was already decided as empty does not qualify.
         ``departure`` requires the absence after an exit opening of the same
         door operation; an infusion proves the stay without it.
         """
         current = self.direct_presence
         if (current is None or not current.qualified_presence
-                or not timeline.entry_cycle_available
-                or self._presence_verdict(timeline.anchor.event_id, at) is False):
+                or not timeline.entry_cycle_available):
             return False
         begin = self._closing_candidate(timeline.anchor).timestamp()
         states = self._presence_states(at)
@@ -1849,49 +1832,6 @@ class Controller:
             return any(since <= when <= begin and value is False for when, value in states)
         return True
 
-    def _occupancy_ratio(self, start, close, at, *, through=None):
-        """Evidence of the states received by ``at`` up to ``through`` (default ``at``)."""
-        timing, _ = self._presence_model()
-        return occupancy_log_ratio(
-            timing, self._presence_states(at), start=start.timestamp(),
-            at=(through or at).timestamp(),
-            close=close.timestamp() if close is not None else None,
-        )
-
-    def _presence_verdict(self, operation_id, at):
-        """A decided door operation keeps its verdict against later sensor states.
-
-        A report received later but valid before the decision reopens it when
-        the evidence up to the decision no longer reaches the ratio.
-        """
-        decided = self._presence_verdicts.get(operation_id)
-        if decided is None:
-            return None
-        verdict, decided_at = decided
-        session = self._session
-        timeline = session.timeline if session is not None else None
-        if timeline is None:
-            return verdict
-        if timeline.active is None:
-            start = close = self._closing_candidate(timeline.anchor) if (
-                timeline.anchor is not None and timeline.anchor.event_id == operation_id
-            ) else None
-        else:
-            opening = timeline.exit_opening
-            start = opening.effective_at if (
-                opening is not None and opening.event_id == operation_id) else None
-            close = (self._closing_candidate(timeline.anchor)
-                     if start is not None and timeline.door == Door.CLOSED
-                     and timeline.anchor is not None else None)
-        if start is None:
-            return verdict
-        _, threshold = self._presence_model()
-        ratio = self._occupancy_ratio(start, close, at, through=min(at, decided_at))
-        if (ratio >= threshold) if verdict else (ratio <= -threshold):
-            return verdict
-        del self._presence_verdicts[operation_id]
-        return None
-
     def _presence_report(self, at):
         received = self._received_at(at)
         return next((report for report in reversed(self._direct_presence_history)
@@ -1899,16 +1839,13 @@ class Controller:
                      and report.timing.received_at <= received), None)
 
     def _reconcile_direct_presence(self, at, *, entry_event=None):
-        """Decide occupancy after a door operation from the sensor history.
+        """Open a provisional gang at a closing with sensor presence.
 
-        Entry: presence at the closing is required. The stay is established
-        once its presence outlasts the sensor's learned hold time far enough
-        for the evidence ratio; the gang then begins at the closing and may
-        still wait for the minimum temperature. Exit: after a new opening, the
-        sensor history decides between a stay and an empty cabin; an empty
-        cabin ends the gang at that opening. Absence without a new opening
-        never ends a gang, and a stay once established for an opening is not
-        revisited by later absence.
+        Presence at the closing candidate is the entry criterion; the gang
+        begins at the closing and may still wait for the minimum temperature.
+        An infusion confirms it; until then a later closing with presence
+        replaces it. Absence never ends a gang: the exit is the ventilation of
+        a new opening.
         """
         session = self._session
         if entry_event is not None:
@@ -1916,61 +1853,37 @@ class Controller:
         if session is None or not session.operation_enabled:
             self._presence_entry = None
             return False
-        current = self.direct_presence
-        if current is None or not current.qualified_presence:
-            return False
         t = session.timeline
-        opening = t.opening if t.door == Door.OPEN else t.closed_opening
-        if (opening is None
-                or self.recognition_context_at(opening.effective_at)[1] is not None
+        if not t.entry_cycle_available or (t.active is not None and (
+                t.active.confirmation != Confirmation.PROVISIONAL
+                or t.active.recognition_kind != Kind.PRESENCE_ENTRY)):
+            return False
+        opening = t.closed_opening
+        if (self.recognition_context_at(opening.effective_at)[1] is not None
                 or not self._recognition_context_current(opening.effective_at)):
             return False
-        _, threshold = self._presence_model()
-        if t.active is None:
-            if not t.entry_cycle_available:
-                return False
-            closure = t.anchor
-            entry = self._presence_entry
-            if entry is not None and entry.closure.event_id != closure.event_id:
-                self._presence_entry = entry = None
-            if entry is None:
-                if self._presence_verdict(closure.event_id, at) is not None:
-                    return False
-                candidate = self._closing_candidate(closure)
-                if (closure.door_close_evidence is None or at < candidate
-                        or not self._presence_at_closing(t, at)):
-                    return False
-                ratio = self._occupancy_ratio(candidate, candidate, at)
-                if ratio <= -threshold:
-                    self._presence_verdicts[closure.event_id] = (False, at)
-                    return False
-                if ratio < threshold:
-                    return False
-                self._presence_entry = entry = PresenceEntry(closure, self._presence_report(at))
-            if self._gang_start_blocked(session):
-                return False
-            effective = self._gang_entry_start_at(t)
-            kind, source, report = Kind.PRESENCE_CONFIRMED, entry.closure, entry.presence
-        else:
-            if (t.exit_opening is None or self._direct_presence_catchup
-                    or self._presence_verdict(opening.event_id, at) is not None):
-                return False
-            close = (self._closing_candidate(t.anchor)
-                     if t.door == Door.CLOSED and t.anchor is not None else None)
-            ratio = self._occupancy_ratio(opening.effective_at, close, at)
-            if ratio >= threshold:
-                self._presence_verdicts[opening.event_id] = (True, at)
-                return False
-            if ratio > -threshold:
+        closure = t.anchor
+        entry = self._presence_entry
+        if entry is not None and entry.closure.event_id != closure.event_id:
+            self._presence_entry = entry = None
+        if entry is None:
+            # Recognition never precedes the confirmation of the closing.
+            if (closure.door_close_evidence is None
+                    or at < closure.door_close_evidence.confirmed_at
+                    or not self._presence_at_closing(t, at)):
                 return False
             report = self._presence_report(at)
-            effective = opening.effective_at
-            kind, source = Kind.PRESENCE_ENDED, opening
-        if report is None or effective is None or effective > at:
+            if report is None:
+                return False
+            self._presence_entry = entry = PresenceEntry(closure, report)
+        if self._gang_start_blocked(session):
+            return False
+        effective = self._gang_entry_start_at(t)
+        if effective is None or effective > at:
             return False
         self.process(Event(
-            f"{kind.value}:{source.event_id}:{report.report_id}", session.session_id,
-            kind, effective, self._received_at(at), at,
+            f"{Kind.PRESENCE_ENTRY.value}:{closure.event_id}:{entry.presence.report_id}",
+            session.session_id, Kind.PRESENCE_ENTRY, effective, self._received_at(at), at,
         ))
         return True
 

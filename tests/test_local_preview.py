@@ -139,7 +139,7 @@ class LocalPreviewTests(unittest.TestCase):
         timeline = self.preview.c.session.timeline
         self.assertEqual(len(timeline.completed), 1)
         gang = timeline.completed[0]
-        self.assertEqual(gang.recognition_kind, Kind.PRESENCE_CONFIRMED)
+        self.assertEqual(gang.recognition_kind, Kind.PRESENCE_ENTRY)
         closure = next(event for event in timeline.processed
                        if event.event_id == gang.start_source_event_id)
         self.assertIsInstance(closure.door_close_evidence, DoorCloseEvidence)
@@ -384,8 +384,8 @@ class LocalPreviewTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             self.preview.action("/preview/finish_phase", body)
         self.assertEqual(len(self.preview.c.session.after_run_history), 1)
-        # The stay is established once presence outlasts the sensor's hold time.
-        for action in ("door_open", "on", "door_close", "step", "door_open", "off"):
+        # Presence at the closing opens the gang; the infusion confirms it.
+        for action in ("door_open", "on", "door_close", "infusion", "door_open", "off"):
             self.preview.action("/simulate", {"action": action})
         self.assertIsNotNone(self.preview.c.session.timeline.active)
         self.assertIsNone(self.preview.c.session.after_run)
@@ -513,7 +513,7 @@ class LocalPreviewTests(unittest.TestCase):
         completed = self.preview.archive(session_id)
         saved_gangs = completed["session"]["timeline"]["completed"]
         self.assertEqual(len(saved_gangs), 1)
-        self.assertEqual(saved_gangs[0]["recognition_kind"], Kind.PRESENCE_CONFIRMED)
+        self.assertEqual(saved_gangs[0]["recognition_kind"], Kind.PRESENCE_ENTRY)
         self.assertIsNotNone(completed["session"]["ended_at"])
         self.assertTrue(completed["records"])
         self.assertTrue(completed["phase_projection"]["intervals"])

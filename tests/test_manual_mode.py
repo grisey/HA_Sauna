@@ -3,7 +3,7 @@
 import unittest
 from datetime import timedelta
 
-from test_foundation import T0, event, ideal_presence, parameters, selected_occupancy
+from test_foundation import T0, event, parameters, selected_occupancy
 
 from custom_components.ha_sauna.core.controller import Controller
 from custom_components.ha_sauna.core.display import phase_timer, start_availability
@@ -18,9 +18,9 @@ def at(seconds):
 
 class ManualModeTests(unittest.TestCase):
     def controller(self, **values):
-        return ideal_presence(Controller(
+        return Controller(
             Parameters({**parameters().as_dict(), **values}), control_mode="manual",
-        ))
+        )
 
     def start(self, controller):
         controller.set_temperature(60, at(0))
@@ -169,6 +169,7 @@ class ManualModeTests(unittest.TestCase):
         self.assertIsNone(controller.session.timeline.active)
         controller.set_temperature(minimum, at(5))
         self.assertEqual(controller.session.timeline.active.started_at, at(5))
+        self.observe(controller, "water", Kind.INFUSION, 5.5)
         controller.set_temperature(minimum - 1, at(6))
         self.observe(controller, "exit", Kind.DOOR_OPEN, 7)
         controller.consume_occupancy_input(selected_occupancy(binary_presence(

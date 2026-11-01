@@ -18,7 +18,7 @@ from custom_components.ha_sauna.core.input_handoff import (
 from custom_components.ha_sauna.core.presence import binary_presence
 from custom_components.ha_sauna.core.timeline import Kind
 from test_cooling import at, controller
-from test_foundation import event, ideal_presence, selected_occupancy
+from test_foundation import event, selected_occupancy
 
 
 def timing(second):
@@ -95,7 +95,7 @@ class ControllerInputTests(unittest.TestCase):
         self.assertFalse(owner.session.operation_enabled)
 
     def test_event_qualification_retains_originals_and_infusion_annotation(self):
-        owner = ideal_presence(controller())
+        owner = controller()
         owner.process(event("open", Kind.DOOR_OPEN, 1))
         owner.process(event("close", Kind.DOOR_CLOSE, 2))
         for second, kind in ((3, Kind.PERSON_STRONG), (4, Kind.INFUSION)):

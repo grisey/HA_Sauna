@@ -47,11 +47,9 @@ Das Ende des alten Gangs verbraucht diesen späteren Türschluss nicht.
 
 Für Verlauf und Statistik reicht der Gang vom zugeordneten Eintritt bis zum
 Abschluss des Austrittsvorgangs. Die Türöffnung allein beendet ihn nicht. Den
-Abschluss belegt das bestätigte Durchlüften dieser Öffnung; das Gangende ist
-dann seine Buchung. Im Sensorbetrieb belegt ihn außerdem die nach der Öffnung
-leere Kabine; das Gangende ist dann die Austrittsöffnung selbst. Bis zur
-Buchung des Abschlusses bleibt die Phase **Saunagang** bestehen; dazwischen
-entsteht keine zusätzliche Aufheiz- oder Bereitschaftsphase.
+Abschluss belegt in beiden Verfahren das bestätigte Durchlüften dieser Öffnung;
+das Gangende ist seine Buchung. Bis dahin bleibt die Phase **Saunagang**
+bestehen; dazwischen entsteht keine zusätzliche Aufheiz- oder Bereitschaftsphase.
 Türöffnung und Türschluss bleiben als eigene Ereignisse sichtbar.
 Fehlende Türquellen oder Betrieb-AUS ersetzen keinen Austrittsnachweis.
 Bei unvollständigen Altarchiven bleibt der bisher aufgezeichnete Abschnitt
@@ -62,110 +60,66 @@ Vorschau und Zustandsentität verwenden dafür dieselbe Ableitung.
 
 ## Gang mit dem Präsenzsensor erkennen
 
-Nur der Sensorbetrieb liefert einen Präsenzverlauf. Nach einem Türvorgang
-stehen zwei Erklärungen gegeneinander: Jemand ist in der Kabine, oder sie ist
-leer. Der Verlauf unterscheidet sie über vier gelernte Zeiten des Sensors:
+Im Sensorbetrieb zählt der Belegungszustand beim Türschluss. Zeitverläufe des
+Sensors nach dem Türschluss, etwa seine Abwesenheitsverzögerung, gehen nicht in
+die Erkennung ein.
 
-| Zeit | Bedeutung |
+| Beleg | Wirkung |
 | --- | --- |
-| Haltezeit | Nach dem Verlassen meldet der Sensor noch so lange Anwesenheit, wie seine Abwesenheitsverzögerung und das Verlassen seines Bereichs dauern |
-| Aufenthalt | Zeit vom Türschluss nach einem Eintritt bis zur ersten Abwesenheitsmeldung |
-| Aussetzer | Abwesenheitsmeldung, obwohl jemand in der Kabine ist, bis zur nächsten Anwesenheit |
-| Leerlauf | Abwesenheit bei leerer Kabine bis zur nächsten Anwesenheitsmeldung |
+| Anwesenheit beim Türschluss nach vollständigem Eintritt | Eröffnet mit der Bestätigung des Türschlusses einen vorläufigen Gang; Beginn ist der Türschluss |
+| Weiterer Türvorgang mit Anwesenheit beim Türschluss vor der Bestätigung | Ersetzt den vorläufigen Gang; Beginn und Frist gehen vom neuen Türschluss aus |
+| Erster Aufguss im vorläufigen Gang | Bestätigt ihn mit gleichem Beginn |
+| Ablauf der [Frist für Personenhinweis und Aufguss](#gang-aus-temperatur-und-feuchte-erkennen) ohne Aufguss | Nimmt den vorläufigen Gang zurück |
+| Bestätigtes Durchlüften einer neuen Öffnung | Beendet den bestätigten Gang zum Buchungszeitpunkt; nimmt einen vorläufigen zurück |
+| Abwesenheit, `unknown`, `unavailable` | Kein Übergang |
+| Betrieb-AUS | Ende des offenen Gangs |
 
-Entschieden wird, sobald eine Erklärung mindestens 150-mal wahrscheinlicher
-ist als die andere, dem Beweisverhältnis der [Erkennung](erkennung.md). Es gibt
-keine festgelegte Wartezeit; die Zeit bis zur Entscheidung folgt aus den
-gelernten Verteilungen. Die Zeiten stammen aus Aufzeichnungen mit
-Präsenzsensor und bewerteter Referenz
-(`recognition_parameters.json`, Block `presence`, erzeugt mit
-`tools/presence_learn.py`); das Nachlernen der Erkennung übernimmt sie
-unverändert. Bei der Haltezeit trennt das Lernen Abschnitte ab, in denen der
-Sensor nach dem Austritt weiter eine Person erfasst; diese gehören nicht zur
-Haltezeit.
-
-| Abschnitt des Verlaufs | Beleg |
-| --- | --- |
-| Anwesenheit ab dem Türschluss | Aufenthalt gegen Haltezeit: je länger sie über die Haltezeit hinaus andauert, desto stärker für einen Aufenthalt; endet sie innerhalb der Haltezeit, für eine leere Kabine |
-| Abwesenheit, danach Anwesenheit bei geschlossener Tür | Aussetzer gegen Leerlauf |
-| Andauernde Abwesenheit | Aussetzer gegen Leerlauf, nach ihrer bisherigen Dauer |
-| Rückkehr der Anwesenheit bei offener Tür | Kein Beleg |
-| Weitere Anwesenheitsabschnitte | Kein Beleg |
-| `unknown`, `unavailable`, Quellenwechsel | Schließt den laufenden Abschnitt mit seiner beobachteten Dauer; mit dem nächsten bekannten Zustand beginnt ein neuer Abschnitt |
-
+Maßgeblich ist der Zustand am Beginn des Türschlusskandidaten aus dem erhaltenen
+Türschlussbeleg; ein rückblickend zugeordneter Türzeitpunkt ersetzt ihn nicht.
+Erkannt und wirksam wird der Gang frühestens mit der Bestätigung des
+Türschlusses, bei später empfangener Meldung mit deren Empfang.
+Ein Türschluss ohne diesen Beleg eröffnet keinen Gang durch den Sensor. Ein
+unveränderter Zustand `on` gilt ohne weitere Meldung fort; erst nach dem
+Kandidatenbeginn einsetzende Anwesenheit zählt nicht. `unknown`, `unavailable`
+oder ein Quellenwechsel vor dem Kandidatenbeginn unterbrechen den Nachweis.
 Gemeldete Zustandszeiten gelten ohne Abzug eines vermuteten Sensorverzugs. Eine
-später empfangene Meldung mit früherer Zustandszeit geht in die Auswertung ein.
-Eine Meldung zählt ab ihrer tatsächlichen Quellenfreigabe.
+später empfangene Meldung mit früherer Zustandszeit geht in die Auswertung ein;
+eine Meldung zählt ab ihrer tatsächlichen Quellenfreigabe.
 
-### Eintritt
-
-Anwesenheit beim Türschluss ist die Voraussetzung eines Eintritts. Maßgeblich
-ist der Beginn des Türschlusskandidaten aus dem erhaltenen Türschlussbeleg; ein
-rückblickend zugeordneter Türzeitpunkt ersetzt ihn nicht. Ein Türschluss ohne
-diesen Beleg begründet keinen Eintritt durch den Sensor. Belegt der
-anschließende Verlauf den Aufenthalt, beginnt der Gang am Türschluss; erkannt
-ist er zum Zeitpunkt dieser Entscheidung. Ein kurzer Überhang nach einem
-Austritt erzeugt so keinen Gang. Ein Aussetzer nach dem Eintritt verhindert ihn
-nicht, solange der Verlauf nicht die leere Kabine belegt.
-
-Ein Aufguss bestätigt einen Eintritt mit Anwesenheit beim Türschluss auch dann,
-wenn der Präsenzverlauf noch nicht entschieden hat; als Beginn gilt ebenfalls
-der Türschluss. Hat der Verlauf die leere Kabine belegt oder lag beim
-Türschluss keine Anwesenheit vor, eröffnet ein Aufguss im Sensorbetrieb keinen
-Gang. Für ihn gilt die [Frist für Personenhinweis und Aufguss](#gang-aus-temperatur-und-feuchte-erkennen).
-
-Liegt die Temperatur beim belegten Eintritt noch unter der Mindesttemperatur,
-bleibt der Eintritt bis zu einer neuen Türöffnung erhalten. Der Gang beginnt
+Liegt die Temperatur beim Eintritt noch unter der Mindesttemperatur, bleibt der
+Eintritt bis zu einer neuen Türöffnung erhalten. Der vorläufige Gang beginnt
 beim Erreichen der Grenze, ohne erneute Türfolge und ohne Rückdatierung auf den
 kälteren Eintritt.
 
-### Aufenthalt und Austritt
+Wie im Proxybetrieb beginnt ein bestätigter Gang damit am letzten Eintritt vor
+dem ersten Aufguss, und allein das bestätigte Durchlüften beendet ihn.
+Abwesenheit beendet keinen Gang, auch nicht nach einer Türöffnung. Eine ältere
+Austrittsfolge kann keinen später begonnenen Gang beenden. Bei einem
+Quellenwechsel bleibt die ursprüngliche Bestätigungsart des Gangs erhalten.
 
-Bei geschlossener Tür bleibt die Person im Raum: Abwesenheit ohne neue
-Türöffnung beendet keinen Gang, auch nicht ein später verdeckter Sensor. Nach
-einer neuen Öffnung bewertet der Verlauf ab dieser Öffnung, ob noch jemand in
-der Kabine ist. Eine schon vor der Öffnung bestehende Abwesenheit gilt bis zur
-Öffnung als Aussetzer; die leere Kabine kann erst mit der Öffnung beginnen.
-Nach dem anschließenden Türschluss gilt dessen Anwesenheitsabschnitt wie beim
-Eintritt.
-
-| Beleg nach der Austrittsöffnung | Wirkung |
-| --- | --- |
-| Bestätigtes Durchlüften der Öffnung | Gangende zum Buchungszeitpunkt der Lüftungsbestätigung, unabhängig vom Sensorzustand |
-| Leere Kabine | Gangende an der Austrittsöffnung; ein bereits beobachteter Türschluss dieses Vorgangs gehört zum Austritt und belegt keinen neuen Eintritt |
-| Aufenthalt | Der Gang läuft weiter; spätere Abwesenheit ohne neue Öffnung ändert das nicht |
-| Unentschieden | Der Gang läuft weiter |
-| Betrieb-AUS | Ende des offenen Gangs |
-
-Nach einem durch Lüften beendeten Gang kann der anschließende Türschluss mit
-Anwesenheit einen neuen Eintritt belegen, wenn der Sensor nach der
+Nach einem durch Lüften beendeten Gang eröffnet der Türschluss desselben
+Türvorgangs nur dann einen vorläufigen Gang, wenn der Sensor nach der
 Austrittsöffnung Abwesenheit gemeldet hat. Hält die Anwesenheit über den ganzen
-Austrittsvorgang an, gehört sie zur austretenden Person, deren
-Abwesenheitsmeldung später eintrifft; dieser Türschluss belegt dann keinen
-neuen Eintritt. Ein Aufguss bestätigt den Aufenthalt auch in diesem Fall. Eine ältere Austrittsfolge kann
-keinen später begonnenen Gang beenden. Die aktuell ausgewählte Quelle bestimmt
-die Abschlussregel, auch nach einem Quellenwechsel; die ursprüngliche
-Bestätigungsart des Gangs bleibt erhalten. Im Proxybetrieb beendet allein das
-bestätigte Durchlüften den Gang.
+Austrittsvorgang an, gehört sie zur austretenden Person. Ein anschließender
+Aufguss eröffnet in diesem Fall einen bestätigten Gang mit Beginn am Türschluss.
+Ohne Anwesenheit beim Türschluss eröffnet ein Aufguss im Sensorbetrieb keinen
+Gang.
 
-Aufgüsse werden dem Gang zugeordnet, bestätigen ihn aber nicht erneut.
-Einzelne Belege des Proxybetriebs (Aufgüsse) bilden keinen Präsenzverlauf; für
-sie gelten die nachfolgenden Regeln des indirekten Verfahrens. Die Wirkung
-aktueller Belegungszustände auf Gangwärme und die gemeinsame Türhilfe
-beschreibt die [Heizpriorität](betrieb.md#heizpriorität).
+Weitere Aufgüsse werden dem Gang zugeordnet. Die Wirkung vorläufiger und
+bestätigter Gänge auf die Gangwärme beschreibt die
+[Heizpriorität](betrieb.md#heizpriorität), die auf eine laufende Kühlung die
+[Ofenkühlung](ofenkuehlung.md#kühlung-abwarten-oder-vorzeitig-beenden).
 
-Der Sensor muss die Kabine erfassen und nicht den Bereich vor der Tür. Bleibt
-eine Person nach dem Austritt vor der Tür im Erfassungsbereich, ist sie nach
-einem weiteren Türvorgang vom Aufenthalt in der Kabine nicht zu unterscheiden
-und erzeugt einen Gang.
+Erfasst der Sensor auch den Bereich vor der Tür, kann eine Person dort beim
+Türschluss einen vorläufigen Gang eröffnen; ohne Aufguss wird er zurückgenommen.
 
 ## Gang aus Temperatur und Feuchte erkennen
 
 Die Erkennung aus Temperatur und Feuchte liefert Türvorgänge, Lüften und
 Aufgüsse, aber keine eigenen Personensignale. Ein Aufguss belegt eine Person in
 der Kabine; er behauptet weder dauerhafte Anwesenheit noch spätere Abwesenheit.
-Ein Gang ohne Aufguss wird im Proxyverfahren deshalb nicht erkannt; dafür ist
-ein Präsenzsensor vorgesehen.
+Ein Gang ohne Aufguss wird im Proxyverfahren deshalb nicht erkannt; im
+Sensorbetrieb bleibt er vorläufig.
 
 | Ereignis | Wirkung |
 | --- | --- |

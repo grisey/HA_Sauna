@@ -37,7 +37,7 @@ Im Automatikbetrieb gilt, von oben nach unten:
 6. Thermostat einschließlich Mindestheizzeit und Heizpause.
 
 Bei vorläufigen und durch Aufguss bestätigten Gängen gilt die Ganganforderung
-aus dem aktiven Gang. Bei Bestätigung durch einen qualifizierten Belegungszustand
+aus dem aktiven Gang. Bei einem durch Anwesenheit beim Türschluss eröffneten Gang
 setzt sie weiterhin einen aktuellen verfügbaren qualifizierten Zustandsbeleg
 voraus. Unbekannter Zustand oder fehlende Verfügbarkeit nimmt nur diese
 zusätzliche Heizanforderung zurück, ohne den Gang zu beenden. Qualifizierte

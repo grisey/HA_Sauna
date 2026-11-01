@@ -8,8 +8,8 @@ from types import SimpleNamespace
 import unittest
 from unittest.mock import AsyncMock, Mock, patch
 
-from test_cooling import at, controller as plain_controller
-from test_foundation import bindings, event, parameters, ideal_presence
+from test_cooling import at
+from test_foundation import bindings, event, parameters
 
 from custom_components.ha_sauna.bindings import Bindings
 from custom_components.ha_sauna.archive import plain
@@ -18,11 +18,6 @@ from custom_components.ha_sauna.core.recognition import Detection
 from custom_components.ha_sauna.core.presence import binary_presence
 from custom_components.ha_sauna.core.timeline import Confirmation, Event, Kind
 from custom_components.ha_sauna.runtime import Configuration, SaunaRuntime
-
-
-def controller(**overrides):
-    """Gang control with the sharply timed presence sensor."""
-    return ideal_presence(plain_controller(**overrides))
 
 
 ENTITY = "binary_sensor.presence"
@@ -43,7 +38,6 @@ class PresenceRuntimeProbe:
             ),
             clock=lambda: self.clock[0],
         )
-        ideal_presence(self.runtime)
         self.runtime.controller.set_temperature(70, at(0))
         self.runtime.controller.set_operation(True, at(0), session_id="s")
 
@@ -105,7 +99,6 @@ def runtime_with_clock(clock):
         ),
         clock=lambda: clock[0],
     )
-    ideal_presence(runtime)
     minimum = runtime.configuration.parameters.values["sauna_min_temperature_c"]
     runtime.controller.set_temperature(minimum, at(0))
     runtime.controller.set_operation(True, at(0), session_id="s")
@@ -415,15 +408,14 @@ class PresenceHandoverTests(unittest.TestCase):
                 self.assertEqual(c.session.timeline.active.started_at, at(closed))
                 self.assertEqual(
                     c.session.timeline.active.confirmation,
-                    Confirmation.CONFIRMED,
+                    Confirmation.PROVISIONAL,
                 )
                 self.assertEqual(
                     sum(e.kind == "gang_started" for e in c.consumer_events),
                     1,
                 )
-                self.assertEqual(
-                    sum(e.kind == "gang_confirmed" for e in c.consumer_events),
-                    1,
+                self.assertFalse(
+                    any(e.kind == "gang_confirmed" for e in c.consumer_events)
                 )
 
 

@@ -671,13 +671,6 @@ class SaunaRuntime:
                         error,
                     )
 
-        if self.session:
-            parameters = self.recognition_parameters
-            if "presence" not in parameters:
-                from .recognition_parameters import shipped_parameters
-
-                parameters = shipped_parameters()
-            self.controller.set_presence_parameters(parameters)
         self.detector = (
             ClimateRecognizer(
                 self.recognition_parameters,
@@ -1177,9 +1170,8 @@ class SaunaRuntime:
                 # Catch-up recognition must use the report already received by
                 # this callback, without advancing past queued device inputs.
                 with self.controller.confirmation_batch(self._clock):
-                    with self.controller.direct_presence_catchup():
-                        await self._drain_device_inputs()
-                        self._deliver_detection(self._clock())
+                    await self._drain_device_inputs()
+                    self._deliver_detection(self._clock())
                     await self._run_cycle()
             self.notify()
 

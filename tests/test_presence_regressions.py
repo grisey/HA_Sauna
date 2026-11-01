@@ -8,8 +8,6 @@ import unittest
 from datetime import UTC, datetime, timedelta
 from unittest.mock import patch
 
-from test_foundation import ideal_presence
-
 from custom_components.ha_sauna.archive import plain
 from custom_components.ha_sauna.bindings import Bindings
 from custom_components.ha_sauna.core.button import END_HOLD
@@ -81,7 +79,7 @@ class PresenceRegressionTests(unittest.TestCase):
                 presence_source="ha_presence",
                 bindings=Bindings({**BINDINGS.values, "presence": source}),
             )
-            runtime = ideal_presence(SaunaRuntime(configuration, clock=lambda: clock[0]))
+            runtime = SaunaRuntime(configuration, clock=lambda: clock[0])
             runtime.controller.begin_session("normalized-occupancy", START)
             runtime.controller.set_temperature(75, START)
 
@@ -114,6 +112,7 @@ class PresenceRegressionTests(unittest.TestCase):
                 gang = runtime.session.timeline.active
                 self.assertIsNotNone(gang)
                 self.assertTrue(runtime.controller.regulation_inputs.gang_heat_demand)
+                door(Kind.INFUSION, 3.5, "water")
 
                 await report("off", 4, "wrong-entity", entity="binary_sensor.unselected")
                 await report("off", 5, "wrong-assertion", assertion="provisional_proxy")
@@ -158,7 +157,7 @@ class PresenceRegressionTests(unittest.TestCase):
                 presence_source="ha_presence",
                 bindings=Bindings({**BINDINGS.values, "presence": "binary_sensor.occupancy"}),
             )
-            runtime = ideal_presence(SaunaRuntime(configuration, clock=lambda: clock[0]))
+            runtime = SaunaRuntime(configuration, clock=lambda: clock[0])
             runtime.controller.begin_session("qualified-events", START)
             runtime.controller.set_temperature(75, START)
             clock[0] = START + timedelta(seconds=1)
