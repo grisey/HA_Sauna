@@ -39,7 +39,7 @@ from .recognition_model import CHANNELS, closing_basis, is_humidity, opening_bas
 
 # rates (1/s) of the forms: from far below the inverse of the longest window (the
 # form is linear there) to far above the inverse sampling interval (a step)
-RATE_GRID = np.geomspace(1 / 200000, 200.0, 62)
+RATE_GRID = np.geomspace(5e-8, 200.0, 78)
 RATE_STEP = math.log(RATE_GRID[1] / RATE_GRID[0])
 
 
@@ -73,6 +73,22 @@ def infusion_basis(u, k: float, p: float) -> np.ndarray:
     )
 
 
+def recovery_basis(u, k: float, p: float) -> np.ndarray:
+    """Vergleichsform eines Übergangs mit Annäherung an ein neues Niveau (Knick bei ``u`` = 0).
+
+    Vor dem Knick fällt der Kanal mit der Steigung ``s``.  Danach endet dieser
+    Abfall mit der Rate ``k``, und der Kanal nähert sich mit der Rate ``p`` einem
+    neuen Niveau: beim Schluss die Erholung der geschlossenen Kabine (V11), beim
+    Durchlüften der Ausgleich der absoluten Feuchte bei offener Tür (V12).  Die
+    Annäherung ist über ihre Anfangssteigung ``e`` angegeben; bei kleinem ``p``
+    geht sie stetig in eine Gerade über.  Spalten: Niveau, Abfall, Annäherung.
+    """
+    u = np.asarray(u, float)
+    v = np.maximum(u, 0)
+    fall = np.where(u < 0, u, -np.expm1(-k * v) / k)
+    return np.column_stack([np.ones_like(u), fall, -np.expm1(-p * v) / p])
+
+
 RATELESS = (slope_basis,)
 
 # basis and coefficient names (without the level) of every form, for temperature
@@ -81,13 +97,13 @@ RATELESS = (slope_basis,)
 # of the slope and of the fluctuation (Verwirbelung, Wedeln, Rauschen)
 FORMS = {
     "opening": {"T": (opening_basis, ("e", "s")), "A": (opening_basis, ("e", "s"))},
-    "closing": {"T": (closing_basis, ("s", "e")), "A": (closing_basis, ("s", "e"))},
+    "closing": {"T": (recovery_basis, ("s", "e")), "A": (recovery_basis, ("s", "e"))},
     "infusion": {
         "T": (slope_basis, ("e", "r")),
         "A": (infusion_basis, ("e", "r", "a", "g")),
     },
     "ventilation": {"T": (closing_basis, ("s", "e")), "A": (closing_basis, ("s", "e"))},
-    "exchange": {"T": (closing_basis, ("s", "e")), "A": (closing_basis, ("s", "e"))},
+    "exchange": {"T": (recovery_basis, ("s", "e")), "A": (recovery_basis, ("s", "e"))},
     "disturbance": {"T": (slope_basis, ("e", "r")), "A": (slope_basis, ("e", "r"))},
 }
 
@@ -302,9 +318,18 @@ def _shifted(index: int, shift: int) -> int:
     """Rasterindex nach dem Ratenfaktor; am Rand bleibt die Rate auf ihrem Grenzwert.
 
     Das Raster reicht bis zu den Grenzwerten der Basis (linear bzw. Stufe), darüber
-    hinaus ändert sie sich nicht mehr.
+    hinaus ändert sie sich nicht mehr.  Eine Grundrate auf dem Grenzwert verschiebt
+    der Faktor nicht: Der Kanal zeigt diese Rate bei keinem Ereignis.
     """
-    return min(max(index + shift, 0), len(RATE_GRID) - 1)
+    last = len(RATE_GRID) - 1
+    if index in (0, last):
+        return index
+    return min(max(index + shift, 0), last)
+
+
+def _shifted_axis(shift: int) -> np.ndarray:
+    """``_shifted`` für alle Rasterindizes."""
+    return np.array([_shifted(i, shift) for i in range(len(RATE_GRID))])
 
 
 def _shift_rates(base, shift: int) -> list:
@@ -368,7 +393,7 @@ def common_rates(profiles: list, rated: list, iterations: int = 20):
                 continue
             total = np.zeros((n, n))
             for e, pr in enumerate(profiles):
-                index = np.clip(np.arange(n) + int(shifts[e]), 0, n - 1)
+                index = _shifted_axis(int(shifts[e]))
                 total += pr[c][np.ix_(index, index)]
             new.append(
                 tuple(
@@ -588,7 +613,7 @@ def _edges(profiles, base, shifts) -> list:
             continue
         total = np.zeros((n, n))
         for pr, j in zip(profiles, shifts):
-            index = np.clip(np.arange(n) + int(j), 0, n - 1)
+            index = _shifted_axis(int(j))
             total += pr[c][np.ix_(index, index)]
         for axis, name in ((0, "k"), (1, "p")):
             v = pair[axis]
