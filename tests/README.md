@@ -369,5 +369,10 @@ schreibt `recognition_parameters.json` samt den Belegen der Lernaufzeichnungen.
 [`tools/recognition_replay.py`](../tools/recognition_replay.py) spielt
 Aufzeichnungen über `SaunaRuntime` mit der eingebauten Erkennung ab und gibt
 Erkennungen, gebuchte und abgelehnte Ereignisse sowie Gänge aus; Gangmodell,
-Steuerung und Nachlauf bleiben dabei unverändert. Beide Werkzeuge sind keine
-Testsuiten und verändern keine Sollereignisse.
+Steuerung und Nachlauf bleiben dabei unverändert. Daneben protokolliert es nur
+beobachtend jede Steuerentscheidung mit Heizanforderung, Grund, Kühlung, Phase
+und Gangzustand, jeden vorläufig erkannten Gang mit Ausgang, Grund und
+Heizdauer sowie Trennungen, Güsse und Abklingprüfung der Aufgusserkennung.
+Die Kühlzeit zählt wie im Betrieb erst ab gemeldetem Schütz AUS; mit
+`--heater recorded` ist das der aufgezeichnete Schützzustand. Beide Werkzeuge
+sind keine Testsuiten und verändern keine Sollereignisse.
