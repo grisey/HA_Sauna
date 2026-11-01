@@ -374,5 +374,9 @@ beobachtend jede Steuerentscheidung mit Heizanforderung, Grund, Kühlung, Phase
 und Gangzustand, jeden vorläufig erkannten Gang mit Ausgang, Grund und
 Heizdauer sowie Trennungen, Güsse und Abklingprüfung der Aufgusserkennung.
 Die Kühlzeit zählt wie im Betrieb erst ab gemeldetem Schütz AUS; mit
-`--heater recorded` ist das der aufgezeichnete Schützzustand. Beide Werkzeuge
-sind keine Testsuiten und verändern keine Sollereignisse.
+`--heater recorded` ist das der aufgezeichnete Schützzustand. Mit
+`--heater split` deutet die Erkennung die gemessenen Kurven mit dem
+aufgezeichneten Schützzustand, während die Schützrückmeldung der Steuerung
+ihrer Heizanforderung folgt wie im Automatikbetrieb. Die aufgezeichneten
+Temperaturen folgen in keiner Variante den Befehlen der Steuerung. Beide
+Werkzeuge sind keine Testsuiten und verändern keine Sollereignisse.

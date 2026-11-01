@@ -10,7 +10,10 @@ Proxyverfahren (Erkennung aus Temperatur und Feuchte); mit ``--presence``
 erreichen aufgezeichnete Präsenzmeldungen (Rolle ``presence``) die Laufzeit
 als Präsenzsensor, sofern die Aufzeichnung ihn verwendet.  Mit
 ``--heater recorded`` folgt die Schützrückmeldung dem aufgezeichneten
-Schützzustand (Rolle ``heater``) statt der Heizanforderung.  Ergebnis je
+Schützzustand (Rolle ``heater``) statt der Heizanforderung.  Mit
+``--heater split`` erhält die Erkennung den aufgezeichneten Schützzustand, der
+zu den gemessenen Kurven gehört, und die Steuerung eine Schützrückmeldung, die
+ihrer Heizanforderung folgt wie im Automatikbetrieb.  Ergebnis je
 Aufzeichnung: erkannte Ereignisse, gebuchte und abgelehnte Ereignisse,
 Gänge.
 
@@ -197,9 +200,17 @@ async def replay(case_dir: Path, parameters: dict | None, *, presence: bool = Fa
     direct = (presence and (case.get("configuration") or {}).get("presence_source") == "ha_presence"
               and any(r["role"] == "presence" for r in rows))
     recorded_heater = [(r["t"], r["value"]) for r in rows if r["role"] == "heater" and isinstance(r["value"], bool)]
-    if heater == "recorded" and not recorded_heater:
+    if heater in ("recorded", "split") and not recorded_heater:
         raise ValueError(f"{case_dir.name}: keine aufgezeichnete Schützrückmeldung")
     heater_state = [None]
+    # split: the recognition receives the recorded contactor exactly as the runtime forwards it with
+    # "recorded" (the feedback reported after the previous cycle); the controller receives its demand
+    recognition_heater = [None]
+
+    def recorded_heating(report):
+        def reported(at, on):
+            return report(at, recognition_heater[0])
+        return reported
     actions = case.get("actions") or case.get("bound_actions") or []
     switches = sorted((a["t"], a["name"] == "start") for a in actions if a["name"] in ("start", "stop"))
     if not switches:
@@ -261,6 +272,18 @@ async def replay(case_dir: Path, parameters: dict | None, *, presence: bool = Fa
     c.process = observing(c.process)
     c.consume_deadline = observing(c.consume_deadline)
     filters = {}                     # recognizer id → observed infusion filter
+    sync_detector = runtime._sync_detector
+
+    def synced():
+        # a new recognizer is observed before the runtime reports any heating or measurement to it
+        sync_detector()
+        detector = runtime.detector
+        if detector is not None and id(detector) not in filters:
+            filters[id(detector)] = observe_infusion_filter(detector)
+            if heater == "split":
+                detector.report_heating = recorded_heating(detector.report_heating)
+
+    runtime._sync_detector = synced
     finished = []
     runtime.recognition_finished = lambda session_id, recognizer: finished.append((session_id, recognizer))
     latest: dict = {}
@@ -309,7 +332,6 @@ async def replay(case_dir: Path, parameters: dict | None, *, presence: bool = Fa
         if runtime.detector is not None and fed_to[0] is not runtime.detector:
             # a new session's recognizer starts with the current values (as the device snapshot does)
             fed_to[0] = runtime.detector
-            filters[id(runtime.detector)] = observe_infusion_filter(runtime.detector)
             for m in latest.values():
                 runtime.detector.accept(m)
         if c.session is not None:
@@ -317,6 +339,7 @@ async def replay(case_dir: Path, parameters: dict | None, *, presence: bool = Fa
                 demand = heater_state[0]
             else:
                 demand = bool(c.last_decision and c.last_decision.heat)
+            recognition_heater[0] = heater_state[0]
             c.report_contactor(demand, now[0])
             c.report_heating(demand, now[0])
             sessions[c.session.session_id] = c.session
@@ -365,7 +388,7 @@ async def replay(case_dir: Path, parameters: dict | None, *, presence: bool = Fa
     filtered = [infusion_filter(rec, filters[id(rec)]) for rec in recognizers if id(rec) in filters]
     return {"recording": case_dir.name, "sessions": len(sessions), "gangs": gangs, "retracted": retracted,
             "detections": detections, "processed": processed, "rejected": rejected, "decisions": decisions,
-            "presence_source": "ha_presence" if direct else "proxy", "until": iso(until),
+            "presence_source": "ha_presence" if direct else "proxy", "heater": heater, "until": iso(until),
             "control": [{"at": iso(at), "heat": h, "reason": reason, "cooling": cooling, "phase": phase, "gang": gang}
                         for at, h, reason, cooling, phase, gang in control],
             "provisional": provisional,
@@ -382,8 +405,9 @@ def main():
     ap.add_argument("--out", required=True)
     ap.add_argument("--presence", action="store_true",
                     help="aufgezeichnete Präsenzmeldungen verwenden, wenn die Aufzeichnung den Sensor nutzt")
-    ap.add_argument("--heater", choices=("demand", "recorded"), default="demand",
-                    help="Schützrückmeldung aus der Heizanforderung oder aus der Aufzeichnung")
+    ap.add_argument("--heater", choices=("demand", "recorded", "split"), default="demand",
+                    help="Schützrückmeldung aus der Heizanforderung, aus der Aufzeichnung oder getrennt: "
+                         "Erkennung aus der Aufzeichnung, Steuerung aus der Heizanforderung")
     ap.add_argument("recordings", nargs="+")
     args = ap.parse_args()
     parameters = json.loads(Path(args.params).read_text()) if args.params else None
