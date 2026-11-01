@@ -5,7 +5,7 @@ Aufruf:
 
 Die Messwerte erreichen die Erkennung der Laufzeit (``runtime.detector``) wie
 im Betrieb; Gangmodell, Steuerung und Nachlauf bleiben unverändert.  Die
-Schützrückmeldung folgt der Heizanforderung.  Ohne ``--presence`` gilt das
+Schützrückmeldung folgt dem Schaltbefehl.  Ohne ``--presence`` gilt das
 Proxyverfahren (Erkennung aus Temperatur und Feuchte); mit ``--presence``
 erreichen aufgezeichnete Präsenzmeldungen (Rolle ``presence``) die Laufzeit
 als Präsenzsensor, sofern die Aufzeichnung ihn verwendet.  Mit
@@ -13,20 +13,31 @@ als Präsenzsensor, sofern die Aufzeichnung ihn verwendet.  Mit
 Schützzustand (Rolle ``heater``) statt der Heizanforderung.  Mit
 ``--heater split`` erhält die Erkennung den aufgezeichneten Schützzustand, der
 zu den gemessenen Kurven gehört, und die Steuerung eine Schützrückmeldung, die
-ihrer Heizanforderung folgt wie im Automatikbetrieb.  Ergebnis je
-Aufzeichnung: erkannte Ereignisse, gebuchte und abgelehnte Ereignisse,
-Gänge.
+ihrem Schaltbefehl folgt wie im Automatikbetrieb.  Die Rückmeldung erreicht die
+Steuerung in jedem Takt über dieselben Eingänge wie bei
+``HADevice.report_received_feedback``.  Ohne Ofenleistung und unabhängigen
+Heiznachweis ist ihre Heizquelle die Schalterrückmeldung des Heizschützes
+(``contactor``, Rolle ``heater``).  Aufzeichnungen mit diesen optionalen
+Rückmeldungen weist das Werkzeug ab, weil dieser Rückmeldeweg nicht nachgebildet
+ist.  Ergebnis je Aufzeichnung: erkannte Ereignisse, gebuchte und abgelehnte
+Ereignisse, Gänge.
 
 Zusätzlich, nur beobachtet (Erkennung, Gangmodell und Steuerung verlaufen wie
 ohne Beobachtung):
 
-- ``control``: jede Entscheidung der Steuerung, bei der sich Heizanforderung,
-  Grund, Kühlung, Phase oder Gangzustand ändert, mit Zeitpunkt.  Kühlung:
-  ``pending`` bis zur ersten Schützrückmeldung AUS, ``running`` während die
-  Kühlzeit zählt, ``suspended`` bei erneut gemeldetem Schütz EIN.
+- ``control``: jede Entscheidung der Steuerung, bei der sich Heizanforderung
+  (``demand``) oder Schaltbefehl (``command``) samt Grund, Kühlung, Phase,
+  Gangzustand, Schützrückmeldung oder gebuchter Heizzustand ändert, mit
+  Zeitpunkt.  Kühlung: ``pending`` bis zur ersten Schützrückmeldung AUS,
+  ``running`` während die Kühlzeit zählt, ``suspended`` bei erneut gemeldetem
+  Schütz EIN.
+- ``heating``: Heizquelle und die von der Steuerung gebuchten Heizintervalle
+  (Heizzeitbuchung aus der Rückmeldung).  Nur diese Intervalle ergeben
+  Heizdauern (``heating_s``); Heizanforderung und Befehl stehen getrennt
+  (``gang_demand_s``, ``command_s``).
 - ``provisional``: jeder vorläufig erkannte Gang mit Beginn, Erkennung,
   Ausgang (bestätigt, zurückgenommen, beendet, offen), Zeitpunkt und Grund des
-  Ausgangs sowie der Dauer der Gangheizung und jeder Heizanforderung bis dahin.
+  Ausgangs sowie Heizdauer, Ganganforderung und Befehl EIN bis dahin.
 - ``infusion_filter``: Trennungen der Güsse mit Grund (Türöffnung, Dampfende,
   abgeflachtes Abklingen), jeder Guss mit den Trennungen seit dem vorigen und
   die Abklingprüfung je Messschritt.  Deren Verhältnis ist wie in
@@ -54,6 +65,12 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
 from custom_components.ha_sauna.bindings import Bindings  # noqa: E402
+from custom_components.ha_sauna.core.input_handoff import (
+    ContactorFeedbackInput,
+    HeatingFeedbackInput,
+    InputTiming,
+    PowerFeedbackInput,
+)
 from custom_components.ha_sauna.core.models import Measurement, Position, Quantity  # noqa: E402
 from custom_components.ha_sauna.core.parameters import Parameters  # noqa: E402
 from custom_components.ha_sauna.core.presence import binary_presence  # noqa: E402
@@ -84,6 +101,9 @@ PRESENCE = "binary_sensor.praesenz"
 RETRACTION = {Kind.VENTILATION: "ventilation", Kind.CONFIRMATION_EXPIRED: "expired",
               Kind.PRESENCE_ENTRY: "replaced"}
 DECAY_COLUMNS = ("t", "state", "p_infusion", "p_decay", "joining", "slope", "steepest", "check", "ratio")
+CONTROL_COLUMNS = ("demand", "demand_reason", "command", "command_reason", "cooling", "phase", "gang",
+                   "contactor", "heating")
+OPTIONAL_HEATING = ("heater_power", "heater_feedback")   # power and independent heating feedback
 
 
 def seconds(at):
@@ -91,14 +111,31 @@ def seconds(at):
 
 
 def control_state(c):
-    """Heizanforderung, Grund, Kühlung, Phase und Gangzustand der aktuellen Entscheidung."""
-    session, decision = c.session, c.last_decision
+    """Heizanforderung und Schaltbefehl mit Grund, Kühlung, Phase, Gangzustand, Rückmeldung und gebuchter
+    Heizzustand nach einer Entscheidung (``CONTROL_COLUMNS``)."""
+    session, demand, command = c.session, c.automatic_decision, c.last_decision
     after_run = session.after_run if session else None
     gang = session.timeline.active if session else None
     cooling = (None if after_run is None else "pending" if after_run.pending_start
                else "suspended" if after_run.ends_at is None else "running")
-    return (bool(decision and decision.heat), decision.reason if decision else None, cooling, c.phase,
-            gang.confirmation.value if gang else None)
+    return (bool(demand and demand.heat), demand.reason if demand else None,
+            bool(command and command.heat), command.reason if command else None, cooling, c.phase,
+            gang.confirmation.value if gang else None, c.contactor,
+            session.heating.reported_heating if session else None)
+
+
+def report_feedback(c, contactor, received_at, at):
+    """Schalterrückmeldung des Heizschützes über die Eingänge von ``HADevice.report_received_feedback``.
+
+    Ohne Ofenleistung und unabhängigen Heiznachweis wählt die Integration die Schalterrückmeldung als
+    Heizquelle (``HADevice.observe_heating``: ``contactor``); die Steuerung bucht daraus die Heizzeit.
+    """
+    timing = InputTiming(effective_at=received_at, received_at=received_at, first_usable_at=None, evaluated_at=at)
+    c.consume_contactor_feedback_input(ContactorFeedbackInput(contactor=contactor, timing=timing))
+    c.report_fallback_heating(contactor, at)
+    c.consume_power_feedback_input(PowerFeedbackInput(power_w=None, valid_until=None, timing=InputTiming(
+        effective_at=None, received_at=None, first_usable_at=None, evaluated_at=at)))
+    c.consume_heating_feedback_input(HeatingFeedbackInput(heating=contactor, timing=timing))
 
 
 def control_seconds(control, until, start, end, wanted):
@@ -111,12 +148,22 @@ def control_seconds(control, until, start, end, wanted):
     return round(total, 1)
 
 
-def gang_heat(row):
+def heating_seconds(intervals, until, start, end):
+    """Sekunden zwischen ``start`` und ``end`` in gebuchten Heizintervallen."""
+    total = 0.0
+    for begin, stop in intervals:
+        lo, hi = max(begin, start), min(stop or until, end)
+        if hi > lo:
+            total += (hi - lo).total_seconds()
+    return round(total, 1)
+
+
+def gang_demand(row):
     return row[2] == "gang_heat_demand"
 
 
-def heat(row):
-    return row[1]
+def command_on(row):
+    return row[3]
 
 
 def observe_infusion_filter(rec):
@@ -202,7 +249,13 @@ async def replay(case_dir: Path, parameters: dict | None, *, presence: bool = Fa
     recorded_heater = [(r["t"], r["value"]) for r in rows if r["role"] == "heater" and isinstance(r["value"], bool)]
     if heater in ("recorded", "split") and not recorded_heater:
         raise ValueError(f"{case_dir.name}: keine aufgezeichnete Schützrückmeldung")
+    optional = sorted({r["role"] for r in rows} & set(OPTIONAL_HEATING))
+    if optional:
+        raise ValueError(f"{case_dir.name}: {', '.join(optional)} aufgezeichnet; dieser Rückmeldeweg ist im "
+                         "Replay nicht nachgebildet")
     heater_state = [None]
+    heater_at = [None]
+    feedback = [None, None]          # contactor feedback reported to the controller and its receipt
     # split: the recognition receives the recorded contactor exactly as the runtime forwards it with
     # "recorded" (the feedback reported after the previous cycle); the controller receives its demand
     recognition_heater = [None]
@@ -236,7 +289,7 @@ async def replay(case_dir: Path, parameters: dict | None, *, presence: bool = Fa
             raise
 
     runtime._process_event = recorded
-    control = []                     # (time, heat, reason, cooling, phase, gang) at every change
+    control = []                     # (time, *CONTROL_COLUMNS) at every change
     evaluate = c._evaluate
 
     def evaluated(at, **kwargs):
@@ -302,6 +355,7 @@ async def replay(case_dir: Path, parameters: dict | None, *, presence: bool = Fa
             if r["role"] == "heater":
                 if isinstance(r["value"], bool):
                     heater_state[0] = r["value"]
+                    heater_at[0] = ORIGIN + timedelta(seconds=r["t"])
                 continue
             if direct and r["role"] == "presence" and isinstance(r["value"], bool):
                 at = ORIGIN + timedelta(seconds=r["t"])
@@ -335,17 +389,20 @@ async def replay(case_dir: Path, parameters: dict | None, *, presence: bool = Fa
             for m in latest.values():
                 runtime.detector.accept(m)
         if c.session is not None:
+            # every cycle, as HADevice.refresh reports the feedback; recorded or following the command
             if heater == "recorded":
-                demand = heater_state[0]
+                contactor, received_at = heater_state[0], heater_at[0]
             else:
-                demand = bool(c.last_decision and c.last_decision.heat)
+                contactor = bool(c.last_decision and c.last_decision.heat)
+                received_at = now[0] if contactor is not feedback[0] or feedback[1] is None else feedback[1]
+            feedback[:] = [contactor, received_at]
             recognition_heater[0] = heater_state[0]
-            c.report_contactor(demand, now[0])
-            c.report_heating(demand, now[0])
+            report_feedback(c, contactor, received_at, now[0])
             sessions[c.session.session_id] = c.session
         watch_timeline()
         second += 1
     until = now[0]
+    booked = sorted((i.started_at, i.ended_at) for session in sessions.values() for i in session.heating.intervals)
     recognizers = [rec for _, rec in finished] + ([runtime.detector] if runtime.detector else [])
     gangs, retracted, processed, provisional = [], [], [], []
     for session in sessions.values():
@@ -356,8 +413,11 @@ async def replay(case_dir: Path, parameters: dict | None, *, presence: bool = Fa
                           "infusions": len(g.infusion_events), "recognition": g.recognition_kind.value,
                           "confirmed": iso(g.confirmed_at),
                           "infusion_times": [iso(e.effective_at) for e in g.infusion_events],
-                          "gang_heat_s": control_seconds(control, until, g.detected_at, g.ended_at or until,
-                                                         gang_heat)})
+                          "heating_s": heating_seconds(booked, until, g.detected_at, g.ended_at or until),
+                          "gang_demand_s": control_seconds(control, until, g.detected_at, g.ended_at or until,
+                                                           gang_demand),
+                          "command_s": control_seconds(control, until, g.detected_at, g.ended_at or until,
+                                                       command_on)})
         for g in timeline.retracted:
             at, reason = retractions.get(g.gang_id, (None, None))
             retracted.append({"start": iso(g.started_at), "detected": iso(g.detected_at), "retracted": iso(at),
@@ -377,8 +437,10 @@ async def replay(case_dir: Path, parameters: dict | None, *, presence: bool = Fa
             provisional.append({"start": iso(g.started_at), "detected": iso(g.detected_at),
                                 "recognition": g.recognition_kind.value, "outcome": outcome, "at": iso(at),
                                 "reason": reason,
-                                "gang_heat_s": control_seconds(control, until, g.detected_at, at or until, gang_heat),
-                                "heat_s": control_seconds(control, until, g.detected_at, at or until, heat)})
+                                "heating_s": heating_seconds(booked, until, g.detected_at, at or until),
+                                "gang_demand_s": control_seconds(control, until, g.detected_at, at or until,
+                                                                 gang_demand),
+                                "command_s": control_seconds(control, until, g.detected_at, at or until, command_on)})
         processed += [(e.kind.value, iso(e.effective_at), iso(e.booking_at)) for e in timeline.processed
                       if e.event_id.startswith("recognition:")]
     provisional.sort(key=lambda g: g["detected"])
@@ -389,8 +451,10 @@ async def replay(case_dir: Path, parameters: dict | None, *, presence: bool = Fa
     return {"recording": case_dir.name, "sessions": len(sessions), "gangs": gangs, "retracted": retracted,
             "detections": detections, "processed": processed, "rejected": rejected, "decisions": decisions,
             "presence_source": "ha_presence" if direct else "proxy", "heater": heater, "until": iso(until),
-            "control": [{"at": iso(at), "heat": h, "reason": reason, "cooling": cooling, "phase": phase, "gang": gang}
-                        for at, h, reason, cooling, phase, gang in control],
+            "heating": {"source": "contactor", "role": "heater",
+                        "follows": "recording" if heater == "recorded" else "command",
+                        "intervals": [[iso(a), iso(b)] for a, b in booked]},
+            "control": [{"at": iso(row[0]), **dict(zip(CONTROL_COLUMNS, row[1:]))} for row in control],
             "provisional": provisional,
             "infusion_filter": {"separations": [s for f in filtered for s in f["separations"]],
                                 "pours": [p for f in filtered for p in f["pours"]],

@@ -370,13 +370,19 @@ schreibt `recognition_parameters.json` samt den Belegen der Lernaufzeichnungen.
 Aufzeichnungen über `SaunaRuntime` mit der eingebauten Erkennung ab und gibt
 Erkennungen, gebuchte und abgelehnte Ereignisse sowie Gänge aus; Gangmodell,
 Steuerung und Nachlauf bleiben dabei unverändert. Daneben protokolliert es nur
-beobachtend jede Steuerentscheidung mit Heizanforderung, Grund, Kühlung, Phase
-und Gangzustand, jeden vorläufig erkannten Gang mit Ausgang, Grund und
-Heizdauer sowie Trennungen, Güsse und Abklingprüfung der Aufgusserkennung.
-Die Kühlzeit zählt wie im Betrieb erst ab gemeldetem Schütz AUS; mit
-`--heater recorded` ist das der aufgezeichnete Schützzustand. Mit
-`--heater split` deutet die Erkennung die gemessenen Kurven mit dem
-aufgezeichneten Schützzustand, während die Schützrückmeldung der Steuerung
-ihrer Heizanforderung folgt wie im Automatikbetrieb. Die aufgezeichneten
-Temperaturen folgen in keiner Variante den Befehlen der Steuerung. Beide
-Werkzeuge sind keine Testsuiten und verändern keine Sollereignisse.
+beobachtend jede Steuerentscheidung mit Heizanforderung und Schaltbefehl samt
+Grund, Kühlung, Phase, Gangzustand und Rückmeldung, jeden vorläufig erkannten
+Gang mit Ausgang und Grund sowie Trennungen, Güsse und Abklingprüfung der
+Aufgusserkennung. Heizdauern stammen aus der Heizzeitbuchung der Steuerung und
+nennen ihre Quelle ([Heizzeit und Energie](../docs/betrieb.md#heizzeit-und-energie));
+Heizanforderung und Befehl stehen getrennt davon. Die Schützrückmeldung
+erreicht die Steuerung in jedem Takt über dieselben Eingänge wie im Betrieb.
+Aufzeichnungen mit Ofenleistung oder unabhängigem Heiznachweis weist das
+Werkzeug ab, weil dieser Rückmeldeweg nicht nachgebildet ist. Die Kühlzeit
+zählt wie im Betrieb erst ab gemeldetem Schütz AUS. Mit `--heater recorded` ist
+die Rückmeldung der aufgezeichnete Schützzustand. Mit `--heater split` deutet
+die Erkennung die gemessenen Kurven mit dem aufgezeichneten Schützzustand,
+während die Schützrückmeldung der Steuerung ihrem Schaltbefehl folgt wie im
+Automatikbetrieb. Die aufgezeichneten Temperaturen folgen in keiner Variante
+den Befehlen der Steuerung. Beide Werkzeuge sind keine Testsuiten und verändern
+keine Sollereignisse.
