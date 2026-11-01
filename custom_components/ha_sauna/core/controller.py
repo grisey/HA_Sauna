@@ -1668,6 +1668,7 @@ class Controller:
                     and self.direct_presence.qualified_presence
                     and self.direct_presence.occupancy != "unknown"
                 ))
+                and not self._absent_since_gang_opening(session.timeline)
             ),
             temporary_door_heat=(
                 "provisional_door_heat" in causes and self._door_request_pending
@@ -1831,6 +1832,25 @@ class Controller:
             since = opening.effective_at.timestamp()
             return any(since <= when <= begin and value is False for when, value in states)
         return True
+
+    def _absent_since_gang_opening(self, timeline):
+        """Sensor operation: absence reported after a door opening in the active gang.
+
+        It ends only the gang heat; the gang still ends by ventilation. A later
+        presence report restores it, as does a new closing with presence, whose
+        presence at the closing candidate is such a report.
+        """
+        current, gang = self.direct_presence, timeline.active
+        if current is None or not current.qualified_presence or self._last_at is None:
+            return False
+        openings = [event.effective_at for event in timeline.processed
+                    if event.kind == Kind.DOOR_OPEN and event.effective_at > gang.started_at]
+        if not openings:
+            return False
+        since = min(openings).timestamp()
+        reported = [value for when, value in self._presence_states(self._last_at)
+                    if when >= since and value is not None]
+        return bool(reported) and reported[-1] is False
 
     def _presence_report(self, at):
         received = self._received_at(at)

@@ -93,7 +93,9 @@ kälteren Eintritt.
 
 Wie im Proxybetrieb beginnt ein bestätigter Gang damit am letzten Eintritt vor
 dem ersten Aufguss, und allein das bestätigte Durchlüften beendet ihn.
-Abwesenheit beendet keinen Gang, auch nicht nach einer Türöffnung. Eine ältere
+Abwesenheit beendet keinen Gang, auch nicht nach einer Türöffnung. Nach einer
+Türöffnung im Gang beendet gemeldete Abwesenheit nur die Ganganforderung
+([Heizpriorität](betrieb.md#heizpriorität)). Eine ältere
 Austrittsfolge kann keinen später begonnenen Gang beenden. Bei einem
 Quellenwechsel bleibt die ursprüngliche Bestätigungsart des Gangs erhalten.
 

@@ -105,6 +105,54 @@ class DirectPresenceControlTests(unittest.TestCase):
         self.assertEqual(self.c.session.timeline.completed, ())
         self.assertIsNone(self.c.session.after_run)
 
+    def test_absence_after_an_opening_ends_only_the_gang_heat_until_presence(self):
+        self.start()
+        gang = self.c.session.timeline.active
+        self.door(Kind.DOOR_OPEN, 5)
+        self.assertTrue(self.c.regulation_inputs.gang_heat_demand)
+        self.report("off", 6)
+        self.assertFalse(self.c.regulation_inputs.gang_heat_demand)
+        self.assertNotEqual(self.c.last_decision.reason, "gang_heat_demand")
+        # Neither a closing without presence nor a further opening restores it.
+        self.door(Kind.DOOR_CLOSE, 7)
+        self.door(Kind.DOOR_OPEN, 8)
+        self.assertFalse(self.c.regulation_inputs.gang_heat_demand)
+        self.report("on", 9)
+        self.assertTrue(self.c.regulation_inputs.gang_heat_demand)
+        self.assertEqual(self.c.last_decision.reason, "gang_heat_demand")
+        self.c.advance(at(4000))
+        self.assertEqual(self.c.session.timeline.active.gang_id, gang.gang_id)
+        self.assertEqual(self.c.session.timeline.completed, ())
+        self.assertIsNone(self.c.session.after_run)
+
+    def test_new_closing_with_presence_restores_the_gang_heat(self):
+        self.start()
+        self.door(Kind.DOOR_OPEN, 5)
+        self.report("off", 6)
+        self.door(Kind.DOOR_CLOSE, 7)
+        self.door(Kind.DOOR_OPEN, 8)
+        self.report("on", 9)
+        self.door(Kind.DOOR_CLOSE, 10)
+        self.assertTrue(self.c.regulation_inputs.gang_heat_demand)
+        # Absence after the latest opening of the gang ends it again.
+        self.report("off", 11)
+        self.assertFalse(self.c.regulation_inputs.gang_heat_demand)
+
+    def test_absence_reported_before_an_opening_keeps_the_gang_heat(self):
+        self.start()
+        self.report("off", 4)
+        self.door(Kind.DOOR_OPEN, 5)
+        self.door(Kind.DOOR_CLOSE, 6)
+        self.assertTrue(self.c.regulation_inputs.gang_heat_demand)
+
+    def test_absence_counts_from_a_later_booked_opening(self):
+        self.start()
+        self.report("off", 6)
+        self.assertTrue(self.c.regulation_inputs.gang_heat_demand)
+        self.c.process(Event("late-open", "s", Kind.DOOR_OPEN, at(5), at(7)))
+        self.assertFalse(self.c.regulation_inputs.gang_heat_demand)
+        self.assertIsNotNone(self.c.session.timeline.active)
+
     def test_exit_opening_and_ventilation_end_without_close_and_count_once(self):
         self.start()
         self.door(Kind.DOOR_OPEN, 5)
@@ -543,6 +591,18 @@ class ProxyDoorControlTests(unittest.TestCase):
                 self.assertEqual(c.session.timeline.active.started_at, at(5))
                 self.assertEqual(c.session.timeline.active.start_basis, "door_close")
                 self.assertFalse(c.session.timeline.entry_cycle_available)
+
+    def test_unqualified_absence_after_an_opening_keeps_the_proxy_gang_heat(self):
+        c = controller()
+        c.process(event("o", Kind.DOOR_OPEN, 1))
+        c.process(event("c", Kind.DOOR_CLOSE, 2))
+        c.process(event("water", Kind.INFUSION, 3))
+        c.process(event("exit-open", Kind.DOOR_OPEN, 4))
+        value = selected_occupancy(binary_presence(
+            "binary_sensor.presence", "off", at(5), at(5),
+        ), at(5))
+        c.consume_occupancy_input(replace(value, qualified_presence=False))
+        self.assertTrue(c.regulation_inputs.gang_heat_demand)
 
     def test_expired_proxy_entry_cannot_be_restarted_by_infusion(self):
         c = controller()
