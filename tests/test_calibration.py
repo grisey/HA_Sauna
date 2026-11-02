@@ -1,8 +1,9 @@
-"""Calibration runs: instructions, replies, protocol and evaluation (V31, W-2).
+"""Calibration runs: instructions, replies, protocol and evaluation (V31, W-2, W-2a).
 
 The run never operates the sauna. Runtime cases use the productive service
 methods with a synthetic final transport and compare control and gang results
-with the same inputs without a calibration run.
+with the same inputs without a calibration run. Every interruption makes a run
+invalid; only uninterrupted runs are evaluated.
 """
 
 import asyncio
@@ -38,6 +39,10 @@ from custom_components.ha_sauna.runtime import SaunaRuntime
 
 T0 = datetime(2026, 11, 2, 12, tzinfo=UTC)
 USER = "synthetic-user"
+# Synthetic windows (seconds from T0) per step of a module.
+A1 = ((0, 20), (380, 390), (420, 430), (475, 480))
+CB = ((0, 20), (80, 90), (270, 280), (400, 410), (470, 490), (610, 620), (680, 690))
+D = ((0, 20), (200, 210), (210, 225), (530, 540), (600, 610), (670, 680))
 
 
 def at(seconds):
@@ -91,9 +96,9 @@ class Driver:
 
 
 class CalibrationRunTests(unittest.TestCase):
-    def run_for(self, kind="session", modules=None, presence=True):
+    def run_for(self, kind="session", modules=None, presence=True, run_id="run"):
         selected = calibration.select_modules(modules, presence=presence)
-        return calibration.CalibrationRun("run", kind, selected, USER, "session", T0,
+        return calibration.CalibrationRun(run_id, kind, selected, USER, "session", T0,
                                           has_presence=presence,
                                           presence=[(T0, False)] if presence else [])
 
@@ -112,7 +117,9 @@ class CalibrationRunTests(unittest.TestCase):
             self.assertIn(calibration.NEXT, dict(closing.actions))
             self.assertEqual(driver.answer(closing, calibration.NEXT)[0], "accepted")
         self.assertEqual(executed, ["P", "A1", "A2", "A3", "CB", "D"])
-        self.assertEqual(run.phase, "finished")
+        self.assertEqual((run.phase, run.valid), ("finished", True))
+        end = [record for record in run.records if record["event"] == "end"]
+        self.assertEqual([(r["reason"], r["valid"]) for r in end], [("finished", True)])
         self.assertIn("Auswertung der Erkennung folgt nach Sitzungsende", closing.message)
         self.assertEqual(
             [step["step"] for step in run.steps if step["module"] == "D"],
@@ -126,16 +133,18 @@ class CalibrationRunTests(unittest.TestCase):
         self.assertTrue(all({calibration.DEVIATE, calibration.CANCEL} <= dict(m.actions).keys()
                             for m in steps))
 
-    def test_cancel_records_the_open_step_and_later_replies_are_late(self):
+    def test_cancel_makes_the_run_invalid_without_further_instruction(self):
         run = self.run_for(modules=("A1",))
         driver = Driver(run)
         entry = driver.advance()[0]
         driver.answer(entry)
         infusion = driver.advance(360)[0]
-        # The service cancels outside any message.
-        self.assertTrue(run.cancel(driver.now, "cancelled", user_id=USER))
-        self.assertFalse(run.cancel(driver.now, "cancelled"))
-        self.assertEqual(run.phase, "cancelled")
+        # The service cancels outside any message; only the notice of invalidity follows.
+        notice = run.interrupt(driver.now, "cancelled", user_id=USER)
+        self.assertEqual([(m.kind, m.actions, m.message) for m in notice], [(
+            "invalid", (), "Kalibrierung ungültig: abgebrochen. Sie wird nicht ausgewertet.")])
+        self.assertEqual(run.interrupt(driver.now, "cancelled"), [])
+        self.assertEqual((run.phase, run.valid), ("invalid", False))
         self.assertEqual([s["outcome"] for s in run.steps], ["reply", "cancelled"])
         self.assertEqual(driver.answer(infusion)[0], "late")
         self.assertEqual(driver.answer(infusion, calibration.CANCEL)[0], "late")
@@ -145,17 +154,63 @@ class CalibrationRunTests(unittest.TestCase):
         records = run.take_records()
         self.assertEqual([r["event"] for r in records if r["event"] in ("start", "end")],
                          ["start", "end"])
+        end = next(r for r in records if r["event"] == "end")
+        self.assertEqual((end["reason"], end["valid"], end["user_id"]),
+                         ("cancelled", False, USER))
         self.assertEqual([r["disposition"] for r in records if r["event"] == "reply"],
                          ["accepted", "late", "late", "duplicate"])
 
-        # Abbrechen in a message ends the run; the same message stays answered.
+        # Abbrechen in a message ends the run the same way; the message stays answered.
         run = self.run_for("module", ("A1",))
         driver = Driver(run)
         entry = driver.advance()[0]
-        self.assertEqual(driver.answer(entry, calibration.CANCEL)[0], "accepted")
-        self.assertEqual((run.phase, run.end_reason), ("cancelled", "cancelled"))
+        disposition, out = driver.answer(entry, calibration.CANCEL)
+        self.assertEqual((disposition, [m.kind for m in out]), ("accepted", ["invalid"]))
+        self.assertEqual((run.phase, run.end_reason), ("invalid", "cancelled"))
         self.assertEqual(driver.answer(entry)[0], "duplicate")
         self.assertEqual(run.steps[0]["outcome"], "cancelled")
+
+    def test_every_interruption_before_the_last_step_is_invalid(self):
+        later = T0 + timedelta(hours=2)
+        for reason, text in calibration.INTERRUPTIONS.items():
+            waiting = self.run_for("module", ("A1",))
+            running = self.run_for("module", ("A1",))
+            Driver(running).advance()
+            pause = self.run_for(modules=("P", "A1"))
+            self.assertEqual(Driver(pause).follow().kind, "pause")
+            for run in (waiting, running, pause):
+                self.assertEqual(
+                    [m.message for m in run.interrupt(later, reason)],
+                    [f"Kalibrierung ungültig: {text}. Sie wird nicht ausgewertet."])
+                self.assertEqual((run.phase, run.end_reason, run.records[-1]["valid"]),
+                                 ("invalid", reason, False))
+        finished = self.run_for("module", ("A1",))
+        Driver(finished).follow()
+        self.assertEqual(finished.interrupt(later, "session_ended"), [])
+        self.assertTrue(finished.valid)
+
+    def test_only_uninterrupted_protocols_are_evaluated(self):
+        finished = self.run_for("module", ("A1",), run_id="finished")
+        Driver(finished).follow()
+        cancelled = self.run_for("module", ("A1",), run_id="cancelled")
+        driver = Driver(cancelled)
+        driver.answer(driver.advance()[0])
+        cancelled.interrupt(driver.now, "cancelled")
+        # Without an end record the run stopped uncleanly.
+        unclean = self.run_for("module", ("A1",), run_id="unclean")
+        driver = Driver(unclean)
+        driver.answer(driver.advance()[0])
+        # A requested repetition that has not run is a step still to come.
+        repeated = self.run_for("module", ("P",), run_id="repeated")
+        driver = Driver(repeated)
+        driver.answer(driver.follow(), calibration.REPEAT)
+        repeated.interrupt(driver.now, "session_ended")
+        records = [record for run in (finished, cancelled, unclean, repeated)
+                   for record in run.take_records()]
+        steps, skipped = calibration.protocol_steps(records)
+        self.assertEqual([(s["run_id"], s["step"]) for s in steps],
+                         [("finished", step.key) for step in calibration.MODULES["A1"].steps])
+        self.assertEqual(skipped, ["cancelled", "unclean", "repeated"])
 
     def test_duplicate_reply_from_a_second_copy_does_not_advance(self):
         run = self.run_for(modules=("A1",))
@@ -277,9 +332,19 @@ class CalibrationEvaluationTests(unittest.TestCase):
                  "outcome": "reply" if step.action else "hold"}
                 for step, (a, b) in zip(steps, windows, strict=True)]
 
+    def recognized(self, module, windows, events):
+        """Found recognition and offset per expectation, additional ones and totals."""
+        result = calibration.evaluate(self.protocol(module, windows), presence=[],
+                                      events=events, gangs=[], gang_heat=[], until=at(3600),
+                                      has_presence=False)
+        found = {(item["step"], e["kind"]): (e["at"], e["offset_s"])
+                 for item in result["executions"][0]["recognition"] for e in item["expected"]}
+        return (found, [(e["kind"], e["at"]) for e in result["additional"]],
+                result["totals"]["events"])
+
     def test_events_presence_and_gang_against_the_windows(self):
         # A1: entry 0–20, infusion 380–390, exit opening 420–430, exit closing 475–480.
-        steps = self.protocol("A1", ((0, 20), (380, 390), (420, 430), (475, 480)))
+        steps = self.protocol("A1", A1)
         events = [("door_open", at(5)), ("door_close", at(15)), ("infusion", at(395)),
                   ("door_open", at(400)), ("door_open", at(428)), ("door_close", at(500))]
         presence = [(at(0), False), (at(12), True), (at(200), False), (at(230), True),
@@ -292,11 +357,14 @@ class CalibrationEvaluationTests(unittest.TestCase):
         entry, infusion, exit_open, exit_close = execution["recognition"]
         self.assertTrue(all(item["found"] and item["offset_s"] == 0
                             for item in entry["expected"]))
-        # Recognized 5 s after the reply, still before the next instruction.
+        # Recognized 5 s after the reply.
         self.assertEqual(infusion["expected"][0]["offset_s"], 5.0)
-        self.assertEqual(infusion["additional"], [{"kind": "door_open", "at": at(400)}])
-        self.assertEqual(exit_open["expected"][0]["offset_s"], 0.0)
-        # The final step of a run ends with its window.
+        # Of two openings eligible for the exit, the one in its window is found.
+        self.assertEqual((exit_open["expected"][0]["at"], exit_open["expected"][0]["offset_s"]),
+                         (at(428), 0.0))
+        self.assertEqual(result["additional"],
+                         [{"run_id": "run", "kind": "door_open", "at": at(400)}])
+        # Recognitions after the last window of a run are not considered.
         self.assertFalse(exit_close["expected"][0]["found"])
         self.assertEqual(result["totals"]["events"],
                          {"reference": 5, "found": 4, "missing": 1, "additional": 1})
@@ -308,6 +376,75 @@ class CalibrationEvaluationTests(unittest.TestCase):
                           gang["reference_infusions"]), (True, 0, 1, 1))
         self.assertEqual(gang["end_offset_s"], 40.0)
         self.assertEqual(gang["gang_heat_after_exit_s"], 20.0)
+
+    def test_opening_recognized_before_its_handoff_belongs_to_its_step(self):
+        # As in probe W-2 4.4: the exit opening 7.8 s before the handoff, after a
+        # spurious door operation. The section rule made it additional to the
+        # infusion and the exit opening missing.
+        found, additional, totals = self.recognized("A1", A1, [
+            ("door_open", at(5)), ("door_close", at(15)), ("infusion", at(385)),
+            ("door_open", at(395)), ("door_close", at(399)),
+            ("door_open", at(412.2)), ("door_close", at(478))])
+        self.assertEqual(found["exit_open", "door_open"], (at(412.2), -7.8))
+        self.assertEqual(found["exit_close", "door_close"], (at(478), 0.0))
+        self.assertEqual(additional, [("door_open", at(395)), ("door_close", at(399))])
+        self.assertEqual(totals, {"reference": 5, "found": 5, "missing": 0, "additional": 2})
+
+    def test_recognitions_that_blocked_each_other_are_both_assigned(self):
+        # The first infusion recognized after its reply and the second before its
+        # handoff: the section rule put both into the second pour, with both
+        # references missing.
+        found, additional, totals = self.recognized("D", D, [
+            ("door_open", at(5)), ("door_close", at(15)), ("infusion", at(215)),
+            ("infusion", at(220)), ("infusion", at(527)),
+            ("door_open", at(605)), ("door_close", at(675))])
+        self.assertEqual(found["infusion_1", "infusion"], (at(215), 5.0))
+        self.assertEqual(found["infusion_2", "infusion"], (at(527), -3.0))
+        # The second pour of the double pour stays additional (E-17).
+        self.assertEqual(additional, [("infusion", at(220))])
+        self.assertEqual(totals, {"reference": 6, "found": 6, "missing": 0, "additional": 1})
+
+    def test_opening_and_closing_of_one_door_operation_stay_together(self):
+        # One recognized door operation from the entry opening to a closing near the
+        # exit closing: per kind the closing would go to the exit, together with
+        # its opening it goes to one reference door operation, here the entry.
+        found, additional, _ = self.recognized("A1", A1, [
+            ("door_open", at(10)), ("infusion", at(385)), ("door_close", at(470))])
+        self.assertEqual(found["entry", "door_open"], (at(10), 0.0))
+        self.assertEqual(found["entry", "door_close"], (at(470), 450.0))
+        self.assertEqual(found["exit_close", "door_close"], (None, None))
+        self.assertEqual(additional, [])
+        # A closing not eligible for the reference of its opening stays additional
+        # rather than going to another door operation.
+        found, additional, totals = self.recognized("CB", CB, [
+            ("door_open", at(5)), ("door_close", at(15)), ("door_open", at(82)),
+            ("door_close", at(88)), ("door_open", at(272)), ("door_close", at(485)),
+            ("infusion", at(405)), ("door_open", at(612)), ("door_close", at(685))])
+        self.assertEqual(found["short_opening", "door_open"], (at(272), 0.0))
+        self.assertEqual([found["short_opening", "door_close"],
+                          found["decay_opening", "door_open"],
+                          found["decay_opening", "door_close"]], [(None, None)] * 3)
+        self.assertEqual(additional, [("door_close", at(485))])
+        self.assertEqual(totals, {"reference": 11, "found": 8, "missing": 3, "additional": 1})
+
+    def test_additional_recognition_and_missing_reference_remain(self):
+        found, additional, totals = self.recognized("A1", A1, [
+            ("door_open", at(5)), ("door_close", at(15)), ("infusion", at(385)),
+            ("infusion", at(395)), ("door_open", at(425))])
+        self.assertEqual(found["infusion", "infusion"], (at(385), 0.0))
+        # The entry closing lies in its own window, not after it: no exit closing.
+        self.assertEqual(found["exit_close", "door_close"], (None, None))
+        self.assertEqual(additional, [("infusion", at(395))])
+        self.assertEqual(totals, {"reference": 5, "found": 4, "missing": 1, "additional": 1})
+
+    def test_assignment_keeps_the_order_without_crossing(self):
+        # Both infusions lie nearer to the second reference; each reference takes
+        # one of them in their order.
+        found, additional, _ = self.recognized("D", D, [
+            ("infusion", at(400)), ("infusion", at(410))])
+        self.assertEqual(found["infusion_1", "infusion"], (at(400), 190.0))
+        self.assertEqual(found["infusion_2", "infusion"], (at(410), -120.0))
+        self.assertEqual(additional, [])
 
     def test_empty_cabin_reports_and_missing_or_additional_gangs(self):
         steps = self.protocol("P", ((0, 30), (630, 760), (760, 880)))
@@ -321,8 +458,7 @@ class CalibrationEvaluationTests(unittest.TestCase):
         self.assertEqual(result["totals"]["empty_cabin_reports"], 2)
         self.assertIsNone(result["executions"][0]["gang"])
 
-        cb = self.protocol("CB", ((0, 20), (80, 90), (270, 280), (400, 410), (470, 490),
-                                  (610, 620), (680, 690)), run_id="other")
+        cb = self.protocol("CB", CB, run_id="other")
         gangs = [{"start": at(15), "confirmed": None, "end": None, "end_reason": None,
                   "infusions": 0}]
         result = calibration.evaluate(cb, presence=[], events=[], gangs=gangs, gang_heat=[],
@@ -435,8 +571,16 @@ class CalibrationRuntimeTests(unittest.TestCase):
             await self.settle(runtime)
             self.assertEqual(sent[-1].payload["message"], "Aufguss, eine Kelle.")
             await runtime.cancel_calibration(actor=ActorRef(USER, "ha_context"))
-            self.assertEqual(run.phase, "cancelled")
+            await self.settle(runtime)
+            self.assertEqual((run.phase, run.end_reason), ("invalid", "cancelled"))
+            self.assertEqual(sent[-1].payload, {
+                "title": "Sauna-Kalibrierung",
+                "message": "Kalibrierung ungültig: abgebrochen. Sie wird nicht ausgewertet."})
             self.assertTrue(runtime.session.operation_enabled)
+            clock[0] += timedelta(seconds=600)
+            await runtime.tick()
+            await self.settle(runtime)
+            self.assertEqual(len(sent), 3)
             await runtime.close()
 
         asyncio.run(exercise())
@@ -523,28 +667,107 @@ class CalibrationRuntimeTests(unittest.TestCase):
 
         self.assertEqual(asyncio.run(exercise(True)), asyncio.run(exercise(False)))
 
-    def test_session_end_evaluates_each_run_and_sends_the_result(self):
+    async def module_in_session(self, clock):
+        """A single module A1 that starts after a sensor gang; its entry is answered."""
+        runtime = self.runtime(clock)
+        runtime.controller.set_temperature(80, START)
+        await runtime.set_operation(True, actor=ActorRef(USER, "ha_context"))
+        await self.sensor_gang(runtime, clock, calibrate=True)
+        await self.settle(runtime)
+        first = runtime.notification_transport.sent[0]
+        clock[0] += timedelta(seconds=10)
+        await runtime.calibration_reply(self.association(first, "reply", clock[0]))
+        return runtime, runtime.calibration_runs[0]
+
+    async def complete(self, runtime, clock):
+        """Answer each further instruction 5 s after its handoff until the run ends."""
+        run, sent = runtime.calibration_runs[0], runtime.notification_transport.sent
+        while run.active:
+            await self.settle(runtime)
+            execution = run.current
+            if execution.sent_at is None:
+                clock[0] = max(clock[0], execution.due_at)
+                await runtime.tick()
+                continue
+            clock[0] = execution.sent_at + timedelta(seconds=5)
+            await runtime.calibration_reply(self.association(sent[-1], "reply", clock[0]))
+        await self.settle(runtime)
+
+    async def end_session(self, runtime, clock):
+        runtime.controller.finish_session(clock[0] + timedelta(seconds=20))
+        clock[0] += timedelta(seconds=21)
+        await runtime.tick()
+        await self.settle(runtime)
+
+    def test_session_end_evaluates_a_completed_run_and_sends_the_result(self):
         async def exercise():
             clock = [START]
-            runtime = self.runtime(clock)
-            runtime.controller.set_temperature(80, START)
-            await runtime.set_operation(True, actor=ActorRef(USER, "ha_context"))
-            await self.sensor_gang(runtime, clock, calibrate=True)
-            await self.settle(runtime)
-            run = runtime.calibration_runs[0]
-            first = runtime.notification_transport.sent[0]
-            await runtime.calibration_reply(
-                self.association(first, "reply", clock[0] + timedelta(seconds=10)))
-            runtime.controller.finish_session(clock[0] + timedelta(seconds=20))
-            clock[0] += timedelta(seconds=21)
-            await runtime.tick()
-            await self.settle(runtime)
+            runtime, run = await self.module_in_session(clock)
+            await self.complete(runtime, clock)
+            self.assertEqual((run.phase, run.valid), ("finished", True))
+            self.assertTrue(runtime.notification_transport.sent[-1].payload["message"]
+                            .startswith("Gang A1 beendet."))
+            await self.end_session(runtime, clock)
             self.assertEqual(runtime.calibration_runs, ())
-            self.assertEqual((run.phase, run.end_reason), ("cancelled", "session_ended"))
+            self.assertEqual((run.phase, run.end_reason), ("finished", "finished"))
             final = runtime.notification_transport.sent[-1]
             self.assertTrue(final.payload["message"].startswith("Kalibrierung ausgewertet."))
             self.assertNotIn("data", final.payload)
             await runtime.close()
+
+        asyncio.run(exercise())
+
+    def test_session_end_before_the_last_step_makes_the_run_invalid(self):
+        async def exercise():
+            clock = [START]
+            runtime, run = await self.module_in_session(clock)
+            await self.end_session(runtime, clock)
+            self.assertEqual(runtime.calibration_runs, ())
+            self.assertEqual((run.phase, run.end_reason), ("invalid", "session_ended"))
+            messages = [item.payload for item in runtime.notification_transport.sent]
+            self.assertEqual(messages[-1], {
+                "title": "Sauna-Kalibrierung",
+                "message": "Kalibrierung ungültig: Sitzung vor dem letzten Schritt beendet. "
+                           "Sie wird nicht ausgewertet."})
+            self.assertFalse(any(m["message"].startswith("Kalibrierung ausgewertet")
+                                 for m in messages))
+            await runtime.close()
+
+        asyncio.run(exercise())
+
+    def test_operation_off_makes_the_run_invalid_without_further_instruction(self):
+        async def exercise():
+            clock = [START]
+            runtime, run = await self.module_in_session(clock)
+            sent = runtime.notification_transport.sent
+            clock[0] += timedelta(seconds=20)
+            await runtime.set_operation(False, actor=ActorRef(USER, "ha_context"))
+            await self.settle(runtime)
+            self.assertEqual((run.phase, run.end_reason), ("invalid", "operation_off"))
+            self.assertEqual([item.payload["message"] for item in sent[1:]],
+                             ["Kalibrierung ungültig: Betrieb aus. Sie wird nicht ausgewertet."])
+            # The session waits for resumption; no instruction follows, not even then.
+            self.assertFalse(runtime.session.operation_enabled)
+            clock[0] += timedelta(seconds=400)
+            await runtime.tick()
+            await runtime.set_operation(True, actor=ActorRef(USER, "ha_context"))
+            clock[0] += timedelta(seconds=400)
+            await runtime.tick()
+            await self.settle(runtime)
+            self.assertEqual((len(sent), run.phase), (2, "invalid"))
+            await self.end_session(runtime, clock)
+            self.assertEqual(len(sent), 2)
+            await runtime.close()
+
+        asyncio.run(exercise())
+
+    def test_unload_makes_the_run_invalid_without_message(self):
+        async def exercise():
+            clock = [START]
+            runtime, run = await self.module_in_session(clock)
+            await runtime.close()
+            self.assertEqual((run.phase, run.end_reason), ("invalid", "integration_unloaded"))
+            self.assertEqual(len(runtime.notification_transport.sent), 1)
 
         asyncio.run(exercise())
 

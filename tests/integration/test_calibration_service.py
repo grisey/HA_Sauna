@@ -1,4 +1,4 @@
-"""Calibration service, native send and reply ingress (W-2); replies never operate."""
+"""Calibration service, native send and reply ingress (W-2, W-2a); replies never operate."""
 
 import asyncio
 import unittest
@@ -89,8 +89,15 @@ class CalibrationServiceTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.runtime.session.session_id, session_id)
         self.assertTrue(self.runtime.session.operation_enabled)
         await self.calibrate("cancel_calibration", users[0])
-        self.assertEqual(run.phase, "cancelled")
+        await self.settle()
+        self.assertEqual(run.phase, "invalid")
         self.assertTrue(self.runtime.session.operation_enabled)
+        # Only the notice of invalidity follows the cancellation.
+        self.assertEqual(
+            [call["message"] for call in calls[len(references):]],
+            ["Kalibrierung ungültig: abgebrochen. Sie wird nicht ausgewertet."]
+            * len(references),
+        )
         await self.runtime.archive.flush()
         records = [
             record["payload"]
@@ -98,11 +105,18 @@ class CalibrationServiceTests(unittest.IsolatedAsyncioTestCase):
                 "records"
             ]
         ]
-        self.assertEqual((records[0]["event"], records[-1]["event"]), ("start", "end"))
+        self.assertEqual(records[0]["event"], "start")
+        end = [record for record in records if record["event"] == "end"]
+        self.assertEqual(
+            [(record["reason"], record["valid"]) for record in end], [("cancelled", False)]
+        )
         self.assertEqual(
             [record["disposition"] for record in records if record["event"] == "reply"],
             ["accepted", "duplicate"],
         )
         messages = [record for record in records if record["event"] == "message"]
-        self.assertEqual(len(messages), len(references))
+        self.assertEqual(
+            sorted(message["message_kind"] for message in messages),
+            ["invalid"] * len(references) + ["step"] * len(references),
+        )
         self.assertTrue(all(message["accepted"] for message in messages))

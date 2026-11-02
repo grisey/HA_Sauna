@@ -2141,7 +2141,9 @@ class SaunaRuntime:
             run = next((item for item in self._calibration_runs if item.active), None)
             if run is None:
                 raise ValueError("Es läuft keine Kalibrierung")
-            run.cancel(self._clock(), "cancelled", user_id=actor.user_id if actor else None)
+            self._send_calibration(run, run.interrupt(
+                self._clock(), "cancelled", user_id=actor.user_id if actor else None,
+            ))
             await self._cycle()
             return {"run_id": run.run_id}
 
@@ -2175,7 +2177,10 @@ class SaunaRuntime:
         return {"present": True, "absent": False}.get(report.occupancy)
 
     def _advance_calibration(self, now):
-        """Send due calibration messages; evaluate the runs of an ended session."""
+        """Send due calibration messages; evaluate the runs of an ended session.
+
+        Betrieb-AUS interrupts a run before it sends anything further (W-2a).
+        """
         if not self._calibration_runs:
             return
         session = self.session
@@ -2183,29 +2188,37 @@ class SaunaRuntime:
             if session is None or run.session_id != session.session_id:
                 self._finish_calibration(run, now)
                 continue
-            self._send_calibration(run, run.advance(
-                now,
-                ready=self.controller.phase == "bereit",
-                gang_active=session.timeline.active is not None,
-            ))
+            if not session.operation_enabled:
+                self._send_calibration(run, run.interrupt(now, "operation_off"))
+            else:
+                self._send_calibration(run, run.advance(
+                    now,
+                    ready=self.controller.phase == "bereit",
+                    gang_active=session.timeline.active is not None,
+                ))
             self._archive_calibration(run)
 
     def _finish_calibration(self, run, now):
-        """Doors and infusions are evaluated once the session has ended (V04)."""
-        run.cancel(now, "session_ended")
+        """Doors and infusions of a valid run are evaluated once the session has ended (V04).
+
+        A run still active at the session end is interrupted; an invalid run
+        only reports that it is invalid (W-2a).
+        """
+        instructions = run.interrupt(now, "session_ended")
         session = next(
             (item for item in reversed(self.controller.completed_sessions)
              if item.session_id == run.session_id),
             None,
         )
-        if session is not None:
+        if run.valid and session is not None:
             result = self._evaluate_calibration(run, session, now)
             run.records.append(
                 {"event": "evaluation", "run_id": run.run_id, "at": now, "result": result}
             )
-            self._send_calibration(run, [run.evaluation_message(
+            instructions = [run.evaluation_message(
                 now, calibration.evaluation_summary(result),
-            )])
+            )]
+        self._send_calibration(run, instructions)
         self._archive_calibration(run)
         self._calibration_runs.remove(run)
         self._calibration_targets.pop(run.run_id, None)
@@ -2394,7 +2407,8 @@ class SaunaRuntime:
             self._notification_recipients = None
             self._pending_device_inputs.clear()
             for run in self._calibration_runs:
-                run.cancel(self._clock(), "integration_unloaded")
+                # The transport closes with the integration; only the protocol remains.
+                run.interrupt(self._clock(), "integration_unloaded")
             for task in tuple(self._calibration_tasks):
                 task.cancel()
             self.log.info("unload", "Sauna-Integration wird beendet; Ofen ausschalten.")

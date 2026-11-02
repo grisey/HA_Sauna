@@ -51,7 +51,8 @@ Datensätze der Sitzung aus ``records.jsonl`` des Archivexports), ist das
 Kalibrierprotokoll die Referenz: ``calibration`` enthält dann die Auswertung
 nach ``core/calibration.evaluate`` mit Präsenz, gebuchten Erkennungen, Gängen
 und Gangheizung dieses Replays.  Die Protokollzeiten werden über
-``started_at`` aus ``case.json`` auf die Zeitachse übertragen.
+``started_at`` aus ``case.json`` auf die Zeitachse übertragen.  Ausgewertet
+werden nur ununterbrochene Läufe; ``skipped_runs`` nennt die übergangenen.
 """
 
 from __future__ import annotations
@@ -471,7 +472,8 @@ async def replay(case_dir: Path, parameters: dict | None, *, presence: bool = Fa
                                   "decay": [row for f in filtered for row in f["decay"]]}}
     protocol = case_dir / "calibration.jsonl"
     if protocol.exists():
-        steps = calibration_steps(protocol, datetime.fromisoformat(case["started_at"]))
+        steps, skipped = calibration.protocol_steps(
+            calibration_records(protocol, datetime.fromisoformat(case["started_at"])))
         presence_marks = ([(ORIGIN + timedelta(seconds=r["t"]), r["value"]) for r in rows
                            if r["role"] == "presence" and isinstance(r["value"], bool)] if direct else [])
         events, references = [], []
@@ -485,29 +487,30 @@ async def replay(case_dir: Path, parameters: dict | None, *, presence: bool = Fa
                            for g in (*timeline.completed, *([timeline.active] if timeline.active else []))
                            if g.gang_id not in withdrawn]
         commands = [(row[0], row[3], row[4]) for row in control]
-        result["calibration"] = plain(calibration.evaluate(
+        result["calibration"] = {**plain(calibration.evaluate(
             steps, presence=presence_marks, events=events, gangs=references,
             gang_heat=calibration.gang_heat_intervals(commands, booked, until), until=until,
-            has_presence=direct))
+            has_presence=direct)), "skipped_runs": skipped}
     return result
 
 
-def calibration_steps(path: Path, started_at: datetime) -> list[dict]:
-    """Abgeschlossene Schritte des Kalibrierprotokolls auf der Zeitachse des Replays."""
+def calibration_records(path: Path, started_at: datetime) -> list[dict]:
+    """Datensätze des Kalibrierprotokolls auf der Zeitachse des Replays."""
     def moved(value):
         return None if value is None else ORIGIN + (datetime.fromisoformat(value) - started_at)
 
-    steps = []
+    records = []
     for line in path.read_text().splitlines():
         if not line.strip():
             continue
         record = json.loads(line)
         payload = record.get("payload", record)
-        if record.get("kind", "calibration") != "calibration" or payload.get("event") != "step":
+        if record.get("kind", "calibration") != "calibration":
             continue
-        steps.append({**payload, **{key: moved(payload.get(key))
-                                    for key in ("at", "handoff_at", "closed_at", "time_fired")}})
-    return steps
+        records.append({**payload, **{key: moved(payload.get(key))
+                                      for key in ("at", "handoff_at", "closed_at", "time_fired")
+                                      if key in payload}})
+    return records
 
 
 def main():

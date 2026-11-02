@@ -10,6 +10,9 @@ Zeitfenster eines Schritts: Untergrenze ist die Übergabe der Anweisung,
 Obergrenze die Antwort (``time_fired``), bei einem Schritt ohne Aktion das Ende
 seiner Wartezeit. Die Wartezeiten der Module sind Teil der Anweisungen an die
 Person, keine Größe der Steuerung oder Erkennung.
+
+Eine Kalibrierung zählt nur ununterbrochen (W-2a): Jede Unterbrechung beendet
+den Lauf sofort als ungültig, ein ungültiger Lauf wird nicht ausgewertet.
 """
 
 from __future__ import annotations
@@ -17,6 +20,7 @@ from __future__ import annotations
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
+from itertools import combinations, product
 
 from .notification_recipients import (
     RecipientAssignment,
@@ -38,6 +42,14 @@ LABELS = {
     CANCEL: "Abbrechen",
     NEXT: "Nächster Gang",
     REPEAT: "Wiederholen",
+}
+
+# Unterbrechungen (W-2a); jede macht den Lauf ungültig.
+INTERRUPTIONS = {
+    "cancelled": "abgebrochen",
+    "operation_off": "Betrieb aus",
+    "session_ended": "Sitzung vor dem letzten Schritt beendet",
+    "integration_unloaded": "Integration entladen oder neu gestartet",
 }
 
 # Bewertete Erkennungen; Lüften gehört zum Gangende.
@@ -218,7 +230,7 @@ class Instruction:
     execution: int | None
     module: str | None
     step: str | None
-    kind: str  # step | pause | result | evaluation
+    kind: str  # step | pause | result | invalid | evaluation
     title: str
     message: str
     actions: tuple[tuple[str, str], ...] = ()
@@ -243,7 +255,9 @@ class CalibrationRun:
     ``kind`` "session": eigene Kalibriersitzung, das erste Modul beginnt nach
     Bereit, weitere nach „Nächster Gang“. ``kind`` "module": ein Modul in einer
     laufenden Sitzung, Beginn sobald kein Gang aktiv ist. ``records`` ist der
-    Ausgang des Protokolls, ``steps`` die abgeschlossenen Schritte.
+    Ausgang des Protokolls, ``steps`` die abgeschlossenen Schritte. Gültig ist
+    nur ein Lauf, der alle Schritte abgeschlossen hat; ``interrupt`` beendet
+    ihn sonst als ungültig.
     """
 
     run_id: str
@@ -280,6 +294,10 @@ class CalibrationRun:
     @property
     def active(self) -> bool:
         return self.phase in ("waiting", "running", "pause")
+
+    @property
+    def valid(self) -> bool:
+        return self.phase == "finished"
 
     @property
     def waiting_for(self) -> str | None:
@@ -431,15 +449,18 @@ class CalibrationRun:
         return [instruction]
 
     def _end(self, at, reason, *, user_id=None):
-        if self.phase in ("running", "waiting", "pause"):
-            self.phase = "finished" if reason == "finished" else "cancelled"
+        valid = reason == "finished"
+        self.phase = "finished" if valid else "invalid"
         self.ended_at, self.end_reason = at, reason
-        self._record("end", at, reason=reason, user_id=user_id)
+        self._record("end", at, reason=reason, valid=valid, user_id=user_id)
 
-    def cancel(self, at: datetime, reason: str, *, user_id=None) -> bool:
-        """End an active run; an open step is recorded without reference."""
+    def interrupt(self, at: datetime, reason: str, *, user_id=None) -> list[Instruction]:
+        """End an active run as invalid; return the message saying so (W-2a).
+
+        An open step is recorded without reference. No instruction follows.
+        """
         if not self.active:
-            return False
+            return []
         execution = self.current
         if self.phase == "running" and execution.sent_at is not None:
             step = execution.module.steps[execution.step]
@@ -451,7 +472,8 @@ class CalibrationRun:
             ))
         self._repeatable = None
         self._end(at, reason, user_id=user_id)
-        return True
+        return [self._emit(at, "invalid", f"Kalibrierung ungültig: {INTERRUPTIONS[reason]}. "
+                                          "Sie wird nicht ausgewertet.")]
 
     def reply(self, action_id: str, at: datetime, user_id: str | None, *,
               message_id: str | None = None,
@@ -482,8 +504,8 @@ class CalibrationRun:
     def _apply_reply(self, seq, kind, context, at, user_id, restart_allowed):
         stale = ("duplicate" if seq in self._answered else "late"), []
         if kind == CANCEL:
-            return ("accepted", []) if self.cancel(at, "cancelled", user_id=user_id) \
-                else stale
+            out = self.interrupt(at, "cancelled", user_id=user_id)
+            return ("accepted", out) if out else stale
         execution = self.current
         if context["kind"] == "step":
             if (self.phase != "running" or execution.seq != seq
@@ -563,19 +585,14 @@ def _by_execution(steps):
     return grouped
 
 
-def _span_ends(grouped):
-    """Each step's section ends at the next handoff of its run (V04: no fixed wait)."""
+def _execution_ends(grouped):
+    """An execution ends at the next handoff of its run, the last one with its window."""
     ends = {}
     keys = sorted(grouped, key=lambda key: (key[0], grouped[key][0]["handoff_at"]))
     for index, key in enumerate(keys):
-        items = grouped[key]
         following = next((grouped[other][0]["handoff_at"] for other in keys[index + 1:]
                           if other[0] == key[0]), None)
-        for position, item in enumerate(items):
-            if position + 1 < len(items):
-                ends[id(item)] = items[position + 1]["handoff_at"]
-            else:
-                ends[id(item)] = following or item["closed_at"]
+        ends[key] = following or grouped[key][-1]["closed_at"]
     return ends, keys
 
 
@@ -590,6 +607,129 @@ def _offset(at, item):
     return 0.0 if at <= item["closed_at"] else _seconds(at - item["closed_at"])
 
 
+def _distance(at, item):
+    return max(item["handoff_at"] - at, at - item["closed_at"], timedelta())
+
+
+def _operations(module):
+    """Reference operation of each expectation: a door opening and the door
+    closing that follows it form one door operation; each infusion is its own."""
+    operations, number = {}, -1
+    for step in module.steps:
+        for kind in step.expects:
+            if kind != DOOR_CLOSE:
+                number += 1
+            operations[step.key, kind] = number
+    return operations
+
+
+def _units(events):
+    """Recognitions in time order; an opening and the closing that follows it
+    form one recognized door operation."""
+    units = []
+    for kind, at in events:
+        if kind == DOOR_CLOSE and units and set(units[-1]) == {DOOR_OPEN}:
+            units[-1][DOOR_CLOSE] = at
+        else:
+            units.append({kind: at})
+    return units
+
+
+def _assign(references, units):
+    """Assign recognized units to references (W-2a); {(reference, kind): unit}.
+
+    ``references`` in protocol order and ``units`` in time order, each a
+    mapping kind → protocol step or time. Per kind the order is kept and no
+    pairs cross; every reference and every recognition is in at most one
+    pair, and the parts of one unit go to the same reference or to none. A
+    recognition is eligible after the window of the previous and before the
+    window of the next reference of its kind. Chosen are the most pairs, then
+    the smallest sum of distances to the windows; on a full tie the earlier
+    recognition and the earlier reference.
+    """
+    kinds = sorted({kind for reference in references for kind in reference})
+    bounds = {}
+    for kind in kinds:
+        order = [index for index, reference in enumerate(references) if kind in reference]
+        for position, index in enumerate(order):
+            bounds[index, kind] = (
+                references[order[position - 1]][kind]["closed_at"] if position else None,
+                references[order[position + 1]][kind]["handoff_at"]
+                if position + 1 < len(order) else None,
+            )
+
+    def eligible(index, kind, at):
+        lower, upper = bounds[index, kind]
+        return (lower is None or at > lower) and (upper is None or at < upper)
+
+    # Last assigned reference per kind; options are compared from the end.
+    states = list(product(range(-1, len(references)), repeat=len(kinds)))
+    following = {state: (0, timedelta(), None) for state in states}
+    tables = []
+    for unit in reversed(units):
+        table = {}
+        for state in states:
+            options = []
+            for index, reference in enumerate(references):
+                fitting = [kind for kind in unit if kind in reference
+                           and index > state[kinds.index(kind)]
+                           and eligible(index, kind, unit[kind])]
+                for size in range(len(fitting), 0, -1):
+                    for parts in combinations(fitting, size):
+                        after = tuple(index if kind in parts else last
+                                      for kind, last in zip(kinds, state, strict=True))
+                        pairs, distance, _ = following[after]
+                        distance += sum((_distance(unit[kind], reference[kind])
+                                         for kind in parts), timedelta())
+                        options.append((pairs + size, distance, (index, parts, after)))
+            pairs, distance, _ = following[state]
+            options.append((pairs, distance, (None, (), state)))
+            table[state] = min(options, key=lambda option: (-option[0], option[1]))
+        tables.append(table)
+        following = table
+    assignment, state = {}, (-1,) * len(kinds)
+    for position, table in enumerate(reversed(tables)):
+        index, parts, state = table[state][2]
+        assignment.update({(index, kind): position for kind in parts})
+    return assignment
+
+
+def _assign_run(groups, events, modules):
+    """Found recognitions per referenced expectation of one run, and the additional ones.
+
+    Considered are recognitions from the first handoff to the last window of
+    the run, except inside the window of a step without reference.
+    """
+    items = [item for group in groups for item in group]
+    excluded = [(item["handoff_at"], item["closed_at"])
+                for item in items if not _referenced(item)]
+    observed = [event for event in events
+                if items[0]["handoff_at"] <= event[1] <= items[-1]["closed_at"]
+                and not any(start <= event[1] <= end for start, end in excluded)]
+    found, additional = {}, []
+    for kinds in ((DOOR_OPEN, DOOR_CLOSE), (INFUSION,)):
+        references = {}
+        for group in groups:
+            module = modules[group[0]["module"]]
+            operations = _operations(module)
+            roles = {step.key: step for step in module.steps}
+            for item in filter(_referenced, group):
+                for kind in roles[item["step"]].expects:
+                    if kind in kinds:
+                        operation = (item["execution"], operations[item["step"], kind])
+                        references.setdefault(operation, {})[kind] = item
+        references = list(references.values())
+        units = _units([event for event in observed if event[0] in kinds])
+        assignment = _assign(references, units)
+        for (index, kind), unit in assignment.items():
+            item = references[index][kind]
+            found[item["execution"], item["step"], kind] = units[unit][kind]
+        assigned = {(unit, kind) for (_, kind), unit in assignment.items()}
+        additional += [(kind, at) for position, unit in enumerate(units)
+                       for kind, at in unit.items() if (position, kind) not in assigned]
+    return found, sorted(additional, key=lambda event: event[1])
+
+
 def _state_at(presence, at):
     state = None
     for moment, value in presence:
@@ -597,27 +737,6 @@ def _state_at(presence, at):
             break
         state = value
     return state
-
-
-def _recognition(item, step, events, end):
-    section = [e for e in events if item["handoff_at"] <= e[1] < end]
-    used = set()
-    expected = []
-    for kind in step.expects:
-        match = next((index for index, e in enumerate(section)
-                      if index not in used and e[0] == kind), None)
-        if match is None:
-            expected.append({"kind": kind, "found": False, "at": None, "offset_s": None})
-            continue
-        used.add(match)
-        at = section[match][1]
-        expected.append({"kind": kind, "found": True, "at": at,
-                         "offset_s": _offset(at, item)})
-    additional = [{"kind": e[0], "at": e[1]} for index, e in enumerate(section)
-                  if index not in used]
-    return {"step": item["step"], "reference": item["reference"],
-            "window": [item["handoff_at"], item["closed_at"]],
-            "expected": expected, "additional": additional}
 
 
 def _presence_result(module, items, presence, bound):
@@ -703,45 +822,58 @@ def _gang_result(module, items, gangs, gang_heat, until, end):
 
 def evaluate(steps, *, presence, events, gangs, gang_heat, until, has_presence=True,
              modules: Mapping[str, Module] = MODULES) -> dict:
-    """Compare closed protocol steps with observations.
+    """Compare closed protocol steps of uninterrupted runs with observations.
 
-    ``events``: booked recognitions (kind, effective time). An event belongs to
-    the step whose section contains it: from the step's handoff to the next
-    handoff of the same run; the final step of a run ends at its window.
+    ``events``: booked recognitions (kind, effective time), assigned per run
+    to the referenced steps by `_assign` (W-2a); a found recognition carries
+    its offset to the window, unassigned ones of the run are additional.
     ``gangs``: non-retracted gangs as mappings with start, confirmed, end,
     end_reason and infusions. ``gang_heat``: intervals of booked heating while
     the heating decision is the gang demand.
     """
     events = sorted((e for e in events if e[0] in EVALUATED_KINDS), key=lambda e: e[1])
     grouped = _by_execution(steps)
-    ends, keys = _span_ends(grouped)
+    ends, keys = _execution_ends(grouped)
+    found, additional = {}, []
+    for run_id in dict.fromkeys(key[0] for key in keys):
+        run_found, run_additional = _assign_run(
+            [grouped[key] for key in keys if key[0] == run_id], events, modules)
+        found.update({(run_id, *key): at for key, at in run_found.items()})
+        additional += [{"run_id": run_id, "kind": kind, "at": at}
+                       for kind, at in run_additional]
     executions = []
     totals = {"gangs": {"reference": 0, "found": 0, "missing": 0, "additional": 0},
-              "events": {"reference": 0, "found": 0, "missing": 0, "additional": 0},
+              "events": {"reference": 0, "found": 0, "missing": 0,
+                         "additional": len(additional)},
               "empty_cabin_reports": 0, "excluded_steps": 0}
     for key in keys:
         items = grouped[key]
         module = modules[items[0]["module"]]
         roles = {step.key: step for step in module.steps}
-        end = ends[id(items[-1])]
         recognition = []
         for item in items:
             if not _referenced(item):
                 totals["excluded_steps"] += 1
                 continue
-            outcome = _recognition(item, roles[item["step"]], events, ends[id(item)])
-            recognition.append(outcome)
-            totals["events"]["reference"] += len(outcome["expected"])
-            totals["events"]["found"] += sum(e["found"] for e in outcome["expected"])
-            totals["events"]["missing"] += sum(not e["found"] for e in outcome["expected"])
-            totals["events"]["additional"] += len(outcome["additional"])
+            expected = []
+            for kind in roles[item["step"]].expects:
+                at = found.get((*key, item["step"], kind))
+                expected.append({"kind": kind, "found": at is not None, "at": at,
+                                 "offset_s": None if at is None else _offset(at, item)})
+            recognition.append({"step": item["step"], "reference": item["reference"],
+                                "window": [item["handoff_at"], item["closed_at"]],
+                                "expected": expected})
+            totals["events"]["reference"] += len(expected)
+            totals["events"]["found"] += sum(e["found"] for e in expected)
+            totals["events"]["missing"] += sum(not e["found"] for e in expected)
         following = next((grouped[k][0]["handoff_at"] for k in keys[keys.index(key) + 1:]
                           if k[0] == key[0]), until)
         presence_result = (_presence_result(module, items, presence, following)
                            if has_presence else None)
         if presence_result:
             totals["empty_cabin_reports"] += sum(e["reports"] for e in presence_result["empty"])
-        gang = _gang_result(module, items, gangs, gang_heat, until, end) if module.gang else None
+        gang = (_gang_result(module, items, gangs, gang_heat, until, ends[key])
+                if module.gang else None)
         if gang is not None:
             totals["gangs"]["reference"] += 1
             totals["gangs"]["found"] += gang["found"]
@@ -750,7 +882,24 @@ def evaluate(steps, *, presence, events, gangs, gang_heat, until, has_presence=T
         executions.append({"run_id": key[0], "execution": key[1], "module": module.module_id,
                            "recognition": recognition, "presence": presence_result,
                            "gang": gang})
-    return {"executions": executions, "totals": totals}
+    return {"executions": executions, "additional": additional, "totals": totals}
+
+
+def protocol_steps(records: Iterable[Mapping]) -> tuple[list[dict], list[str]]:
+    """Closed steps of uninterrupted runs and the runs passed over (W-2a).
+
+    A run counts only if its last ``end`` record is valid; a run without an
+    end, as after an unclean stop, was interrupted as well.
+    """
+    records = [record for record in records if "run_id" in record]
+    valid = {}
+    for record in records:
+        if record.get("event") == "end":
+            valid[record["run_id"]] = record.get("valid") is True
+    steps = [dict(record) for record in records
+             if record.get("event") == "step" and valid.get(record["run_id"])]
+    runs = dict.fromkeys(record["run_id"] for record in records)
+    return steps, [run_id for run_id in runs if not valid.get(run_id)]
 
 
 def gang_heat_intervals(decisions, heating, until):
