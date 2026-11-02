@@ -1,4 +1,4 @@
-"""Calibration runs: instructions, replies, protocol and evaluation (V31, W-2, W-2a).
+"""Calibration runs: instructions, replies, protocol and evaluation (V31, W-2, W-2a, W-2b).
 
 The run never operates the sauna. Runtime cases use the productive service
 methods with a synthetic final transport and compare control and gang results
@@ -10,8 +10,10 @@ import asyncio
 import unittest
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
+from types import SimpleNamespace
 
 from test_presence_regressions import START, _runtime
+from test_program_configuration import _FakeHass
 
 from custom_components.ha_sauna.archive import encoded
 from custom_components.ha_sauna.bindings import Bindings
@@ -36,6 +38,7 @@ from custom_components.ha_sauna.core.notification_recipients import (
 from custom_components.ha_sauna.core.presence import binary_presence
 from custom_components.ha_sauna.core.timeline import DoorCloseEvidence, Event, Kind
 from custom_components.ha_sauna.runtime import SaunaRuntime
+from custom_components.ha_sauna.settings import async_set_control_mode
 
 T0 = datetime(2026, 11, 2, 12, tzinfo=UTC)
 USER = "synthetic-user"
@@ -333,13 +336,13 @@ class CalibrationEvaluationTests(unittest.TestCase):
                 for step, (a, b) in zip(steps, windows, strict=True)]
 
     def recognized(self, module, windows, events):
-        """Found recognition and offset per expectation, additional ones and totals."""
+        """Status, time and offset per expectation, additional ones, merged ones and totals."""
         result = calibration.evaluate(self.protocol(module, windows), presence=[],
                                       events=events, gangs=[], gang_heat=[], until=at(3600),
                                       has_presence=False)
-        found = {(item["step"], e["kind"]): (e["at"], e["offset_s"])
+        found = {(item["step"], e["kind"]): (e["status"], e["at"], e["offset_s"])
                  for item in result["executions"][0]["recognition"] for e in item["expected"]}
-        return (found, [(e["kind"], e["at"]) for e in result["additional"]],
+        return (found, [(e["kind"], e["at"]) for e in result["additional"]], result["merged"],
                 result["totals"]["events"])
 
     def test_events_presence_and_gang_against_the_windows(self):
@@ -355,19 +358,26 @@ class CalibrationEvaluationTests(unittest.TestCase):
                                       gang_heat=[(at(100), at(450))], until=at(900))
         execution = result["executions"][0]
         entry, infusion, exit_open, exit_close = execution["recognition"]
-        self.assertTrue(all(item["found"] and item["offset_s"] == 0
+        self.assertTrue(all(item["status"] == "found" and item["offset_s"] == 0
                             for item in entry["expected"]))
-        # Recognized 5 s after the reply.
-        self.assertEqual(infusion["expected"][0]["offset_s"], 5.0)
+        # Recognized 5 s after the reply: assigned outside the window.
+        self.assertEqual((infusion["expected"][0]["status"], infusion["expected"][0]["offset_s"]),
+                         ("outside", 5.0))
         # Of two openings eligible for the exit, the one in its window is found.
         self.assertEqual((exit_open["expected"][0]["at"], exit_open["expected"][0]["offset_s"]),
                          (at(428), 0.0))
         self.assertEqual(result["additional"],
                          [{"run_id": "run", "kind": "door_open", "at": at(400)}])
         # Recognitions after the last window of a run are not considered.
-        self.assertFalse(exit_close["expected"][0]["found"])
+        self.assertEqual(exit_close["expected"][0]["status"], "missing")
         self.assertEqual(result["totals"]["events"],
-                         {"reference": 5, "found": 4, "missing": 1, "additional": 1})
+                         {"reference": 5, "found": 3, "outside": 1, "missing": 1,
+                          "additional": 1, "merged": 0})
+        self.assertEqual(calibration.evaluation_summary(result), (
+            "Kalibrierung ausgewertet. Gänge 1 von 1 gefunden, 0 zusätzlich. "
+            "Türen und Aufgüsse 3 von 5 im Fenster gefunden, 1 außerhalb des Fensters "
+            "zugeordnet, 1 zusätzlich. Anwesenheit bei leerer Kabine: 0-mal. "
+            "Einzelheiten im Archiv."))
         dropouts = execution["presence"]["dropouts"]
         self.assertEqual((dropouts["count"], dropouts["durations_s"]), (1, [30.0]))
         self.assertEqual(execution["presence"]["after_run_s"], 25.0)
@@ -381,70 +391,125 @@ class CalibrationEvaluationTests(unittest.TestCase):
         # As in probe W-2 4.4: the exit opening 7.8 s before the handoff, after a
         # spurious door operation. The section rule made it additional to the
         # infusion and the exit opening missing.
-        found, additional, totals = self.recognized("A1", A1, [
+        found, additional, _, totals = self.recognized("A1", A1, [
             ("door_open", at(5)), ("door_close", at(15)), ("infusion", at(385)),
             ("door_open", at(395)), ("door_close", at(399)),
             ("door_open", at(412.2)), ("door_close", at(478))])
-        self.assertEqual(found["exit_open", "door_open"], (at(412.2), -7.8))
-        self.assertEqual(found["exit_close", "door_close"], (at(478), 0.0))
+        self.assertEqual(found["exit_open", "door_open"], ("outside", at(412.2), -7.8))
+        self.assertEqual(found["exit_close", "door_close"], ("found", at(478), 0.0))
         self.assertEqual(additional, [("door_open", at(395)), ("door_close", at(399))])
-        self.assertEqual(totals, {"reference": 5, "found": 5, "missing": 0, "additional": 2})
+        self.assertEqual(totals, {"reference": 5, "found": 4, "outside": 1, "missing": 0,
+                                  "additional": 2, "merged": 0})
 
     def test_recognitions_that_blocked_each_other_are_both_assigned(self):
         # The first infusion recognized after its reply and the second before its
         # handoff: the section rule put both into the second pour, with both
         # references missing.
-        found, additional, totals = self.recognized("D", D, [
+        found, additional, _, totals = self.recognized("D", D, [
             ("door_open", at(5)), ("door_close", at(15)), ("infusion", at(215)),
             ("infusion", at(220)), ("infusion", at(527)),
             ("door_open", at(605)), ("door_close", at(675))])
-        self.assertEqual(found["infusion_1", "infusion"], (at(215), 5.0))
-        self.assertEqual(found["infusion_2", "infusion"], (at(527), -3.0))
+        self.assertEqual(found["infusion_1", "infusion"], ("outside", at(215), 5.0))
+        self.assertEqual(found["infusion_2", "infusion"], ("outside", at(527), -3.0))
         # The second pour of the double pour stays additional (E-17).
         self.assertEqual(additional, [("infusion", at(220))])
-        self.assertEqual(totals, {"reference": 6, "found": 6, "missing": 0, "additional": 1})
+        self.assertEqual(totals, {"reference": 6, "found": 4, "outside": 2, "missing": 0,
+                                  "additional": 1, "merged": 0})
 
-    def test_opening_and_closing_of_one_door_operation_stay_together(self):
-        # One recognized door operation from the entry opening to a closing near the
-        # exit closing: per kind the closing would go to the exit, together with
-        # its opening it goes to one reference door operation, here the entry.
-        found, additional, _ = self.recognized("A1", A1, [
-            ("door_open", at(10)), ("infusion", at(385)), ("door_close", at(470))])
-        self.assertEqual(found["entry", "door_open"], (at(10), 0.0))
-        self.assertEqual(found["entry", "door_close"], (at(470), 450.0))
-        self.assertEqual(found["exit_close", "door_close"], (None, None))
-        self.assertEqual(additional, [])
-        # A closing not eligible for the reference of its opening stays additional
-        # rather than going to another door operation.
-        found, additional, totals = self.recognized("CB", CB, [
+    def test_each_recognition_is_assigned_on_its_own_without_blocking(self):
+        # C/B: the closing of the short opening is missed. Bound to that opening,
+        # the closing in the window of the opening in the decay stayed additional
+        # (W-2a). On its own it is found there; the recognition merged both
+        # door operations.
+        found, additional, merged, totals = self.recognized("CB", CB, [
             ("door_open", at(5)), ("door_close", at(15)), ("door_open", at(82)),
             ("door_close", at(88)), ("door_open", at(272)), ("door_close", at(485)),
             ("infusion", at(405)), ("door_open", at(612)), ("door_close", at(685))])
-        self.assertEqual(found["short_opening", "door_open"], (at(272), 0.0))
-        self.assertEqual([found["short_opening", "door_close"],
-                          found["decay_opening", "door_open"],
-                          found["decay_opening", "door_close"]], [(None, None)] * 3)
-        self.assertEqual(additional, [("door_close", at(485))])
-        self.assertEqual(totals, {"reference": 11, "found": 8, "missing": 3, "additional": 1})
+        self.assertEqual(found["short_opening", "door_open"], ("found", at(272), 0.0))
+        self.assertEqual(found["short_opening", "door_close"], ("missing", None, None))
+        self.assertEqual(found["decay_opening", "door_open"], ("missing", None, None))
+        self.assertEqual(found["decay_opening", "door_close"], ("found", at(485), 0.0))
+        self.assertEqual(additional, [])
+        self.assertEqual(merged, [{
+            "run_id": "run",
+            "opening": {"at": at(272), "execution": 1, "step": "short_opening"},
+            "closing": {"at": at(485), "execution": 1, "step": "decay_opening"}}])
+        self.assertEqual(totals, {"reference": 11, "found": 9, "outside": 0, "missing": 2,
+                                  "additional": 0, "merged": 1})
+        # A1: one recognized door operation from the entry opening to a closing
+        # 5 s before the exit closing. The closing goes to the nearest fitting
+        # window, not with +450 s to the entry (W-2a).
+        found, additional, merged, totals = self.recognized("A1", A1, [
+            ("door_open", at(10)), ("infusion", at(385)), ("door_close", at(470))])
+        self.assertEqual(found["entry", "door_open"], ("found", at(10), 0.0))
+        self.assertEqual(found["entry", "door_close"], ("missing", None, None))
+        self.assertEqual(found["exit_close", "door_close"], ("outside", at(470), -5.0))
+        self.assertEqual([(m["opening"]["step"], m["closing"]["step"]) for m in merged],
+                         [("entry", "exit_close")])
+        self.assertEqual(totals, {"reference": 5, "found": 2, "outside": 1, "missing": 2,
+                                  "additional": 0, "merged": 1})
 
     def test_additional_recognition_and_missing_reference_remain(self):
-        found, additional, totals = self.recognized("A1", A1, [
+        found, additional, _, totals = self.recognized("A1", A1, [
             ("door_open", at(5)), ("door_close", at(15)), ("infusion", at(385)),
             ("infusion", at(395)), ("door_open", at(425))])
-        self.assertEqual(found["infusion", "infusion"], (at(385), 0.0))
+        self.assertEqual(found["infusion", "infusion"], ("found", at(385), 0.0))
         # The entry closing lies in its own window, not after it: no exit closing.
-        self.assertEqual(found["exit_close", "door_close"], (None, None))
+        self.assertEqual(found["exit_close", "door_close"], ("missing", None, None))
         self.assertEqual(additional, [("infusion", at(395))])
-        self.assertEqual(totals, {"reference": 5, "found": 4, "missing": 1, "additional": 1})
+        self.assertEqual(totals, {"reference": 5, "found": 4, "outside": 0, "missing": 1,
+                                  "additional": 1, "merged": 0})
 
     def test_assignment_keeps_the_order_without_crossing(self):
         # Both infusions lie nearer to the second reference; each reference takes
-        # one of them in their order.
-        found, additional, _ = self.recognized("D", D, [
+        # one of them in their order, both outside their windows.
+        found, additional, _, totals = self.recognized("D", D, [
             ("infusion", at(400)), ("infusion", at(410))])
-        self.assertEqual(found["infusion_1", "infusion"], (at(400), 190.0))
-        self.assertEqual(found["infusion_2", "infusion"], (at(410), -120.0))
+        self.assertEqual(found["infusion_1", "infusion"], ("outside", at(400), 190.0))
+        self.assertEqual(found["infusion_2", "infusion"], ("outside", at(410), -120.0))
         self.assertEqual(additional, [])
+        self.assertEqual((totals["found"], totals["outside"]), (0, 2))
+
+    def test_assignment_does_not_cross_the_order_over_all_kinds(self):
+        # The infusion lies before the exit opening with the door closed. An
+        # infusion recognized after the exit opening is not assigned to it as
+        # well; per kind both were assigned (W-2a). The nearer exit opening is.
+        found, additional, _, _ = self.recognized("A1", A1, [
+            ("door_open", at(5)), ("door_close", at(15)), ("door_open", at(415)),
+            ("infusion", at(425))])
+        self.assertEqual(found["exit_open", "door_open"], ("outside", at(415), -5.0))
+        self.assertEqual(found["infusion", "infusion"], ("missing", None, None))
+        self.assertEqual(additional, [("infusion", at(425))])
+        # The same within a step: the opening comes before its closing. Of a
+        # closing recognized before the opening one is assigned, on a full tie
+        # the earlier recognition.
+        found, additional, _, _ = self.recognized("A1", A1, [
+            ("door_close", at(5)), ("door_open", at(15)), ("infusion", at(385))])
+        self.assertEqual((found["entry", "door_open"], found["entry", "door_close"]),
+                         (("missing", None, None), ("found", at(5), 0.0)))
+        self.assertEqual(additional, [("door_open", at(15))])
+
+    def test_gang_belongs_to_the_module_through_the_assigned_entry_closing(self):
+        # C/B: entry recognized before the instruction to enter. The gang starts
+        # at the closing assigned to the entry; by the rule of W-2 it was missing
+        # and additional.
+        steps = self.protocol("CB", CB)
+        events = [("door_open", at(5)), ("door_close", at(15)), ("door_open", at(72)),
+                  ("door_close", at(75)), ("infusion", at(405))]
+
+        def gang(start):
+            gangs = [{"start": at(start), "confirmed": at(405), "end": None,
+                      "end_reason": None, "infusions": 1}]
+            result = calibration.evaluate(steps, presence=[], events=events, gangs=gangs,
+                                          gang_heat=[], until=at(900), has_presence=False)
+            item = result["executions"][0]["gang"]
+            return item["found"], item.get("start_offset_s"), item["additional"]
+
+        self.assertEqual(gang(75), (True, -5.0, 0))
+        # A start that is not the assigned closing, at the minimum temperature:
+        # the rule of W-2 applies.
+        self.assertEqual(gang(100), (True, 10.0, 0))
+        self.assertEqual(gang(77), (False, None, 1))
 
     def test_empty_cabin_reports_and_missing_or_additional_gangs(self):
         steps = self.protocol("P", ((0, 30), (630, 760), (760, 880)))
@@ -533,6 +598,8 @@ class CalibrationRuntimeTests(unittest.TestCase):
             clock = [START]
             runtime = self.runtime(clock)
             runtime.controller.set_temperature(60, START)
+            await runtime.accept_presence(binary_presence(
+                "binary_sensor.presence", "off", START, START))
             result = await runtime.start_calibration(actor=ActorRef(USER, "ha_context"),
                                                      modules=["A1"])
             self.assertEqual(result["modules"], ["A1"])
@@ -770,6 +837,104 @@ class CalibrationRuntimeTests(unittest.TestCase):
             self.assertEqual(len(runtime.notification_transport.sent), 1)
 
         asyncio.run(exercise())
+
+    def test_manual_heater_selection_makes_the_run_invalid(self):
+        async def exercise():
+            clock = [START]
+            runtime, run = await self.module_in_session(clock)
+            sent = runtime.notification_transport.sent
+            clock[0] += timedelta(seconds=20)
+            await runtime.set_heater_override(False, actor=ActorRef(USER, "ha_context"))
+            await self.settle(runtime)
+            self.assertEqual((run.phase, run.end_reason), ("invalid", "heater_override"))
+            self.assertEqual([item.payload["message"] for item in sent[1:]], [
+                "Kalibrierung ungültig: manuelle Ofenwahl. Sie wird nicht ausgewertet."])
+            # Returning to automatic does not make it valid again.
+            await runtime.set_heater_override(None, actor=ActorRef(USER, "ha_context"))
+            clock[0] += timedelta(seconds=400)
+            await runtime.tick()
+            await self.settle(runtime)
+            self.assertEqual((len(sent), run.phase), (2, "invalid"))
+            await runtime.close()
+
+        asyncio.run(exercise())
+
+    def test_manual_mode_makes_the_run_invalid(self):
+        async def exercise():
+            actor = ActorRef(USER, "ha_context")
+            clock = [START]
+            runtime, run = await self.module_in_session(clock)
+            entry = SimpleNamespace(runtime_data=runtime,
+                                    options=runtime.configuration.as_options())
+            # In automatic operation the mode is locked; the run goes on.
+            with self.assertRaisesRegex(ValueError, "ausgeschaltetem Automatikbetrieb"):
+                await async_set_control_mode(_FakeHass(), entry, "manual", actor=actor)
+            self.assertEqual(run.phase, "running")
+            await runtime.close()
+
+            # A module in a session in manual mode ends at once.
+            clock = [START]
+            runtime = self.runtime(clock)
+            runtime.controller.set_temperature(80, START)
+            entry = SimpleNamespace(runtime_data=runtime,
+                                    options=runtime.configuration.as_options())
+            await async_set_control_mode(_FakeHass(), entry, "manual", actor=actor)
+            await runtime.accept_presence(binary_presence(
+                "binary_sensor.presence", "off", START, START))
+            await runtime.set_heater_override(True, actor=actor)
+            self.assertTrue(runtime.session.operation_enabled)
+            await runtime.start_calibration(actor=actor, module="A1")
+            await self.settle(runtime)
+            run = runtime.calibration_runs[0]
+            self.assertEqual((run.phase, run.end_reason), ("invalid", "manual_mode"))
+            self.assertEqual([item.payload["message"]
+                              for item in runtime.notification_transport.sent], [
+                "Kalibrierung ungültig: manueller Modus. Sie wird nicht ausgewertet."])
+            await runtime.close()
+
+        asyncio.run(exercise())
+
+    def test_unknown_or_unavailable_presence_makes_the_run_invalid(self):
+        text = ("Kalibrierung ungültig: Präsenzsensor unbekannt oder nicht verfügbar. "
+                "Sie wird nicht ausgewertet.")
+
+        async def exercise(state):
+            clock = [START]
+            runtime, run = await self.module_in_session(clock)
+            sent = runtime.notification_transport.sent
+            clock[0] += timedelta(seconds=20)
+            await runtime.accept_presence(binary_presence(
+                "binary_sensor.presence", state, clock[0], clock[0]))
+            await self.settle(runtime)
+            self.assertEqual((run.phase, run.end_reason), ("invalid", "presence_unavailable"))
+            self.assertEqual([item.payload["message"] for item in sent[1:]], [text])
+            # A later report of presence does not make it valid again.
+            clock[0] += timedelta(seconds=5)
+            await runtime.accept_presence(binary_presence(
+                "binary_sensor.presence", "on", clock[0], clock[0]))
+            clock[0] += timedelta(seconds=400)
+            await runtime.tick()
+            await self.settle(runtime)
+            self.assertEqual((len(sent), run.phase), (2, "invalid"))
+            await runtime.close()
+
+        for state in ("unknown", "unavailable"):
+            asyncio.run(exercise(state))
+
+        async def without_report():
+            # Without a reported state at the start the run ends at once.
+            clock = [START]
+            runtime = self.runtime(clock)
+            runtime.controller.set_temperature(60, START)
+            await runtime.start_calibration(actor=ActorRef(USER, "ha_context"), modules=["A1"])
+            await self.settle(runtime)
+            run = runtime.calibration_runs[0]
+            self.assertEqual((run.phase, run.end_reason), ("invalid", "presence_unavailable"))
+            self.assertEqual([item.payload["message"]
+                              for item in runtime.notification_transport.sent], [text])
+            await runtime.close()
+
+        asyncio.run(without_report())
 
 
 if __name__ == "__main__":

@@ -2179,7 +2179,8 @@ class SaunaRuntime:
     def _advance_calibration(self, now):
         """Send due calibration messages; evaluate the runs of an ended session.
 
-        Betrieb-AUS interrupts a run before it sends anything further (W-2a).
+        An interrupting state ends a run before it sends anything further
+        (W-2a, W-2b).
         """
         if not self._calibration_runs:
             return
@@ -2188,8 +2189,9 @@ class SaunaRuntime:
             if session is None or run.session_id != session.session_id:
                 self._finish_calibration(run, now)
                 continue
-            if not session.operation_enabled:
-                self._send_calibration(run, run.interrupt(now, "operation_off"))
+            reason = self._calibration_interruption(run, session)
+            if reason is not None:
+                self._send_calibration(run, run.interrupt(now, reason))
             else:
                 self._send_calibration(run, run.advance(
                     now,
@@ -2197,6 +2199,23 @@ class SaunaRuntime:
                     gang_active=session.timeline.active is not None,
                 ))
             self._archive_calibration(run)
+
+    def _calibration_interruption(self, run, session):
+        """Interrupting state at this cycle end; every path into it ends with a cycle.
+
+        A manual heater selection holds while its override lasts. Presence is
+        the state the sensor last reported to the run, at its start the
+        current one; each report ends with a cycle.
+        """
+        if not session.operation_enabled:
+            return "operation_off"
+        if self.controller.control_mode == "manual":
+            return "manual_mode"
+        if self.controller.heater_override is not None:
+            return "heater_override"
+        if run.has_presence and run.presence[-1][1] is None:
+            return "presence_unavailable"
+        return None
 
     def _finish_calibration(self, run, now):
         """Doors and infusions of a valid run are evaluated once the session has ended (V04).

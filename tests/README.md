@@ -68,14 +68,17 @@ weder Empfang noch Rückmeldungen eines tatsächlichen Companion-Clients.
 Die [Kalibrierung](../docs/kalibrierung.md) prüft `test_calibration.py` im
 Fachkernlauf: vollständiger Durchlauf aller Module mit simulierten Antworten,
 Wiederholung, doppelte und verspätete Antworten, Startbedingungen und
-Auswertung gegen synthetische Fenster, darunter die Zuordnung früh oder spät
-erkannter Ereignisse und zusammengehörender Türvorgänge. Die Laufzeitfälle
-verwenden die produktiven Start-, Antwort- und Taktmethoden mit synthetischem
-Abschlusstransport; derselbe Eingangsverlauf ohne Kalibrierung ergibt dieselben
-Heizentscheidungen und denselben Gangverlauf. Abbrechen, Betrieb AUS, Entladen
-und ein Sitzungsende vor dem letzten Schritt machen die Kalibrierung ungültig,
-ohne weitere Anweisung und ohne Auswertung. `test_archive_retention.py`
-prüft die Aufbewahrung von Sitzungen mit Kalibrierprotokoll.
+Auswertung gegen synthetische Fenster, darunter die Zuordnung in physikalischer
+Reihenfolge ohne Kreuzung über die Arten, früh oder spät erkannte Ereignisse,
+zusammengelegte Türvorgänge und der Gang über den zugeordneten Eintrittsschluss.
+Die Laufzeitfälle verwenden die produktiven Start-, Antwort- und Taktmethoden
+mit synthetischem Abschlusstransport; derselbe Eingangsverlauf ohne Kalibrierung
+ergibt dieselben Heizentscheidungen und denselben Gangverlauf. Abbrechen,
+Betrieb AUS, manueller Modus, manuelle Ofenwahl, ein unbekannter oder nicht
+verfügbarer Präsenzsensor, Entladen und ein Sitzungsende vor dem letzten Schritt
+machen die Kalibrierung ungültig, ohne weitere Anweisung und ohne Auswertung.
+`test_archive_retention.py` prüft die Aufbewahrung von Sitzungen mit
+Kalibrierprotokoll.
 `integration/test_calibration_service.py` führt den registrierten Dienst über
 die Mobile-App-Geräteaktion und den nativen Antworteingang bis zum Ablauf und
 zum Archivprotokoll.

@@ -13,6 +13,8 @@ Person, keine Größe der Steuerung oder Erkennung.
 
 Eine Kalibrierung zählt nur ununterbrochen (W-2a): Jede Unterbrechung beendet
 den Lauf sofort als ungültig, ein ungültiger Lauf wird nicht ausgewertet.
+Die Erkennungen eines Laufs werden seinen Referenzen in deren physikalischer
+Reihenfolge zugeordnet (W-2b).
 """
 
 from __future__ import annotations
@@ -20,7 +22,7 @@ from __future__ import annotations
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
-from itertools import combinations, product
+from itertools import pairwise
 
 from .notification_recipients import (
     RecipientAssignment,
@@ -44,12 +46,15 @@ LABELS = {
     REPEAT: "Wiederholen",
 }
 
-# Unterbrechungen (W-2a); jede macht den Lauf ungültig.
+# Unterbrechungen (W-2a, W-2b); jede macht den Lauf ungültig.
 INTERRUPTIONS = {
     "cancelled": "abgebrochen",
     "operation_off": "Betrieb aus",
     "session_ended": "Sitzung vor dem letzten Schritt beendet",
     "integration_unloaded": "Integration entladen oder neu gestartet",
+    "manual_mode": "manueller Modus",
+    "heater_override": "manuelle Ofenwahl",
+    "presence_unavailable": "Präsenzsensor unbekannt oder nicht verfügbar",
 }
 
 # Bewertete Erkennungen; Lüften gehört zum Gangende.
@@ -623,79 +628,100 @@ def _operations(module):
     return operations
 
 
-def _units(events):
-    """Recognitions in time order; an opening and the closing that follows it
-    form one recognized door operation."""
-    units = []
-    for kind, at in events:
-        if kind == DOOR_CLOSE and units and set(units[-1]) == {DOOR_OPEN}:
-            units[-1][DOOR_CLOSE] = at
-        else:
-            units.append({kind: at})
-    return units
+def _sequence(groups, modules):
+    """Referenced expectations of one run in their physical order (W-2b).
 
-
-def _assign(references, units):
-    """Assign recognized units to references (W-2a); {(reference, kind): unit}.
-
-    ``references`` in protocol order and ``units`` in time order, each a
-    mapping kind → protocol step or time. Per kind the order is kept and no
-    pairs cross; every reference and every recognition is in at most one
-    pair, and the parts of one unit go to the same reference or to none. A
-    recognition is eligible after the window of the previous and before the
-    window of the next reference of its kind. Chosen are the most pairs, then
-    the smallest sum of distances to the windows; on a full tie the earlier
-    recognition and the earlier reference.
+    Steps follow the protocol, within a step the opening comes before its
+    closing. Each entry is (kind, protocol step, reference operation).
     """
-    kinds = sorted({kind for reference in references for kind in reference})
+    references = []
+    for group in groups:
+        module = modules[group[0]["module"]]
+        operations = _operations(module)
+        roles = {step.key: step for step in module.steps}
+        for item in filter(_referenced, group):
+            references += [(kind, item, (item["execution"], operations[item["step"], kind]))
+                           for kind in roles[item["step"]].expects]
+    return references
+
+
+def _assign(references, events):
+    """Assign recognitions along the physical order (W-2b); {recognition: reference}.
+
+    ``references`` from `_sequence`, ``events`` as (kind, time) in time
+    order, both as positions. Each recognition goes on its own to at most one
+    reference of its kind, each reference takes at most one recognition, and
+    no pairs cross the order over all kinds. A recognition is eligible after
+    the window of the previous and before the window of the next reference of
+    its kind. Chosen are the most pairs, then the smallest sum of distances to
+    the windows; on a full tie the earlier recognition and the earlier
+    reference.
+    """
     bounds = {}
-    for kind in kinds:
-        order = [index for index, reference in enumerate(references) if kind in reference]
+    for kind in {reference[0] for reference in references}:
+        order = [index for index, reference in enumerate(references) if reference[0] == kind]
         for position, index in enumerate(order):
-            bounds[index, kind] = (
-                references[order[position - 1]][kind]["closed_at"] if position else None,
-                references[order[position + 1]][kind]["handoff_at"]
+            bounds[index] = (
+                references[order[position - 1]][1]["closed_at"] if position else None,
+                references[order[position + 1]][1]["handoff_at"]
                 if position + 1 < len(order) else None,
             )
 
     def eligible(index, kind, at):
-        lower, upper = bounds[index, kind]
-        return (lower is None or at > lower) and (upper is None or at < upper)
+        lower, upper = bounds[index]
+        return (references[index][0] == kind and (lower is None or at > lower)
+                and (upper is None or at < upper))
 
-    # Last assigned reference per kind; options are compared from the end.
-    states = list(product(range(-1, len(references)), repeat=len(kinds)))
-    following = {state: (0, timedelta(), None) for state in states}
+    # Per first free reference the best result of the later recognitions;
+    # options are compared from the end.
+    following = [(0, timedelta(), None)] * (len(references) + 1)
     tables = []
-    for unit in reversed(units):
-        table = {}
-        for state in states:
-            options = []
-            for index, reference in enumerate(references):
-                fitting = [kind for kind in unit if kind in reference
-                           and index > state[kinds.index(kind)]
-                           and eligible(index, kind, unit[kind])]
-                for size in range(len(fitting), 0, -1):
-                    for parts in combinations(fitting, size):
-                        after = tuple(index if kind in parts else last
-                                      for kind, last in zip(kinds, state, strict=True))
-                        pairs, distance, _ = following[after]
-                        distance += sum((_distance(unit[kind], reference[kind])
-                                         for kind in parts), timedelta())
-                        options.append((pairs + size, distance, (index, parts, after)))
-            pairs, distance, _ = following[state]
-            options.append((pairs, distance, (None, (), state)))
-            table[state] = min(options, key=lambda option: (-option[0], option[1]))
+    for kind, at in reversed(events):
+        table = []
+        for free in range(len(references) + 1):
+            options = [(following[index + 1][0] + 1,
+                        following[index + 1][1] + _distance(at, references[index][1]), index)
+                       for index in range(free, len(references)) if eligible(index, kind, at)]
+            options.append((*following[free][:2], None))
+            table.append(min(options, key=lambda option: (-option[0], option[1])))
         tables.append(table)
         following = table
-    assignment, state = {}, (-1,) * len(kinds)
+    assignment, free = {}, 0
     for position, table in enumerate(reversed(tables)):
-        index, parts, state = table[state][2]
-        assignment.update({(index, kind): position for kind in parts})
+        index = table[free][2]
+        if index is not None:
+            assignment[position], free = index, index + 1
     return assignment
 
 
+def _merged(references, events, assignment):
+    """Reference door operations merged by the recognition (W-2b).
+
+    An opening assigned to one reference door operation is followed among the
+    door recognitions by a closing assigned to a later one. The assignment
+    stays as it is.
+    """
+    doors = [position for position, (kind, _) in enumerate(events)
+             if kind in (DOOR_OPEN, DOOR_CLOSE)]
+    merged = []
+    for opening, closing in pairwise(doors):
+        if (events[opening][0] != DOOR_OPEN or events[closing][0] != DOOR_CLOSE
+                or opening not in assignment or closing not in assignment):
+            continue
+        first, second = references[assignment[opening]], references[assignment[closing]]
+        if second[2] > first[2]:
+            merged.append({
+                "opening": {"at": events[opening][1], "execution": first[1]["execution"],
+                            "step": first[1]["step"]},
+                "closing": {"at": events[closing][1], "execution": second[1]["execution"],
+                            "step": second[1]["step"]},
+            })
+    return merged
+
+
 def _assign_run(groups, events, modules):
-    """Found recognitions per referenced expectation of one run, and the additional ones.
+    """Assignment of one run: found recognition per referenced expectation,
+    the additional recognitions and the merged door operations.
 
     Considered are recognitions from the first handoff to the last window of
     the run, except inside the window of a step without reference.
@@ -706,28 +732,14 @@ def _assign_run(groups, events, modules):
     observed = [event for event in events
                 if items[0]["handoff_at"] <= event[1] <= items[-1]["closed_at"]
                 and not any(start <= event[1] <= end for start, end in excluded)]
-    found, additional = {}, []
-    for kinds in ((DOOR_OPEN, DOOR_CLOSE), (INFUSION,)):
-        references = {}
-        for group in groups:
-            module = modules[group[0]["module"]]
-            operations = _operations(module)
-            roles = {step.key: step for step in module.steps}
-            for item in filter(_referenced, group):
-                for kind in roles[item["step"]].expects:
-                    if kind in kinds:
-                        operation = (item["execution"], operations[item["step"], kind])
-                        references.setdefault(operation, {})[kind] = item
-        references = list(references.values())
-        units = _units([event for event in observed if event[0] in kinds])
-        assignment = _assign(references, units)
-        for (index, kind), unit in assignment.items():
-            item = references[index][kind]
-            found[item["execution"], item["step"], kind] = units[unit][kind]
-        assigned = {(unit, kind) for (_, kind), unit in assignment.items()}
-        additional += [(kind, at) for position, unit in enumerate(units)
-                       for kind, at in unit.items() if (position, kind) not in assigned]
-    return found, sorted(additional, key=lambda event: event[1])
+    references = _sequence(groups, modules)
+    assignment = _assign(references, observed)
+    found = {}
+    for position, index in assignment.items():
+        kind, item, _ = references[index]
+        found[item["execution"], item["step"], kind] = observed[position][1]
+    additional = [event for position, event in enumerate(observed) if position not in assignment]
+    return found, additional, _merged(references, observed, assignment)
 
 
 def _state_at(presence, at):
@@ -785,7 +797,10 @@ def _presence_result(module, items, presence, bound):
     return result
 
 
-def _gang_result(module, items, gangs, gang_heat, until, end):
+def _gang_result(module, items, gangs, gang_heat, until, end, entry_close):
+    """Gang of one execution: the gang whose start is the recognition assigned
+    to the entry closing (W-2b), otherwise the first with its start from the
+    instruction to enter to the instruction to leave (W-2)."""
     roles = {step.key: step for step in module.steps}
     entry = next((item for item in items if roles[item["step"]].role == "entry"), None)
     exit_open = next((item for item in items if roles[item["step"]].role == "exit_open"), None)
@@ -794,7 +809,8 @@ def _gang_result(module, items, gangs, gang_heat, until, end):
     begin = items[0]["handoff_at"]
     inside = [g for g in gangs if begin <= g["start"] < end]
     limit = exit_open["handoff_at"] if exit_open is not None else end
-    own = [g for g in inside if entry["handoff_at"] <= g["start"] < limit]
+    own = [g for g in gangs if entry_close is not None and g["start"] == entry_close]
+    own = own or [g for g in inside if entry["handoff_at"] <= g["start"] < limit]
     gang = own[0] if own else None
     additional = [g for g in inside if g is not gang]
     infusions = sum(INFUSION in roles[item["step"]].expects
@@ -825,26 +841,28 @@ def evaluate(steps, *, presence, events, gangs, gang_heat, until, has_presence=T
     """Compare closed protocol steps of uninterrupted runs with observations.
 
     ``events``: booked recognitions (kind, effective time), assigned per run
-    to the referenced steps by `_assign` (W-2a); a found recognition carries
-    its offset to the window, unassigned ones of the run are additional.
-    ``gangs``: non-retracted gangs as mappings with start, confirmed, end,
-    end_reason and infusions. ``gang_heat``: intervals of booked heating while
-    the heating decision is the gang demand.
+    to the referenced steps by `_assign` (W-2b). Each reference is found in
+    its window, assigned outside it with its offset, or missing; unassigned
+    recognitions of the run are additional, and merged door operations are
+    noted. ``gangs``: non-retracted gangs as mappings with start, confirmed,
+    end, end_reason and infusions. ``gang_heat``: intervals of booked heating
+    while the heating decision is the gang demand.
     """
     events = sorted((e for e in events if e[0] in EVALUATED_KINDS), key=lambda e: e[1])
     grouped = _by_execution(steps)
     ends, keys = _execution_ends(grouped)
-    found, additional = {}, []
+    found, additional, merged = {}, [], []
     for run_id in dict.fromkeys(key[0] for key in keys):
-        run_found, run_additional = _assign_run(
+        run_found, run_additional, run_merged = _assign_run(
             [grouped[key] for key in keys if key[0] == run_id], events, modules)
         found.update({(run_id, *key): at for key, at in run_found.items()})
         additional += [{"run_id": run_id, "kind": kind, "at": at}
                        for kind, at in run_additional]
+        merged += [{"run_id": run_id, **item} for item in run_merged]
     executions = []
     totals = {"gangs": {"reference": 0, "found": 0, "missing": 0, "additional": 0},
-              "events": {"reference": 0, "found": 0, "missing": 0,
-                         "additional": len(additional)},
+              "events": {"reference": 0, "found": 0, "outside": 0, "missing": 0,
+                         "additional": len(additional), "merged": len(merged)},
               "empty_cabin_reports": 0, "excluded_steps": 0}
     for key in keys:
         items = grouped[key]
@@ -858,21 +876,25 @@ def evaluate(steps, *, presence, events, gangs, gang_heat, until, has_presence=T
             expected = []
             for kind in roles[item["step"]].expects:
                 at = found.get((*key, item["step"], kind))
-                expected.append({"kind": kind, "found": at is not None, "at": at,
+                status = ("missing" if at is None else
+                          "found" if item["handoff_at"] <= at <= item["closed_at"] else
+                          "outside")
+                expected.append({"kind": kind, "status": status, "at": at,
                                  "offset_s": None if at is None else _offset(at, item)})
+                totals["events"][status] += 1
             recognition.append({"step": item["step"], "reference": item["reference"],
                                 "window": [item["handoff_at"], item["closed_at"]],
                                 "expected": expected})
             totals["events"]["reference"] += len(expected)
-            totals["events"]["found"] += sum(e["found"] for e in expected)
-            totals["events"]["missing"] += sum(not e["found"] for e in expected)
         following = next((grouped[k][0]["handoff_at"] for k in keys[keys.index(key) + 1:]
                           if k[0] == key[0]), until)
         presence_result = (_presence_result(module, items, presence, following)
                            if has_presence else None)
         if presence_result:
             totals["empty_cabin_reports"] += sum(e["reports"] for e in presence_result["empty"])
-        gang = (_gang_result(module, items, gangs, gang_heat, until, ends[key])
+        entry = next((step.key for step in module.steps if step.role == "entry"), None)
+        gang = (_gang_result(module, items, gangs, gang_heat, until, ends[key],
+                             found.get((*key, entry, DOOR_CLOSE)))
                 if module.gang else None)
         if gang is not None:
             totals["gangs"]["reference"] += 1
@@ -882,7 +904,8 @@ def evaluate(steps, *, presence, events, gangs, gang_heat, until, has_presence=T
         executions.append({"run_id": key[0], "execution": key[1], "module": module.module_id,
                            "recognition": recognition, "presence": presence_result,
                            "gang": gang})
-    return {"executions": executions, "additional": additional, "totals": totals}
+    return {"executions": executions, "additional": additional, "merged": merged,
+            "totals": totals}
 
 
 def protocol_steps(records: Iterable[Mapping]) -> tuple[list[dict], list[str]]:
@@ -957,7 +980,8 @@ def evaluation_summary(result: dict) -> str:
     if gangs["reference"] or gangs["additional"]:
         parts.append(f"Gänge {gangs['found']} von {gangs['reference']} gefunden, "
                      f"{gangs['additional']} zusätzlich.")
-    parts.append(f"Türen und Aufgüsse {events['found']} von {events['reference']} gefunden, "
+    parts.append(f"Türen und Aufgüsse {events['found']} von {events['reference']} im Fenster "
+                 f"gefunden, {events['outside']} außerhalb des Fensters zugeordnet, "
                  f"{events['additional']} zusätzlich.")
     parts.append(f"Anwesenheit bei leerer Kabine: {totals['empty_cabin_reports']}-mal.")
     parts.append("Einzelheiten im Archiv.")
