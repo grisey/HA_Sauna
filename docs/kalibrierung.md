@@ -9,10 +9,16 @@ Antworten bedienen die Sauna nicht.
 
 ## Start und Abbruch
 
-| Weg | Start | Ablauf |
-| --- | --- | --- |
-| Kalibriersitzung | `ha_sauna.start_calibration` ohne laufende Sitzung | Startet den Saunabetrieb im Automatikbetrieb, aus dem manuellen Modus mit Wechsel auf Automatik. Nach **Bereit** laufen die Module der Reihe nach: P, A1, A2, A3, C/B, D. `modules` schränkt die Auswahl ein. |
-| Einzelnes Modul | `ha_sauna.start_calibration` mit `module` in einer laufenden Sitzung | Startet, sobald kein Gang aktiv ist. Ein vorläufiger Gang zählt als aktiv. |
+Die Kalibrierung startet im Sauna-Panel unter **Einstellungen → Daten und
+Wartung → Kalibrierung** oder über den Dienst `ha_sauna.start_calibration`.
+Beide Wege verwenden denselben Ablauf und dieselbe Berechtigungsprüfung;
+startender Benutzer ist im Panel der angemeldete Benutzer. Der Bereich **Daten
+und Wartung** steht Administratoren zur Verfügung.
+
+| Weg | Start im Panel | Start per Dienst | Ablauf |
+| --- | --- | --- | --- |
+| Kalibriersitzung | **Kalibriersitzung starten** ohne laufende Sitzung, mit Auswahl der Module; vorgewählt sind alle angebotenen | `ha_sauna.start_calibration` ohne laufende Sitzung; `modules` schränkt die Auswahl ein | Startet den Saunabetrieb im Automatikbetrieb, aus dem manuellen Modus mit Wechsel auf Automatik. Nach **Bereit** laufen die gewählten Module der Reihe nach: P, A1, A2, A3, C/B, D. |
+| Einzelnes Modul | **Modul starten** in einer laufenden Sitzung, mit Auswahl eines Moduls | `ha_sauna.start_calibration` mit `module` in einer laufenden Sitzung | Startet, sobald kein Gang aktiv ist. Ein vorläufiger Gang zählt als aktiv. |
 
 Voraussetzungen:
 
@@ -22,13 +28,28 @@ Voraussetzungen:
 - Steuerberechtigung für die Betriebsentität, wie bei den übrigen Diensten.
 - Es läuft keine andere Kalibrierung derselben Instanz.
 - Ohne Präsenzsensor entfällt Modul P; ein ausdrücklich angefordertes Modul P
-  wird abgewiesen. Die übrigen Module laufen ohne Präsenzmessung.
+  wird abgewiesen. Die übrigen Module laufen ohne Präsenzmessung. Das Panel
+  bietet P nur mit Präsenzsensor an.
 
-Die Dienstantwort enthält `run_id`, `kind` (`session` oder `module`),
+Fehlt eine Voraussetzung, ist der Start im Panel mit dem Grund gesperrt. Die
+Companion-Ziele prüft das Panel nach dem Laden und auf **Companion-Ziele erneut
+prüfen**.
+
+Die Antwort auf den Start enthält `run_id`, `kind` (`session` oder `module`),
 `session_id`, die gewählten Module und die Ziele.
 
-`ha_sauna.cancel_calibration` beendet die laufende Kalibrierung. Sitzung und
-Saunabetrieb laufen weiter.
+**Kalibrierung abbrechen** im Panel oder `ha_sauna.cancel_calibration` beendet
+die laufende Kalibrierung; sie ist dann ungültig. Sitzung und Saunabetrieb
+laufen weiter.
+
+Während eines Laufs zeigt die Karte **Kalibrierung** die Art, das Modul, den
+Schritt (n von m) und worauf der Lauf wartet: **Bereit**, **Gangende**,
+**Antwort** oder **Wartezeit**. Die Steuerungsansicht zeigt dazu einen kurzen
+Hinweis, etwa „Kalibrierung läuft: A1, Schritt 2 von 4“. Nach dem Ende zeigt die
+Karte das letzte Ergebnis: gültig oder ungültig mit Grund, bei einer gültigen
+Kalibrierung nach dem Sitzungsende die Summen der Auswertung. Das letzte
+Ergebnis gilt bis zum Neuladen der Integration; die Einzelheiten stehen im
+Archiv der Sitzung.
 
 ## Gültigkeit
 
@@ -36,7 +57,7 @@ Eine Kalibrierung gilt nur ununterbrochen: Alle Schritte der gewählten Module
 sind abgeschlossen, durch Antwort, **Abweichend** oder Ende der Wartezeit.
 Unterbrechungen sind:
 
-- **Abbrechen** in einer Nachricht oder über den Dienst
+- **Abbrechen** in einer Nachricht, im Panel oder über den Dienst
 - Betrieb AUS
 - der manuelle Modus
 - eine manuelle Ofenwahl, solange sie gilt

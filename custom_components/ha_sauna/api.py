@@ -11,6 +11,7 @@ from homeassistant.helpers import entity_registry as er
 from .appearance import APPEARANCE_CATALOG, frontend_preferences
 from .archive import energy_interval_delta, plain
 from .const import DOMAIN
+from .core import calibration
 from .core.configuration_model import ConfigurationModel, temperature_control
 from .core.notification_recipients import ActorRef
 from .notification_options import CONF_NOTIFICATION_ASSIGNMENTS
@@ -20,6 +21,7 @@ from .core.power import watts
 from .core.timeline import active_gang_duration_seconds, project_door_cycles, project_gang_intervals
 from .environment import environment_snapshot
 from .log import LEVELS
+from .notifications import async_resolve_recipients
 from .runtime import Configuration
 from .presentation import (
     decision_message,
@@ -298,6 +300,7 @@ class StateView(HomeAssistantView):
                         if runtime.detector
                         else None,
                         "manual_controls": manual_controls(runtime),
+                        "calibration": runtime.calibration_status,
                         "permissions": {
                             "admin": request["hass_user"].is_admin,
                             "control": can_control(request, entry_id),
@@ -1100,6 +1103,78 @@ class RecognitionSessionsView(HomeAssistantView):
         return self.json(runtime.recognition_learning.overview())
 
 
+class CalibrationView(HomeAssistantView):
+    """Start a calibration from the panel (W-2c).
+
+    Same runtime method and permission boundary as ha_sauna.start_calibration;
+    the starting user is the authenticated request user. GET reports how many
+    Companion targets with replies that user has.
+    """
+
+    url = "/api/ha_sauna/{entry_id}/calibration"
+    name = "api:ha_sauna:calibration"
+    requires_auth = True
+
+    async def get(self, request, entry_id):
+        require_control(request, entry_id)
+        hass = request.app[KEY_HASS]
+        runtime = runtime_for(hass, entry_id)
+        targets = calibration.reply_targets(
+            request["hass_user"].id,
+            runtime.configuration.notification_assignments,
+            await async_resolve_recipients(hass),
+        )
+        return self.json({"targets": len(targets)})
+
+    async def post(self, request, entry_id):
+        require_control(request, entry_id)
+        body = await json_body(request)
+
+        def known(value):
+            return isinstance(value, str) and value in calibration.MODULES
+
+        if not (
+            isinstance(body, dict)
+            and set(body) <= {"module", "modules"}
+            and ("module" not in body or known(body["module"]))
+            and ("modules" not in body or (
+                isinstance(body["modules"], list) and body["modules"]
+                and all(known(item) for item in body["modules"])
+            ))
+        ):
+            raise web.HTTPBadRequest(text="module oder modules muss Kalibriermodule nennen.")
+        hass = request.app[KEY_HASS]
+        runtime = runtime_for(hass, entry_id)
+        resolutions = await async_resolve_recipients(hass)
+        try:
+            result = await runtime.start_calibration(
+                actor=request_actor(request), module=body.get("module"),
+                modules=body.get("modules"), resolutions=resolutions,
+            )
+        except ValueError as error:
+            return self.json({"error": str(error)}, status_code=409)
+        return self.json(result)
+
+
+class CalibrationCancelView(HomeAssistantView):
+    """Cancel the running calibration (W-2c); same path as ha_sauna.cancel_calibration."""
+
+    url = "/api/ha_sauna/{entry_id}/calibration/cancel"
+    name = "api:ha_sauna:calibration:cancel"
+    requires_auth = True
+
+    async def post(self, request, entry_id):
+        require_control(request, entry_id)
+        if await json_body(request) != {}:
+            raise web.HTTPBadRequest(text="Der Abbruch erwartet ein leeres Objekt.")
+        runtime = runtime_for(request.app[KEY_HASS], entry_id)
+        try:
+            result = await runtime.cancel_calibration(actor=request_actor(request))
+        except ValueError as error:
+            return self.json({"error": str(error)}, status_code=409)
+        return self.json(result)
+
+
 def register(hass):
     data = hass.data.setdefault(DOMAIN, {})
     if data.get("api_registered"):
@@ -1126,4 +1201,6 @@ def register(hass):
     hass.http.register_view(HeaterView)
     hass.http.register_view(LoggingView)
     hass.http.register_view(RecognitionSessionsView)
+    hass.http.register_view(CalibrationView)
+    hass.http.register_view(CalibrationCancelView)
     data["api_registered"] = True

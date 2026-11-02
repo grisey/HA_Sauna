@@ -14,7 +14,8 @@ Person, keine Größe der Steuerung oder Erkennung.
 Eine Kalibrierung zählt nur ununterbrochen (W-2a): Jede Unterbrechung beendet
 den Lauf sofort als ungültig, ein ungültiger Lauf wird nicht ausgewertet.
 Die Erkennungen eines Laufs werden seinen Referenzen in deren physikalischer
-Reihenfolge zugeordnet (W-2b).
+Reihenfolge zugeordnet (W-2b). ``CalibrationRun.status`` ist der Anzeigezustand
+für das Panel (W-2c).
 """
 
 from __future__ import annotations
@@ -316,6 +317,35 @@ class CalibrationRun:
 
     def owns(self, action_id: str) -> bool:
         return action_id in self._actions
+
+    def status(self) -> dict:
+        """Display state without user identities (W-2c).
+
+        An active run names its module, step n of m and what it waits for:
+        ``ready`` (Bereit), ``gang_end`` (no gang active), ``reply`` or
+        ``hold`` (waiting time). An ended run names its validity and reason.
+        """
+        state = {"kind": self.kind, "modules": [m.label for m in self.modules],
+                 "started_at": self.started_at}
+        if not self.active:
+            return {**state, "valid": self.valid, "reason": self.end_reason,
+                    "reason_text": INTERRUPTIONS.get(self.end_reason),
+                    "ended_at": self.ended_at}
+        if self.phase == "waiting":
+            module = self._repeat_module or self.modules[self._next_module]
+            return {**state, "module": module.label, "step": None,
+                    "steps": len(module.steps),
+                    "waiting": "ready" if self.waiting_for == "ready" else "gang_end"}
+        execution = self.current
+        steps = len(execution.module.steps)
+        if self.phase == "pause":
+            # All steps are closed; „Nächster Gang“ is the awaited reply.
+            return {**state, "module": execution.module.label, "step": steps,
+                    "steps": steps, "waiting": "reply"}
+        step = execution.module.steps[execution.step]
+        waiting = "reply" if execution.sent_at is not None and step.action else "hold"
+        return {**state, "module": execution.module.label, "step": execution.step + 1,
+                "steps": steps, "waiting": waiting}
 
     # -- protocol -----------------------------------------------------------
 

@@ -81,7 +81,14 @@ machen die Kalibrierung ungültig, ohne weitere Anweisung und ohne Auswertung.
 Kalibrierprotokoll.
 `integration/test_calibration_service.py` führt den registrierten Dienst über
 die Mobile-App-Geräteaktion und den nativen Antworteingang bis zum Ablauf und
-zum Archivprotokoll.
+zum Archivprotokoll. Derselbe Test führt Start und Abbruch über die
+authentifizierten Panelansichten mit derselben Berechtigungsgrenze wie die
+Dienste und prüft den Kalibrierstatus im Zustand, für Normalbenutzer nur den
+laufenden Lauf. `test_calibration.py` prüft dazu Modul, Schritt und Wartegrund
+des Anzeigezustands sowie das letzte Ergebnis nach dem Sitzungsende,
+`test_local_preview.py` denselben Weg in der lokalen Vorschau und
+`panel_calibration.test.js` Karte, Sperrgründe und den Hinweis in der
+Steuerungsansicht.
 
 Die [Modellübergaben](../docs/modelluebergaben.md) werden durch
 `test_model_handoff.py`, `test_control_handoff.py`,

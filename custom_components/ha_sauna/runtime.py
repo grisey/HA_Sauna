@@ -582,10 +582,33 @@ class SaunaRuntime:
         self._calibration_runs: list[calibration.CalibrationRun] = []
         self._calibration_targets = {}
         self._calibration_tasks = set()
+        # Display state of the last run ended with its session (W-2c).
+        self._calibration_last = None
 
     @property
     def calibration_runs(self) -> tuple[calibration.CalibrationRun, ...]:
         return tuple(self._calibration_runs)
+
+    @property
+    def calibration_status(self) -> dict:
+        """Calibration state for the panel (W-2c).
+
+        ``active``: the running run, if any. ``last``: the last ended run with
+        its validity and reason; after its session ended also the totals of
+        the evaluation. ``modules``: the modules on offer, P only with a
+        presence sensor.
+        """
+        active = next((run for run in self._calibration_runs if run.active), None)
+        ended = [run for run in self._calibration_runs if not run.active]
+        return {
+            "active": active.status() if active is not None else None,
+            "last": {**ended[-1].status(), "totals": None} if ended else self._calibration_last,
+            "modules": [
+                {"id": module.module_id, "label": module.label, "title": module.title}
+                for module in calibration.select_modules(
+                    None, presence=self.configuration_model.direct_presence)
+            ],
+        }
 
     @property
     def notification_recipients(self):
@@ -2229,6 +2252,7 @@ class SaunaRuntime:
              if item.session_id == run.session_id),
             None,
         )
+        totals = None
         if run.valid and session is not None:
             result = self._evaluate_calibration(run, session, now)
             run.records.append(
@@ -2237,6 +2261,8 @@ class SaunaRuntime:
             instructions = [run.evaluation_message(
                 now, calibration.evaluation_summary(result),
             )]
+            totals = result["totals"]
+        self._calibration_last = {**run.status(), "totals": totals}
         self._send_calibration(run, instructions)
         self._archive_calibration(run)
         self._calibration_runs.remove(run)

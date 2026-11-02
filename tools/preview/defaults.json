@@ -25,6 +25,11 @@
     "control_input": "event.demo_taster",
     "presence": "binary_sensor.demo_fp300"
   },
+  "calibration": {
+    "entry_id": "lokale-vorschau",
+    "user_id": "vorschau-benutzer",
+    "device_id": "vorschau-telefon"
+  },
   "button_event_types": [
     "btn_down",
     "btn_up",

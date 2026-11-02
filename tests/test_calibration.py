@@ -1,5 +1,8 @@
 """Calibration runs: instructions, replies, protocol and evaluation (V31, W-2, W-2a, W-2b).
 
+The display state for the panel (W-2c) names module, step and waiting reason
+of the running run and keeps the last result after its session ended.
+
 The run never operates the sauna. Runtime cases use the productive service
 methods with a synthetic final transport and compare control and gang results
 with the same inputs without a calibration run. Every interruption makes a run
@@ -295,6 +298,46 @@ class CalibrationRunTests(unittest.TestCase):
             until=driver.now, has_presence=False)
         self.assertEqual(result["totals"]["excluded_steps"], 1)
         self.assertEqual(result["totals"]["events"]["additional"], 0)
+
+    def test_status_names_module_step_and_what_the_run_waits_for(self):
+        run = self.run_for(modules=("P", "A1"))
+        driver = Driver(run)
+
+        def shown():
+            status = run.status()
+            self.assertNotIn("user_id", status)
+            return tuple(status[key] for key in ("module", "step", "steps", "waiting"))
+
+        self.assertEqual((run.status()["kind"], run.status()["modules"]),
+                         ("session", ["P", "A1"]))
+        self.assertEqual(shown(), ("P", None, 3, "ready"))
+        driver.answer(driver.advance()[0])
+        # The next instruction follows after its waiting time.
+        self.assertEqual(shown(), ("P", 2, 3, "hold"))
+        front = driver.advance(600)[0]
+        self.assertEqual(shown(), ("P", 2, 3, "reply"))
+        driver.answer(front)
+        self.assertEqual(driver.advance()[0].step, "away")
+        # A step without action ends with its waiting time.
+        self.assertEqual(shown(), ("P", 3, 3, "hold"))
+        pause = driver.advance(120)[-1]
+        self.assertEqual((pause.kind, shown()), ("pause", ("P", 3, 3, "reply")))
+        driver.answer(pause, calibration.NEXT)
+        self.assertEqual(shown(), ("A1", 1, 4, "hold"))
+        driver.advance()
+        self.assertEqual(shown(), ("A1", 1, 4, "reply"))
+        run.interrupt(driver.now, "cancelled", user_id=USER)
+        self.assertEqual(run.status(), {
+            "kind": "session", "modules": ["P", "A1"], "started_at": T0, "valid": False,
+            "reason": "cancelled", "reason_text": "abgebrochen", "ended_at": driver.now})
+
+        single = self.run_for("module", ("A1",))
+        self.assertEqual((single.status()["module"], single.status()["waiting"]),
+                         ("A1", "gang_end"))
+        Driver(single).follow()
+        self.assertEqual(
+            {key: single.status()[key] for key in ("valid", "reason", "reason_text")},
+            {"valid": True, "reason": "finished", "reason_text": None})
 
     def test_without_presence_sensor_p_is_omitted(self):
         self.assertEqual([m.module_id for m in calibration.select_modules(None, presence=False)],
@@ -780,6 +823,53 @@ class CalibrationRuntimeTests(unittest.TestCase):
             final = runtime.notification_transport.sent[-1]
             self.assertTrue(final.payload["message"].startswith("Kalibrierung ausgewertet."))
             self.assertNotIn("data", final.payload)
+            await runtime.close()
+
+        asyncio.run(exercise())
+
+    def test_status_keeps_the_last_result_after_the_session_end(self):
+        async def exercise():
+            clock = [START]
+            runtime, run = await self.module_in_session(clock)
+            status = runtime.calibration_status
+            self.assertEqual([item["id"] for item in status["modules"]],
+                             ["P", "A1", "A2", "A3", "CB", "D"])
+            self.assertEqual(
+                {key: status["active"][key]
+                 for key in ("kind", "module", "step", "steps", "waiting")},
+                {"kind": "module", "module": "A1", "step": 2, "steps": 4,
+                 "waiting": "hold"})
+            self.assertIsNone(status["last"])
+            await self.complete(runtime, clock)
+            status = runtime.calibration_status
+            self.assertIsNone(status["active"])
+            self.assertEqual((status["last"]["valid"], status["last"]["totals"]),
+                             (True, None))
+            await self.end_session(runtime, clock)
+            # The run has left the runtime; its evaluation totals remain shown.
+            self.assertEqual(runtime.calibration_runs, ())
+            last = runtime.calibration_status["last"]
+            self.assertEqual((last["valid"], last["reason"], last["ended_at"]),
+                             (True, "finished", run.ended_at))
+            self.assertEqual(
+                calibration.evaluation_summary({"totals": last["totals"]}),
+                runtime.notification_transport.sent[-1].payload["message"])
+            await runtime.close()
+
+            clock = [START]
+            runtime, run = await self.module_in_session(clock)
+            await runtime.cancel_calibration(actor=ActorRef(USER, "ha_context"))
+            await self.end_session(runtime, clock)
+            last = runtime.calibration_status["last"]
+            self.assertEqual(
+                (last["valid"], last["reason"], last["reason_text"], last["totals"]),
+                (False, "cancelled", "abgebrochen", None))
+            await runtime.close()
+
+            # Without a presence sensor module P is not offered.
+            runtime = _runtime(clock)
+            self.assertEqual([item["id"] for item in runtime.calibration_status["modules"]],
+                             ["A1", "A2", "A3", "CB", "D"])
             await runtime.close()
 
         asyncio.run(exercise())

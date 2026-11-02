@@ -773,6 +773,41 @@ class LocalPreviewTests(unittest.TestCase):
         self.preview.step(self.preview.c.parameters.values["light_transition_seconds"] + 1)
         self.assertEqual(self.preview.state()["manual_controls"]["light"]["observation"]["brightness_percent"], bright)
 
+    def test_calibration_uses_the_runtime_start_reply_and_cancel(self):
+        """W-2c: the preview drives the productive calibration paths."""
+        self.preview.reset("bereit")
+        self.assertEqual(self.preview.calibration_targets(), 1)
+        result = self.preview.action("/preview/calibration", {"module": "A1"})
+        self.assertEqual((result["kind"], result["modules"]), ("module", ["A1"]))
+        active = self.preview.state()["calibration"]["active"]
+        self.assertEqual(
+            {key: active[key] for key in ("module", "step", "steps", "waiting")},
+            {"module": "A1", "step": 1, "steps": 4, "waiting": "reply"})
+        self.assertEqual([item.payload["message"] for item in self.preview.transport.sent],
+                         ["Gang A1: hinein, Tür zu."])
+        for _ in range(4):
+            self.preview.action("/simulate", {"action": "calibration_reply"})
+        last = self.preview.state()["calibration"]["last"]
+        self.assertEqual((last["valid"], last["totals"]), (True, None))
+        self.preview.action("/simulate", {"action": "session_end"})
+        last = self.preview.state()["calibration"]["last"]
+        self.assertEqual(last["totals"]["gangs"]["reference"], 1)
+        self.assertTrue(self.preview.transport.sent[-1].payload["message"]
+                        .startswith("Kalibrierung ausgewertet."))
+
+        self.preview.reset("bereit")
+        self.preview.action("/preview/calibration", {"module": "A1"})
+        self.preview.action("/simulate", {"action": "role", "value": "user"})
+        self.assertEqual(set(self.preview.state()["calibration"]), {"active"})
+        self.preview.action("/simulate", {"action": "role", "value": "admin"})
+        self.preview.action("/preview/calibration/cancel", {})
+        last = self.preview.state()["calibration"]["last"]
+        self.assertEqual((last["valid"], last["reason_text"]), (False, "abgebrochen"))
+        self.preview.action("/simulate", {"action": "companion"})
+        self.assertEqual(self.preview.calibration_targets(), 0)
+        with self.assertRaisesRegex(ValueError, "Companion-Ziel"):
+            self.preview.action("/preview/calibration", {"module": "A1"})
+
     def test_minute_step_and_scenario_state_match_preview_controls(self):
         before = self.preview.now
         self.preview.action("/simulate", {"action":"step"})

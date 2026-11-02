@@ -182,6 +182,7 @@ class CommonPanelFields(WireValue):
     gang_duration_seconds: float | None
     measurements: tuple[Measurement | FrozenMap, ...]
     manual_controls: PanelManualControls
+    calibration: FrozenMap
     permissions: PanelPermissions
 
     def __post_init__(self):

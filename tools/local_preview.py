@@ -28,6 +28,7 @@ from custom_components.ha_sauna.archive import (
     session_has_gangs,
 )
 from custom_components.ha_sauna.bindings import Bindings
+from custom_components.ha_sauna.core import calibration
 from custom_components.ha_sauna.core.configuration_model import (
     ConfigurationModel,
     temperature_control,
@@ -40,6 +41,23 @@ from custom_components.ha_sauna.core.history import (
 from custom_components.ha_sauna.core.light import normal_brightness
 from custom_components.ha_sauna.core.light_control import light_plan, select_light
 from custom_components.ha_sauna.core.light_output import LightOutput, LightQuantizer
+from custom_components.ha_sauna.core.notification_exchange import (
+    ReplyAssociation,
+    ReplyDisposition,
+    ReplyEnvelope,
+    ReplyKey,
+    TransportHandoff,
+)
+from custom_components.ha_sauna.core.notification_recipients import (
+    ActorRef,
+    CapabilityEvidence,
+    RecipientAssignment,
+    RecipientCapability,
+    RecipientRef,
+    RecipientResolution,
+    ResolvedRecipient,
+    TargetIdentity,
+)
 from custom_components.ha_sauna.core.parameters import (
     EDITABLE_DEFINITIONS,
     LIVE_TEMPERATURE_KEYS,
@@ -114,10 +132,92 @@ class PreviewRuntime(SaunaRuntime):
         )
 
 
+class PreviewTransport:
+    """Synthetic Companion transport; each copy is accepted, nothing leaves the preview."""
+
+    def __init__(self):
+        self.sent = []
+
+    def prepare_handoff(self, notification, *, correlate=True):
+        return notification
+
+    async def dispatch(self, prepared):
+        self.sent.append(prepared)
+        return TransportHandoff(prepared, True, "lokale Vorschau")
+
+    def forget_session(self, session_id):
+        pass
+
+
+def calibration_reference():
+    return RecipientRef("device", PREVIEW_DEFAULTS["calibration"]["device_id"], "home_assistant")
+
+
 class Preview:
     def __init__(self):
         self.admin = True
+        self.companion = True
         self.reset(PREVIEW_DEFAULTS["initial"]["scenario"])
+
+    def run(self, awaitable):
+        """Run one runtime call; its calibration handoffs finish within it (W-2c)."""
+        async def settled():
+            result = await awaitable
+            while self.runtime._calibration_tasks:
+                await asyncio.gather(*tuple(self.runtime._calibration_tasks))
+                await asyncio.sleep(0)
+            return result
+        return asyncio.run(settled())
+
+    def attach_notifications(self):
+        """The preview user has one Companion target; replies only with it enabled."""
+        reference = calibration_reference()
+        self.transport = PreviewTransport()
+        self.runtime.notification_entry_id = PREVIEW_DEFAULTS["calibration"]["entry_id"]
+        self.runtime.notification_transport = self.transport
+        self.runtime.notification_resolutions = (RecipientResolution(reference, ResolvedRecipient(
+            reference, TargetIdentity("home_assistant", reference.reference_id),
+            RecipientCapability(
+                send=CapabilityEvidence("lokale Vorschau", "message/title/native data"),
+                reply=CapabilityEvidence("lokale Vorschau", "simulierte Antwort")
+                if self.companion else None,
+            ),
+        )),)
+
+    def calibration_targets(self):
+        return len(calibration.reply_targets(
+            PREVIEW_DEFAULTS["calibration"]["user_id"],
+            self.runtime.configuration.notification_assignments,
+            self.runtime.notification_resolutions,
+        ))
+
+    def calibration_reply(self):
+        """Answer the current instruction like a person following it."""
+        run = next((item for item in self.runtime.calibration_runs if item.active), None)
+        if run is None or run.phase == "waiting":
+            raise ValueError("Keine Anweisung der Kalibrierung wartet auf eine Antwort.")
+        execution = run.current
+        if run.phase == "running" and execution.sent_at is None:
+            self.step((execution.due_at - self.now).total_seconds())
+        self.step(PREVIEW_DEFAULTS["sequence"]["action_seconds"])
+        notification = self.transport.sent[-1]
+        action = next((
+            item["action"]
+            for item in notification.payload.get("data", {}).get("actions", [])
+            if item["action"].endswith((f"_{calibration.REPLY.upper()}",
+                                        f"_{calibration.NEXT.upper()}"))
+        ), None)
+        if action is None:
+            raise ValueError("Diese Anweisung endet mit ihrer Wartezeit.")
+        reply = ReplyEnvelope(
+            None, None, None, None, None,
+            ActorRef(PREVIEW_DEFAULTS["calibration"]["user_id"], "lokale Vorschau"),
+            {"action": action}, observed_at=self.now,
+            reply_key=ReplyKey("home_assistant", action),
+        )
+        self.run(self.runtime.calibration_reply(
+            ReplyAssociation(ReplyDisposition.ACCEPTED, reply, notification, True)))
+        self.sample()
 
     def reset(self, scenario):
         self.archive_revision = getattr(self, "archive_revision", 0) + 1
@@ -137,7 +237,12 @@ class Preview:
             Parameters({"target_temperature_c": initial["target_temperature_c"]}), presence_source="ha_presence",
             control_input_mode="button",
             control_mode="manual" if scenario == "manuell" else "automatic",
+            notification_assignments=(RecipientAssignment(
+                PREVIEW_DEFAULTS["calibration"]["user_id"],
+                frozenset((calibration_reference(),)),
+            ),),
         ), clock=lambda: self.now)
+        self.attach_notifications()
         self.entry = SimpleNamespace(
             runtime_data=self.runtime, options=self.runtime.configuration.as_options(),
         )
@@ -314,17 +419,17 @@ class Preview:
     def standards(self):
         if not self.admin:
             raise ValueError("Administratorrechte erforderlich")
-        return asyncio.run(async_get_field_standards(self.entry))
+        return self.run(async_get_field_standards(self.entry))
 
     def standard_action(self, body):
         if not self.admin:
             raise ValueError("Administratorrechte erforderlich")
         arguments = field_standard_action_arguments(body)
         if "confirmation" not in body:
-            return asyncio.run(async_preview_field_standard_action(
+            return self.run(async_preview_field_standard_action(
                 self.entry, body["action"], **arguments,
             ))
-        result = asyncio.run(async_apply_field_standard_action(
+        result = self.run(async_apply_field_standard_action(
             self.hass, self.entry, body["action"],
             confirmation=body["confirmation"], **arguments,
         ))
@@ -332,12 +437,13 @@ class Preview:
             # HA's options listener replaces the runtime for parameter changes.
             # The same replacement is simulated only after the owner accepted
             # an idle, atomic write; saved archives keep their original context.
-            asyncio.run(self.runtime.close())
+            self.run(self.runtime.close())
             self.record_heater_ends()
             self.runtime = PreviewRuntime(
                 Configuration.from_options(self.entry.options), clock=lambda: self.now,
             )
             self.entry.runtime_data = self.runtime
+            self.attach_notifications()
             self.c = self.runtime.controller
             self.decision_cursor = self.consumer_cursor = self.heater_end_cursor = 0
             self.light_output = LightOutput(self.c.parameters)
@@ -353,7 +459,7 @@ class Preview:
             self.now = min(end, self.now + timedelta(seconds=PREVIEW_DEFAULTS["sequence"]["sample_seconds"]))
             value = initial if temperature is None else initial + (temperature-initial)*(self.now-origin).total_seconds()/seconds
             self.c.set_temperature(value, self.now)
-            asyncio.run(self.runtime.tick())
+            self.run(self.runtime.tick())
             self.sample()
 
     async def button_event(self, *events):
@@ -368,7 +474,7 @@ class Preview:
     def button(self, action):
         previous_mode = self.c.control_mode
         if action == "button_release":
-            asyncio.run(self.button_event("btn_up"))
+            self.run(self.button_event("btn_up"))
             self.button_pressed = False
         else:
             if self.button_pressed:
@@ -380,11 +486,11 @@ class Preview:
                     "button_triple": ("triple_push", 3),
                 }[action]
                 # Native devices publish the final click summary after release.
-                asyncio.run(self.button_event(*(("btn_down", "btn_up") * count), gesture))
+                self.run(self.button_event(*(("btn_down", "btn_up") * count), gesture))
             else:
-                asyncio.run(self.button_event("btn_down"))
+                self.run(self.button_event("btn_down"))
                 self.button_pressed = True
-                asyncio.run(self.button_event("long_push"))
+                self.run(self.button_event("long_push"))
         if previous_mode != self.c.control_mode:
             self.select_light(0 if self.c.control_mode == "manual" else None)
         self.sample()
@@ -403,7 +509,7 @@ class Preview:
 
     def presence(self, value):
         report = binary_presence(PREVIEW_DEFAULTS["bindings"]["presence"], value, self.now, self.now)
-        asyncio.run(self.runtime.accept_presence(report))
+        self.run(self.runtime.accept_presence(report))
         self.record("presence", report)
         self.sample()
 
@@ -527,6 +633,7 @@ class Preview:
                          "override_ends_at":self.light_output.manual_ends_at,
                          "automatic":self.light_output.last_automatic_brightness,
                          "normal":self.normal_light()}},
+            "calibration":self.runtime.calibration_status,
             "permissions":{k:True for k in ("admin","control","temperature","program","light","heater")},
         })
         for key, owner, owner_id, after in (
@@ -569,6 +676,19 @@ class Preview:
             if action in ("button_short", "button_double", "button_triple", "button_hold", "button_release"):
                 self.button(action)
                 return {}
+            if action == "calibration_reply":
+                self.calibration_reply()
+                return {}
+            if action == "companion":
+                self.companion = not self.companion
+                self.attach_notifications()
+                return {}
+            if action == "session_end":
+                if self.c.session is None:
+                    raise ValueError("Es läuft keine Sitzung.")
+                self.c.finish_session(self.now)
+                self.step(PREVIEW_DEFAULTS["sequence"]["action_seconds"])
+                return {}
             if action != "step":
                 self.step(PREVIEW_DEFAULTS["sequence"]["action_seconds"])
             if action in ("door_open", "door_close", "infusion", "ventilation_confirmed"):
@@ -591,11 +711,27 @@ class Preview:
                     raise ValueError("Ungültige Ofenrückmeldung")
             else:
                 raise ValueError("Unbekannter Simulationseingang")
+        elif path.endswith("/calibration/cancel"):
+            if body != {}:
+                raise ValueError("Der Abbruch erwartet ein leeres Objekt.")
+            result = self.run(self.runtime.cancel_calibration(
+                actor=ActorRef(PREVIEW_DEFAULTS["calibration"]["user_id"], "lokale Vorschau")))
+            self.sample()
+            return result
+        elif path.endswith("/calibration"):
+            if not isinstance(body, dict) or not set(body) <= {"module", "modules"}:
+                raise ValueError("module oder modules muss Kalibriermodule nennen.")
+            result = self.run(self.runtime.start_calibration(
+                actor=ActorRef(PREVIEW_DEFAULTS["calibration"]["user_id"], "lokale Vorschau"),
+                module=body.get("module"), modules=body.get("modules"),
+            ))
+            self.sample()
+            return result
         elif path.endswith("/control"):
-            asyncio.run(self.runtime.set_operation(body["enabled"]))
+            self.run(self.runtime.set_operation(body["enabled"]))
         elif path.endswith("/control-mode"):
             previous_mode = self.c.control_mode
-            asyncio.run(async_set_control_mode(self.hass, self.entry, body["mode"]))
+            self.run(async_set_control_mode(self.hass, self.entry, body["mode"]))
             if previous_mode != self.c.control_mode:
                 self.select_light(0 if self.c.control_mode == "manual" else None)
             self.sample()
@@ -618,7 +754,7 @@ class Preview:
         elif path.endswith("/heater"):
             previous_id = self.c.session.session_id if self.c.session else None
             previous_selection = self.c.last_heater_selection
-            decision = asyncio.run(self.runtime.set_heater_override(body["value"]))
+            decision = self.run(self.runtime.set_heater_override(body["value"]))
             selection = self.c.last_heater_selection
             # The runtime deliberately ignores a repeated boolean choice that
             # is already effective. Only its new original selection proves an
@@ -645,16 +781,16 @@ class Preview:
         elif path.endswith("/button-gesture"):
             if not isinstance(body, dict) or set(body) != {"gesture"}:
                 raise ValueError("Tastergeste fehlt oder ist ungültig")
-            configuration = asyncio.run(async_set_button_gesture(self.hass, self.entry, body["gesture"]))
+            configuration = self.run(async_set_button_gesture(self.hass, self.entry, body["gesture"]))
             self.button_pressed = False
             return {"success":True, "button_session_gesture":configuration.button_session_gesture}
         elif path.endswith("/button-program"):
             if not isinstance(body, dict) or set(body) != {"profile"}:
                 raise ValueError("Tasterprogramm fehlt oder ist ungültig")
-            configuration = asyncio.run(async_set_button_program(self.hass, self.entry, body["profile"]))
+            configuration = self.run(async_set_button_program(self.hass, self.entry, body["profile"]))
             return {"success":True, "button_program":configuration.button_program}
         elif path.endswith("/appearance"):
-            appearance = asyncio.run(async_set_appearance(self.hass, self.entry, body))
+            appearance = self.run(async_set_appearance(self.hass, self.entry, body))
             return {"appearance": appearance}
         elif path.endswith("/standards"):
             return self.standard_action(body)
@@ -667,7 +803,7 @@ class Preview:
             }
             if not isinstance(body, dict) or not body or set(body) - display_keys:
                 raise ValueError("Ungültige Darstellungseinstellungen")
-            asyncio.run(async_set_parameters(self.hass, self.entry, body, partial=True))
+            self.run(async_set_parameters(self.hass, self.entry, body, partial=True))
             # The preview has no HA options listener. Only display choices are
             # accepted here; publish the saved configuration without a reload.
             self.runtime.configuration = Configuration.from_options(self.entry.options)
@@ -676,19 +812,19 @@ class Preview:
         elif path.endswith("/temperature"):
             if not body or set(body) - LIVE_TEMPERATURE_KEYS:
                 raise ValueError("Ungültige Temperatureinstellung")
-            asyncio.run(async_set_parameters(self.hass, self.entry, body, partial=True))
+            self.run(async_set_parameters(self.hass, self.entry, body, partial=True))
         elif path.endswith("/program"):
             if set(body) == {"profile"} and isinstance(body["profile"], str):
-                asyncio.run(async_set_program(self.hass, self.entry, body["profile"]))
+                self.run(async_set_program(self.hass, self.entry, body["profile"]))
             elif set(body) == {"target_temperature_c"}:
-                asyncio.run(async_set_parameters(
+                self.run(async_set_parameters(
                     self.hass, self.entry, body, partial=True, explicit_target=True,
                     program_mode="constant", new_program=True,
                 ))
             elif set(body) == {"temperature_steps"}:
-                asyncio.run(async_set_temperature_steps(self.hass, self.entry, body["temperature_steps"]))
+                self.run(async_set_temperature_steps(self.hass, self.entry, body["temperature_steps"]))
             elif set(body) == {"target_temperature_c", "final_temperature_c", "temperature_gangs"}:
-                asyncio.run(async_set_parameters(
+                self.run(async_set_parameters(
                     self.hass, self.entry, body, partial=True, explicit_target=False,
                     program_mode="progressive", new_program=True,
                 ))
@@ -751,6 +887,8 @@ class Handler(BaseHTTPRequestHandler):
                 self.send_error(404)
                 return
             self.send(result)
+        elif path.endswith("/calibration"):
+            self.send({"targets": preview.calibration_targets()})
         elif path.endswith("/standards"):
             try:
                 self.send(preview.standards())
