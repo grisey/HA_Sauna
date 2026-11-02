@@ -316,11 +316,11 @@
       ]
     },
     {
-      "contract": "An already present occupant starts at the minimum; falling below it cannot prevent the later exit of that gang.",
+      "contract": "A closing before the session first reaches the minimum is no entry: an already present occupant waits, and reaching the minimum alone starts no gang (E-11).",
       "scenario": "I03",
       "expectation_ids": [
         "cold_entry_waits",
-        "minimum_crossing_starts_gang"
+        "minimum_crossing_starts_no_gang"
       ],
       "supersedes": [
         {

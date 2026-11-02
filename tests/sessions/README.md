@@ -38,7 +38,7 @@ Aufenthalte; die physischen Taster befinden sich außerhalb der Kabine.
 | G05 | Manuell über Kurzdruck, Thermostatzyklen, erkannte Aufenthalte und Ausschalten während einer Heizpause. |
 | I01 | Höheres Soll nach Bereitschaft, niedrigeres Programm, kurze Türöffnung ohne Aufenthalt, nächste Gangtemperatur, Programmwechsel, einzelne Stufen und Konstant. |
 | I02 | Ofen- und Lichtübersteuerung, ausdrückliche und zeitabhängige Rückgabe, wiederholte Auswahl, verspätete Abwesenheit, Kühlende per Bedienung und erneuter Eintritt während Kühlung. |
-| I03 | Kurzdruck startet Manuell, kurzes Aus/Ein setzt dieselbe Aufzeichnung fort; Gerätegeste übernimmt sie in Automatik; früher Eintritt, mehrere Personen, Übersteuerung und Rückgabe, abschließende Gerätegeste. Varianten: Lang-/Doppel-/Dreifachdruck und gespeichertes Programm/Konstant. |
+| I03 | Kurzdruck startet Manuell, kurzes Aus/Ein setzt dieselbe Aufzeichnung fort; Gerätegeste übernimmt sie in Automatik; früher Eintritt vor dem ersten Erreichen der Mindesttemperatur ohne Gang (E-11), mehrere Personen, Übersteuerung und Rückgabe, abschließende Gerätegeste. Varianten: Lang-/Doppel-/Dreifachdruck und gespeichertes Programm/Konstant. |
 | I04 | Eintritt unter Mindesttemperatur, abgeschlossener Gang trotz später niedriger Temperatur, Aus und Wiederaufnahme im Nachlauf, endgültiges Ausschalten nach Verlassen. |
 | I05 | Proxybetrieb: Rückkehr durch die noch offene Tür vor erfüllter Mindestkühlzeit, Aufguss als Personenbeleg, unveränderter Kühlbeginn und anschließende Heizanforderung. |
 

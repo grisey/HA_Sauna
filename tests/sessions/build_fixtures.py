@@ -838,7 +838,7 @@ def iteration_three():
     s.expect('cold_entry_waits',{'active_gang':False},'A cold entry alone must not evade the unchanged minimum temperature.',at=s.t)
     crossed_begin=s.t
     s.heat(PARAMETERS['sauna_min_temperature_c']+inputs['minimum_crossing_above_c'])
-    s.expect('minimum_crossing_starts_gang',{'active_gang':True,'cooling_active':False},'Continuing presence and the existing entry become a gang when the real minimum is reached; no new door action is needed.',between=(crossed_begin,s.t),eventually=True,presence_sources=['ha_presence'])
+    s.expect('minimum_crossing_starts_no_gang',{'active_gang':False},'The session reaches the minimum for the first time only after this closing, so it is no entry (E-11): reaching the minimum with continuing presence starts no gang. The joint stay counts from the next closing with presence.',between=(crossed_begin,s.t),presence_sources=['ha_presence'])
     joined=s.t
     s.human_event('second_person_joins')
     s.append('entry',temperature_gain=inputs['joined_upper_gain_c'],lower_gain=inputs['joined_lower_gain_c'],thermal='heater_on')
@@ -1049,7 +1049,7 @@ def main():
       ],
       'assessment_basis':[
         'User-described external controls and physical entry, stay, infusion, departure and through-ventilation.',
-        'The configured minimum gates only new gang starts; existing gang ends remain evaluable below it.',
+        'The configured minimum gates only new gang starts; existing gang ends remain evaluable below it. A door closing before the session first reaches the minimum is no entry (E-11).',
         'Direct presence at the entry closing opens a provisional gang; its first infusion confirms it. Only confirmed through-ventilation of an exit ends a gang; absence after an opening ends only the gang heat demand.',
         'A stay without infusion remains provisional with direct presence and is not recognised under proxy detection; it is never counted and starts no cooling.',
         'Any processed proxy person evidence, an infusion since the recognition supplies no person signals, limits a running cooling cycle to its original configured minimum; elapsed OFF time counts and repeated evidence cannot restart its clock. A new directly observed entry ends cooling as soon as its gang takes effect, even while provisional.',

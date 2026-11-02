@@ -100,7 +100,7 @@
     {
       "id": "I03",
       "path": "fixtures/scenarios/I03.json",
-      "sha256": "7b4f7b1150d3684470bb10fe6efb27670b4beb8c55b8627d498969b77254163b",
+      "sha256": "839f7f8a37d9af3a8136246690610597e4c32cbde98453ca15db8e18b4c837cc",
       "presence_sources": [
         "ha_presence"
       ],
