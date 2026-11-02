@@ -55,7 +55,7 @@ def phase_timer(controller, now):
                 "mode": "paused",
             }
         return remaining("after_run", "Ofenkühlung noch", phase.ends_at)
-    if session.timeline.active:
+    if controller.acting_gang:
         return {
             "kind": "gang",
             "label": "Saunagang seit",
@@ -107,7 +107,7 @@ def start_availability(controller, now, estimated_ready_seconds=None):
     if session is None or not session.operation_enabled:
         return result
 
-    active = session.timeline.active
+    active = controller.acting_gang
     if active is not None and session.after_run is None:
         result.update(
             blocker={"kind": "gang"},

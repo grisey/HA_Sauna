@@ -6,6 +6,8 @@ from test_cooling import at, controller
 from test_foundation import event, selected_occupancy
 
 from custom_components.ha_sauna.archive import plain, session_has_gangs
+from custom_components.ha_sauna.core.display import phase_timer, start_availability
+from custom_components.ha_sauna.core.light_control import light_phase
 from custom_components.ha_sauna.core.presence import binary_presence
 from custom_components.ha_sauna.core.timeline import Confirmation, Door, DoorCloseEvidence, Event, Kind
 
@@ -65,18 +67,88 @@ class DirectPresenceControlTests(unittest.TestCase):
         self.assertEqual(self.c.session.timeline.active.gang_id, gang.gang_id)
         self.assertEqual(sum(e.kind == "gang_confirmed" for e in self.c.consumer_events), 1)
 
-    def test_unconfirmed_gang_is_retracted_after_the_confirmation_period(self):
+    def effects(self, second):
+        """Gang heat, phase, light and display of the active gang at ``second``."""
+        return (
+            self.c.regulation_inputs.gang_heat_demand,
+            self.c.phase == "saunagang",
+            light_phase(self.c, at(second))[1] == "saunagang",
+            phase_timer(self.c, at(second))["kind"] == "gang",
+            start_availability(self.c, at(second))["blocker"] == {"kind": "gang"},
+        )
+
+    def test_unconfirmed_gang_has_no_deadline_in_sensor_operation(self):
         gang = self.enter()
-        deadline = 3 + self.c.parameters.seconds("confirmation_minutes")
-        self.c.advance(at(deadline - 1))
+        self.assertNotIn("confirmation", {d.purpose for d in self.c.session.deadlines})
+        late = 3 + 2 * self.c.parameters.seconds("confirmation_minutes")
+        self.c.advance(at(late))
         self.assertEqual(self.c.session.timeline.active.gang_id, gang.gang_id)
-        self.c.advance(at(deadline))
+        self.assertEqual(self.c.session.timeline.retracted, ())
+        self.assertEqual(self.effects(late), (True,) * 5)
+        # A late first infusion still confirms the stay from its closing.
+        self.door(Kind.INFUSION, late + 1)
+        gang = self.c.session.timeline.active
+        self.assertEqual(gang.confirmation, Confirmation.CONFIRMED)
+        self.assertEqual(gang.started_at, at(3))
+
+    def test_provisional_gang_acts_only_while_presence_is_reported(self):
+        gang = self.enter()
+        self.assertEqual(self.effects(3), (True,) * 5)
+        self.report("off", 4)
+        self.assertEqual(self.effects(4), (False,) * 5)
+        self.assertEqual(self.c.phase, "aufheizen")
+        self.assertNotEqual(self.c.last_decision.reason, "gang_heat_demand")
+        # The gang itself remains until its infusion, replacement or ventilation.
+        late = 4 + 2 * self.c.parameters.seconds("confirmation_minutes")
+        self.c.advance(at(late))
+        self.assertEqual(self.c.session.timeline.active.gang_id, gang.gang_id)
+        self.assertEqual(self.effects(late), (False,) * 5)
+        self.report("on", late + 1)
+        self.assertEqual(self.effects(late + 1), (True,) * 5)
+        self.assertEqual(self.c.last_decision.reason, "gang_heat_demand")
+        # A confirmed gang acts without that condition.
+        self.report("off", late + 2)
+        self.door(Kind.INFUSION, late + 3)
+        self.assertEqual(self.c.session.timeline.active.confirmation, Confirmation.CONFIRMED)
+        self.assertEqual(self.effects(late + 3), (True,) * 5)
+
+    def test_unknown_keeps_the_last_presence_for_the_provisional_effect(self):
+        self.enter()
+        self.report("unavailable", 4)
+        self.assertEqual(self.c.phase, "saunagang")
+        # The gang heat still needs a current known state.
+        self.assertFalse(self.c.regulation_inputs.gang_heat_demand)
+        self.report("off", 5)
+        self.report("unknown", 6)
+        self.assertEqual(self.c.phase, "aufheizen")
+        self.report("on", 7)
+        self.assertEqual(self.effects(7), (True,) * 5)
+
+    def test_absent_provisional_gang_ends_by_ventilation(self):
+        gang = self.enter()
+        self.report("off", 4)
+        self.c.advance(at(999))
+        self.assertEqual(self.c.session.timeline.active.gang_id, gang.gang_id)
+        self.door(Kind.DOOR_OPEN, 1000)
+        self.door(Kind.VENTILATION, 1001)
         self.assertIsNone(self.c.session.timeline.active)
         self.assertEqual(self.c.session.timeline.retracted[-1].gang_id, gang.gang_id)
         self.assertEqual(self.c.session.timeline.gang_count, 0)
-        # The same closing does not open another provisional gang.
-        self.c.advance(at(deadline + 600))
+        self.assertIsNone(self.c.session.after_run)
+
+    def test_infusion_after_presence_through_the_exit_opens_a_gang_without_deadline(self):
+        self.start()
+        self.door(Kind.DOOR_OPEN, 5)
+        self.door(Kind.VENTILATION, 6)
+        self.door(Kind.DOOR_CLOSE, 7)
+        late = 7 + 2 * self.c.parameters.seconds("confirmation_minutes")
+        self.c.advance(at(late))
         self.assertIsNone(self.c.session.timeline.active)
+        self.door(Kind.INFUSION, late + 1)
+        gang = self.c.session.timeline.active
+        self.assertEqual(gang.confirmation, Confirmation.CONFIRMED)
+        self.assertEqual(gang.started_at, at(7))
+        self.assertIsNone(self.c.session.after_run)
 
     def test_ventilation_retracts_an_unconfirmed_gang(self):
         gang = self.enter()
@@ -413,10 +485,10 @@ class DirectPresenceControlTests(unittest.TestCase):
         self.assertEqual(second.started_at, at(6))
         self.assertEqual(second.confirmation, Confirmation.PROVISIONAL)
         self.assertEqual(self.c.session.timeline.retracted[-1].gang_id, first.gang_id)
-        # The confirmation period restarts with the replacing entry.
-        deadline = 6 + self.c.parameters.seconds("confirmation_minutes")
-        self.c.advance(at(deadline - 1))
-        self.door(Kind.INFUSION, deadline - 0.5)
+        # The replacing gang waits for its infusion without a deadline.
+        late = 6 + 2 * self.c.parameters.seconds("confirmation_minutes")
+        self.c.advance(at(late - 1))
+        self.door(Kind.INFUSION, late - 0.5)
         gang = self.c.session.timeline.active
         self.assertEqual(gang.gang_id, second.gang_id)
         self.assertEqual(gang.confirmation, Confirmation.CONFIRMED)
@@ -603,6 +675,20 @@ class ProxyDoorControlTests(unittest.TestCase):
         ), at(5))
         c.consume_occupancy_input(replace(value, qualified_presence=False))
         self.assertTrue(c.regulation_inputs.gang_heat_demand)
+
+    def test_proxy_provisional_gang_keeps_its_deadline_and_effects(self):
+        c = controller()
+        c.process(event("o", Kind.DOOR_OPEN, 1))
+        c.process(event("c", Kind.DOOR_CLOSE, 2))
+        c.process(event("p", Kind.PERSON_STRONG, 3))
+        value = selected_occupancy(binary_presence(
+            "binary_sensor.presence", "off", at(4), at(4),
+        ), at(4))
+        c.consume_occupancy_input(replace(value, qualified_presence=False))
+        self.assertEqual(c.session.timeline.active.confirmation, Confirmation.PROVISIONAL)
+        self.assertEqual(c.phase, "saunagang")
+        self.assertTrue(c.regulation_inputs.gang_heat_demand)
+        self.assertIn("confirmation", {d.purpose for d in c.session.deadlines})
 
     def test_expired_proxy_entry_cannot_be_restarted_by_infusion(self):
         c = controller()

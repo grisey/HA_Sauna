@@ -635,13 +635,34 @@ class Controller:
             self._session = replace(self._session, ready_at=None)
 
     @property
+    def acting_gang(self):
+        """The active gang while it acts on gang heat, phase, light and display.
+
+        In sensor operation a provisional sensor gang acts only while the last
+        presence report is present; a later presence report restores it. The
+        gang itself still ends by an infusion, a replacing entry, ventilation
+        or operation OFF.
+        """
+        session = self._session
+        gang = session.timeline.active if session else None
+        current = self.direct_presence
+        if (gang is None or gang.confirmation != Confirmation.PROVISIONAL
+                or gang.recognition_kind not in DIRECT_SIGNALS
+                or current is None or not current.qualified_presence
+                or self._last_at is None):
+            return gang
+        reported = [value for _, value in self._presence_states(self._last_at)
+                    if value is not None]
+        return gang if reported and reported[-1] is True else None
+
+    @property
     def phase(self) -> str:
         session = self._session
         if session is None or not session.operation_enabled:
             return "aus"
         if session.after_run:
             return "nachlauf"
-        if session.timeline.active:
+        if self.acting_gang:
             return "saunagang"
         if self.control_mode == "manual":
             return "manuell"
@@ -1186,7 +1207,11 @@ class Controller:
             )
         ):
             self._clear_readiness()
-        if active is None or active.confirmation == Confirmation.CONFIRMED:
+        if (active is None or active.confirmation == Confirmation.CONFIRMED
+                or active.recognition_kind in DIRECT_SIGNALS):
+            # The confirmation deadline belongs to the proxy method. A
+            # provisional sensor gang ends by an infusion, a replacing entry,
+            # ventilation or operation OFF.
             self._cancel("confirmation")
         elif replaced:
             self._schedule(
@@ -1252,9 +1277,12 @@ class Controller:
                 and effective_at < self._gang_entry_start_at(timeline))
         ):
             return "entry_context_changed"
-        if at > self._gang_control_start_at(timeline) + timedelta(
-            seconds=self.parameters.seconds("confirmation_minutes")
+        current = self.direct_presence
+        if (current is None or not current.qualified_presence) and at > (
+            self._gang_control_start_at(timeline)
+            + timedelta(seconds=self.parameters.seconds("confirmation_minutes"))
         ):
+            # The deadline applies only to the proxy method.
             return "entry_context_expired"
         return None
 
@@ -1660,10 +1688,11 @@ class Controller:
     def regulation_inputs(self):
         session = self._session
         causes = self.regulation_causes
+        gang = self.acting_gang
         return ControlInputs(
             gang_heat_demand=bool(
-                "gang_heat" in causes and session and session.timeline.active
-                and (session.timeline.active.recognition_kind not in DIRECT_SIGNALS or (
+                "gang_heat" in causes and gang
+                and (gang.recognition_kind not in DIRECT_SIGNALS or (
                     self.direct_presence is not None and self.direct_presence.available
                     and self.direct_presence.qualified_presence
                     and self.direct_presence.occupancy != "unknown"
