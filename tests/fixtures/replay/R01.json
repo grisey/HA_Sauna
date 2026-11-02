@@ -209,17 +209,11 @@
       "id": "P05-two-exits",
       "values": {
         "gang_count": 2,
-        "gang_confirmation": {
-          "one_of": [
-            null,
-            "provisional"
-          ]
-        },
+        "gang_confirmation": null,
         "cooling_active": true,
-        "cooling_duration_s": 480.0,
         "heater_request": false
       },
-      "reason": "Genau zwei reale Aufenthalte und Austritte sind durch den Nutzer bestätigt. Der danach gemessene Feuchteanstieg ist kein Beleg für einen dritten bestätigten Aufenthalt. Die neue Nutzerregel lässt eine unbestätigte Proxyvermutung zu und begrenzt bei einem solchen Personenbeleg die laufende Kühlung auf ihre Mindestgesamtdauer. Am Prüfzeitpunkt ist deren bestätigte AUS-Zeit noch nicht vollständig; der Ofen muss ausgeschaltet bleiben. Ob dabei kein oder ein vorläufiger Gang geführt wird, wird ausdrücklich nicht als menschliche Anwesenheit bewertet.",
+      "reason": "Genau zwei reale Aufenthalte und Austritte sind durch den Nutzer bestätigt. Der danach gemessene Feuchteanstieg ist kein Beleg für einen weiteren Aufenthalt: Die Erkennung liefert keine eigenen Personensignale, und ohne Aufguss entsteht im Proxyverfahren kein Gang. Er begrenzt deshalb auch die laufende Kühlung nicht auf ihre Mindestgesamtdauer; sie behält ihre berechnete Dauer. Am Prüfzeitpunkt läuft sie noch, der Ofen muss ausgeschaltet bleiben.",
       "at_s": 9844.284567
     },
     {

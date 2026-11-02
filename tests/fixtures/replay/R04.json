@@ -324,10 +324,16 @@
     {
       "id": "D06-brief-door-does-not-create-stay",
       "values": {
-        "active_gang": false,
-        "gang_count": 0
+        "gang_count": 0,
+        "gang_confirmation": {
+          "one_of": [
+            null,
+            "provisional"
+          ]
+        },
+        "gang_heat_demand": false
       },
-      "reason": "Der Nutzer beschreibt eine kurze frühere Türfolge vor dem echten Aufenthalt. Die echte Präsenz ist ab 19:31:45 wieder abwesend; die spätere thermische Erholung allein ist kein Gang.",
+      "reason": "Der Nutzer beschreibt eine kurze frühere Türfolge vor dem echten Aufenthalt. Die echte Präsenz ist ab 19:31:45 wieder abwesend. Die Anwesenheit beim Schluss dieser Türfolge eröffnet einen vorläufigen Gang; ohne Aufguss wird er weder bestätigt noch gezählt, und ohne gemeldete Anwesenheit wirkt er nicht. Die spätere thermische Erholung allein ist kein Gang.",
       "between_s": [
         3678.883311,
         3918.883311
@@ -336,21 +342,26 @@
     {
       "id": "D07-new-presence-cannot-reuse-old-closure",
       "values": {
-        "active_gang": false,
-        "gang_count": 0
+        "gang_count": 0,
+        "gang_confirmation": {
+          "one_of": [
+            null,
+            "provisional"
+          ]
+        }
       },
-      "reason": "Die neue Präsenzmeldung geht der thermischen Reaktion des späteren Eintritts voraus. Sie darf den bereits abgeschlossenen kurzen Türvorgang nicht rückwirkend zum Gangbeginn machen.",
+      "reason": "Die neue Präsenzmeldung geht der thermischen Reaktion des späteren Eintritts voraus. Sie macht den bereits abgeschlossenen kurzen Türvorgang weder zu einem bestätigten noch zu einem gezählten Gang. Ein noch bestehender vorläufiger Gang wirkt mit dieser Anwesenheit wieder, bis das Lüften des späteren Eintritts ihn zurücknimmt.",
       "at_s": 3943.883311
     },
     {
       "id": "D08-current-entry-starts",
       "values": {
         "active_gang": true,
-        "gang_confirmation": "confirmed",
+        "gang_confirmation": "provisional",
         "target_temperature_c": 90,
         "cooling_active": false
       },
-      "reason": "Nach dem neuen beidseitigen Temperaturabfall erholen sich beide Messhöhen bei anhaltender direkter Präsenz deutlich oberhalb der Mindesttemperatur. Das breite Fenster folgt dieser Messfolge, nicht einem alten Detektorzeitpunkt. Der erste echte Gang übernimmt den zuletzt gewählten einmaligen Wert 90 °C.",
+      "reason": "Nach dem neuen beidseitigen Temperaturabfall erholen sich beide Messhöhen bei anhaltender direkter Präsenz deutlich oberhalb der Mindesttemperatur. Das breite Fenster folgt dieser Messfolge, nicht einem alten Detektorzeitpunkt. Der erste echte Gang übernimmt den zuletzt gewählten einmaligen Wert 90 °C. Sein erster Aufguss folgt erst nach dem Fenster (geprüfte Referenz 4490,2 s); bis dahin ist der Gang vorläufig.",
       "between_s": [
         4128.883311,
         4218.883311
@@ -385,11 +396,11 @@
       "id": "D11-return-is-recognized",
       "values": {
         "active_gang": true,
-        "gang_confirmation": "confirmed",
+        "gang_confirmation": "provisional",
         "cooling_active": false,
         "gang_heat_demand": true
       },
-      "reason": "Der weitere echte Eintritt zeigt ab 20:02 direkte Präsenz, einen neuen beidseitigen Türabfall und danach geschlossene Erholung. Ein dadurch bestätigter Gang muss vor der späteren manuellen Kühlungsbedienung erkannt werden und unterbricht eventuell noch laufende Kühlung. Dass die alte fehlerhafte Kühlung noch besteht, ist ausdrücklich keine Voraussetzung.",
+      "reason": "Der weitere echte Eintritt zeigt ab 20:02 direkte Präsenz, einen neuen beidseitigen Türabfall und danach geschlossene Erholung. Der dadurch eröffnete Gang muss vor der späteren manuellen Kühlungsbedienung erkannt werden und beendet mit der gemeldeten Anwesenheit schon als vorläufiger Gang eine eventuell noch laufende Kühlung. Sein erster Aufguss folgt erst nach dem Fenster (geprüfte Referenz 6036,3 s). Dass die alte fehlerhafte Kühlung noch besteht, ist ausdrücklich keine Voraussetzung.",
       "between_s": [
         5508.883311,
         5598.883311
@@ -505,14 +516,19 @@
       "id": "D16-door-reopening-with-continuing-presence",
       "values": {
         "active_gang": true,
-        "gang_confirmation": "confirmed",
+        "gang_confirmation": {
+          "one_of": [
+            "provisional",
+            "confirmed"
+          ]
+        },
         "gang_count": {
           "since_s": 14628.883311,
           "min": 0,
           "max": 0
         }
       },
-      "reason": "Im späteren Aufenthalt bleibt die direkte Präsenz durchgehend vorhanden. Der weitere beidseitige kurze Temperatureinbruch um 22:45 darf weder einen zusätzlichen Gang zählen noch den fortdauernden Aufenthalt unterbrechen. Eine neue Präsenzflanke ist dafür nicht nötig.",
+      "reason": "Im späteren Aufenthalt bleibt die direkte Präsenz durchgehend vorhanden. Der weitere beidseitige kurze Temperatureinbruch um 22:45 darf weder einen zusätzlichen Gang zählen noch den fortdauernden Aufenthalt unterbrechen. Eine neue Präsenzflanke ist dafür nicht nötig. Bestätigt wird der Gang erst durch seinen ersten Aufguss innerhalb des Fensters (geprüfte Referenz 15055,0 s); bis dahin ist er vorläufig.",
       "between_s": [
         14628.883311,
         15348.883311

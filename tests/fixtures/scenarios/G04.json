@@ -641,7 +641,7 @@
       "values": {
         "active_gang": false
       },
-      "reason": "The same exit opening, through-ventilation and continuing absence end the gang.",
+      "reason": "The exit opening with confirmed through-ventilation ends the gang; absence is not required for it.",
       "between_s": [
         8259.368,
         8299.368
@@ -718,7 +718,7 @@
       "values": {
         "active_gang": false
       },
-      "reason": "The same exit opening, through-ventilation and continuing absence end the gang.",
+      "reason": "The exit opening with confirmed through-ventilation ends the gang; absence is not required for it.",
       "between_s": [
         10566.371,
         10606.371
@@ -788,7 +788,7 @@
       "values": {
         "active_gang": false
       },
-      "reason": "The same exit opening, through-ventilation and continuing absence end the gang.",
+      "reason": "The exit opening with confirmed through-ventilation ends the gang; absence is not required for it.",
       "between_s": [
         13298.368,
         13338.368
@@ -799,27 +799,21 @@
       ]
     },
     {
-      "id": "stay_3_cooling",
+      "id": "stay_3_no_cooling",
       "values": {
-        "cooling_active": true,
-        "heater_request": false,
-        "phase": "nachlauf"
+        "cooling_active": false,
+        "phase": {
+          "one_of": [
+            "aufheizen",
+            "bereit"
+          ]
+        }
       },
-      "reason": "A confirmed ended gang is cooling before its independently calculated release.",
+      "reason": "Without an infusion the directly observed stay remains provisional; ventilation retracts it uncounted and it starts no oven cooling.",
       "at_s": 13284.558,
       "presence_sources": [
         "ha_presence"
       ]
-    },
-    {
-      "id": "stay_3_cooling_over",
-      "values": {
-        "cooling_active": false,
-        "heater_request": true
-      },
-      "reason": "Cooling completes from the declared heat history; below the thermostat threshold the subsequent measured inertia belongs to a newly energised heater, not an extra heating prohibition.",
-      "at_s": 13912.084,
-      "sampling": "before_the_next_control_action"
     },
     {
       "id": "stopped",
@@ -846,11 +840,11 @@
     {
       "id": "completed_direct_session",
       "values": {
-        "gang_count": 3,
+        "gang_count": 2,
         "retained_sessions": 1,
         "completed_sessions": 1
       },
-      "reason": "The full directly observed stays belong to one retained session; thermostat cycles do not split its recording.",
+      "reason": "The directly observed stays belong to one retained session; thermostat cycles do not split its recording. Only the infusion-confirmed stays count; the last dry stay stays provisional and is retracted (E-01).",
       "at_s": 14872.284,
       "presence_sources": [
         "ha_presence"
@@ -1080,6 +1074,7 @@
       "planned_duration_s": 805.453,
       "history_from_s": 10924.307,
       "basis": "Closed-form integral of the documented exponential weighting over the predeclared actuator intervals. Used to construct thermal continuation, not copied from product output.",
+      "expectation_basis": "No cooling follows a stay without infusion (E-01). The declared off continuation remains an unchanged climate input.",
       "resumed_heating_s": 13687.284
     }
   ]

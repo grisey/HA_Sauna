@@ -1190,7 +1190,7 @@
       "values": {
         "active_gang": false
       },
-      "reason": "The same exit opening, through-ventilation and continuing absence end the gang.",
+      "reason": "The exit opening with confirmed through-ventilation ends the gang; absence is not required for it.",
       "between_s": [
         7362.008,
         7373.008
@@ -1218,7 +1218,7 @@
         "cooling_active": true,
         "heater_request": false
       },
-      "reason": "Absence after door closure completes the already observed exit; the old gang cannot continue heating.",
+      "reason": "The confirmed through-ventilation of the exit ends the gang and starts cooling; the absence reported after the door closure is not needed for that, and the old gang cannot continue heating.",
       "at_s": 7364.008,
       "presence_sources": [
         "ha_presence"
@@ -1312,7 +1312,7 @@
       "values": {
         "active_gang": false
       },
-      "reason": "The same exit opening, through-ventilation and continuing absence end the gang.",
+      "reason": "The exit opening with confirmed through-ventilation ends the gang; absence is not required for it.",
       "between_s": [
         17965.557,
         18005.557
@@ -1379,7 +1379,7 @@
       "values": {
         "active_gang": false
       },
-      "reason": "The same exit opening, through-ventilation and continuing absence end the gang.",
+      "reason": "The exit opening with confirmed through-ventilation ends the gang; absence is not required for it.",
       "between_s": [
         19532.288,
         19572.288
@@ -1429,7 +1429,7 @@
       "values": {
         "active_gang": false
       },
-      "reason": "The same exit opening, through-ventilation and continuing absence end the gang.",
+      "reason": "The exit opening with confirmed through-ventilation ends the gang; absence is not required for it.",
       "between_s": [
         21092.288,
         21132.288

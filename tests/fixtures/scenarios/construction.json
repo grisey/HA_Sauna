@@ -51,7 +51,6 @@
     "manual_exit_offset_seconds": 160,
     "outside_stop_seconds": 5,
     "ventilation_close_tail_seconds": 90,
-    "proxy_recovery_cue_seconds": 420,
     "after_run_margin_seconds": 60
   },
   "base": {

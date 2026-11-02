@@ -18,9 +18,9 @@
   "assessment_basis": [
     "User-described external controls and physical entry, stay, infusion, departure and through-ventilation.",
     "The configured minimum gates only new gang starts; existing gang ends remain evaluable below it.",
-    "Direct presence confirms a complete entry; its delayed absence can complete the same ventilated exit after closure.",
-    "A dry stay is confirmed with direct presence but has no infusion confirmation under proxy detection.",
-    "Any processed proxy person indication limits a running cooling cycle to its original configured minimum; elapsed OFF time counts and repeated indications cannot restart its clock. Directly confirmed entry ends cooling immediately.",
+    "Direct presence at the entry closing opens a provisional gang; its first infusion confirms it. Only confirmed through-ventilation of an exit ends a gang; absence after an opening ends only the gang heat demand.",
+    "A stay without infusion remains provisional with direct presence and is not recognised under proxy detection; it is never counted and starts no cooling.",
+    "Any processed proxy person evidence, an infusion since the recognition supplies no person signals, limits a running cooling cycle to its original configured minimum; elapsed OFF time counts and repeated evidence cannot restart its clock. A new directly observed entry ends cooling as soon as its gang takes effect, even while provisional.",
     "Manual mode shares recognition and recording while retaining only thermostat heat control and manually selected light."
   ],
   "scope_limits": [
@@ -33,7 +33,7 @@
       "id": "G01",
       "duration_s": 19501.265,
       "human_stays": 5,
-      "evaluations": 40,
+      "evaluations": 39,
       "climate_file": "G01.measurements.json",
       "climate_sha256": "de240216123ab2899193e377b9840677d76917b4af42550f6b9de6258d94b84f"
     },
@@ -41,7 +41,7 @@
       "id": "G02",
       "duration_s": 14700.111,
       "human_stays": 3,
-      "evaluations": 26,
+      "evaluations": 25,
       "climate_file": "G02.measurements.json",
       "climate_sha256": "8145b3b951f147d288414b84299d3bd003b440e3900188d2a3725767e59c7658"
     },
@@ -49,7 +49,7 @@
       "id": "G03",
       "duration_s": 19419.055,
       "human_stays": 5,
-      "evaluations": 40,
+      "evaluations": 39,
       "climate_file": "G03.measurements.json",
       "climate_sha256": "5e3967afdbb9bc0844b8ffec21af97b604bde2769268029ff9bcd5bcdc23eac4"
     },
@@ -57,41 +57,41 @@
       "id": "G04",
       "duration_s": 14872.284,
       "human_stays": 3,
-      "evaluations": 28,
+      "evaluations": 27,
       "climate_file": "G04.measurements.json",
       "climate_sha256": "78bdf0fdb5864f9ff46ed2e2b18e763aef1ffbd3adaf398b12bd092b73496085"
     },
     {
       "id": "G01-proxy",
-      "duration_s": 15291.059,
+      "duration_s": 18379.366,
       "human_stays": 5,
       "evaluations": 38,
       "climate_file": "G01-proxy.measurements.json",
-      "climate_sha256": "e43f148051cb443c7bb86dd60bc249231e86ca7bdf794a57da0a95bfb4cc3b82"
+      "climate_sha256": "9136261664331ede06ee15951cf73615ec39f7f08d27a6102b55867aba0404f0"
     },
     {
       "id": "G02-proxy",
-      "duration_s": 13649.324,
+      "duration_s": 13646.31,
       "human_stays": 3,
       "evaluations": 24,
       "climate_file": "G02-proxy.measurements.json",
-      "climate_sha256": "baf8ab0559a4c63441b23ef07557adb6d35202c1284760a94d57a636337b7397"
+      "climate_sha256": "244f67b3c99ad064e6457a2f4f59922ad7e69d94f20394083779330a3e541ae0"
     },
     {
       "id": "G03-proxy",
-      "duration_s": 16567.929,
+      "duration_s": 18331.661,
       "human_stays": 5,
       "evaluations": 38,
       "climate_file": "G03-proxy.measurements.json",
-      "climate_sha256": "14f4780fd18af336a53adb78d14217f4cab6b1d408fece112162f35d34544276"
+      "climate_sha256": "5a270b047ce01d6a5d04537367474ad0ea7313d8fd0e39de5ab03a7a6e7aef12"
     },
     {
       "id": "G04-proxy",
-      "duration_s": 12673.916,
+      "duration_s": 13753.368,
       "human_stays": 3,
-      "evaluations": 27,
+      "evaluations": 26,
       "climate_file": "G04-proxy.measurements.json",
-      "climate_sha256": "faa0461ae39904df1c9af3a16fefd5f213dd10c890c84810a5e35a67efcb7f6b"
+      "climate_sha256": "2ae5ccc2db3b6821c5d5faa46b0f17ba046fe43fd7b8f8f81c21a2b587d63cd6"
     },
     {
       "id": "G05",
@@ -137,7 +137,7 @@
       "id": "I05-proxy",
       "duration_s": 8560.319,
       "human_stays": 2,
-      "evaluations": 13,
+      "evaluations": 12,
       "climate_file": "I05-proxy.measurements.json",
       "climate_sha256": "0bd641bab1fd31fea9f0c3c6b1b17025a902a1e5c95b1fd09e246a96cfb56d37"
     },

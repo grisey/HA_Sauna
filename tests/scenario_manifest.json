@@ -3,15 +3,15 @@
   "source_curves": "fixtures/scenarios/source_curves.json",
   "source_curves_sha256": "a3a98cc4f2a0f526bc40f5e45c86f3d6820390f250679c9fcaeb6f9e69a0c7e6",
   "construction_file": "fixtures/scenarios/construction.json",
-  "construction_sha256": "23462fe0c2991e4b635c63db50b554b3a4cd898b992e1cb704d93da82daf4f87",
+  "construction_sha256": "b19f25ea5dfb4220b4579d887c499ed4dc95b07530a98c597888b89ebfdc8271",
   "configuration_file": "fixtures/scenarios/configuration.json",
-  "configuration_sha256": "0860a00844af542d3741c67740c94ecd1d68d4be4196e0679ef068e53a4c789c",
+  "configuration_sha256": "6667fec25c368009dccda89cfb80446c982306803cfaa60ea6ed018974376815",
   "configuration_policy": "The canonical defaults catalog is consumed once through its bound source reference; effective parameter changes require explicit input review; presentation-only changes do not rematerialize curves. Explicit user programme selections and historical replay configurations are independent data.",
   "scenarios": [
     {
       "id": "G01",
       "path": "fixtures/scenarios/G01.json",
-      "sha256": "daa5cf08a8604104c6f7f390adc6b9c6d26da5b1e77e34038cdd70b63819f5f2",
+      "sha256": "849207a4db1741156a492f5e29c677c874a20f5d5d9baaf1511f1731e912ee12",
       "presence_sources": [
         "ha_presence"
       ]
@@ -19,7 +19,7 @@
     {
       "id": "G02",
       "path": "fixtures/scenarios/G02.json",
-      "sha256": "976fe12fb4eaca864b38a5931b01921ef235df98b3f8a8ee8715f2cba86c94ec",
+      "sha256": "dfdaa8be77f8d792e10f9017fd005b70318d041ef793b7b074d9621e199a0382",
       "presence_sources": [
         "ha_presence"
       ]
@@ -27,7 +27,7 @@
     {
       "id": "G03",
       "path": "fixtures/scenarios/G03.json",
-      "sha256": "10aadcaadaef51b8add9b1993173eb0a2af4534d5c5353cbf5dacbd67372476e",
+      "sha256": "21deca8a1a8de798975642726ca34b64d4df8cead5776cdd69ad83b807cfaae6",
       "presence_sources": [
         "ha_presence"
       ]
@@ -35,7 +35,7 @@
     {
       "id": "G04",
       "path": "fixtures/scenarios/G04.json",
-      "sha256": "c003b20e6e3de9283bff99ebd3461c5c21e6a8105a409fe5d789f16cdfdb6c01",
+      "sha256": "1ba18ff076b3d5253b56881fa0b1bc94cc99083a1a3bc6172d125ff8d9f5202f",
       "presence_sources": [
         "ha_presence"
       ]
@@ -43,7 +43,7 @@
     {
       "id": "G01-proxy",
       "path": "fixtures/scenarios/G01-proxy.json",
-      "sha256": "2fd9bad050c235d91da6f9c1f1b1051624ff417a0cfd187fd16693b588632705",
+      "sha256": "befcf7e15771d0493626473e18117ad722009f65570ac88bf915ca8db97f6f08",
       "presence_sources": [
         "proxy"
       ]
@@ -51,7 +51,7 @@
     {
       "id": "G02-proxy",
       "path": "fixtures/scenarios/G02-proxy.json",
-      "sha256": "317fdb0dc6875dc81ac2717cca5f882ca24d9470dca65f8f930dd6b4e1fb7853",
+      "sha256": "2a351974a3fa876738f9c4695278f8805c8d486d46e51b68ae7edc5ba1425d3d",
       "presence_sources": [
         "proxy"
       ]
@@ -59,7 +59,7 @@
     {
       "id": "G03-proxy",
       "path": "fixtures/scenarios/G03-proxy.json",
-      "sha256": "b75169d2a13d7d34371fad15b7bdd2d6230dd29c5ca63d0a53f0bfcbbc9f3a06",
+      "sha256": "fe6ea950f17386b825be7855cbb3473eda1c41099fc53d67a46e0e3e9666dc6e",
       "presence_sources": [
         "proxy"
       ]
@@ -67,7 +67,7 @@
     {
       "id": "G04-proxy",
       "path": "fixtures/scenarios/G04-proxy.json",
-      "sha256": "fd28c4099eefcabd9630dc7c00df0d18d78b9c9a70e39a367ea987ee29d3387f",
+      "sha256": "de9baf0f57a68b5188543996bbeb00a171daf0246a72cb09089ffc770d20cc78",
       "presence_sources": [
         "proxy"
       ]
@@ -75,7 +75,7 @@
     {
       "id": "G05",
       "path": "fixtures/scenarios/G05.json",
-      "sha256": "f679c4d9390a4302dbbab49c42266210019eb42dd21d2fa6d6573f6e01d3f52d",
+      "sha256": "bc985f7330a27b68fc26b5b5c5c5d290bac586347944de8881ae1240ea7ad58d",
       "presence_sources": [
         "ha_presence",
         "proxy"
@@ -84,7 +84,7 @@
     {
       "id": "I01",
       "path": "fixtures/scenarios/I01.json",
-      "sha256": "5ca7804564a3901b38d311ca2c7b7e4ee69d8eab0df782e3b5ccf4869ef70ee1",
+      "sha256": "af9c7cb13f8caa1ee1985cebcbbe03ee86520eb6c1b28e241e6483c5e934880c",
       "presence_sources": [
         "ha_presence"
       ]
@@ -92,7 +92,7 @@
     {
       "id": "I02",
       "path": "fixtures/scenarios/I02.json",
-      "sha256": "09e1df892dfbfae014327587ec01ef29a91d1d12eca386c2895f6cb8708fb0d2",
+      "sha256": "4cd469b4d38a93188323971530f07b269c19e99e8c494fd55293086483d4fe0d",
       "presence_sources": [
         "ha_presence"
       ]
@@ -100,7 +100,7 @@
     {
       "id": "I03",
       "path": "fixtures/scenarios/I03.json",
-      "sha256": "89fb036b0e8c51f67fd8488096065ad4fa6154b80170d534378f49b5c47ee34f",
+      "sha256": "7b4f7b1150d3684470bb10fe6efb27670b4beb8c55b8627d498969b77254163b",
       "presence_sources": [
         "ha_presence"
       ],
@@ -218,7 +218,7 @@
     {
       "id": "I04",
       "path": "fixtures/scenarios/I04.json",
-      "sha256": "040882995407d54542174e8cf2549fc23aa2dc7412f86e7263938f45f4e4d8d2",
+      "sha256": "62352f49416cd3b84c5f13bc0b56cb0e8e979423548edb65cab6cc18a7d950f5",
       "presence_sources": [
         "ha_presence"
       ]
@@ -226,7 +226,7 @@
     {
       "id": "I05-proxy",
       "path": "fixtures/scenarios/I05-proxy.json",
-      "sha256": "fc789c6e87348090fb182b6b780323ee3382cc1da737855b0dd9e81d950a8cb4",
+      "sha256": "d3d9b3cebddc5db06c685cd45001f6996105ba21c6bf30a926f7f7f435b029ff",
       "presence_sources": [
         "proxy"
       ]

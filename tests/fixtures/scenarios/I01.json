@@ -1125,7 +1125,7 @@
       "values": {
         "active_gang": false
       },
-      "reason": "The same exit opening, through-ventilation and continuing absence end the gang.",
+      "reason": "The exit opening with confirmed through-ventilation ends the gang; absence is not required for it.",
       "between_s": [
         7711.084,
         7751.084
@@ -1207,7 +1207,7 @@
       "values": {
         "active_gang": false
       },
-      "reason": "The same exit opening, through-ventilation and continuing absence end the gang.",
+      "reason": "The exit opening with confirmed through-ventilation ends the gang; absence is not required for it.",
       "between_s": [
         11143.27,
         11183.27
@@ -1285,7 +1285,7 @@
       "values": {
         "active_gang": false
       },
-      "reason": "The same exit opening, through-ventilation and continuing absence end the gang.",
+      "reason": "The exit opening with confirmed through-ventilation ends the gang; absence is not required for it.",
       "between_s": [
         13294.764,
         13334.764
@@ -1355,7 +1355,7 @@
       "values": {
         "active_gang": false
       },
-      "reason": "The same exit opening, through-ventilation and continuing absence end the gang.",
+      "reason": "The exit opening with confirmed through-ventilation ends the gang; absence is not required for it.",
       "between_s": [
         16211.349,
         16251.349
@@ -1446,7 +1446,7 @@
       "values": {
         "active_gang": false
       },
-      "reason": "The same exit opening, through-ventilation and continuing absence end the gang.",
+      "reason": "The exit opening with confirmed through-ventilation ends the gang; absence is not required for it.",
       "between_s": [
         19447.455,
         19487.455

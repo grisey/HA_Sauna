@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "id": "I05-proxy",
-  "title": "Proxy return through the still-open door: minimum cooling with repeated person evidence",
+  "title": "Proxy return through the still-open door: minimum cooling after an infusion as person evidence",
   "kind": "derived_whole_session",
   "configuration": {
     "parameter_source": "configuration.json",
@@ -383,7 +383,7 @@
       "values": {
         "active_gang": false
       },
-      "reason": "The same exit opening, through-ventilation and continuing absence end the gang.",
+      "reason": "The exit opening with confirmed through-ventilation ends the gang; absence is not required for it.",
       "between_s": [
         6485.319,
         6525.319
@@ -424,31 +424,10 @@
           "min": 1
         }
       },
-      "reason": "Any real processed proxy person indication limits total cooling to the configured minimum; it cannot instantly cancel the still-unelapsed part.",
+      "reason": "Any real processed proxy person indication, here the infusion after the return, limits total cooling to the configured minimum; it cannot instantly cancel the still-unelapsed part.",
       "between_s": [
         6645.319,
-        6715.319
-      ]
-    },
-    {
-      "id": "repeated_signals_keep_original_clock",
-      "values": {
-        "cooling_active": true,
-        "heater_request": false,
-        "cooling_duration_s": 300,
-        "cooling_remaining_s": {
-          "min": 0,
-          "max": 60.0
-        },
-        "proxy_person_signal_count": {
-          "since_s": 6485.318559556787,
-          "min": 2
-        }
-      },
-      "reason": "Cooling was already active at the declared return. The remaining time is bounded by the configured total minimum minus that observed elapsed interval. The second separate source moisture rise must not restart or extend the clock.",
-      "between_s": [
-        6725.319,
-        6755.319
+        6665.319
       ]
     },
     {

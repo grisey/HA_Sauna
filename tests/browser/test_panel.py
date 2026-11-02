@@ -2457,7 +2457,10 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
         await expect(link).to_have_attribute("href", "/config/integrations/integration/ha_sauna")
         for group in ("operation", "sensors", "light"):
             await expect(self.panel.locator(f'[data-action="settings-section:{group}"]')).to_have_count(0)
-        saved_proxy = {"confirmation_minutes": 17.25, "strong_humidity_upper": 0.73}
+        # A stored field hidden in sensor operation: the deadline applies to the
+        # proxy method only (E-02). The values of the former curve recognition
+        # are catalog-bound since 5eba4cf and cannot be stored.
+        saved_proxy = {"confirmation_minutes": 17.25}
         await async_set_parameters(self.hass, self.entry, saved_proxy, partial=True)
         await self.hass.async_block_till_done()
         self.runtime = await PresenceRuntimeIntegrationTests.configure(self)

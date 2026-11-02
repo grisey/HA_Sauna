@@ -891,7 +891,7 @@
       "values": {
         "active_gang": false
       },
-      "reason": "The same exit opening, through-ventilation and continuing absence end the gang.",
+      "reason": "The exit opening with confirmed through-ventilation ends the gang; absence is not required for it.",
       "between_s": [
         6321.302,
         6361.302
@@ -968,7 +968,7 @@
       "values": {
         "active_gang": false
       },
-      "reason": "The same exit opening, through-ventilation and continuing absence end the gang.",
+      "reason": "The exit opening with confirmed through-ventilation ends the gang; absence is not required for it.",
       "between_s": [
         9512.16,
         9552.16
@@ -1045,7 +1045,7 @@
       "values": {
         "active_gang": false
       },
-      "reason": "The same exit opening, through-ventilation and continuing absence end the gang.",
+      "reason": "The exit opening with confirmed through-ventilation ends the gang; absence is not required for it.",
       "between_s": [
         12027.593,
         12067.593
@@ -1122,7 +1122,7 @@
       "values": {
         "active_gang": false
       },
-      "reason": "The same exit opening, through-ventilation and continuing absence end the gang.",
+      "reason": "The exit opening with confirmed through-ventilation ends the gang; absence is not required for it.",
       "between_s": [
         15772.788,
         15812.788
@@ -1192,7 +1192,7 @@
       "values": {
         "active_gang": false
       },
-      "reason": "The same exit opening, through-ventilation and continuing absence end the gang.",
+      "reason": "The exit opening with confirmed through-ventilation ends the gang; absence is not required for it.",
       "between_s": [
         17876.661,
         17916.661
@@ -1203,27 +1203,21 @@
       ]
     },
     {
-      "id": "stay_5_cooling",
+      "id": "stay_5_no_cooling",
       "values": {
-        "cooling_active": true,
-        "heater_request": false,
-        "phase": "nachlauf"
+        "cooling_active": false,
+        "phase": {
+          "one_of": [
+            "aufheizen",
+            "bereit"
+          ]
+        }
       },
-      "reason": "A confirmed ended gang is cooling before its independently calculated release.",
+      "reason": "Without an infusion the directly observed stay remains provisional; ventilation retracts it uncounted and it starts no oven cooling.",
       "at_s": 17847.089,
       "presence_sources": [
         "ha_presence"
       ]
-    },
-    {
-      "id": "stay_5_cooling_over",
-      "values": {
-        "cooling_active": false,
-        "heater_request": true
-      },
-      "reason": "Cooling completes from the declared heat history; below the thermostat threshold the subsequent measured inertia belongs to a newly energised heater, not an extra heating prohibition.",
-      "at_s": 18458.855,
-      "sampling": "before_the_next_control_action"
     },
     {
       "id": "stopped",
@@ -1250,11 +1244,11 @@
     {
       "id": "completed_direct_session",
       "values": {
-        "gang_count": 5,
+        "gang_count": 4,
         "retained_sessions": 1,
         "completed_sessions": 1
       },
-      "reason": "The full directly observed stays belong to one retained session; thermostat cycles do not split its recording.",
+      "reason": "The directly observed stays belong to one retained session; thermostat cycles do not split its recording. Only the infusion-confirmed stays count; the last dry stay stays provisional and is retracted (E-01).",
       "at_s": 19419.055,
       "presence_sources": [
         "ha_presence"
@@ -1588,6 +1582,7 @@
       "planned_duration_s": 773.931,
       "history_from_s": 15760.013,
       "basis": "Closed-form integral of the documented exponential weighting over the predeclared actuator intervals. Used to construct thermal continuation, not copied from product output.",
+      "expectation_basis": "No cooling follows a stay without infusion (E-01). The declared off continuation remains an unchanged climate input.",
       "resumed_heating_s": 18234.055
     }
   ]

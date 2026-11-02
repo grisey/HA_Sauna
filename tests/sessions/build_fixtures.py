@@ -426,8 +426,12 @@ class Session:
                 }
         self.thermal_state = 'on'
 
-    def finish_cooling_history(self, number, *, target=None, completed=True):
-        """Continue off only until the planned release, then use real inertia."""
+    def finish_cooling_history(self, number, *, target=None, completed=True, expect_release=True):
+        """Continue off only until the planned release, then use real inertia.
+
+        Without ``expect_release`` the declared continuation remains a climate
+        input only; no cooling release is evaluated for it.
+        """
         cycle = self.pending_cooling
         assert cycle is not None
         release = cycle['planned_release_s']
@@ -459,8 +463,9 @@ class Session:
         resumed = self.t-elapsed
         self.append('reheat_lag',offset=elapsed,thermal='heater_on_with_observed_reheat_lag')
         cycle['resumed_heating_s'] = round(resumed, INPUTS['numerics']['time_digits'])
-        self.expect(f'stay_{number}_cooling_over', {'cooling_active': False, 'heater_request': True},
-                    'Cooling completes from the declared heat history; below the thermostat threshold the subsequent measured inertia belongs to a newly energised heater, not an extra heating prohibition.', at=self.t)
+        if expect_release:
+            self.expect(f'stay_{number}_cooling_over', {'cooling_active': False, 'heater_request': True},
+                        'Cooling completes from the declared heat history; below the thermostat threshold the subsequent measured inertia belongs to a newly energised heater, not an extra heating prohibition.', at=self.t)
 
     def start(self, *, button=False):
         self.action('button',{'event':'single_push'}) if button else self.action('start')
@@ -566,28 +571,31 @@ class Session:
                            'infusion':infusion,'presence_absent_s':absence,'exit_curve_at_s':exit_curve_at})
         self.inside = False
         if not manual and not dry_proxy:
+            # The moisture recovery after ventilation is no person evidence:
+            # the recognition supplies no person signals (5eba4cf), so proxy
+            # cooling also runs to its calculated release.
             cycle = self.begin_cooling(exit_curve_at + planned_off)
-            if self.presence_source == 'proxy':
-                # In the unchanged source both heights show moisture recovery
-                # after the shared minimum. By source420s this has continued
-                # for160 seconds. The fixture binds the consequent heat return
-                # in advance; it does not suppress this proxy person evidence.
-                cycle = self.limit_proxy_cooling(exit_curve_at+INPUTS['stay']['proxy_recovery_cue_seconds'])
-                cycle['cue_source'] = {'curve_id':exit_kind,'at_source_s':INPUTS['stay']['proxy_recovery_cue_seconds'],
-                                      'basis':'Both source heights show sustained vapour-density recovery after ventilation; this person-like environmental signal is kept unchanged.'}
         self.expect(f'stay_{number}_ended',{'active_gang':False},
-                    'The same exit opening, through-ventilation and continuing absence end the gang.',
+                    'The exit opening with confirmed through-ventilation ends the gang; absence is not required for it.',
                     between=(max(absence,end-30),end+10),eventually=True,presence_sources=['ha_presence'])
         if cooling and not manual:
             if dry_proxy:
                 self.coast(PARAMETERS['session_gap_minutes']*60 - (end-out-INPUTS['stay']['outside_stop_seconds']) + INPUTS['stay']['after_run_margin_seconds'])
                 self.expect('dry_proxy_shutdown_complete', {'recording':False,'operation_enabled':False,'cooling_active':False},
                             'The unconfirmed dry stay is not counted; an outside stop followed by the ordinary after-run closes the same session.',at=self.t,presence_sources=['proxy'])
+            elif not infusion:
+                # E-01: there are no gangs without infusion. The directly
+                # observed stay stays provisional and ventilation retracts it.
+                cycle['expectation_basis'] = 'No cooling follows a stay without infusion (E-01). The declared off continuation remains an unchanged climate input.'
+                self.expect(f'stay_{number}_no_cooling',{'cooling_active':False,'phase':{'one_of':['aufheizen','bereit']}},
+                            'Without an infusion the directly observed stay remains provisional; ventilation retracts it uncounted and it starts no oven cooling.',
+                            at=min(end,cycle['planned_start_s']+cycle['planned_duration_s']/2),
+                            presence_sources=['ha_presence'])
+                self.finish_cooling_history(number,target=next_target,expect_release=False)
             else:
                 self.expect(f'stay_{number}_cooling',{'cooling_active':True,'heater_request':False,'phase':'nachlauf'},
                             'A confirmed ended gang is cooling before its independently calculated release.',
-                            at=min(end,cycle['planned_start_s']+cycle['planned_duration_s']/2),
-                            presence_sources=['ha_presence'] if not infusion else None)
+                            at=min(end,cycle['planned_start_s']+cycle['planned_duration_s']/2))
                 self.finish_cooling_history(number,target=next_target)
         return start,out,end
 
@@ -641,19 +649,6 @@ def base_scenario(identity, title, targets, *, mode='automatic', program=None, p
         s.expect(f'target_{i}',{'target_temperature_c':target},'The selected programme determines this stay target; no mode change occurs.',at=s.t)
         s.stay(i,infusion=i!=len(targets),manual=mode=='manual',cooling=mode!='manual',
                next_target=targets[min(i,len(targets)-1)])
-        if identity == 'G04-proxy' and i == 1:
-            first = s.stays[-1]
-            exit_block = next(block for block in s.blocks
-                              if block['at_s'] == round(first['exit_curve_at_s'],INPUTS['numerics']['time_digits']))
-            s.expect('elapsed_minimum_person_signal_requests_heat_immediately',
-                     {'cooling_active':False,'heater_request':True,'heater_command':True},
-                     'Within the unchanged measured exit and moisture-recovery interval, a processed proxy person signal after the original minimum cooling time must release cooling and request and command heat in that input handler, before actuator acknowledgement or a later tick. At least one such handler must be reached.',
-                     between=(first['exit_curve_at_s'],exit_block['until_s']))
-            s.expected[-1]['input_transition'] = {
-                'counter_increases':'proxy_person_signal_count',
-                'before':{'cooling_active':True,
-                          'cooling_elapsed_s':{'min':seconds('after_run_minutes')}},
-            }
         if mode=='manual':
             if i==1:
                 first=s.stays[-1]
@@ -673,8 +668,8 @@ def base_scenario(identity, title, targets, *, mode='automatic', program=None, p
                  'The thermostat may be off while manual operation remains enabled.',at=s.t)
     if mode=='manual' or presence_source != 'proxy':
         s.finish(button=mode=='manual')
-    s.expect('completed_direct_session',{'gang_count':len(targets),'retained_sessions':1,'completed_sessions':1},
-             'The full directly observed stays belong to one retained session; thermostat cycles do not split its recording.',at=s.t,presence_sources=['ha_presence'])
+    s.expect('completed_direct_session',{'gang_count':len(targets)-1,'retained_sessions':1,'completed_sessions':1},
+             'The directly observed stays belong to one retained session; thermostat cycles do not split its recording. Only the infusion-confirmed stays count; the last dry stay stays provisional and is retracted (E-01).',at=s.t,presence_sources=['ha_presence'])
     s.expect('completed_proxy_session',{'gang_count':len(targets)-1,'retained_sessions':1,'completed_sessions':1},
              'Only the infusion-confirmed stays count under proxy detection; the last dry stay supplies no infusion confirmation.',at=s.t,presence_sources=['proxy'])
     return s.save()
@@ -755,7 +750,7 @@ def iteration_two():
     s.stay(1,exit_kind='late_absence_exit',absence_delay=inputs['late_absence_seconds'],cooling=False,entry_heating_delayed=True)
     end=s.t
     s.expect('phase_returns_heater',{'heater_override':None},'Entry into a confirmed gang returns the temporary heater choice even though automatic heat remains requested.',at=s.stays[-1]['entered_s']+450,presence_sources=['ha_presence'])
-    s.expect('late_absence_ends',{'active_gang':False,'cooling_active':True,'heater_request':False},'Absence after door closure completes the already observed exit; the old gang cannot continue heating.',at=end+1,presence_sources=['ha_presence'])
+    s.expect('late_absence_ends',{'active_gang':False,'cooling_active':True,'heater_request':False},'The confirmed through-ventilation of the exit ends the gang and starts cooling; the absence reported after the door closure is not needed for that, and the old gang cannot continue heating.',at=end+1,presence_sources=['ha_presence'])
     s.action('button',{'event':'single_push'},t=end+inputs['cooling_button_after_seconds'])
     s.coast(inputs['cooling_button_coast_seconds'])
     s.expect('cooling_rejects_manual_on',{'heater_request':False,'cooling_active':True,'fault_count':0},'Short-press heater admission during cooling is rejected without creating a session-start fault.',at=s.t)
@@ -886,7 +881,7 @@ def iteration_four():
     s.start()
     s.heat(PARAMETERS['sauna_min_temperature_c']+inputs['entry_above_minimum_c'])
     s.stay(1,infusion=False,short=True,cooling=False)
-    s.expect('exit_below_minimum',{'active_gang':False,'gang_count':1},'An existing gang must end while ventilation lowers temperature beneath the minimum for new starts.',at=s.t,presence_sources=['ha_presence'])
+    s.expect('exit_below_minimum',{'active_gang':False,'gang_count':0},'An existing gang must end while ventilation lowers temperature beneath the minimum for new starts. The short stay has no infusion: it stays provisional and is retracted uncounted (E-01).',at=s.t,presence_sources=['ha_presence'])
     s.action('stop')
     s.coast(inputs['restart_coast_seconds'])
     s.expect('afterrun_recording',{'operation_enabled':False,'recording':True,'light_after_run':True},'A normal stop keeps its recording available during the unmodified restart interval.',at=s.t)
@@ -914,13 +909,13 @@ def iteration_four():
     s.coast(inputs['after_run_light_coast_seconds'])
     s.action('set_light',{'value':None})
     s.coast(max(0,out+inputs['outside_stop_seconds']+seconds('session_gap_minutes')+inputs['after_run_margin_seconds']-s.t))
-    s.expect('final_end_not_extended',{'recording':False,'operation_enabled':False,'light_after_run':False,'retained_sessions':1,'completed_sessions':1,'gang_count':2,'recording_history_intact':True},'Manual light action in after-run does not extend its original session deadline. Resumption preserves accumulated energy and the original heating and contactor history through the stored completion.',at=s.t)
+    s.expect('final_end_not_extended',{'recording':False,'operation_enabled':False,'light_after_run':False,'retained_sessions':1,'completed_sessions':1,'gang_count':1,'recording_history_intact':True},'Manual light action in after-run does not extend its original session deadline. Resumption preserves accumulated energy and the original heating and contactor history through the stored completion. Only the infusion-confirmed second stay counts (E-01).',at=s.t)
     return s.save()
 
 
 def iteration_five():
     inputs = INPUTS['cases']['I05']
-    s=Session('I05-proxy','Proxy return through the still-open door: minimum cooling with repeated person evidence',
+    s=Session('I05-proxy','Proxy return through the still-open door: minimum cooling after an infusion as person evidence',
               presence_source='proxy')
     s.start()
     # A usable entry while the standard selection is still warming. This is an
@@ -953,16 +948,15 @@ def iteration_five():
     s.overlay_person_moisture(closed,source_offset=inputs['moisture_source_offset_seconds'],duration=inputs['moisture_duration_seconds'])
     s.human_event('infusion_after_return',t=closed+inputs['infusion_after_seconds'],
                   detail='The source moisture rise at210s lies90s after the reused120s start; the person is inside behind the closed door.')
+    # The cooling clock starts at the actual contactor OFF after the gang end,
+    # never before the exit opening; the minimum therefore lasts at least
+    # until out+minimum. Since 5eba4cf the infusion after the return is the
+    # only person evidence; the moisture rises supply no person signals.
     s.expect('person_signal_limits_to_minimum',
              {'cooling_active':True,'heater_request':False,'cooling_duration_s':seconds('after_run_minutes'),
               'cooling_minimum_s':seconds('after_run_minutes'),'proxy_person_signal_count':{'since_s':returned,'min':1}},
-             'Any real processed proxy person indication limits total cooling to the configured minimum; it cannot instantly cancel the still-unelapsed part.',
-             between=(out+280,out+350))
-    s.expect('repeated_signals_keep_original_clock',
-             {'cooling_active':True,'heater_request':False,'cooling_duration_s':seconds('after_run_minutes'),
-              'cooling_remaining_s':{'min':0,'max':seconds('after_run_minutes')-(out+360-returned)},
-              'proxy_person_signal_count':{'since_s':returned,'min':2}},
-             'Cooling was already active at the declared return. The remaining time is bounded by the configured total minimum minus that observed elapsed interval. The second separate source moisture rise must not restart or extend the clock.',between=(out+360,out+390))
+             'Any real processed proxy person indication, here the infusion after the return, limits total cooling to the configured minimum; it cannot instantly cancel the still-unelapsed part.',
+             between=(out+280,out+seconds('after_run_minutes')))
     s.expect('original_minimum_expires',{'cooling_active':False,'heater_request':True},
              'The original minimum has elapsed. The below-target cabin may heat although the returning person did not provide a separate new opening event.',at=out+450)
     s.dry(inputs['remaining_stay_seconds'],heater=True)
@@ -1056,9 +1050,9 @@ def main():
       'assessment_basis':[
         'User-described external controls and physical entry, stay, infusion, departure and through-ventilation.',
         'The configured minimum gates only new gang starts; existing gang ends remain evaluable below it.',
-        'Direct presence confirms a complete entry; its delayed absence can complete the same ventilated exit after closure.',
-        'A dry stay is confirmed with direct presence but has no infusion confirmation under proxy detection.',
-        'Any processed proxy person indication limits a running cooling cycle to its original configured minimum; elapsed OFF time counts and repeated indications cannot restart its clock. Directly confirmed entry ends cooling immediately.',
+        'Direct presence at the entry closing opens a provisional gang; its first infusion confirms it. Only confirmed through-ventilation of an exit ends a gang; absence after an opening ends only the gang heat demand.',
+        'A stay without infusion remains provisional with direct presence and is not recognised under proxy detection; it is never counted and starts no cooling.',
+        'Any processed proxy person evidence, an infusion since the recognition supplies no person signals, limits a running cooling cycle to its original configured minimum; elapsed OFF time counts and repeated evidence cannot restart its clock. A new directly observed entry ends cooling as soon as its gang takes effect, even while provisional.',
         'Manual mode shares recognition and recording while retaining only thermostat heat control and manually selected light.',
       ],
       'scope_limits':[

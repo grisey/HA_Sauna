@@ -407,7 +407,7 @@
       "values": {
         "active_gang": false
       },
-      "reason": "The same exit opening, through-ventilation and continuing absence end the gang.",
+      "reason": "The exit opening with confirmed through-ventilation ends the gang; absence is not required for it.",
       "between_s": [
         3274.049,
         3314.049
@@ -421,9 +421,9 @@
       "id": "exit_below_minimum",
       "values": {
         "active_gang": false,
-        "gang_count": 1
+        "gang_count": 0
       },
-      "reason": "An existing gang must end while ventilation lowers temperature beneath the minimum for new starts.",
+      "reason": "An existing gang must end while ventilation lowers temperature beneath the minimum for new starts. The short stay has no infusion: it stays provisional and is retracted uncounted (E-01).",
       "at_s": 3303.849,
       "presence_sources": [
         "ha_presence"
@@ -468,10 +468,10 @@
         "light_after_run": false,
         "retained_sessions": 1,
         "completed_sessions": 1,
-        "gang_count": 2,
+        "gang_count": 1,
         "recording_history_intact": true
       },
-      "reason": "Manual light action in after-run does not extend its original session deadline. Resumption preserves accumulated energy and the original heating and contactor history through the stored completion.",
+      "reason": "Manual light action in after-run does not extend its original session deadline. Resumption preserves accumulated energy and the original heating and contactor history through the stored completion. Only the infusion-confirmed second stay counts (E-01).",
       "at_s": 9525.018
     },
     {

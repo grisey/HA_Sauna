@@ -640,7 +640,7 @@
       "values": {
         "active_gang": false
       },
-      "reason": "The same exit opening, through-ventilation and continuing absence end the gang.",
+      "reason": "The exit opening with confirmed through-ventilation ends the gang; absence is not required for it.",
       "between_s": [
         7159.335,
         7199.335
@@ -734,7 +734,7 @@
       "values": {
         "active_gang": false
       },
-      "reason": "The same exit opening, through-ventilation and continuing absence end the gang.",
+      "reason": "The exit opening with confirmed through-ventilation ends the gang; absence is not required for it.",
       "between_s": [
         9174.722,
         9214.722
@@ -800,7 +800,7 @@
       "values": {
         "active_gang": false
       },
-      "reason": "The same exit opening, through-ventilation and continuing absence end the gang.",
+      "reason": "The exit opening with confirmed through-ventilation ends the gang; absence is not required for it.",
       "between_s": [
         11803.651,
         11843.651
@@ -861,11 +861,11 @@
     {
       "id": "completed_direct_session",
       "values": {
-        "gang_count": 3,
+        "gang_count": 2,
         "retained_sessions": 1,
         "completed_sessions": 1
       },
-      "reason": "The full directly observed stays belong to one retained session; thermostat cycles do not split its recording.",
+      "reason": "The directly observed stays belong to one retained session; thermostat cycles do not split its recording. Only the infusion-confirmed stays count; the last dry stay stays provisional and is retracted (E-01).",
       "at_s": 13533.091,
       "presence_sources": [
         "ha_presence"

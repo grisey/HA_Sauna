@@ -51,7 +51,7 @@
     {
       "id": "R01",
       "file": "fixtures/replay/R01.json",
-      "sha256": "5dde938d01435945a751d358a930fe9dcc8d8fcdb0f080d7ab738e447628cbce",
+      "sha256": "12243ab5cbe923acb3892de10df1811a9da9a42dfa541bf52f7aed7970de6131",
       "samples_file": "fixtures/replay/R01.samples.jsonl.gz",
       "samples_sha256": "055b78ed47edc3c019b5161a3a26a5d141dd25b31ce9b9718b39cc935db2c49c",
       "samples_count": 44251,
@@ -81,7 +81,7 @@
     {
       "id": "R04",
       "file": "fixtures/replay/R04.json",
-      "sha256": "57223a177a3ab6d76702cb4f4e829a164e16e00ae5848ca7f7a1809f5de204ec",
+      "sha256": "4eca5f66010e04bfae32f9cef900f002565dd02796a353e01963ca9e4ffd2fb4",
       "samples_file": "fixtures/replay/R04.samples.jsonl.gz",
       "samples_sha256": "ac60b7f73a8eca659f1dfbc1031b1a2f809b95a91f421683e1d146fa28891406",
       "samples_count": 56304,

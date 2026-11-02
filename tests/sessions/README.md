@@ -40,7 +40,7 @@ Aufenthalte; die physischen Taster befinden sich außerhalb der Kabine.
 | I02 | Ofen- und Lichtübersteuerung, ausdrückliche und zeitabhängige Rückgabe, wiederholte Auswahl, verspätete Abwesenheit, Kühlende per Bedienung und erneuter Eintritt während Kühlung. |
 | I03 | Kurzdruck startet Manuell, kurzes Aus/Ein setzt dieselbe Aufzeichnung fort; Gerätegeste übernimmt sie in Automatik; früher Eintritt, mehrere Personen, Übersteuerung und Rückgabe, abschließende Gerätegeste. Varianten: Lang-/Doppel-/Dreifachdruck und gespeichertes Programm/Konstant. |
 | I04 | Eintritt unter Mindesttemperatur, abgeschlossener Gang trotz später niedriger Temperatur, Aus und Wiederaufnahme im Nachlauf, endgültiges Ausschalten nach Verlassen. |
-| I05 | Proxybetrieb: Rückkehr durch die noch offene Tür vor erfüllter Mindestkühlzeit, wiederholte Personenbelege, unveränderter Kühlbeginn und anschließende Heizanforderung. |
+| I05 | Proxybetrieb: Rückkehr durch die noch offene Tür vor erfüllter Mindestkühlzeit, Aufguss als Personenbeleg, unveränderter Kühlbeginn und anschließende Heizanforderung. |
 
 Die Grundsitzungen führen beide Erkennungsquellen durch ihre jeweils möglichen
 Abläufe. Varianten verwenden gemeinsame Kurvenabschnitte, solange deren
@@ -54,11 +54,17 @@ nicht. Transportfehler, Berechtigungen und genaue Ereignisreihenfolgen bleiben
 eigenständige Schnittstellenprüfungen.
 
 Bei Proxy-Personenbelegen gilt die Mindestdauer für die gesamte bereits laufende
-Kühlung. Die Bewertung prüft deshalb Gesamtdauer, gezählte AUS-Zeit und Restzeit
-gemeinsam. Nach bereits erfülltem Minimum müssen Kühlung und Heizentscheidung
-im selben Verarbeitungsschritt wechseln; dies prüfen die Proxyvarianten G01–G04.
-Weitere Signale dürfen keine neue
-Frist beginnen. Ein unbestätigter Proxyhinweis zählt keinen zusätzlichen Gang.
+Kühlung. Die Erkennung liefert keine eigenen Personensignale; Personenbeleg ist im
+Proxyverfahren der Aufguss. I05 prüft die Begrenzung durch einen Aufguss nach der
+Rückkehr über Gesamtdauer, Mindestdauer und Zahl der Belege. Die Feuchteerholung
+nach dem Lüften ist kein Personenbeleg: In den Proxyvarianten G01–G04 läuft die
+Kühlung bis zu ihrer berechneten Freigabe, und die Kurve setzt die Heizung erst
+dort fort.
+
+Der letzte Aufenthalt von G01–G05 hat keinen Aufguss. Mit Präsenzsensor bleibt er
+vorläufig, wird nicht gezählt und löst keine Kühlung aus
+([Gangmodell](../../docs/gangmodell.md)). Die Kurve behält dort die zuvor
+deklarierte Abkühlung als unveränderten Eingang (`expectation_basis`).
 
 ## Messwerte und Bewertung
 

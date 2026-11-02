@@ -60,12 +60,17 @@ Zustand innerhalb dieses Fensters. Die Texte unter `reason` begründen jede
 Bewertung fachlich, ohne damalige Algorithmusausgaben als Wahrheit zu verwenden.
 
 R01 unterscheidet die zwei menschlich bestätigten Aufenthalte von der
-unbestätigten Proxyvermutung während der anschließenden Feuchterholung.
-P05 verlangt keinen dritten Gang und keine behauptete Abwesenheitsgewissheit:
-Ein noch vorläufiger Verdacht ist zulässig, ein bestätigter dritter Gang nicht.
-Die neue Nutzerregel für jedes Proxy-Personensignal bindet hier die laufende
-Kühlung an ihre Mindestgesamtdauer; bis zu deren Ablauf bleibt der Ofen aus.
-Die Meldungen enthalten keinen unabhängigen direkten Präsenznachweis.
+anschließenden Feuchterholung. Die Erkennung liefert keine eigenen
+Personensignale; ohne Aufguss entsteht daraus im Proxyverfahren kein Gang, und
+die laufende Kühlung behält ihre berechnete Dauer. P05 verlangt deshalb weder
+einen dritten noch einen vorläufigen Gang; bis zum Ende der Kühlung bleibt der
+Ofen aus. Die Meldungen enthalten keinen unabhängigen direkten Präsenznachweis.
+
+In R04 eröffnet Anwesenheit beim Türschluss einen vorläufigen Gang; bestätigt wird
+er erst durch den ersten Aufguss ([Gangmodell](../../../docs/gangmodell.md)).
+D08, D11 und D16 bewerten deshalb den vorläufigen Gang bis zum ersten Aufguss der
+geprüften Referenz. Die kurze Türfolge vor dem ersten Aufenthalt (D06, D07) bleibt
+ungezählt und unbestätigt.
 
 R03 enthält die vollständige anschließende Tasterfolge einschließlich aller
 nativen Druck-, Langdruck- und Loslassmeldungen. Die kurze manuelle Pause und
