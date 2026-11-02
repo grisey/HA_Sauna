@@ -45,6 +45,13 @@ ohne Beobachtung):
 
 Zeiten in ``detections`` und ``infusion_filter`` sind Sekunden ab Beginn der
 Zeitachse, alle übrigen ISO-Zeitpunkte.
+
+Enthält der Aufzeichnungsordner ``calibration.jsonl`` (die ``calibration``-
+Datensätze der Sitzung aus ``records.jsonl`` des Archivexports), ist das
+Kalibrierprotokoll die Referenz: ``calibration`` enthält dann die Auswertung
+nach ``core/calibration.evaluate`` mit Präsenz, gebuchten Erkennungen, Gängen
+und Gangheizung dieses Replays.  Die Protokollzeiten werden über
+``started_at`` aus ``case.json`` auf die Zeitachse übertragen.
 """
 
 from __future__ import annotations
@@ -64,7 +71,9 @@ import numpy as np
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
+from custom_components.ha_sauna.archive import plain
 from custom_components.ha_sauna.bindings import Bindings  # noqa: E402
+from custom_components.ha_sauna.core import calibration
 from custom_components.ha_sauna.core.input_handoff import (
     ContactorFeedbackInput,
     HeatingFeedbackInput,
@@ -448,18 +457,57 @@ async def replay(case_dir: Path, parameters: dict | None, *, presence: bool = Fa
                   for rec in recognizers for d in rec.detections]
     decisions = [d for rec in recognizers for d in rec.decisions]
     filtered = [infusion_filter(rec, filters[id(rec)]) for rec in recognizers if id(rec) in filters]
-    return {"recording": case_dir.name, "sessions": len(sessions), "gangs": gangs, "retracted": retracted,
-            "detections": detections, "processed": processed, "rejected": rejected, "decisions": decisions,
-            "presence_source": "ha_presence" if direct else "proxy", "heater": heater, "until": iso(until),
-            "heating": {"source": "contactor", "role": "heater",
-                        "follows": "recording" if heater == "recorded" else "command",
-                        "intervals": [[iso(a), iso(b)] for a, b in booked]},
-            "control": [{"at": iso(row[0]), **dict(zip(CONTROL_COLUMNS, row[1:]))} for row in control],
-            "provisional": provisional,
-            "infusion_filter": {"separations": [s for f in filtered for s in f["separations"]],
-                                "pours": [p for f in filtered for p in f["pours"]],
-                                "decay_columns": DECAY_COLUMNS,
-                                "decay": [row for f in filtered for row in f["decay"]]}}
+    result = {"recording": case_dir.name, "sessions": len(sessions), "gangs": gangs, "retracted": retracted,
+              "detections": detections, "processed": processed, "rejected": rejected, "decisions": decisions,
+              "presence_source": "ha_presence" if direct else "proxy", "heater": heater, "until": iso(until),
+              "heating": {"source": "contactor", "role": "heater",
+                          "follows": "recording" if heater == "recorded" else "command",
+                          "intervals": [[iso(a), iso(b)] for a, b in booked]},
+              "control": [{"at": iso(row[0]), **dict(zip(CONTROL_COLUMNS, row[1:]))} for row in control],
+              "provisional": provisional,
+              "infusion_filter": {"separations": [s for f in filtered for s in f["separations"]],
+                                  "pours": [p for f in filtered for p in f["pours"]],
+                                  "decay_columns": DECAY_COLUMNS,
+                                  "decay": [row for f in filtered for row in f["decay"]]}}
+    protocol = case_dir / "calibration.jsonl"
+    if protocol.exists():
+        steps = calibration_steps(protocol, datetime.fromisoformat(case["started_at"]))
+        presence_marks = ([(ORIGIN + timedelta(seconds=r["t"]), r["value"]) for r in rows
+                           if r["role"] == "presence" and isinstance(r["value"], bool)] if direct else [])
+        events, references = [], []
+        for session in sessions.values():
+            timeline = session.timeline
+            events += [(e.kind.value, e.effective_at) for e in timeline.processed
+                       if e.event_id.startswith("recognition:")]
+            withdrawn = {g.gang_id for g in timeline.retracted}
+            references += [{"start": g.started_at, "confirmed": g.confirmed_at, "end": g.ended_at,
+                            "end_reason": g.end_reason, "infusions": len(g.infusion_events)}
+                           for g in (*timeline.completed, *([timeline.active] if timeline.active else []))
+                           if g.gang_id not in withdrawn]
+        commands = [(row[0], row[3], row[4]) for row in control]
+        result["calibration"] = plain(calibration.evaluate(
+            steps, presence=presence_marks, events=events, gangs=references,
+            gang_heat=calibration.gang_heat_intervals(commands, booked, until), until=until,
+            has_presence=direct))
+    return result
+
+
+def calibration_steps(path: Path, started_at: datetime) -> list[dict]:
+    """Abgeschlossene Schritte des Kalibrierprotokolls auf der Zeitachse des Replays."""
+    def moved(value):
+        return None if value is None else ORIGIN + (datetime.fromisoformat(value) - started_at)
+
+    steps = []
+    for line in path.read_text().splitlines():
+        if not line.strip():
+            continue
+        record = json.loads(line)
+        payload = record.get("payload", record)
+        if record.get("kind", "calibration") != "calibration" or payload.get("event") != "step":
+            continue
+        steps.append({**payload, **{key: moved(payload.get(key))
+                                    for key in ("at", "handoff_at", "closed_at", "time_fired")}})
+    return steps
 
 
 def main():

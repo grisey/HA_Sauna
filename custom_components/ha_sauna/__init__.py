@@ -54,16 +54,27 @@ async def async_setup_entry(
             hass, runtime,
             hass.config.path("ha_sauna", f"{entry.entry_id}.sqlite"), entry.entry_id
         )
+        from .calibration_services import register as register_calibration
+        from .core.calibration import is_action
         from .notification_services import register as register_notifications
         from .notifications import HomeAssistantNotifications, async_resolve_recipients
 
+        def calibration_reply(association):
+            # Only calibration actions reach the run; every reply stays an event.
+            key = association.reply.reply_key
+            if key is not None and is_action(key.value):
+                hass.async_create_task(runtime.calibration_reply(association))
+
         runtime.notification_entry_id = entry.entry_id
         runtime.notification_resolutions = await async_resolve_recipients(hass)
-        notifications = HomeAssistantNotifications(hass, entry.entry_id)
+        notifications = HomeAssistantNotifications(
+            hass, entry.entry_id, calibration_reply
+        )
         runtime.notification_transport = notifications
         runtime.on_close(notifications.close)
         await notifications.async_start()
         register_notifications(hass)
+        register_calibration(hass)
         from .recognition_services import register as register_recognition
         from .recognition_store import async_setup_recognition_learning
 

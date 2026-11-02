@@ -65,6 +65,18 @@ Vergessen beendet beide Ausgaben für diese Zuordnung.
 Der abschließende Notify-Transport ist synthetisch; diese Prüfungen belegen
 weder Empfang noch Rückmeldungen eines tatsächlichen Companion-Clients.
 
+Die [Kalibrierung](../docs/kalibrierung.md) prüft `test_calibration.py` im
+Fachkernlauf: vollständiger Durchlauf aller Module mit simulierten Antworten,
+Abbruch, Wiederholung, doppelte und verspätete Antworten, Startbedingungen und
+Auswertung gegen synthetische Fenster. Die Laufzeitfälle verwenden die
+produktiven Start-, Antwort- und Taktmethoden mit synthetischem
+Abschlusstransport; derselbe Eingangsverlauf ohne Kalibrierung ergibt dieselben
+Heizentscheidungen und denselben Gangverlauf. `test_archive_retention.py`
+prüft die Aufbewahrung von Sitzungen mit Kalibrierprotokoll.
+`integration/test_calibration_service.py` führt den registrierten Dienst über
+die Mobile-App-Geräteaktion und den nativen Antworteingang bis zum Ablauf und
+zum Archivprotokoll.
+
 Die [Modellübergaben](../docs/modelluebergaben.md) werden durch
 `test_model_handoff.py`, `test_control_handoff.py`,
 `test_observation_handoff.py`, `test_thermal_handoff.py`,

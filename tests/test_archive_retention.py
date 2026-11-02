@@ -96,6 +96,33 @@ class ArchiveRetentionTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(await self.archive.erase("confirmed"), 1)
         self.assertIsNone(self.archive.read("confirmed"))
 
+    async def test_calibration_protocol_keeps_sessions_without_confirmed_gang(self):
+        """E-15: a calibration protocol retains the session, at its end and at startup."""
+        for identity, protocol in (("calibrated", True), ("plain", False)):
+            c = self.session(identity)
+            self.save(c.session)
+            if protocol:
+                self.archive.append(
+                    "calibration", T0, {"event": "start", "run_id": "run"}, identity
+                )
+            c.finish_session(T0 + timedelta(seconds=1))
+            self.save(c.completed_sessions[-1])
+        open_calibration = self.session("open")
+        self.save(open_calibration.session)
+        self.archive.append("calibration", T0, {"event": "start", "run_id": "o"}, "open")
+        await self.archive.flush()
+        self.assertIsNone(self.archive.read("plain"))
+        kept = self.archive.read("calibrated")
+        self.assertIsNotNone(kept["session"]["ended_at"])
+        self.assertEqual([r["kind"] for r in kept["records"]], ["session", "calibration", "session"])
+        await self.archive.close()
+        self.archive = Archive(self.archive.path, "e", sessions_only=True)
+        await self.archive.start()
+        self.assertIsNotNone(self.archive.read("calibrated"))
+        self.assertIsNone(self.archive.read("open")["session"]["ended_at"])
+        self.assertEqual(await self.archive.erase("calibrated"), 1)
+        self.assertIsNone(self.archive.read("calibrated"))
+
     async def test_unknown_session_rejection_leaves_archive_usable(self):
         self.save(self.session("historical", True).session)
         await self.archive.flush()

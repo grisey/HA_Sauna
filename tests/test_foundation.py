@@ -516,7 +516,7 @@ class PackagingTests(unittest.TestCase):
             ast.parse(text)
             with self.subTest(file=file.name):
                 if file.name not in {"device.py", "notifications.py", "notification_services.py",
-                                     "recognition_services.py"}:
+                                     "recognition_services.py", "calibration_services.py"}:
                     self.assertNotIn("hass.services", text)
                 if file.name not in {"device.py", "notifications.py"}:
                     self.assertNotIn("async_call(", text)

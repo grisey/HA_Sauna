@@ -11,6 +11,7 @@ from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime, timedelta
 from math import isfinite
 from types import MappingProxyType
+from uuid import uuid4
 
 from .appearance import (
     APPEARANCE_CATALOG,
@@ -44,8 +45,10 @@ from .core.input_handoff import (
     OperationInput,
     TemperatureInput,
 )
+from .core import calibration
 from .core.models import Position, Session
 from .core.sensor_sample import ClimatePacket, SampleStream
+from .core.notification_exchange import NotificationEnvelope
 from .core.notification_recipients import ActorRef, RecipientAssignment, SessionRecipients
 from .notification_options import (
     CONF_NOTIFICATION_ASSIGNMENTS, decode_notification_assignments, encode_notification_assignments,
@@ -574,6 +577,15 @@ class SaunaRuntime:
         self.notification_transport = None
         self.notification_resolutions = ()
         self._notification_recipients = None
+        # Calibration runs of the current session (V31). They instruct and
+        # observe only; controller, recognizer and gang model never read them.
+        self._calibration_runs: list[calibration.CalibrationRun] = []
+        self._calibration_targets = {}
+        self._calibration_tasks = set()
+
+    @property
+    def calibration_runs(self) -> tuple[calibration.CalibrationRun, ...]:
+        return tuple(self._calibration_runs)
 
     @property
     def notification_recipients(self):
@@ -719,6 +731,7 @@ class SaunaRuntime:
             self.device.refresh(now)
         if self.device:
             await self.device.apply(now)
+        self._advance_calibration(now)
         self.notify()
 
     def _advance_presence_source(self, at):
@@ -1168,6 +1181,10 @@ class SaunaRuntime:
                     self._consume_presence_report(
                         report, qualified=True, defer_evaluation=True,
                     )
+                    for run in self._calibration_runs:
+                        run.observe_presence(
+                            report.effective_at, self._calibration_state(report),
+                        )
             if direct or selected:
                 # Catch-up recognition must use the report already received by
                 # this callback, without advancing past queued device inputs.
@@ -2051,6 +2068,208 @@ class SaunaRuntime:
                 )
             await self._cycle()
 
+    async def start_calibration(
+        self, *, actor: ActorRef, modules=None, module=None, resolutions=None,
+    ):
+        """Start a calibration session or one module of the running session (V31).
+
+        Without a session this starts an automatic session; its modules follow
+        after Bereit. A single module needs a running session and starts once
+        no gang is active. Instructions go to the starting user's Companion
+        targets with replies. Only one run is active at a time.
+        """
+        async with self.serialized():
+            self._require_open()
+            if resolutions is not None:
+                self.notification_resolutions = resolutions
+            targets = calibration.reply_targets(
+                actor.user_id if actor else None,
+                self.configuration.notification_assignments,
+                self.notification_resolutions,
+            )
+            if not targets:
+                raise ValueError(
+                    "Kein Companion-Ziel mit Antworten für den startenden Benutzer"
+                )
+            if self.notification_transport is None or self.notification_entry_id is None:
+                raise ValueError("Benachrichtigungstransport ist nicht verfügbar")
+            if any(run.active for run in self._calibration_runs):
+                raise ValueError("Es läuft bereits eine Kalibrierung")
+            presence = self.configuration_model.direct_presence
+            now = self._clock()
+            if module is not None:
+                if modules is not None:
+                    raise ValueError("module und modules schließen einander aus")
+                if self.session is None:
+                    raise ValueError("Ein einzelnes Modul startet in einer laufenden Sitzung")
+                selected, kind = calibration.select_modules((module,), presence=presence), "module"
+            else:
+                if self.session is not None:
+                    raise ValueError(
+                        "Eine Kalibriersitzung startet ohne laufende Sitzung; "
+                        "in einer laufenden Sitzung startet ein einzelnes Modul"
+                    )
+                selected, kind = calibration.select_modules(modules, presence=presence), "session"
+                if self.controller.control_mode != "automatic":
+                    self._set_control_mode("automatic", at=now, received_at=now)
+                self._apply_operation(True, actor=actor, received_at=now)
+            report = self.presence.external.get(
+                self.configuration.bindings.values.get("presence")
+            )
+            run = calibration.CalibrationRun(
+                uuid4().hex, kind, selected, actor.user_id, self.session.session_id, now,
+                has_presence=presence,
+                presence=[(now, self._calibration_state(report))] if presence else [],
+            )
+            self._calibration_runs.append(run)
+            self._calibration_targets[run.run_id] = targets
+            await self._cycle()
+            return {
+                "run_id": run.run_id,
+                "kind": kind,
+                "session_id": run.session_id,
+                "modules": [item.module_id for item in selected],
+                "targets": [
+                    {"transport": target.transport, "endpoint": target.endpoint}
+                    for target in targets
+                ],
+            }
+
+    async def cancel_calibration(self, *, actor: ActorRef | None = None):
+        async with self.serialized():
+            self._require_open()
+            run = next((item for item in self._calibration_runs if item.active), None)
+            if run is None:
+                raise ValueError("Es läuft keine Kalibrierung")
+            run.cancel(self._clock(), "cancelled", user_id=actor.user_id if actor else None)
+            await self._cycle()
+            return {"run_id": run.run_id}
+
+    async def calibration_reply(self, association):
+        """Pass a reply with a calibration action to its run; it never operates the sauna."""
+        reply = association.reply
+        action = reply.reply_key.value if reply.reply_key is not None else None
+        if not calibration.is_action(action) or association.notification is None:
+            return None
+        async with self.serialized():
+            if self.closed:
+                return None
+            run = next((item for item in self._calibration_runs if item.owns(action)), None)
+            if run is None:
+                return "unknown"
+            disposition, instructions = run.reply(
+                action, reply.observed_at or self._clock(), reply.actor.user_id,
+                message_id=association.notification.message_id,
+                restart_allowed=not any(
+                    item.active for item in self._calibration_runs if item is not run
+                ),
+            )
+            self._send_calibration(run, instructions)
+            await self._cycle()
+            return disposition
+
+    @staticmethod
+    def _calibration_state(report):
+        if report is None or not report.available:
+            return None
+        return {"present": True, "absent": False}.get(report.occupancy)
+
+    def _advance_calibration(self, now):
+        """Send due calibration messages; evaluate the runs of an ended session."""
+        if not self._calibration_runs:
+            return
+        session = self.session
+        for run in tuple(self._calibration_runs):
+            if session is None or run.session_id != session.session_id:
+                self._finish_calibration(run, now)
+                continue
+            self._send_calibration(run, run.advance(
+                now,
+                ready=self.controller.phase == "bereit",
+                gang_active=session.timeline.active is not None,
+            ))
+            self._archive_calibration(run)
+
+    def _finish_calibration(self, run, now):
+        """Doors and infusions are evaluated once the session has ended (V04)."""
+        run.cancel(now, "session_ended")
+        session = next(
+            (item for item in reversed(self.controller.completed_sessions)
+             if item.session_id == run.session_id),
+            None,
+        )
+        if session is not None:
+            result = self._evaluate_calibration(run, session, now)
+            run.records.append(
+                {"event": "evaluation", "run_id": run.run_id, "at": now, "result": result}
+            )
+            self._send_calibration(run, [run.evaluation_message(
+                now, calibration.evaluation_summary(result),
+            )])
+        self._archive_calibration(run)
+        self._calibration_runs.remove(run)
+        self._calibration_targets.pop(run.run_id, None)
+
+    def _evaluate_calibration(self, run, session, now):
+        timeline = session.timeline
+        retracted = {gang.gang_id for gang in timeline.retracted}
+        gangs = [
+            {"start": gang.started_at, "confirmed": gang.confirmed_at,
+             "end": gang.ended_at, "end_reason": gang.end_reason,
+             "infusions": len(gang.infusion_events)}
+            for gang in (*timeline.completed, *([timeline.active] if timeline.active else []))
+            if gang.gang_id not in retracted
+        ]
+        events = [(event.kind.value, event.effective_at) for event in timeline.processed
+                  if event.event_id.startswith("recognition:")]
+        until = session.ended_at or now
+        decisions = [(item.at, item.heat, item.reason) for item in self.controller.decisions
+                     if item.session_id == session.session_id]
+        heating = [(item.started_at, item.ended_at) for item in session.heating.intervals]
+        return calibration.evaluate(
+            run.steps, presence=run.presence, events=events, gangs=gangs,
+            gang_heat=calibration.gang_heat_intervals(decisions, heating, until),
+            until=until, has_presence=run.has_presence,
+        )
+
+    def _send_calibration(self, run, instructions):
+        """Register each copy now; its handoff runs outside the control lock."""
+        transport = self.notification_transport
+        if not instructions or transport is None or self.notification_entry_id is None:
+            return
+        loop = asyncio.get_running_loop()
+        for instruction in instructions:
+            for target in self._calibration_targets.get(run.run_id, ()):
+                message_id = uuid4().hex
+                payload = {"title": instruction.title, "message": instruction.message}
+                if instruction.actions:
+                    payload["data"] = {"actions": run.native_actions(instruction, message_id)}
+                envelope = NotificationEnvelope(
+                    message_id, f"calibration:{run.run_id}:{instruction.seq}",
+                    self.notification_entry_id, target, payload, run.session_id,
+                )
+                task = loop.create_task(self._dispatch_calibration(
+                    transport, run, instruction, envelope, transport.prepare_handoff(envelope),
+                ))
+                self._calibration_tasks.add(task)
+                task.add_done_callback(self._calibration_tasks.discard)
+
+    async def _dispatch_calibration(self, transport, run, instruction, envelope, prepared):
+        handoff = await transport.dispatch(prepared)
+        async with self._lock:
+            if self.closed:
+                return
+            run.handed_off(instruction, envelope.message_id, envelope.target,
+                           handoff.accepted, handoff.evidence)
+            self._archive_calibration(run)
+
+    def _archive_calibration(self, run):
+        records = run.take_records()
+        if self.archive is None:
+            return
+        for record in records:
+            self.archive.append("calibration", record["at"], record, run.session_id)
+
     async def tick(self, _at=None):
         # HA schedules each interval independently. Keep at most one current
         # tick waiting/running; it reads the current clock after taking the lock.
@@ -2174,6 +2393,10 @@ class SaunaRuntime:
             self.closed = True
             self._notification_recipients = None
             self._pending_device_inputs.clear()
+            for run in self._calibration_runs:
+                run.cancel(self._clock(), "integration_unloaded")
+            for task in tuple(self._calibration_tasks):
+                task.cancel()
             self.log.info("unload", "Sauna-Integration wird beendet; Ofen ausschalten.")
             callbacks, self._cleanup = self._cleanup, []
             for unsubscribe in reversed(callbacks):
@@ -2182,6 +2405,11 @@ class SaunaRuntime:
                 except Exception as error:
                     failures.append(error)
             if self.archive is not None:
+                try:
+                    for run in self._calibration_runs:
+                        self._archive_calibration(run)
+                except Exception as error:
+                    failures.append(error)
                 try:
                     self._persist_manual_heater_ends()
                 except Exception as error:

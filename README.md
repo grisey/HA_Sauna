@@ -36,6 +36,8 @@ und den [Download](https://www.hacs.dev/docs/use/repositories/dashboard/).
   Licht, Timer und Schutzabschaltung.
 - [Sitzungen aufbewahren und exportieren](docs/speicherung.md): Archiv,
   Löschung und Backup.
+- [Kalibrierung](docs/kalibrierung.md): Kalibrierlauf mit Anweisungen per
+  Benachrichtigung, Protokoll und Auswertung.
 
 Ergänzende Regeln: [Gangerkennung](docs/gangmodell.md),
 [Tür- und Feuchteerkennung](docs/erkennung.md), [Ofenkühlung](docs/ofenkuehlung.md)
