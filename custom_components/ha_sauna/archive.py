@@ -309,7 +309,7 @@ class Archive:
                     "SELECT session_id,payload FROM sessions WHERE entry_id=?",
                     (self.entry_id,),
                 ).fetchall():
-                    if not session_has_gangs(json.loads(row[1])):
+                    if not self._retained(db, row[0], json.loads(row[1])):
                         self._delete_session(db, row[0])
                 db.execute(
                     "DELETE FROM records WHERE entry_id=? AND "
@@ -321,6 +321,14 @@ class Archive:
                 self._prune_configurations(db)
                 if db.total_changes > before_cleanup:
                     self.revision = self._bump_revision(db)
+
+    def _retained(self, db, session_id, payload):
+        """A confirmed gang or a calibration protocol keeps a finished session (E-15)."""
+        return session_has_gangs(payload) or db.execute(
+            "SELECT 1 FROM records WHERE entry_id=? AND session_id=? "
+            "AND kind='calibration' LIMIT 1",
+            (self.entry_id, session_id),
+        ).fetchone() is not None
 
     def _configuration_column(self, db):
         """Permit read-only access to an unmodified schema-1 archive as well."""
@@ -520,7 +528,7 @@ class Archive:
                 return
             if kind == "session" and self.sessions_only:
                 data = json.loads(payload)
-                if data.get("ended_at") and not session_has_gangs(data):
+                if data.get("ended_at") and not self._retained(db, session_id, data):
                     self._delete_session(db, session_id)
                     self._prune_context(db, datetime.fromisoformat(at))
                     self._prune_configurations(db)

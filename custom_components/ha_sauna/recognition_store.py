@@ -1,12 +1,15 @@
 """Nachlernen der Erkennung: gelernte Größen, Sitzungsbelege und Rückmeldungen.
 
 Nach jeder abgeschlossenen Sitzung zieht ``RecognitionLearning`` aus deren
-Messwerten und eigenen Erkennungen Belege (``recognition_learning``).  Eine
-Rückmeldung „abgelehnt“ nimmt die Belege eines Ereignisses heraus,
-„bestätigt“ hebt eine Ablehnung auf.  Neu geschätzt werden die Modellgrößen
-erst auf Anforderung (Aktion „Erkennung nachlernen“): Belege der
-mitgelieferten Lernaufzeichnungen bleiben als Startwissen erhalten, die
-jüngsten Sitzungen ergänzen sie.  Neue Größen gelten ab der nächsten Sitzung.
+Messwerten und eigenen Erkennungen Belege (``recognition_learning``).  Sie
+werden als „nicht freigegeben“ gespeichert; erst die ausdrückliche Freigabe
+der Sitzung (Aktion „Sitzung für das Nachlernen freigeben“ oder Panel) lässt
+sie in eine Schätzung ein.  Eine Rückmeldung „abgelehnt“ nimmt die Belege
+eines Ereignisses heraus, „bestätigt“ hebt eine Ablehnung auf.  Neu geschätzt
+werden die Modellgrößen erst auf Anforderung (Aktion „Erkennung nachlernen“):
+Belege der mitgelieferten Lernaufzeichnungen bleiben als Startwissen
+erhalten, freigegebene Sitzungen ergänzen sie.  Neue Größen gelten ab der
+nächsten Sitzung.
 """
 
 from __future__ import annotations
@@ -25,6 +28,11 @@ STORAGE_VERSION = 1
 SESSION_LIMIT = 40
 
 
+def is_released(session: dict) -> bool:
+    """Freigabe einer gespeicherten Sitzung; Belege ohne Status (älterer Lernstand) sind nicht freigegeben."""
+    return session.get("released") is True
+
+
 class RecognitionLearning:
     """Lernstand einer Sauna-Instanz; Speicherung übernimmt der Aufrufer."""
 
@@ -33,15 +41,13 @@ class RecognitionLearning:
         self.sessions: list[dict] = list(data.get("sessions", []))
         self.rejected: set[str] = set(data.get("rejected", []))
         self.parameters: dict | None = data.get("parameters")
-        self.outside: dict | None = data.get("outside")
-        self.pending: int = int(data.get("pending", 0))   # sessions and feedback since the last estimate
+        self.pending: int = int(data.get("pending", 0))   # sessions, releases and feedback since the last estimate
 
     def as_dict(self) -> dict:
         return {
             "sessions": self.sessions,
             "rejected": sorted(self.rejected),
             "parameters": self.parameters,
-            "outside": self.outside,
             "pending": self.pending,
         }
 
@@ -52,8 +58,6 @@ class RecognitionLearning:
         """Belege einer abgeschlossenen Sitzung aufnehmen (nur mit beiden Messpositionen)."""
         if tuple(recognizer.channels) != CHANNELS:
             return False
-        if recognizer.outside is not None and not recognizer.outside_from_reference:
-            self.outside = {c: float(v) for c, v in zip(recognizer.channels, recognizer.outside)}
 
         def source(detection):
             return recognition_event_id(session_id, detection.kind, detection.effective_at)
@@ -65,14 +69,43 @@ class RecognitionLearning:
             return False
         events = [[source(d), Kind(d.kind).value, utc(d.effective_at).isoformat()] for d in recognizer.detections]
         self.sessions = [s for s in self.sessions if s["session"] != session_id]
-        self.sessions.append({"session": session_id, "events": events, "evidence": learning.compact(evidence)})
+        # new evidence starts unreleased: a release covers only the evidence it was given for
+        self.sessions.append({
+            "session": session_id, "started_at": utc(recognizer.origin).isoformat(), "released": False,
+            "events": events, "evidence": learning.compact(evidence),
+        })
         self.sessions = self.sessions[-SESSION_LIMIT:]
         self.pending += 1
         return True
 
+    def release(self, session_id: str, released: bool) -> bool:
+        """Gespeicherte Sitzung für das Nachlernen freigeben oder die Freigabe zurücknehmen."""
+        session = next((s for s in self.sessions if s["session"] == session_id), None)
+        if session is None:
+            raise KeyError(session_id)
+        if is_released(session) == released:
+            return False
+        session["released"] = released
+        self.pending += 1
+        return True
+
+    def overview(self) -> list[dict]:
+        """Gespeicherte Sitzungen, jüngste zuerst: Beginn, erkannte Türöffnungen und Aufgüsse, Freigabe."""
+        return [
+            {
+                "session_id": s["session"],
+                "started_at": s.get("started_at"),
+                "door_openings": sum(e[1] == Kind.DOOR_OPEN.value for e in s["events"]),
+                "infusions": sum(e[1] == Kind.INFUSION.value for e in s["events"]),
+                "released": is_released(s),
+            }
+            for s in reversed(self.sessions)
+        ]
+
     def estimate(self) -> dict:
-        """Modellgrößen aus Startwissen und Sitzungsbelegen ohne abgelehnte Ereignisse."""
-        evidence = learning.merge_evidence(shipped_evidence(), *[s["evidence"] for s in self.sessions])
+        """Modellgrößen aus Startwissen und freigegebenen Sitzungsbelegen ohne abgelehnte Ereignisse."""
+        released = [s["evidence"] for s in self.sessions if is_released(s)]
+        evidence = learning.merge_evidence(shipped_evidence(), *released)
         params = learning.estimate(evidence, base=shipped_parameters(), rejected=frozenset(self.rejected))
         self.parameters = params
         self.pending = 0
@@ -110,12 +143,14 @@ async def async_setup_recognition_learning(hass, entry, runtime) -> RecognitionL
     """Lernstand laden und an die Laufzeit binden: Belege nach jeder Sitzung, Schätzung auf Anforderung."""
     from homeassistant.helpers.storage import Store
 
+    from .environment import outside_air
+
     store = Store(hass, STORAGE_VERSION, f"ha_sauna.recognition.{entry.entry_id}")
     await hass.async_add_executor_job(shipped_parameters)      # file read outside the event loop
     state = RecognitionLearning(await store.async_load())
     lock = asyncio.Lock()
     runtime.recognition_parameters = state.current_parameters()
-    runtime.recognition_outside = state.outside
+    runtime.outside_air = lambda: outside_air(hass, runtime.configuration.bindings.values)
     runtime.recognition_learning = state
 
     async def update(work):
@@ -126,7 +161,6 @@ async def async_setup_recognition_learning(hass, entry, runtime) -> RecognitionL
             await store.async_save(state.as_dict())
             if not runtime.closed:
                 runtime.recognition_parameters = state.current_parameters()
-                runtime.recognition_outside = state.outside
 
     def learn(session_id, recognizer):
         def work():
@@ -141,14 +175,22 @@ async def async_setup_recognition_learning(hass, entry, runtime) -> RecognitionL
 
         await update(work)
 
+    async def release(session_id, released):
+        """Freigabe einer gespeicherten Sitzung setzen; unbekannte Sitzung: KeyError."""
+        def work():
+            return state.release(session_id, released)
+
+        await update(work)
+
     async def relearn() -> dict:
-        """Modellgrößen aus allen Belegen neu schätzen (gilt ab der nächsten Sitzung)."""
+        """Modellgrößen aus Startwissen und freigegebenen Belegen neu schätzen (gilt ab der nächsten Sitzung)."""
         summary = {}
 
         def work():
             summary["changes"] = state.pending
             state.estimate()
             summary["sessions"] = len(state.sessions)
+            summary["released"] = sum(is_released(s) for s in state.sessions)
             summary["rejected"] = len(state.rejected)
             return True
 
@@ -157,5 +199,6 @@ async def async_setup_recognition_learning(hass, entry, runtime) -> RecognitionL
 
     runtime.recognition_finished = learn
     runtime.recognition_feedback = feedback
+    runtime.recognition_release = release
     runtime.recognition_relearn = relearn
     return state

@@ -37,12 +37,20 @@ Im Automatikbetrieb gilt, von oben nach unten:
 6. Thermostat einschließlich Mindestheizzeit und Heizpause.
 
 Bei vorläufigen und durch Aufguss bestätigten Gängen gilt die Ganganforderung
-aus dem aktiven Gang. Bei Bestätigung durch einen qualifizierten Belegungszustand
-setzt sie weiterhin einen aktuellen verfügbaren qualifizierten Zustandsbeleg
-voraus. Unbekannter Zustand oder fehlende Verfügbarkeit nimmt nur diese
-zusätzliche Heizanforderung zurück, ohne den Gang zu beenden. Qualifizierte
-Abwesenheit allein beendet weder Gang noch Ganganforderung; das Gangende folgt
-den bestehenden Tür- und Lüftungsregeln.
+aus dem aktiven Gang. Ein vorläufiger Gang des Präsenzsensors fordert sie nur an,
+solange er [wirkt](gangmodell.md#vorläufiger-gang-im-sensorbetrieb). Bei einem
+durch Anwesenheit beim Türschluss eröffneten Gang setzt sie weiterhin einen
+aktuellen verfügbaren qualifizierten Zustandsbeleg voraus. Unbekannter Zustand
+oder fehlende Verfügbarkeit nimmt nur diese zusätzliche Heizanforderung zurück,
+ohne den Gang zu beenden.
+
+Im Sensorbetrieb endet die Ganganforderung, sobald der Sensor nach einer
+Türöffnung im laufenden Gang Abwesenheit meldet; danach regelt der Thermostat.
+Eine spätere Anwesenheitsmeldung stellt sie wieder her, ebenso ein neuer
+Türschluss mit Anwesenheit. Eine weitere Türöffnung allein stellt sie nicht
+wieder her. Abwesenheit ohne vorherige Türöffnung im Gang, etwa bei verdecktem
+Sensor, lässt die Ganganforderung bestehen. Abwesenheit beendet in keinem Fall
+den Gang; das Gangende folgt den bestehenden Tür- und Lüftungsregeln.
 
 Die Türhilfe fordert nach einem geeigneten Türschluss zusätzliches Heizen an.
 Dafür müssen Öffnung und anschließender Schluss zu demselben Vorgang

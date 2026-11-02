@@ -139,7 +139,7 @@ class LocalPreviewTests(unittest.TestCase):
         timeline = self.preview.c.session.timeline
         self.assertEqual(len(timeline.completed), 1)
         gang = timeline.completed[0]
-        self.assertEqual(gang.recognition_kind, Kind.PRESENCE_CONFIRMED)
+        self.assertEqual(gang.recognition_kind, Kind.PRESENCE_ENTRY)
         closure = next(event for event in timeline.processed
                        if event.event_id == gang.start_source_event_id)
         self.assertIsInstance(closure.door_close_evidence, DoorCloseEvidence)
@@ -384,7 +384,8 @@ class LocalPreviewTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             self.preview.action("/preview/finish_phase", body)
         self.assertEqual(len(self.preview.c.session.after_run_history), 1)
-        for action in ("door_open", "on", "door_close", "door_open", "off"):
+        # Presence at the closing opens the gang; the infusion confirms it.
+        for action in ("door_open", "on", "door_close", "infusion", "door_open", "off"):
             self.preview.action("/simulate", {"action": action})
         self.assertIsNotNone(self.preview.c.session.timeline.active)
         self.assertIsNone(self.preview.c.session.after_run)
@@ -512,7 +513,7 @@ class LocalPreviewTests(unittest.TestCase):
         completed = self.preview.archive(session_id)
         saved_gangs = completed["session"]["timeline"]["completed"]
         self.assertEqual(len(saved_gangs), 1)
-        self.assertEqual(saved_gangs[0]["recognition_kind"], Kind.PRESENCE_CONFIRMED)
+        self.assertEqual(saved_gangs[0]["recognition_kind"], Kind.PRESENCE_ENTRY)
         self.assertIsNotNone(completed["session"]["ended_at"])
         self.assertTrue(completed["records"])
         self.assertTrue(completed["phase_projection"]["intervals"])
@@ -771,6 +772,41 @@ class LocalPreviewTests(unittest.TestCase):
         self.assertEqual(self.preview.state()["manual_controls"]["light"]["observation"]["brightness_percent"], 0)
         self.preview.step(self.preview.c.parameters.values["light_transition_seconds"] + 1)
         self.assertEqual(self.preview.state()["manual_controls"]["light"]["observation"]["brightness_percent"], bright)
+
+    def test_calibration_uses_the_runtime_start_reply_and_cancel(self):
+        """W-2c: the preview drives the productive calibration paths."""
+        self.preview.reset("bereit")
+        self.assertEqual(self.preview.calibration_targets(), 1)
+        result = self.preview.action("/preview/calibration", {"module": "A1"})
+        self.assertEqual((result["kind"], result["modules"]), ("module", ["A1"]))
+        active = self.preview.state()["calibration"]["active"]
+        self.assertEqual(
+            {key: active[key] for key in ("module", "step", "steps", "waiting")},
+            {"module": "A1", "step": 1, "steps": 4, "waiting": "reply"})
+        self.assertEqual([item.payload["message"] for item in self.preview.transport.sent],
+                         ["Gang A1: hinein, Tür zu."])
+        for _ in range(4):
+            self.preview.action("/simulate", {"action": "calibration_reply"})
+        last = self.preview.state()["calibration"]["last"]
+        self.assertEqual((last["valid"], last["totals"]), (True, None))
+        self.preview.action("/simulate", {"action": "session_end"})
+        last = self.preview.state()["calibration"]["last"]
+        self.assertEqual(last["totals"]["gangs"]["reference"], 1)
+        self.assertTrue(self.preview.transport.sent[-1].payload["message"]
+                        .startswith("Kalibrierung ausgewertet."))
+
+        self.preview.reset("bereit")
+        self.preview.action("/preview/calibration", {"module": "A1"})
+        self.preview.action("/simulate", {"action": "role", "value": "user"})
+        self.assertEqual(set(self.preview.state()["calibration"]), {"active"})
+        self.preview.action("/simulate", {"action": "role", "value": "admin"})
+        self.preview.action("/preview/calibration/cancel", {})
+        last = self.preview.state()["calibration"]["last"]
+        self.assertEqual((last["valid"], last["reason_text"]), (False, "abgebrochen"))
+        self.preview.action("/simulate", {"action": "companion"})
+        self.assertEqual(self.preview.calibration_targets(), 0)
+        with self.assertRaisesRegex(ValueError, "Companion-Ziel"):
+            self.preview.action("/preview/calibration", {"module": "A1"})
 
     def test_minute_step_and_scenario_state_match_preview_controls(self):
         before = self.preview.now

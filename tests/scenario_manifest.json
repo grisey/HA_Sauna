@@ -2,9 +2,11 @@
   "schema_version": 2,
   "source_curves": "fixtures/scenarios/source_curves.json",
   "source_curves_sha256": "a3a98cc4f2a0f526bc40f5e45c86f3d6820390f250679c9fcaeb6f9e69a0c7e6",
+  "construction_file": "fixtures/scenarios/construction.json",
+  "construction_sha256": "23462fe0c2991e4b635c63db50b554b3a4cd898b992e1cb704d93da82daf4f87",
   "configuration_file": "fixtures/scenarios/configuration.json",
-  "configuration_sha256": "98e12ad65c4b0913d4cf44645ac483b689f7feff54e39c1db0defc407bd8c13b",
-  "configuration_policy": "Resolved parameters and programme values are bound separately from UI metadata. Declared construction inputs and measurements stay byte-bound; changed effective inputs require review before rebinding.",
+  "configuration_sha256": "0860a00844af542d3741c67740c94ecd1d68d4be4196e0679ef068e53a4c789c",
+  "configuration_policy": "The canonical defaults catalog is consumed once through its bound source reference; effective parameter changes require explicit input review; presentation-only changes do not rematerialize curves. Explicit user programme selections and historical replay configurations are independent data.",
   "scenarios": [
     {
       "id": "G01",
@@ -98,7 +100,7 @@
     {
       "id": "I03",
       "path": "fixtures/scenarios/I03.json",
-      "sha256": "73f081bfc859e9e584ec8735c1b32d89bf0e566605ba826d97309ee91700bec9",
+      "sha256": "89fb036b0e8c51f67fd8488096065ad4fa6154b80170d534378f49b5c47ee34f",
       "presence_sources": [
         "ha_presence"
       ],
@@ -216,7 +218,7 @@
     {
       "id": "I04",
       "path": "fixtures/scenarios/I04.json",
-      "sha256": "324a28431d87084d1c3fc4304ac4e2761c7615b6b0e53170f898294c70c50185",
+      "sha256": "040882995407d54542174e8cf2549fc23aa2dc7412f86e7263938f45f4e4d8d2",
       "presence_sources": [
         "ha_presence"
       ]
@@ -247,7 +249,5 @@
         "proxy"
       ]
     }
-  ],
-  "construction_file": "fixtures/scenarios/construction.json",
-  "construction_sha256": "23462fe0c2991e4b635c63db50b554b3a4cd898b992e1cb704d93da82daf4f87"
+  ]
 }

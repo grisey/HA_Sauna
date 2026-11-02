@@ -8,7 +8,7 @@ from types import SimpleNamespace
 import unittest
 from unittest.mock import AsyncMock, Mock, patch
 
-from test_cooling import at, controller
+from test_cooling import at
 from test_foundation import bindings, event, parameters
 
 from custom_components.ha_sauna.bindings import Bindings
@@ -372,7 +372,7 @@ class PresenceHandoverTests(unittest.TestCase):
         self.assertEqual(completed.gang_id, original.gang_id)
         self.assertEqual(completed.infusion_events, original.infusion_events)
         self.assertEqual(completed.ended_at, at(returned + 2))
-        self.assertEqual(completed.end_reason, "presence_exit")
+        self.assertEqual(completed.end_reason, "ventilation")
         self.assertIn(
             event("exit-ventilation", Kind.VENTILATION, returned + 2),
             c.session.timeline.processed,
@@ -408,15 +408,14 @@ class PresenceHandoverTests(unittest.TestCase):
                 self.assertEqual(c.session.timeline.active.started_at, at(closed))
                 self.assertEqual(
                     c.session.timeline.active.confirmation,
-                    Confirmation.CONFIRMED,
+                    Confirmation.PROVISIONAL,
                 )
                 self.assertEqual(
                     sum(e.kind == "gang_started" for e in c.consumer_events),
                     1,
                 )
-                self.assertEqual(
-                    sum(e.kind == "gang_confirmed" for e in c.consumer_events),
-                    1,
+                self.assertFalse(
+                    any(e.kind == "gang_confirmed" for e in c.consumer_events)
                 )
 
 

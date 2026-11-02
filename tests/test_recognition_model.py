@@ -15,7 +15,7 @@ from custom_components.ha_sauna.core.recognition import (
     ClimateRecognizer, InfusionUpdate, _OpenDoor, flattening_probability, recognition_event_id,
 )
 from custom_components.ha_sauna.core.recognition_model import (
-    CLOSED, DECAY, INFUSION, NM, OPEN, RECOVERY, SHIFT, ModelParameters, StateModel, closing_basis, closing_kink, opening_basis,
+    CLOSED, DECAY, INFUSION, NM, OPEN, OUTSIDE_TYPICAL, RECOVERY, SHIFT, ModelParameters, StateModel, closing_basis, closing_kink, opening_basis,
     opening_evident,
 )
 from custom_components.ha_sauna.core.recognition_learning import CLOSE_RATE_GRID, close_form
@@ -96,6 +96,7 @@ def cabin(n=900, dt=2.0, seed=0, door=None, infusion=None, lower_only=None):
 
 
 ROOM = {"Tu": 22.0, "Tl": 22.0, "Au": 8.0, "Al": 8.0}
+ROOM_AIR = {"temperature": 22.0, "absolute_humidity": 8.0}      # the same air as outside air of the recognizer
 
 
 def model_run(values, times, params):
@@ -185,7 +186,7 @@ def measurements(times, values, origin=T0):
 class RecognizerTests(unittest.TestCase):
     def run_recognizer(self, items, chunks, params=None):
         # the synthetic cabin is already warm: the surrounding air comes from an earlier session
-        recognizer = ClimateRecognizer(params or parameters(), T0, outside_reference=ROOM)
+        recognizer = ClimateRecognizer(params or parameters(), T0, outside=ROOM_AIR)
         size = max(1, len(items) // chunks)
         for start in range(0, len(items), size):
             part = items[start:start + size]
@@ -199,7 +200,7 @@ class RecognizerTests(unittest.TestCase):
     def test_one_reading_is_evaluated_with_all_its_channels(self):
         t, y = cabin(n=40)
         items = measurements(t, y)
-        recognizer = ClimateRecognizer(parameters(), T0, outside_reference=ROOM)
+        recognizer = ClimateRecognizer(parameters(), T0, outside=ROOM_AIR)
         for m in items:
             recognizer.accept(m)
         recognizer.advance(items[-1].received_at)
@@ -225,15 +226,19 @@ class RecognizerTests(unittest.TestCase):
         recognizer.accept(Measurement(Position.UPPER, Quantity.TEMPERATURE, 22.0, "22", "s", T0 - timedelta(hours=1)))
         self.assertEqual(recognizer._pending[0][0], T0)
 
-    def test_warm_start_uses_the_earlier_surrounding_air(self):
+    def test_outside_air_is_given_or_typical_never_the_cabin_at_the_start(self):
         t, y = cabin(n=60)
-        reference = {"Tu": 21.0, "Tl": 21.0, "Au": 8.0, "Al": 8.0}
-        recognizer = ClimateRecognizer(parameters(), T0, outside_reference=reference)
+        recognizer = ClimateRecognizer(parameters(), T0, outside={"temperature": -3.0, "absolute_humidity": None})
         for m in measurements(t, y):
             recognizer.accept(m)
         recognizer.advance(T0 + timedelta(seconds=float(t[-1])))
-        self.assertTrue(recognizer.outside_from_reference)
-        np.testing.assert_allclose(recognizer.outside, [21.0, 21.0, 8.0, 8.0])
+        typical = OUTSIDE_TYPICAL["absolute_humidity"]
+        np.testing.assert_allclose(recognizer.outside, [-3.0, -3.0, typical, typical])
+        self.assertEqual(recognizer.outside_source, {"temperature": "configured", "absolute_humidity": "typical"})
+        logged = [d for d in recognizer.decisions if d["event"] == "outside_air"]
+        self.assertEqual(logged[0]["source"]["temperature"], "configured")
+        plain = ClimateRecognizer(parameters(), T0)
+        np.testing.assert_allclose(plain.outside, [OUTSIDE_TYPICAL["temperature"]] * 2 + [typical] * 2)
 
     def test_episodes_are_confirmed_by_evidence_ratio_and_timed_at_their_first_step(self):
         def row(closed=0.0, opened=0.0, infusion=0.0, decay=0.0, recovery=0.0):
@@ -348,6 +353,17 @@ class RecognizerTests(unittest.TestCase):
         door = _OpenDoor(start=0, confirmed=5)
         self.assertAlmostEqual((cold._closing_time(door, 80) - T0).total_seconds(), 120.0, delta=4.0)
 
+    def test_a_heater_switched_off_shortly_before_still_heats_the_cabin(self):
+        # walls and stones keep heating after switching off: the cooling cabin counts only after the learned
+        # return time of the temperature drift
+        params = parameters()
+        params["drift_tau"] = [600.0, 600.0, None, None]
+        recognizer = ClimateRecognizer(params, T0)
+        recognizer._grid_t = [0.0, 300.0, 900.0]
+        recognizer.report_heating(T0, True)
+        recognizer.report_heating(T0 + timedelta(seconds=100), False)
+        self.assertEqual(recognizer._heater_off([0, 1, 2]), [False, False, True])
+
     def test_a_new_opening_or_an_infusion_ends_the_comparison(self):
         # closing at 120 s, recovery confirmed at 160 s, then the cabin changes again at 200 s
         t = np.arange(0.0, 260.0, 2.0)
@@ -395,10 +411,33 @@ class RecognizerTests(unittest.TestCase):
         self.assertEqual(form["atypical"], ["S@odd"])
         self.assertEqual(form["closings"], 4)
 
+    def test_a_closing_without_recovery_ends_the_opening(self):
+        # R05 99:21–99:33: the heater was switched off shortly before; after the short opening the cabin keeps
+        # cooling slowly instead of recovering.  The opening ends into the closed cabin all the same.
+        root = Path(__file__).resolve().parent
+        params = json.loads((root.parent / "custom_components/ha_sauna/recognition_parameters.json").read_text())
+        roles = {"upper_temperature": (Position.UPPER, Quantity.TEMPERATURE),
+                 "upper_humidity": (Position.UPPER, Quantity.HUMIDITY),
+                 "lower_temperature": (Position.LOWER, Quantity.TEMPERATURE),
+                 "lower_humidity": (Position.LOWER, Quantity.HUMIDITY)}
+        recognizer = ClimateRecognizer(params, T0)
+        for line in gzip.open(root / "fixtures/replay/R05.samples.jsonl.gz"):
+            row = json.loads(line)
+            if row["role"] not in roles or not 85 * 60 <= row["t"] <= 105 * 60:
+                continue
+            at = T0 + timedelta(seconds=row["t"])
+            recognizer.accept(Measurement(*roles[row["role"]], float(row["value"]), str(row["value"]), "s", at))
+            recognizer.advance(at - timedelta.resolution)
+        times = [((d.kind, (d.effective_at - T0).total_seconds())) for d in recognizer.detections]
+        opened = [t for kind, t in times if kind is Kind.DOOR_OPEN and abs(t - (99 * 60 + 21)) <= 30]
+        closed = [t for kind, t in times if kind is Kind.DOOR_CLOSE and t > opened[0]]
+        self.assertTrue(closed)
+        self.assertLessEqual(abs(closed[0] - (99 * 60 + 33)), 30)
+
     def test_no_infusion_before_anyone_entered(self):
         # until an opening is confirmed nobody is inside: the infusion state cannot be entered
         t, y = cabin(n=600, infusion=600.0)
-        recognizer = ClimateRecognizer(parameters(), T0, outside_reference=ROOM)
+        recognizer = ClimateRecognizer(parameters(), T0, outside=ROOM_AIR)
         for m in measurements(t[:40], y[:40]):
             recognizer.accept(m)
         recognizer.advance(T0 + timedelta(seconds=float(t[39])))

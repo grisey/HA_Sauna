@@ -93,9 +93,74 @@ recognition_feedback:
       name: Sitzung
       selector:
         text:
+recognition_release:
+  name: Sitzung für das Nachlernen freigeben
+  description: Gibt eine gespeicherte Sitzung für das Nachlernen frei oder nimmt die Freigabe zurück. Gespeicherte Sitzungen sind zunächst nicht freigegeben; nur freigegebene gehen in das nächste Nachlernen ein.
+  fields:
+    entry_id:
+      name: Sauna-Instanz
+      required: true
+      selector:
+        config_entry:
+          integration: ha_sauna
+    session_id:
+      name: Sitzung
+      required: true
+      selector:
+        text:
+    released:
+      name: Freigegeben
+      required: true
+      selector:
+        boolean:
 recognition_learn:
   name: Erkennung nachlernen
-  description: Schätzt die Erkennungsgrößen aus Startwissen, gespeicherten Sitzungsbelegen und Rückmeldungen neu. Die neuen Größen gelten ab der nächsten Sitzung.
+  description: Schätzt die Erkennungsgrößen aus Startwissen, freigegebenen Sitzungsbelegen und Rückmeldungen neu. Die neuen Größen gelten ab der nächsten Sitzung.
+  fields:
+    entry_id:
+      name: Sauna-Instanz
+      required: true
+      selector:
+        config_entry:
+          integration: ha_sauna
+start_calibration:
+  name: Kalibrierung starten
+  description: Ohne laufende Sitzung startet eine Kalibriersitzung im Automatikbetrieb; ihre Module folgen nach Bereit. In einer laufenden Sitzung startet ein einzelnes Modul, sobald kein Gang aktiv ist. Die Anweisungen gehen an die Companion-Ziele mit Antworten des startenden Benutzers.
+  fields:
+    entry_id:
+      name: Sauna-Instanz
+      required: true
+      selector:
+        config_entry:
+          integration: ha_sauna
+    module:
+      name: Einzelnes Modul
+      description: Nur in einer laufenden Sitzung.
+      selector:
+        select:
+          options:
+            - P
+            - A1
+            - A2
+            - A3
+            - CB
+            - D
+    modules:
+      name: Module der Kalibriersitzung
+      description: Nur ohne laufende Sitzung; ohne Angabe alle Module, ohne Präsenzsensor ohne Modul P.
+      selector:
+        select:
+          multiple: true
+          options:
+            - P
+            - A1
+            - A2
+            - A3
+            - CB
+            - D
+cancel_calibration:
+  name: Kalibrierung abbrechen
+  description: Beendet die laufende Kalibrierung. Sitzung und Saunabetrieb laufen weiter.
   fields:
     entry_id:
       name: Sauna-Instanz

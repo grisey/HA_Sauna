@@ -3,6 +3,7 @@
 Der HA-Manager und Entitätsbestand sind isolierte Testdoubles. Schema-, Flow-
 und Selektorklassen stammen aus dem tatsächlich installierten Home Assistant.
 """
+import asyncio
 import importlib.util
 import os
 from pathlib import Path
@@ -87,6 +88,17 @@ class AdapterTests(unittest.IsolatedAsyncioTestCase):
         self.temp = tempfile.TemporaryDirectory()
         self.hass.config = SimpleNamespace(
             path=lambda *parts: str(Path(self.temp.name).joinpath(*parts)), components=set(),
+            config_dir=self.temp.name,
+        )
+        # Setup binds the recognition learning store (5eba4cf): HA storage,
+        # executor jobs and background tasks of the real loop.
+        loop = asyncio.get_running_loop()
+        self.hass.loop = loop
+        self.hass.async_add_executor_job = (
+            lambda target, *args: loop.run_in_executor(None, target, *args)
+        )
+        self.hass.async_create_background_task = (
+            lambda coroutine, name: loop.create_task(coroutine, name=name)
         )
 
     async def asyncTearDown(self):
@@ -746,12 +758,10 @@ class AdapterTests(unittest.IsolatedAsyncioTestCase):
         self.entry.options["presence_source"] = "ha_presence"
         with patch.object(type(flow), "config_entry", new_callable=PropertyMock, return_value=self.entry):
             menu = await flow.async_step_sensors()
-            self.assertNotIn("parameters_presence_strong", menu["menu_options"])
+            # Door and person-signal thresholds have no settings group since 5eba4cf.
             self.assertNotIn("parameters_presence_evaluation", menu["menu_options"])
-            self.assertIn("parameters_door", menu["menu_options"])
-            rejected = await flow.async_step_parameters_presence_strong()
+            self.assertIn("parameters_presence_direct", menu["menu_options"])
             confirmation = await flow.async_step_parameters_presence_evaluation()
-        self.assertEqual(rejected["reason"], "settings_unavailable")
         self.assertEqual(confirmation["reason"], "settings_unavailable")
 
     async def test_panel_fields_cannot_be_submitted_as_basic_configuration(self):

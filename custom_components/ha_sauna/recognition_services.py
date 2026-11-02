@@ -1,4 +1,4 @@
-"""Rückmeldung zu erkannten Ereignissen und Nachlernen auf Anforderung."""
+"""Rückmeldung zu erkannten Ereignissen, Freigabe von Sitzungen und Nachlernen auf Anforderung."""
 
 import voluptuous as vol
 from homeassistant.auth.permissions.const import POLICY_CONTROL
@@ -12,6 +12,7 @@ from .const import DOMAIN
 from .core.timeline import Kind
 
 SERVICE_FEEDBACK = "recognition_feedback"
+SERVICE_RELEASE = "recognition_release"
 SERVICE_LEARN = "recognition_learn"
 FEEDBACK_KINDS = (Kind.DOOR_OPEN.value, Kind.DOOR_CLOSE.value, Kind.VENTILATION.value,
                   Kind.VENTILATION_COMPLETE.value, Kind.INFUSION.value)
@@ -27,6 +28,13 @@ FEEDBACK_SCHEMA = vol.Schema(
 )
 
 
+RELEASE_SCHEMA = vol.Schema(
+    {
+        vol.Required("entry_id"): str,
+        vol.Required("session_id"): vol.All(str, vol.Length(min=1)),
+        vol.Required("released"): cv.boolean,
+    }
+)
 LEARN_SCHEMA = vol.Schema({vol.Required("entry_id"): str})
 
 
@@ -67,6 +75,16 @@ def register(hass):
         await runtime.recognition_feedback(event_id, call.data["verdict"])
         return {"event_id": event_id, "verdict": call.data["verdict"]}
 
+    async def release(call):
+        runtime = await _runtime(hass, call)
+        if runtime.recognition_release is None:
+            raise HomeAssistantError("Nachlernen ist nicht verfügbar")
+        try:
+            await runtime.recognition_release(call.data["session_id"], call.data["released"])
+        except KeyError as error:
+            raise HomeAssistantError("Keine gespeicherte Sitzung mit Lernbelegen gefunden") from error
+        return {"session_id": call.data["session_id"], "released": call.data["released"]}
+
     async def learn(call):
         runtime = await _runtime(hass, call)
         if runtime.recognition_relearn is None:
@@ -74,6 +92,8 @@ def register(hass):
         return await runtime.recognition_relearn()
 
     hass.services.async_register(DOMAIN, SERVICE_FEEDBACK, feedback, schema=FEEDBACK_SCHEMA,
+                                 supports_response=SupportsResponse.OPTIONAL)
+    hass.services.async_register(DOMAIN, SERVICE_RELEASE, release, schema=RELEASE_SCHEMA,
                                  supports_response=SupportsResponse.OPTIONAL)
     hass.services.async_register(DOMAIN, SERVICE_LEARN, learn, schema=LEARN_SCHEMA,
                                  supports_response=SupportsResponse.OPTIONAL)

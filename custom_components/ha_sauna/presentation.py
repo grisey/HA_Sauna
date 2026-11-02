@@ -299,6 +299,9 @@ def public_state(result):
             result[key] = public_session(result[key])
     if "phase_projection" in result:
         result["phase_projection"] = public_phase_projection(result["phase_projection"])
+    if "calibration" in result:
+        # The control hint is public; results stay with the protocol (administrators).
+        result["calibration"] = {"active": result["calibration"]["active"]}
     for key in ("rule_inputs", "heating_observation", "decision", "faults", "protection",
                 "inhibits", "archive_error", "detection_channels", "detector_trace", "presence"):
         result.pop(key, None)

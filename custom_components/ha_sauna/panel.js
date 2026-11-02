@@ -415,6 +415,7 @@ const events = {
   ventilation_complete: "Vollständiges Lüften bestätigt",
   operation_off: "Betrieb ausgeschaltet",
   confirmation_expired: "Vorläufigen Gang aufgehoben",
+  presence_entry: "Gangbeginn vorläufig · Anwesenheit beim Türschluss",
   presence_confirmed: "Gangbeginn · Präsenz nach Türvorgang",
   presence_ended: "Gangende · Abwesenheit und Durchlüften",
   presence_close_ended: "Gangende · Türschluss ohne dauerhafte Anwesenheit",
@@ -5673,6 +5674,12 @@ class SaunaPanel extends HTMLElement {
         this.archiveRevision = undefined;
         this.archiveAdminSessions = null;
         this.archiveDeletePending = null;
+        this.recognitionSessions = null;
+        this.recognitionSessionsMessage = "";
+        this.calibrationTargets = undefined;
+        this.calibrationSelection = null;
+        this.calibrationModule = null;
+        this.calibrationMessage = "";
         this.historyLoad = null;
         this.shown = null;
         this.chartDataIndex = null;
@@ -5789,6 +5796,12 @@ class SaunaPanel extends HTMLElement {
     });
     this.shadowRoot.addEventListener("change", (e) => {
       if (!this.state) return;
+      if (e.target.matches("[data-calibration-module]"))
+        this.selectCalibrationModule(
+          e.target.dataset.calibrationModule,
+          e.target.checked,
+        );
+      if (e.target.id === "calibration-module") this.calibrationModule = e.target.value;
       if (e.target.matches("[data-appearance-instrument]"))
         this.updateAppearanceField(e.target);
       if (e.target.matches("[data-manual-light-value]"))
@@ -6838,6 +6851,10 @@ class SaunaPanel extends HTMLElement {
       )
       .join("");
     const alert = notices ? `<div class="notice" role="alert">${notices}</div>` : "";
+    const calibrationRun = s.calibration?.active;
+    const calibrationHint = calibrationRun
+      ? `<p class="muted calibration-hint" role="status">Kalibrierung läuft: ${esc(this.calibrationProgress(calibrationRun, { waiting: false }))}</p>`
+      : "";
     const finishPhase =
       session?.after_run && s.operation_enabled && !manualMode
         ? `<button class="tile operation" data-action="end-phase:after_run:${esc(encodeURIComponent(session.after_run.phase_id))}" ${permissions.control ? "" : "disabled"}>Kühlung beenden</button>`
@@ -7056,6 +7073,7 @@ class SaunaPanel extends HTMLElement {
         stateLine: manualMode
           ? `<div class="state-line"><div class="phase-time"><strong class="phase" aria-label="Temperaturregelung ${heater.manual === true ? "Ein" : "Aus"}">${heater.manual === true ? "Ein" : "Aus"}</strong></div></div>`
           : stateLine,
+        calibrationHint,
         overviewLightTimer,
         operation,
         temperatureAutomation,
@@ -7337,6 +7355,7 @@ class SaunaPanel extends HTMLElement {
     const {
       modeControls,
       stateLine,
+      calibrationHint,
       overviewLightTimer,
       operation,
       temperatureAutomation,
@@ -7359,7 +7378,7 @@ class SaunaPanel extends HTMLElement {
       ? `<div class="control-status-row">${stateLine}${modeControls}</div>`
       : stateLine;
     const actions = operation ? `<div class="tiles">${operation}</div>` : "";
-    return `<div class="control-overview"><div class="dashboard"><div class="card control-main">${status}${overviewLightTimer}${actions}${temperatureAutomation}${controls}${alert}</div><div class="card gauge-card"><div class="gauges" style="--round-count:${Math.max(1, roundCount)}"><div class="measurement-instrument" data-instrument="temperature" data-instrument-style="${this.instrumentStyle("temperature")}"><h2>Temperatur</h2>${temperatureGauge}</div><div class="measurement-instrument" data-instrument="humidity" data-instrument-style="${this.instrumentStyle("humidity")}"><h2>Luftfeuchte</h2>${humidityGauge}</div>${lightGauge}</div>${weather}</div></div></div>`;
+    return `<div class="control-overview"><div class="dashboard"><div class="card control-main">${status}${calibrationHint || ""}${overviewLightTimer}${actions}${temperatureAutomation}${controls}${alert}</div><div class="card gauge-card"><div class="gauges" style="--round-count:${Math.max(1, roundCount)}"><div class="measurement-instrument" data-instrument="temperature" data-instrument-style="${this.instrumentStyle("temperature")}"><h2>Temperatur</h2>${temperatureGauge}</div><div class="measurement-instrument" data-instrument="humidity" data-instrument-style="${this.instrumentStyle("humidity")}"><h2>Luftfeuchte</h2>${humidityGauge}</div>${lightGauge}</div>${weather}</div></div></div>`;
   }
   renderDetailView(view) {
     if (this.state?.configuration_model?.regulation_causes?.length === 0) {
@@ -9981,6 +10000,7 @@ class SaunaPanel extends HTMLElement {
             {
               door_open: "Türöffnung erkannt",
               door_close: "Türschluss erkannt",
+              presence_entry: "Türschluss mit Anwesenheit · vorläufig",
               presence_confirmed: "Türvorgang abgeschlossen · Präsenz belegt",
               presence_ended: "Austrittsöffnung · Abwesenheit und Durchlüften belegt",
               presence_close_ended: "Türschluss · keine dauerhafte Sensoranwesenheit",
@@ -14940,7 +14960,7 @@ class SaunaPanel extends HTMLElement {
       const contents = {
         programs: `<div class="card settings-programs"><h2>Programme</h2><div id="program-library"></div></div><div class="card"><h2>Start über Taster oder Betriebsschalter</h2><div id="button-settings"></div></div>`,
         appearance: admin ? this.appearanceSettingsMarkup() : "",
-        maintenance: `<div class="card"><h2>Sitzungsarchiv ${this.infoButton("archive-retention", "Gespeicherte Sitzungen", "Nur Sitzungen mit bestätigtem Saunagang bleiben im Archiv.")}</h2><button class="confirm" data-action="export">Archiv als ZIP herunterladen</button><div id="archive-management"></div></div><div class="card"><h2>Protokollierung ${this.infoButton("logging", "Protokollumfang", "Home-Assistant-Protokoll, unabhängig vom Sitzungsarchiv. Betriebsereignisse enthalten auch Fehler und Warnungen; Diagnose ergänzt Messwerte und Erkennungsprüfungen.")}</h2><div class="row"><label for="log-level">Umfang</label><select id="log-level"><option value="ERROR">Fehler</option><option value="INFO">Betriebsereignisse</option><option value="DEBUG">Detaillierte Diagnose</option></select><button data-action="logging" class="confirm">Übernehmen</button></div><a href="/config/logs">Home-Assistant-Protokoll öffnen</a></div><div class="card"><h2>Standards und Werkseinstellungen</h2><p>Vorschau für alle gespeicherten Felder einschließlich ausgeblendeter Einstellungen. Programmbibliothek und Gerätezuordnung werden in ihren eigenen Bereichen verwaltet.</p>${this.standardMenuButton({ all: true }, "Standards für alle Bereiche")}</div>`,
+        maintenance: `<div class="card"><h2>Sitzungsarchiv ${this.infoButton("archive-retention", "Gespeicherte Sitzungen", "Nur Sitzungen mit bestätigtem Saunagang oder mit Kalibrierprotokoll bleiben im Archiv.")}</h2><button class="confirm" data-action="export">Archiv als ZIP herunterladen</button><div id="archive-management"></div></div><div class="card"><h2>Lernsitzungen ${this.infoButton("recognition-learning", "Freigabe für das Nachlernen", "Nach jeder Sitzung werden Lernbelege der Erkennung gespeichert, zunächst nicht freigegeben. Nur freigegebene Sitzungen gehen in die Aktion „Erkennung nachlernen“ ein.")}</h2><div id="recognition-learning"></div></div><div class="card"><h2>Kalibrierung ${this.infoButton("calibration", "Kalibrierung", "Anweisungen kommen als Companion-Benachrichtigung an den startenden Benutzer; jede Antwort schließt das Zeitfenster ihres Vorgangs. Steuerung, Erkennung und Gangmodell bleiben unverändert.")}</h2><div id="calibration"></div></div><div class="card"><h2>Protokollierung ${this.infoButton("logging", "Protokollumfang", "Home-Assistant-Protokoll, unabhängig vom Sitzungsarchiv. Betriebsereignisse enthalten auch Fehler und Warnungen; Diagnose ergänzt Messwerte und Erkennungsprüfungen.")}</h2><div class="row"><label for="log-level">Umfang</label><select id="log-level"><option value="ERROR">Fehler</option><option value="INFO">Betriebsereignisse</option><option value="DEBUG">Detaillierte Diagnose</option></select><button data-action="logging" class="confirm">Übernehmen</button></div><a href="/config/logs">Home-Assistant-Protokoll öffnen</a></div><div class="card"><h2>Standards und Werkseinstellungen</h2><p>Vorschau für alle gespeicherten Felder einschließlich ausgeblendeter Einstellungen. Programmbibliothek und Gerätezuordnung werden in ihren eigenen Bereichen verwaltet.</p>${this.standardMenuButton({ all: true }, "Standards für alle Bereiche")}</div>`,
         personal: `<div class="card"><h2>Persönliche Startseite ${this.infoButton("start-page", "Gültigkeit der Startseite", "Gilt nur für das aktuelle Home-Assistant-Profil.")}</h2><button data-action="default-page" class="confirm">Als Startseite festlegen</button><p id="start-page-status" class="muted" role="status"></p></div>`,
       };
       this.$("#settings").innerHTML =
@@ -14977,6 +14997,10 @@ class SaunaPanel extends HTMLElement {
       this.drawAppearanceStatus();
       this.syncAppearanceEditor();
       this.drawArchiveManagement();
+      this.drawRecognitionLearning();
+      this.drawCalibration();
+      if (state.permissions.control && this.calibrationTargets === undefined)
+        this.runPanelAction(() => this.loadCalibrationTargets());
     }
     this.renderProgramLibrary();
     this.drawButtonProgram();
@@ -15052,6 +15076,207 @@ class SaunaPanel extends HTMLElement {
       this.archiveAdminBusy = false;
       this.drawArchiveManagement();
     }
+  }
+  drawRecognitionLearning() {
+    if (!this.state?.permissions?.admin || !this.$("#recognition-learning")) return;
+    const busy = this.recognitionSessionsBusy ? "disabled" : "",
+      sessions = this.recognitionSessions,
+      label = (session) =>
+        session.started_at
+          ? `Sitzung vom ${esc(this.when(session.started_at))}`
+          : `Sitzung ${esc(session.session_id)}`;
+    this.updateMarkup(
+      "#recognition-learning",
+      `<div class="row"><button data-action="learning-list" ${busy}>Lernsitzungen anzeigen</button></div>${sessions ? (sessions.length ? sessions.map((session) => `<div class="row"><span>${label(session)}: ${esc(session.door_openings)} Türöffnungen, ${esc(session.infusions)} Aufgüsse, ${session.released ? "freigegeben" : "nicht freigegeben"}</span><button data-action="learning-${session.released ? "withdraw" : "release"}:${esc(encodeURIComponent(session.session_id))}" ${busy}>${session.released ? "Freigabe zurücknehmen" : "Freigeben"}</button></div>`).join("") : "<p>Keine gespeicherten Lernbelege.</p>") : ""}<p role="status">${esc(this.recognitionSessionsMessage || "")}</p>`,
+    );
+  }
+  async loadRecognitionSessions() {
+    if (!this.state?.permissions?.admin || this.recognitionSessionsBusy) return;
+    const entry = this.entry,
+      generation = this.generation;
+    this.recognitionSessionsBusy = true;
+    this.recognitionSessionsMessage = "";
+    this.drawRecognitionLearning();
+    try {
+      const sessions = await this.api(`/${entry}/recognition/sessions`);
+      if (entry === this.entry && generation === this.generation)
+        this.recognitionSessions = sessions;
+    } finally {
+      this.recognitionSessionsBusy = false;
+      this.drawRecognitionLearning();
+    }
+  }
+  async releaseRecognitionSession(sessionId, released) {
+    if (!this.state?.permissions?.admin || this.recognitionSessionsBusy) return;
+    const entry = this.entry,
+      generation = this.generation;
+    this.recognitionSessionsBusy = true;
+    this.drawRecognitionLearning();
+    try {
+      const sessions = await this.api(`/${entry}/recognition/sessions`, "POST", {
+        session_id: sessionId,
+        released,
+      });
+      if (entry === this.entry && generation === this.generation) {
+        this.recognitionSessions = sessions;
+        this.recognitionSessionsMessage = released
+          ? "Sitzung für das Nachlernen freigegeben."
+          : "Freigabe zurückgenommen.";
+      }
+    } finally {
+      this.recognitionSessionsBusy = false;
+      this.drawRecognitionLearning();
+    }
+  }
+  drawCalibration() {
+    if (!this.state?.permissions?.admin || !this.$("#calibration")) return;
+    const state = this.state,
+      calibration = state.calibration || {},
+      run = calibration.active,
+      last = calibration.last,
+      offered = calibration.modules || [],
+      blocked = calibration.blocked,
+      busy = this.calibrationBusy,
+      targets = this.calibrationTargets;
+    // A running calibration shows its own status instead of a lock reason.
+    const locked = !state.permissions.control
+      ? "Für die Kalibrierung fehlt die Steuerberechtigung."
+      : run
+        ? ""
+        : targets === 0
+          ? "Kein Ziel „Companion: Daten und Antworten“ für diesen Benutzer."
+          : targets === null
+            ? "Die Companion-Ziele konnten nicht geprüft werden."
+            : targets === undefined
+              ? "Companion-Ziele werden geprüft …"
+              : blocked
+                ? `Ein jetzt gestartetes Modul wäre sofort ungültig: ${blocked.reason_text}.`
+                : "";
+    const disabled = locked || busy ? "disabled" : "";
+    let start;
+    if (state.session) {
+      const choice = this.calibrationModuleChoice(offered);
+      start = `<div class="row"><label for="calibration-module">Modul</label><select id="calibration-module" ${disabled}>${offered.map((module) => `<option value="${esc(module.id)}" ${module.id === choice ? "selected" : ""}>${esc(module.label)} – ${esc(module.title)}</option>`).join("")}</select><button class="confirm" data-action="calibration-start" ${disabled}>Modul starten</button></div><p class="muted">Das Modul startet, sobald kein Gang aktiv ist.</p>`;
+    } else {
+      const chosen = this.calibrationSessionChoice(offered);
+      start = `<div class="row" role="group" aria-label="Module der Kalibriersitzung">${offered.map((module) => `<label><input type="checkbox" data-calibration-module="${esc(module.id)}" ${chosen.includes(module.id) ? "checked" : ""} ${disabled}> ${esc(module.label)} – ${esc(module.title)}</label>`).join("")}</div><div class="row"><button class="confirm" data-action="calibration-start" ${disabled || (chosen.length ? "" : "disabled")}>Kalibriersitzung starten</button></div><p class="muted">Startet den Saunabetrieb im Automatikbetrieb. Die Module folgen nach Bereit.</p>`;
+    }
+    const status = run
+      ? `<p><strong>${run.kind === "session" ? "Kalibriersitzung" : "Einzelnes Modul"} läuft:</strong> ${esc(this.calibrationProgress(run))}</p><div class="row"><button class="stop" data-action="calibration-cancel" ${state.permissions.control && !busy ? "" : "disabled"}>Kalibrierung abbrechen</button></div><p class="muted">Nach dem Abbruch ist der Lauf ungültig und wird nicht ausgewertet.</p>`
+      : last
+        ? `<p><strong>Letztes Ergebnis${last.ended_at ? ` vom ${esc(this.when(last.ended_at))}` : ""}:</strong> ${last.valid ? "gültig" : `ungültig, ${esc(last.reason_text || last.reason || "")}`}</p>${last.valid ? `<p>${esc(this.calibrationTotals(last.totals))}</p>` : ""}<p class="muted">Die Einzelheiten stehen im Archiv der Sitzung.</p>`
+        : "";
+    this.updateMarkup(
+      "#calibration",
+      `${status}${run ? "" : start}${locked ? `<p class="muted">${esc(locked)}</p>` : ""}${!run && state.permissions.control && (targets === 0 || targets === null) ? `<div class="row"><button data-action="calibration-targets" ${this.calibrationTargetsLoading ? "disabled" : ""}>Companion-Ziele erneut prüfen</button></div>` : ""}<p role="status">${esc(this.calibrationMessage || "")}</p>`,
+    );
+  }
+  calibrationProgress(run, { waiting = true } = {}) {
+    const reason = `wartet auf ${
+      {
+        ready: "Bereit",
+        gang_end: "Gangende",
+        reply: "Antwort",
+        hold: "Wartezeit",
+      }[run.waiting] || run.waiting
+    }`;
+    if (run.step == null) return `${run.module}, ${reason}`;
+    return `${run.module}, Schritt ${run.step} von ${run.steps}${waiting ? `, ${reason}` : ""}`;
+  }
+  calibrationTotals(totals) {
+    if (!totals) return "Die Auswertung der Erkennung folgt nach dem Sitzungsende.";
+    const { gangs, events } = totals;
+    return `Gänge ${gangs.found} von ${gangs.reference} gefunden, ${gangs.additional} zusätzlich. Türen und Aufgüsse ${events.found} von ${events.reference} im Fenster gefunden, ${events.outside} außerhalb des Fensters zugeordnet, ${events.missing} fehlen, ${events.additional} zusätzlich. Anwesenheit bei leerer Kabine: ${totals.empty_cabin_reports}-mal.`;
+  }
+  selectCalibrationModule(id, chosen) {
+    const selection = new Set(
+      this.calibrationSessionChoice(this.state?.calibration?.modules || []),
+    );
+    if (chosen) selection.add(id);
+    else selection.delete(id);
+    this.calibrationSelection = [...selection];
+    this.drawCalibration();
+  }
+  calibrationSessionChoice(offered) {
+    const ids = offered.map((module) => module.id);
+    return this.calibrationSelection
+      ? ids.filter((id) => this.calibrationSelection.includes(id))
+      : ids;
+  }
+  calibrationModuleChoice(offered) {
+    return offered.some((module) => module.id === this.calibrationModule)
+      ? this.calibrationModule
+      : offered[0]?.id;
+  }
+  async loadCalibrationTargets() {
+    const permissions = this.state?.permissions;
+    if (!permissions?.admin || !permissions.control || this.calibrationTargetsLoading)
+      return;
+    const entry = this.entry,
+      generation = this.generation;
+    this.calibrationTargetsLoading = true;
+    this.calibrationMessage = "";
+    this.drawCalibration();
+    try {
+      const result = await this.api(`/${entry}/calibration`);
+      if (entry === this.entry && generation === this.generation)
+        this.calibrationTargets = result.targets;
+    } catch (error) {
+      if (entry === this.entry && generation === this.generation) {
+        this.calibrationTargets = null;
+        this.calibrationMessage = errorText(error);
+      }
+    } finally {
+      this.calibrationTargetsLoading = false;
+      this.drawCalibration();
+    }
+  }
+  async startCalibration() {
+    const state = this.state;
+    if (
+      !state?.permissions?.admin ||
+      !state.permissions.control ||
+      this.calibrationBusy ||
+      state.calibration?.active ||
+      state.calibration?.blocked ||
+      !this.calibrationTargets
+    )
+      return;
+    const offered = state.calibration?.modules || [],
+      body = state.session
+        ? { module: this.calibrationModuleChoice(offered) }
+        : { modules: this.calibrationSessionChoice(offered) };
+    if (state.session ? !body.module : !body.modules.length) return;
+    await this.calibrationRequest("", body);
+  }
+  async cancelCalibration() {
+    const state = this.state;
+    if (
+      !state?.permissions?.admin ||
+      !state.permissions.control ||
+      this.calibrationBusy ||
+      !state.calibration?.active
+    )
+      return;
+    await this.calibrationRequest("/cancel", {});
+  }
+  async calibrationRequest(path, body) {
+    const entry = this.entry,
+      generation = this.generation;
+    this.calibrationBusy = true;
+    this.calibrationMessage = "";
+    this.drawCalibration();
+    try {
+      await this.api(`/${entry}/calibration${path}`, "POST", body);
+    } catch (error) {
+      if (entry === this.entry && generation === this.generation)
+        this.calibrationMessage = errorText(error);
+    } finally {
+      this.calibrationBusy = false;
+    }
+    if (entry === this.entry && generation === this.generation)
+      await this.refresh(true);
+    this.drawCalibration();
   }
   async eraseArchive() {
     const pending = this.archiveDeletePending;
@@ -16055,6 +16280,24 @@ class SaunaPanel extends HTMLElement {
       this.drawArchiveManagement();
       return;
     }
+    if (action.startsWith("learning-")) {
+      if (!this.state?.permissions?.admin) return;
+      if (action === "learning-list") return this.loadRecognitionSessions();
+      if (action.startsWith("learning-release:"))
+        return this.releaseRecognitionSession(
+          decodeURIComponent(action.slice(17)),
+          true,
+        );
+      if (action.startsWith("learning-withdraw:"))
+        return this.releaseRecognitionSession(
+          decodeURIComponent(action.slice(18)),
+          false,
+        );
+      return;
+    }
+    if (action === "calibration-targets") return this.loadCalibrationTargets();
+    if (action === "calibration-start") return this.startCalibration();
+    if (action === "calibration-cancel") return this.cancelCalibration();
     if (!this.state) return;
     this.message(null);
     const permissions = this.state?.permissions || {},

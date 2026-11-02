@@ -112,6 +112,7 @@ class PresenceRegressionTests(unittest.TestCase):
                 gang = runtime.session.timeline.active
                 self.assertIsNotNone(gang)
                 self.assertTrue(runtime.controller.regulation_inputs.gang_heat_demand)
+                door(Kind.INFUSION, 3.5, "water")
 
                 await report("off", 4, "wrong-entity", entity="binary_sensor.unselected")
                 await report("off", 5, "wrong-assertion", assertion="provisional_proxy")

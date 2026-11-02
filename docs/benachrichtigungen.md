@@ -14,7 +14,9 @@ Erreichbarkeit noch Anzeige oder Empfang am Endgerät.
 Die Integration stellt expliziten Versand und auswertbare Antworten bereit.
 Nachrichtentexte, angebotene Aktionen und deren fachliche Bedeutung sind keine
 Folge der Empfängerzuordnung. Eine Antwort ist keine automatische
-Saunabedienung und erteilt keine Steuerberechtigung.
+Saunabedienung und erteilt keine Steuerberechtigung. Aus eigenem Anlass sendet
+die Integration nur die Nachrichten einer ausdrücklich gestarteten
+[Kalibrierung](kalibrierung.md).
 
 ## Native Companion-Daten und Voraussetzungen
 
@@ -107,7 +109,9 @@ beweist nicht die Herkunft der Antwort. Bei instanzübergreifend mehrdeutiger Zu
 Instanz-, Nachrichten- und Zielangaben und `ambiguous: true` ausgegeben. Eine
 frühe Antwort während des laufenden Versandaufrufs kann bereits zugeordnet
 werden; `handoff_accepted` bleibt bis dessen Abschluss unbekannt. Antworten lösen
-keine Saunabedienung aus.
+keine Saunabedienung aus. Eine Antwort mit einer Aktion der
+[Kalibrierung](kalibrierung.md) geht zusätzlich an deren Ablauf und erscheint
+ebenfalls als Event.
 
 Alle geladenen Instanzen verwenden einen gemeinsamen Korrelationsowner für
 native Aktionskennungen. Der Eingang bewahrt die native Antwort als

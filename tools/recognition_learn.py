@@ -95,7 +95,6 @@ def main():
         learning.likelihood_evidence(ev, first, times, values)
     merged = learning.merge_evidence(*[ev for _, _, _, ev in collected])
     params = learning.estimate(merged, base=first)
-    learning.pool_forms(merged)                     # shipped start knowledge holds no measured courses
     params["evidence"] = learning.compact(merged)
     params["training"] = names
     Path(args.out).write_text(json.dumps(params, separators=(",", ":")))

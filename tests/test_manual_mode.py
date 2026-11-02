@@ -169,6 +169,7 @@ class ManualModeTests(unittest.TestCase):
         self.assertIsNone(controller.session.timeline.active)
         controller.set_temperature(minimum, at(5))
         self.assertEqual(controller.session.timeline.active.started_at, at(5))
+        self.observe(controller, "water", Kind.INFUSION, 5.5)
         controller.set_temperature(minimum - 1, at(6))
         self.observe(controller, "exit", Kind.DOOR_OPEN, 7)
         controller.consume_occupancy_input(selected_occupancy(binary_presence(

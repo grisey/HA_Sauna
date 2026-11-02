@@ -28,8 +28,8 @@ import numpy as np
 from .models import Measurement, Position, Quantity
 from .moisture import absolute_humidity
 from .recognition_model import (
-    CHANNELS, CLOSED, DECAY, INFUSION, NM, OPEN, RECOVERY, SHIFT, ModelParameters, StateModel, closing_kink,
-    is_humidity, opening_evident,
+    CHANNELS, CLOSED, DECAY, INFUSION, NM, OPEN, OUTSIDE_TYPICAL, RECOVERY, SHIFT, ModelParameters, StateModel,
+    closing_kink, is_humidity, opening_evident,
 )
 from .timeline import DoorCloseEvidence, InfusionEnd, Kind, utc
 
@@ -363,7 +363,7 @@ class ClimateRecognizer:
     """Messwerte annehmen, Zustandsmodell fortschreiben, Ereignisse liefern."""
 
     def __init__(self, parameters: dict, origin: datetime, *, positions=(Position.UPPER, Position.LOWER),
-                 observer=None, keep_record: bool = True, evaluate: bool = True, outside_reference=None):
+                 observer=None, keep_record: bool = True, evaluate: bool = True, outside=None):
         self.origin = utc(origin)
         self.positions = tuple(Position(p) for p in positions)
         channels = tuple(c for c in CHANNELS if CHANNEL_SOURCES[c][0] in self.positions)
@@ -380,16 +380,20 @@ class ClimateRecognizer:
         self._clocks: dict = {}                                # physical sensor clock → (time, monotonic ns)
         self._seen: OrderedDict = OrderedDict()               # recent originals → value (redelivery)
         self._model: StateModel | None = None
-        self._outside: list = []
-        self._outside_t: list = []
-        self.outside = None
-        # surrounding air of an earlier session ({channel: value}); used when this session starts warmer
-        self.outside_reference = dict(outside_reference) if outside_reference else None
-        self.outside_from_reference = False
+        self._start: list = []
+        self._start_t: list = []
+        # surrounding air of the cabin (outside air of the sauna): {"temperature", "absolute_humidity"} from the
+        # configured weather source or sensors; missing values: the typical value of the parameters
+        typical = {**OUTSIDE_TYPICAL, **(parameters.get("outside_typical") or {})}
+        given = {k: v for k, v in (outside or {}).items() if v is not None}
+        air = {**typical, **given}
+        self.outside_source = {k: "configured" if k in given else "typical" for k in typical}
+        self.outside = np.array([air["absolute_humidity"] if is_humidity(c) else air["temperature"]
+                                 for c in channels], float)
         self._last_time: datetime | None = None
         self._steps = 0
         self._buffer: deque = deque()                         # (step, filtered mu, lik, T) of undecided steps
-        self._door = _Track((OPEN,), exits=(RECOVERY, INFUSION, DECAY))   # a closing: recovery sets in (or steam)
+        self._door = _Track((OPEN,))                       # a closing: any state of the closed cabin
         self._infusion = _Track((INFUSION,))
         self._steam = _Track((INFUSION, DECAY))                # infusion rise and decay together
         self._pour: int | None = None                         # start step of the latest pour
@@ -536,23 +540,16 @@ class ClimateRecognizer:
             self._last_time = at
             return []
         if self._model is None:
-            # the cabin air at the start stands for the surrounding air (mean of the first 30 samples);
-            # a cabin that starts warmer than the surrounding air of an earlier session is still warm from
-            # before, then that earlier surrounding air applies
-            self._outside.append(y)
-            self._outside_t.append(sec)
-            if len(self._outside) < 30:
+            # the drift at the start: slope of the first 30 samples; the state starts at the newest values
+            self._start.append(y)
+            self._start_t.append(sec)
+            if len(self._start) < 30:
                 self._last_time = at
                 return []
-            self.outside = np.mean(self._outside, axis=0)
-            reference = self.outside_reference
-            if reference and all(c in reference for c in self.channels):
-                temps = [i for i, c in enumerate(self.channels) if not c.startswith("A")]
-                if any(self.outside[i] > reference[self.channels[i]] for i in temps):
-                    self.outside = np.array([float(reference[c]) for c in self.channels])
-                    self.outside_from_reference = True
-            # the state starts at the newest values; the drift from the slope of the start samples
-            drift, drift_var = _start_drift(np.asarray(self._outside_t), np.asarray(self._outside))
+            self.decisions.append({"event": "outside_air", "decided_at": at.isoformat(),
+                                   "values": {c: round(float(v), 2) for c, v in zip(self.channels, self.outside)},
+                                   "source": dict(self.outside_source)})
+            drift, drift_var = _start_drift(np.asarray(self._start_t), np.asarray(self._start))
             self._model = StateModel(self.model_parameters, y, self.outside, drift=drift, drift_var=drift_var)
             self._model.infusion_possible = False      # an infusion needs someone inside: only after an opening
             self._last_time = at
@@ -660,14 +657,24 @@ class ClimateRecognizer:
         self._heating.append((sec, on))
 
     def _heater_off(self, steps) -> list:
-        """Per buffered step: True when the heater was reported off at its time."""
+        """Per buffered step: True when the heater is off long enough for the cabin to cool.
+
+        After switching off, walls and stones keep heating the cabin; the heater counts as off only once
+        it has been reported off for the learned return time of the temperature drift (the time the
+        heating effect persists in the closed cabin).
+        """
         if not self._heating:
             return [False] * len(steps)
+        p = self.model_parameters
+        temperature = [i for i, c in enumerate(self.channels) if not is_humidity(c)]
+        taus = [float(p.drift_tau[i]) for i in temperature if math.isfinite(float(p.drift_tau[i]))]
+        persist = max(taus) if taus else 0.0
         times = [h[0] for h in self._heating]
         out = []
         for step in steps:
-            k = int(np.searchsorted(times, self._grid_t[step], side="right")) - 1
-            out.append(k >= 0 and self._heating[k][1] is False)
+            at = self._grid_t[step]
+            k = int(np.searchsorted(times, at, side="right")) - 1
+            out.append(k >= 0 and self._heating[k][1] is False and at - self._heating[k][0] >= persist)
         return out
 
     def _door_pending(self) -> bool:
@@ -679,9 +686,7 @@ class ClimateRecognizer:
         if self.record is not None:
             self.record.door_prob.append((self._steps - 1, float(self._post[-1][OPEN])))
         out: list = []
-        steps = range(self._post_base, self._post_base + len(self._post))
-        cooling = [(CLOSED, SHIFT) if off else () for off in self._heater_off(steps)]
-        for what, index, confirmed in self._door.scan(self._post, self._post_base, ratio, cooling):
+        for what, index, confirmed in self._door.scan(self._post, self._post_base, ratio):
             self._explain(Kind.DOOR_OPEN if what == "start" else Kind.DOOR_CLOSE, index, confirmed, (OPEN,), at,
                           what == "start")
             p_open = float(self._posterior(index)[OPEN])

@@ -130,6 +130,66 @@ class PanelAPITests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(runtime.controller.completed_sessions, ())
             self.assertEqual(dict(self.entry.options), options)
 
+    async def test_learning_session_release_route_and_action_share_permission_and_state(self):
+        from homeassistant.core import Context
+        from homeassistant.exceptions import HomeAssistantError, Unauthorized
+        from homeassistant.helpers.storage import Store
+
+        runtime = self.entry.runtime_data
+        # A stored session record; the release covers transport, validation and storage only.
+        stored = {
+            "session": "s1", "started_at": "2030-01-01T10:00:00+00:00", "released": False,
+            "events": [["s1:door_open", "door_open", "2030-01-01T10:05:00+00:00"]], "evidence": {},
+        }
+        runtime.recognition_learning.sessions.append(stored)
+        url = self.base + "/" + self.entry.entry_id + "/recognition/sessions"
+        release = {"entry_id": self.entry.entry_id, "session_id": "s1", "released": True}
+        denied = await self.hass.auth.async_create_user("No control", group_ids=[])
+        token = await self.hass.auth.async_create_refresh_token(denied, client_id="http://localhost/")
+        denied_headers = {"Authorization": "Bearer " + self.hass.auth.async_create_access_token(token)}
+        async with ClientSession(headers=denied_headers) as client:
+            async with client.get(url) as response:
+                self.assertEqual(response.status, 403)
+            async with client.post(url, json={"session_id": "s1", "released": True}) as response:
+                self.assertEqual(response.status, 403)
+        with self.assertRaises(Unauthorized):
+            await self.hass.services.async_call(
+                "ha_sauna", "recognition_release", release,
+                blocking=True, return_response=True, context=Context(user_id=denied.id),
+            )
+        self.assertFalse(stored["released"])
+        async with ClientSession(headers=self.headers) as client:
+            async with client.get(url) as response:
+                self.assertEqual(response.status, 200, await response.text())
+                self.assertEqual(await response.json(), [{
+                    "session_id": "s1", "started_at": "2030-01-01T10:00:00+00:00",
+                    "door_openings": 1, "infusions": 0, "released": False,
+                }])
+            for body in (
+                {}, {"session_id": "s1"}, {"session_id": "", "released": True},
+                {"session_id": "s1", "released": "true"}, {"session_id": "s1", "released": True, "x": 1},
+            ):
+                async with client.post(url, json=body) as response:
+                    self.assertEqual(response.status, 400)
+            async with client.post(url, json={"session_id": "missing", "released": True}) as response:
+                self.assertEqual(response.status, 404)
+            async with client.post(url, json={"session_id": "s1", "released": True}) as response:
+                self.assertEqual(response.status, 200, await response.text())
+                self.assertTrue((await response.json())[0]["released"])
+        saved = await Store(self.hass, 1, f"ha_sauna.recognition.{self.entry.entry_id}").async_load()
+        self.assertTrue(saved["sessions"][-1]["released"])
+        response = await self.hass.services.async_call(
+            "ha_sauna", "recognition_release", {**release, "released": False},
+            blocking=True, return_response=True,
+        )
+        self.assertEqual(response, {"session_id": "s1", "released": False})
+        self.assertFalse(runtime.recognition_learning.overview()[0]["released"])
+        with self.assertRaises(HomeAssistantError):
+            await self.hass.services.async_call(
+                "ha_sauna", "recognition_release", {**release, "session_id": "missing"},
+                blocking=True, return_response=True,
+            )
+
     async def asyncSetUp(self):
         self.hass, self.temp = await start_hass()
         self.entry = await create_sauna(self.hass)
@@ -1053,8 +1113,9 @@ class PanelAPITests(unittest.IsolatedAsyncioTestCase):
                 state = await response.json()
             self.assertNotIn(entity_id, json.dumps(state))
             active = state["session"]["timeline"]["active"]
+            # Presence at the entry closing opens a provisional gang (57e0ba6).
             recognition = next(item for item in state["session"]["timeline"]["processed"]
-                               if item["kind"] == "presence_confirmed")
+                               if item["kind"] == "presence_entry")
             self.assertEqual(active["recognition_event_id"], recognition["event_id"])
             self.assertEqual(active["session_id"], session_id)
             self.assertEqual(state["session"]["door_cycles"], expected_cycles(active["gang_id"]))
@@ -1086,6 +1147,9 @@ class PanelAPITests(unittest.IsolatedAsyncioTestCase):
             self.assertIs(runtime.session, live_session)
             self.assertEqual(plain(runtime.session), original_live)
 
+            # There are no gangs without infusion: the first infusion confirms the
+            # provisional gang, otherwise the ventilation retracts it (E-01).
+            await door("infusion", Kind.INFUSION, 38)
             await door("exit-open", Kind.DOOR_OPEN, 40)
             await presence("off", 50)
             self.assertIsNotNone(runtime.session.timeline.active)
@@ -2473,13 +2537,16 @@ class PanelAPITests(unittest.IsolatedAsyncioTestCase):
         other_configuration = other.runtime_data.configuration
         presence = "binary_sensor.restore_presence"
         self.hass.states.async_set(presence, "off", {"device_class": "occupancy"})
-        hidden = "parameters.strong_window_seconds"
+        # A stored field hidden in sensor operation: the deadline applies to the
+        # proxy method only (E-02). The values of the former curve recognition
+        # are catalog-bound since 5eba4cf and have no field standard.
+        hidden = "parameters.confirmation_minutes"
         fallback = "parameters.sensor_timeout_seconds"
         power = "parameters.nominal_power_kw"
         color = "appearance.colors.event_door"
         unchanged_factory = "appearance.colors.text"
-        hidden_definition = BY_KEY["strong_window_seconds"]
-        increment = BY_KEY["person_step_seconds"].default
+        hidden_definition = BY_KEY["confirmation_minutes"]
+        increment = hidden_definition.number_step
         catalog = deepcopy(self.entry.options["temperature_programs"])
         catalog.append({**catalog[0], "id": "retained_standard_program", "name": "Erhaltenes Programm"})
         program = catalog[-1]
@@ -2494,7 +2561,7 @@ class PanelAPITests(unittest.IsolatedAsyncioTestCase):
             "temperature_steps": stages,
             "parameters": {
                 **self.entry.options["parameters"],
-                "strong_window_seconds": hidden_definition.default + increment,
+                "confirmation_minutes": hidden_definition.default + increment,
                 "sensor_timeout_seconds": BY_KEY["sensor_timeout_seconds"].default + BY_KEY["sensor_timeout_seconds"].number_step,
                 "nominal_power_kw": power_definition.default + power_definition.number_step,
             },
@@ -2522,6 +2589,7 @@ class PanelAPITests(unittest.IsolatedAsyncioTestCase):
                             self.assertEqual(response.status, 200, await response.text())
                             before = {row["id"]: row for row in (await response.json())["fields"]}
                         self.assertFalse(before[hidden]["applicable"])
+                        self.assertNotIn("parameters.strong_window_seconds", before)
                         self.assertFalse(before[fallback]["has_standard"])
                         self.assertEqual(before[unchanged_factory]["active"], before[unchanged_factory]["factory"])
                         expected_scope = ({hidden} if "field" in scope else

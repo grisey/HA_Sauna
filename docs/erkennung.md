@@ -7,9 +7,9 @@ Verfahren aus Temperatur und Feuchte.
 | Erkennung | Aus Temperatur und Feuchte | Mit Präsenzsensor |
 | --- | --- | --- |
 | Türöffnung und Türschluss | Zustandsmodell der Kabine | Dasselbe Zustandsmodell |
-| Anwesenheit | Keine eigenen Personensignale; der erste Aufguss nach einem Eintritt eröffnet den Gang | Belegungszustand der zugeordneten Entität |
-| Aufguss | Eröffnet oder ergänzt den Gang | Erfassung im bereits bestätigten Gang |
-| Lüften und Durchgelüftet | Kurvenform der Feuchte während der offenen Tür; Nachweis für das Gangende | Bestandteil derselben Austrittsöffnung; zusammen mit deren Abwesenheitsnachweis Beleg für das Gangende |
+| Anwesenheit | Keine eigenen Personensignale; der erste Aufguss nach einem Eintritt eröffnet den Gang | Belegungszustand der zugeordneten Entität beim Türschluss; eröffnet einen vorläufigen Gang |
+| Aufguss | Eröffnet oder ergänzt den Gang | Bestätigt den vorläufigen Gang oder ergänzt ihn |
+| Lüften und Durchgelüftet | Kurvenform der Feuchte während der offenen Tür; Nachweis für das Gangende | Dasselbe |
 
 Die Übergangsregeln beschreibt die [Gangerkennung](gangmodell.md). Die Erkennung
 kennt weder Sitzung noch Gang; sie erhält Messwerte und die Rückmeldung, ob
@@ -35,10 +35,14 @@ nicht noch einmal; ein verspätetes älteres Original ersetzt keinen neueren
 Wert.
 
 Die Luft der Umgebung (wohin die Kabinenluft bei offener Tür entweicht und
-woher Frischluft kommt) ist der Mittelwert der ersten 30 Messschritte einer
-Sitzung. Beginnt eine Sitzung wärmer als die Umgebungsluft einer früheren
-Sitzung, ist die Kabine noch vom vorherigen Betrieb warm; dann gilt die
-früher bestimmte Umgebungsluft.
+woher Frischluft kommt) ist die Außenluft. Sie wird beim Sitzungsstart aus der
+konfigurierten Wetterquelle oder den Außensensoren übernommen: Temperatur und
+absolute Feuchte (direkt, sonst aus Temperatur und relativer Feuchte, sonst
+aus dem Taupunkt). Fehlt ein Wert, gilt der typische Wert des europäischen
+Winterhalbjahrs: 4 °C (Mittel Oktober bis März, DWD 1991–2020) und 6,0 g/m³
+(nahezu gesättigt, 95 % relative Feuchte). Die Kabine beim Start sagt über die
+Außenluft nichts aus und wird dafür nicht verwendet. Welche Werte gelten und
+woher sie stammen, steht im Entscheidungsprotokoll der Sitzung.
 
 ## Zustandsmodell der Kabine
 
@@ -117,7 +121,7 @@ wird ebenso entschieden.
 | Ereignis | Zustand |
 | --- | --- |
 | Tür auf | Beginn des Zustands offen, zusätzlich durch die Öffnungsform belegt (siehe unten) |
-| Tür zu | Übergang aus offen in die Erholung (die Temperatur steigt wieder), in einen Aufguss oder in das Abklingen; bei ausgeschaltetem Ofen auch in die geschlossene, abkühlende Kabine |
+| Tür zu | Ende des Zustands offen: Übergang in einen Zustand der geschlossenen Kabine (Erholung, zu, Heizwechsel) oder in Aufguss bzw. Abklingen |
 | Aufguss | Beginn des Zustands Aufguss |
 | Aufgussende | Ende von Aufguss und Abklingen zusammen; öffnet sich vorher die Tür, endet der Aufguss mit der Öffnung |
 
@@ -155,16 +159,19 @@ dort, wo nach dem Schließen schon eine neue Öffnung oder ein Aufguss beginnt
 (der Zustand ist an einem Schritt die wahrscheinlichste Erklärung). Gewählt
 wird der Knick mit der kleinsten Restquadratsumme, an dem die Temperatur
 vorher fällt (`s < 0`) und danach wieder steigt (`e ≥ 0`). War der Ofen
-während der ganzen Öffnung als aus gemeldet, wird keine Erholung erwartet;
-dann genügt, dass der Temperaturabfall langsamer wird (`e > s`). Ein
-Ausschalten erst während der Öffnung ändert das nicht: Steine und Wände
-halten die Wärme, die Temperatur steigt nach dem Schließen trotzdem. Ohne
+während der ganzen Öffnung aus (im Sinne des folgenden Absatzes), wird keine
+Erholung erwartet; dann genügt, dass der Temperaturabfall langsamer wird
+(`e > s`). Ohne
 gelernte Form oder ohne solchen Knick gilt der erste Schritt des Übergangs.
 
-Ohne Heizung gibt es nach dem Schließen keine Erholung. Deshalb endet eine
-Öffnung bei ausgeschaltetem Ofen auch in den Zustand zu oder Heizwechsel; bei
-heizendem Ofen nicht, damit ein Ausschlag mitten in einer Öffnung sie nicht
-teilt.
+Nach dem Schließen steigt die Temperatur nicht immer wieder an: beim Aufheizen
+läuft der Anstieg mit der Heizsteigung weiter, bei kurz zuvor ausgeschaltetem
+oder gerade eingeschaltetem Ofen fällt sie langsam weiter. Die Öffnung endet
+deshalb in jeden Zustand der geschlossenen Kabine. Für die Vergleichsform des
+Schließens gilt der Ofen erst als aus, wenn er so lange als aus gemeldet ist
+wie die gelernte Rückkehrzeit der Grunddrift der Temperatur (die Zeit, in der
+eine Änderung der Heizwirkung in der geschlossenen Kabine nachwirkt); bis
+dahin heizen Steine und Wände weiter.
 
 Mehrere Güsse gehören zu einem Aufguss, solange das Abklingen des vorigen
 Gusses nicht erkennbar abgeflacht ist. Abgeflacht heißt: Die Feuchtesteigung
@@ -237,14 +244,34 @@ Verwendet werden Sitzungen ohne Türöffnung während eines Gangs.
 
 Nach jeder abgeschlossenen Sitzung mit beiden Messpositionen zieht die
 Integration aus deren Messwerten und eigenen bestätigten Erkennungen neue
-Belege. Neu geschätzt werden die Größen erst mit der Aktion **Erkennung
+Belege. Gespeichert werden die Belege der letzten 40 Sitzungen, jeweils mit
+dem Status „nicht freigegeben“. In eine Neuschätzung gehen neben den Belegen
+der Lernaufzeichnungen nur ausdrücklich freigegebene Sitzungen ein.
+
+Die Freigabe gilt je Sitzung und lässt sich zurücknehmen:
+
+- Panel: **Einstellungen → Daten und Wartung → Lernsitzungen**. Die Liste
+  nennt je gespeicherter Sitzung Beginn, erkannte Türöffnungen und Aufgüsse
+  sowie den Status.
+- Aktion **Sitzung für das Nachlernen freigeben**
+  (`ha_sauna.recognition_release`) mit Sitzungskennung und `released`
+  (`true` freigeben, `false` zurücknehmen).
+
+Beide Wege verlangen das Bedienrecht am Betriebsschalter der Instanz; der
+Bereich **Daten und Wartung** im Panel steht Administratoren zur Verfügung.
+Erzeugt dieselbe Sitzung erneut Belege, ersetzen sie die gespeicherten und
+sind wieder nicht freigegeben. Belege eines Lernstands ohne Status gelten als
+nicht freigegeben.
+
+Neu geschätzt werden die Größen erst mit der Aktion **Erkennung
 nachlernen** (`ha_sauna.recognition_learn`); die Rechnung läuft im
 Hintergrund und darf dauern. Die Belege der Lernaufzeichnungen bleiben als
-Startwissen erhalten; die Belege der letzten 40 Sitzungen ergänzen sie. Die
-neuen Größen gelten ab der nächsten Sitzung. Der Lernstand liegt im
+Startwissen erhalten; die freigegebenen Sitzungen ergänzen sie. Die neuen
+Größen gelten ab der nächsten Sitzung. Der Lernstand liegt im
 Home-Assistant-Speicher der Instanz. Die Antwort der Aktion nennt die Zahl
-der seit dem letzten Nachlernen hinzugekommenen Sitzungen und Rückmeldungen,
-der gespeicherten Sitzungen und der abgelehnten Ereignisse.
+der seit dem letzten Nachlernen hinzugekommenen Sitzungen, Freigaben,
+Rücknahmen und Rückmeldungen, der gespeicherten und der freigegebenen
+Sitzungen und der abgelehnten Ereignisse.
 
 Die Aktion **Rückmeldung zur Erkennung** (`ha_sauna.recognition_feedback`)
 lehnt ein erkanntes Ereignis ab (`reject`) oder hebt die Ablehnung auf

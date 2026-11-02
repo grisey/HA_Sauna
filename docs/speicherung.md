@@ -3,10 +3,11 @@
 ## Welche Sitzungen erhalten bleiben
 
 Sitzungen mit mindestens einem bestätigten Gang bleiben mit ihren Originaldaten
-ohne Altersbegrenzung erhalten. Sitzungen ohne bestätigten Gang werden nach dem
-Abschluss verworfen; dieselbe Bereinigung erfolgt beim Integrationsstart für
-ältere Sitzungen ohne bestätigten Gang. Das gilt auch für Aufzeichnungen im
-manuellen Modus.
+ohne Altersbegrenzung erhalten, ebenso Sitzungen mit einem
+[Kalibrierprotokoll](kalibrierung.md#protokoll-und-aufbewahrung). Die übrigen
+Sitzungen ohne bestätigten Gang werden nach dem Abschluss verworfen; dieselbe
+Bereinigung erfolgt beim Integrationsstart für ältere Sitzungen. Das gilt auch
+für Aufzeichnungen im manuellen Modus.
 
 AUS unterbricht zunächst nur den Betrieb. Erneutes EIN vor Ende der
 Wiederaufnahmefrist gehört unabhängig von der Betriebsart zur gleichen

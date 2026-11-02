@@ -65,6 +65,33 @@ Vergessen beendet beide Ausgaben für diese Zuordnung.
 Der abschließende Notify-Transport ist synthetisch; diese Prüfungen belegen
 weder Empfang noch Rückmeldungen eines tatsächlichen Companion-Clients.
 
+Die [Kalibrierung](../docs/kalibrierung.md) prüft `test_calibration.py` im
+Fachkernlauf: vollständiger Durchlauf aller Module mit simulierten Antworten,
+Wiederholung, doppelte und verspätete Antworten, Startbedingungen und
+Auswertung gegen synthetische Fenster, darunter die Zuordnung in physikalischer
+Reihenfolge ohne Kreuzung über die Arten, früh oder spät erkannte Ereignisse,
+zusammengelegte Türvorgänge und der Gang über den zugeordneten Eintrittsschluss.
+Die Laufzeitfälle verwenden die produktiven Start-, Antwort- und Taktmethoden
+mit synthetischem Abschlusstransport; derselbe Eingangsverlauf ohne Kalibrierung
+ergibt dieselben Heizentscheidungen und denselben Gangverlauf. Abbrechen,
+Betrieb AUS, manueller Modus, manuelle Ofenwahl, ein unbekannter oder nicht
+verfügbarer Präsenzsensor, Entladen und ein Sitzungsende vor dem letzten Schritt
+machen die Kalibrierung ungültig, ohne weitere Anweisung und ohne Auswertung.
+`test_archive_retention.py` prüft die Aufbewahrung von Sitzungen mit
+Kalibrierprotokoll.
+`integration/test_calibration_service.py` führt den registrierten Dienst über
+die Mobile-App-Geräteaktion und den nativen Antworteingang bis zum Ablauf und
+zum Archivprotokoll. Derselbe Test führt Start und Abbruch über die
+authentifizierten Panelansichten mit derselben Berechtigungsgrenze wie die
+Dienste und prüft den Kalibrierstatus im Zustand, für Normalbenutzer nur den
+laufenden Lauf. `test_calibration.py` prüft dazu Modul, Schritt und Wartegrund
+des Anzeigezustands, den Sperrgrund für den Modulstart gleich dem Grund, mit dem
+ein gestartetes Modul sofort ungültig endet, sowie das letzte Ergebnis nach dem
+Sitzungsende,
+`test_local_preview.py` denselben Weg in der lokalen Vorschau und
+`panel_calibration.test.js` Karte, Sperrgründe und den Hinweis in der
+Steuerungsansicht.
+
 Die [Modellübergaben](../docs/modelluebergaben.md) werden durch
 `test_model_handoff.py`, `test_control_handoff.py`,
 `test_observation_handoff.py`, `test_thermal_handoff.py`,
@@ -369,5 +396,20 @@ schreibt `recognition_parameters.json` samt den Belegen der Lernaufzeichnungen.
 [`tools/recognition_replay.py`](../tools/recognition_replay.py) spielt
 Aufzeichnungen über `SaunaRuntime` mit der eingebauten Erkennung ab und gibt
 Erkennungen, gebuchte und abgelehnte Ereignisse sowie Gänge aus; Gangmodell,
-Steuerung und Nachlauf bleiben dabei unverändert. Beide Werkzeuge sind keine
-Testsuiten und verändern keine Sollereignisse.
+Steuerung und Nachlauf bleiben dabei unverändert. Daneben protokolliert es nur
+beobachtend jede Steuerentscheidung mit Heizanforderung und Schaltbefehl samt
+Grund, Kühlung, Phase, Gangzustand und Rückmeldung, jeden vorläufig erkannten
+Gang mit Ausgang und Grund sowie Trennungen, Güsse und Abklingprüfung der
+Aufgusserkennung. Heizdauern stammen aus der Heizzeitbuchung der Steuerung und
+nennen ihre Quelle ([Heizzeit und Energie](../docs/betrieb.md#heizzeit-und-energie));
+Heizanforderung und Befehl stehen getrennt davon. Die Schützrückmeldung
+erreicht die Steuerung in jedem Takt über dieselben Eingänge wie im Betrieb.
+Aufzeichnungen mit Ofenleistung oder unabhängigem Heiznachweis weist das
+Werkzeug ab, weil dieser Rückmeldeweg nicht nachgebildet ist. Die Kühlzeit
+zählt wie im Betrieb erst ab gemeldetem Schütz AUS. Mit `--heater recorded` ist
+die Rückmeldung der aufgezeichnete Schützzustand. Mit `--heater split` deutet
+die Erkennung die gemessenen Kurven mit dem aufgezeichneten Schützzustand,
+während die Schützrückmeldung der Steuerung ihrem Schaltbefehl folgt wie im
+Automatikbetrieb. Die aufgezeichneten Temperaturen folgen in keiner Variante
+den Befehlen der Steuerung. Beide Werkzeuge sind keine Testsuiten und verändern
+keine Sollereignisse.

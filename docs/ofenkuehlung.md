@@ -16,9 +16,11 @@ bestätigtes Schütz-AUS startet die Uhr und legt die berechnete Kühldauer samt
 Mindestdauer für diesen Kühlzyklus fest. Nur bestätigte AUS-Zeit zählt; Schütz-EIN oder
 unbekannte Rückmeldung pausieren die Uhr, ohne die Heizsperre aufzuheben.
 
-Ein tatsächlich neuer, durch einen verfügbaren qualifizierten Belegungszustand
-bestätigter Eintritt beendet die Kühlung sofort. Eine Zustandsmeldung allein,
-ein vorläufiger Gang oder eine Bestätigung allein durch Aufguss genügt dafür nicht.
+Ein tatsächlich neuer Gang mit Anwesenheit beim Türschluss beendet die Kühlung
+sofort, schon als vorläufiger Gang, sobald er
+[wirkt](gangmodell.md#vorläufiger-gang-im-sensorbetrieb). Eine Zustandsmeldung
+allein oder im Proxybetrieb ein vorläufiger Gang oder eine Bestätigung allein
+durch Aufguss genügt dafür nicht.
 Jeder neue zugelassene einmalige Personenbeleg, einschließlich eines
 Aufgusses als Personenbeleg, begrenzt die laufende Kühlung auf ihre Mindestgesamtdauer.
 Bereits bestätigte AUS-Zeit seit Kühlbeginn wird dabei vollständig angerechnet.

@@ -93,7 +93,7 @@
       "allow_zero": false,
       "optional": false,
       "maximum": 100,
-      "default": 60,
+      "default": 50,
       "minimum": null,
       "integer": false,
       "description": "Untergrenze für die Solltemperatur. Ein neuer Saunagang kann erst beginnen, wenn eine gültige Temperaturmessung diesen Wert erreicht.",
@@ -5651,7 +5651,7 @@
         "label": "Lüften und Gangende",
         "descriptions": {
           "proxy": "Beim Verlassen wird die Tür zum Lüften erneut geöffnet. Bestätigtes Lüften nach dieser Öffnung beendet den Gang: Die relative Feuchte flacht bei weiter ungebremst fallender Temperatur ab. Die spätere Abflachung der absoluten Feuchte gilt in der Statistik als vollständiges Lüften.",
-          "ha_presence": "Beim Verlassen wird die Tür zum Lüften erneut geöffnet. Diese Öffnung, bestätigtes Lüften und zugehörige Abwesenheit beenden den Gang. Als Lüften zählt die Abflachung der relativen Feuchte bei weiter ungebremst fallender Temperatur. Die spätere Abflachung der absoluten Feuchte gilt in der Statistik als vollständiges Lüften."
+          "ha_presence": "Beim Verlassen wird die Tür zum Lüften erneut geöffnet. Bestätigtes Lüften nach dieser Öffnung beendet den Gang, gemeldete Abwesenheit beendet ihn nicht. Als Lüften zählt die Abflachung der relativen Feuchte bei weiter ungebremst fallender Temperatur. Die spätere Abflachung der absoluten Feuchte gilt in der Statistik als vollständiges Lüften."
         }
       },
       {

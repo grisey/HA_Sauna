@@ -53,8 +53,8 @@ indirekten Anwesenheitsnachweis. Beim FP300 gehört dazu die Präsenzentität;
 der PIR-Bewegungsausgang belegt keine dauerhafte Anwesenheit.
 
 Beide Verfahren benötigen zum Beginn eine erkannte
-Türöffnung mit anschließendem Türschluss. Zum Ende genügen eine erneute
-Öffnung und der passende Abwesenheits- oder Lüftungsnachweis. Die [Gangerkennung](gangmodell.md) beschreibt die
+Türöffnung mit anschließendem Türschluss. Das Ende belegt in beiden Verfahren
+das bestätigte Lüften einer erneuten Öffnung. Die [Gangerkennung](gangmodell.md) beschreibt die
 Bedingungen beider Verfahren.
 
 ## Betrieb, Erkennung und Licht einstellen
