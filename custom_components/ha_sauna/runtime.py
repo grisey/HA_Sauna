@@ -596,18 +596,26 @@ class SaunaRuntime:
         ``active``: the running run, if any. ``last``: the last ended run with
         its validity and reason; after its session ended also the totals of
         the evaluation. ``modules``: the modules on offer, P only with a
-        presence sensor.
+        presence sensor. ``blocked``: in a running session the state that
+        would end a single module started now at once, with its reason
+        (W-2d); the panel locks the module start while it holds.
         """
         active = next((run for run in self._calibration_runs if run.active), None)
         ended = [run for run in self._calibration_runs if not run.active]
+        presence = self.configuration_model.direct_presence
+        blocked = self._calibration_blocking(
+            presence_known=not presence or self._calibration_presence() is not None,
+        ) if self.session is not None else None
         return {
             "active": active.status() if active is not None else None,
             "last": {**ended[-1].status(), "totals": None} if ended else self._calibration_last,
             "modules": [
                 {"id": module.module_id, "label": module.label, "title": module.title}
-                for module in calibration.select_modules(
-                    None, presence=self.configuration_model.direct_presence)
+                for module in calibration.select_modules(None, presence=presence)
             ],
+            "blocked": {
+                "reason": blocked, "reason_text": calibration.INTERRUPTIONS[blocked],
+            } if blocked is not None else None,
         }
 
     @property
@@ -2136,13 +2144,10 @@ class SaunaRuntime:
                 if self.controller.control_mode != "automatic":
                     self._set_control_mode("automatic", at=now, received_at=now)
                 self._apply_operation(True, actor=actor, received_at=now)
-            report = self.presence.external.get(
-                self.configuration.bindings.values.get("presence")
-            )
             run = calibration.CalibrationRun(
                 uuid4().hex, kind, selected, actor.user_id, self.session.session_id, now,
                 has_presence=presence,
-                presence=[(now, self._calibration_state(report))] if presence else [],
+                presence=[(now, self._calibration_presence())] if presence else [],
             )
             self._calibration_runs.append(run)
             self._calibration_targets[run.run_id] = targets
@@ -2199,6 +2204,12 @@ class SaunaRuntime:
             return None
         return {"present": True, "absent": False}.get(report.occupancy)
 
+    def _calibration_presence(self):
+        """Presence state a run starting now records: the sensor's last report."""
+        return self._calibration_state(
+            self.presence.external.get(self.configuration.bindings.values.get("presence"))
+        )
+
     def _advance_calibration(self, now):
         """Send due calibration messages; evaluate the runs of an ended session.
 
@@ -2232,11 +2243,21 @@ class SaunaRuntime:
         """
         if not session.operation_enabled:
             return "operation_off"
+        return self._calibration_blocking(
+            presence_known=not run.has_presence or run.presence[-1][1] is not None,
+        )
+
+    def _calibration_blocking(self, *, presence_known):
+        """Manual mode, a manual heater selection or unknown presence (L-W2b-4/5).
+
+        Each ends a run at the next cycle end, a run started in it at once;
+        the same check locks the module start in the panel (W-2d).
+        """
         if self.controller.control_mode == "manual":
             return "manual_mode"
         if self.controller.heater_override is not None:
             return "heater_override"
-        if run.has_presence and run.presence[-1][1] is None:
+        if not presence_known:
             return "presence_unavailable"
         return None
 

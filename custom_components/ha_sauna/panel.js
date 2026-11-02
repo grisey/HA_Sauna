@@ -15135,19 +15135,23 @@ class SaunaPanel extends HTMLElement {
       run = calibration.active,
       last = calibration.last,
       offered = calibration.modules || [],
+      blocked = calibration.blocked,
       busy = this.calibrationBusy,
       targets = this.calibrationTargets;
+    // A running calibration shows its own status instead of a lock reason.
     const locked = !state.permissions.control
       ? "Für die Kalibrierung fehlt die Steuerberechtigung."
       : run
-        ? "Es läuft bereits eine Kalibrierung."
+        ? ""
         : targets === 0
           ? "Kein Ziel „Companion: Daten und Antworten“ für diesen Benutzer."
           : targets === null
             ? "Die Companion-Ziele konnten nicht geprüft werden."
             : targets === undefined
               ? "Companion-Ziele werden geprüft …"
-              : "";
+              : blocked
+                ? `Ein jetzt gestartetes Modul wäre sofort ungültig: ${blocked.reason_text}.`
+                : "";
     const disabled = locked || busy ? "disabled" : "";
     let start;
     if (state.session) {
@@ -15234,6 +15238,7 @@ class SaunaPanel extends HTMLElement {
       !state.permissions.control ||
       this.calibrationBusy ||
       state.calibration?.active ||
+      state.calibration?.blocked ||
       !this.calibrationTargets
     )
       return;

@@ -874,6 +874,65 @@ class CalibrationRuntimeTests(unittest.TestCase):
 
         asyncio.run(exercise())
 
+    def test_status_names_the_state_that_would_end_a_module_at_once(self):
+        actor = ActorRef(USER, "ha_context")
+
+        async def started(runtime, reason):
+            # The lock reason is the reason the started module ends with.
+            self.assertEqual(runtime.calibration_status["blocked"], {
+                "reason": reason, "reason_text": calibration.INTERRUPTIONS[reason]})
+            await runtime.start_calibration(actor=actor, module="A1")
+            await self.settle(runtime)
+            run = runtime.calibration_runs[-1]
+            self.assertEqual((run.phase, run.end_reason), ("invalid", reason))
+
+        async def exercise():
+            clock = [START]
+            runtime = self.runtime(clock)
+            runtime.controller.set_temperature(80, START)
+            entry = SimpleNamespace(runtime_data=runtime,
+                                    options=runtime.configuration.as_options())
+            await async_set_control_mode(_FakeHass(), entry, "manual", actor=actor)
+            # Without a session the calibration session stays startable.
+            self.assertIsNone(runtime.calibration_status["blocked"])
+            await runtime.accept_presence(binary_presence(
+                "binary_sensor.presence", "off", START, START))
+            await runtime.set_heater_override(True, actor=actor)
+            self.assertIsNotNone(runtime.session)
+            await started(runtime, "manual_mode")
+            await runtime.close()
+
+            clock = [START]
+            runtime = self.runtime(clock)
+            runtime.controller.set_temperature(80, START)
+            await runtime.set_operation(True, actor=actor)
+            await runtime.accept_presence(binary_presence(
+                "binary_sensor.presence", "off", START, START))
+            self.assertIsNone(runtime.calibration_status["blocked"])
+            await runtime.set_heater_override(False, actor=actor)
+            await started(runtime, "heater_override")
+            await runtime.set_heater_override(None, actor=actor)
+            self.assertIsNone(runtime.calibration_status["blocked"])
+            for state in ("unknown", "unavailable"):
+                clock[0] += timedelta(seconds=5)
+                await runtime.accept_presence(binary_presence(
+                    "binary_sensor.presence", state, clock[0], clock[0]))
+                await started(runtime, "presence_unavailable")
+            clock[0] += timedelta(seconds=5)
+            await runtime.accept_presence(binary_presence(
+                "binary_sensor.presence", "on", clock[0], clock[0]))
+            self.assertIsNone(runtime.calibration_status["blocked"])
+            await runtime.close()
+
+            # Without a presence sensor no module needs a presence state.
+            runtime = _runtime(clock)
+            runtime.controller.set_temperature(80, clock[0])
+            await runtime.set_operation(True, actor=actor)
+            self.assertIsNone(runtime.calibration_status["blocked"])
+            await runtime.close()
+
+        asyncio.run(exercise())
+
     def test_session_end_before_the_last_step_makes_the_run_invalid(self):
         async def exercise():
             clock = [START]

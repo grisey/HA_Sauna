@@ -41,7 +41,7 @@ function fixture({
     state: {
       permissions: { admin: true, control: true, ...permissions },
       session,
-      calibration: { active: null, last: null, modules, ...calibration },
+      calibration: { active: null, last: null, modules, blocked: null, ...calibration },
     },
     $: (key) => nodes[key],
     updateMarkup: (key, html) => (nodes[key].innerHTML = html),
@@ -132,7 +132,8 @@ test("a running calibration shows module, step and what it waits for and can be 
   );
   assert.match(html(), /data-action="calibration-cancel" >Kalibrierung abbrechen/);
   assert.match(html(), /Nach dem Abbruch ist der Lauf ungültig/);
-  assert.match(html(), /Es läuft bereits eine Kalibrierung\./);
+  // The own status replaces the lock reason of a running calibration.
+  assert.doesNotMatch(html(), /Es läuft bereits eine Kalibrierung/);
   assert.doesNotMatch(html(), /calibration-start/);
   await p.action("calibration-start");
   await p.action("calibration-cancel");
@@ -213,6 +214,28 @@ test("the start is locked with its reason", async () => {
   await p.action("calibration-targets");
   await p.action("calibration-start");
   assert.equal(sent(requests).length, 0);
+});
+
+test("in a running session the module start is locked while a module would end at once", async () => {
+  for (const [reason, text] of [
+    ["manual_mode", "manueller Modus"],
+    ["heater_override", "manuelle Ofenwahl"],
+    ["presence_unavailable", "Präsenzsensor unbekannt oder nicht verfügbar"],
+  ]) {
+    const { p, requests, html } = fixture({
+      session: { session_id: "s" },
+      calibration: { blocked: { reason, reason_text: text } },
+    });
+    await p.action("calibration-targets");
+    assert.match(
+      html(),
+      new RegExp(`Ein jetzt gestartetes Modul wäre sofort ungültig: ${text}\\.`),
+    );
+    assert.match(html(), /<select id="calibration-module" disabled>/);
+    assert.match(html(), /data-action="calibration-start" disabled>Modul starten/);
+    await p.action("calibration-start");
+    assert.equal(sent(requests).length, 1);
+  }
 });
 
 test("a rejected start shows the reason of the integration", async () => {

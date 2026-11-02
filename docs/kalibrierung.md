@@ -35,6 +35,14 @@ Fehlt eine Voraussetzung, ist der Start im Panel mit dem Grund gesperrt. Die
 Companion-Ziele prüft das Panel nach dem Laden und auf **Companion-Ziele erneut
 prüfen**.
 
+**Modul starten** ist außerdem gesperrt, solange ein Zustand besteht, der das
+Modul sofort ungültig beenden würde ([Gültigkeit](#gültigkeit)): der manuelle
+Modus, eine manuelle Ofenwahl und, mit Präsenzsensor, ein Präsenzzustand
+„unbekannt“ oder „nicht verfügbar“ oder noch keine Meldung. Die Karte nennt den
+Grund. Der Dienst startet in diesen Zuständen; das Modul endet dann sofort
+ungültig. **Kalibriersitzung starten** bleibt im manuellen Modus startbar, weil
+die Kalibriersitzung auf Automatik wechselt.
+
 Die Antwort auf den Start enthält `run_id`, `kind` (`session` oder `module`),
 `session_id`, die gewählten Module und die Ziele.
 
