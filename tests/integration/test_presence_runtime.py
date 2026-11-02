@@ -410,6 +410,9 @@ class PresenceRuntimeIntegrationTests(unittest.IsolatedAsyncioTestCase):
 
         await temperature(minimum - 1)
         await runtime.set_operation(True)
+        # Entries count only after the session first reached the minimum (E-11).
+        await temperature(minimum)
+        await temperature(minimum - 1)
         await door("entry-open", Kind.DOOR_OPEN)
         await door("entry-close", Kind.DOOR_CLOSE)
         self.assertIsNone(runtime.session.timeline.active)

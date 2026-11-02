@@ -161,6 +161,9 @@ class ManualModeTests(unittest.TestCase):
         minimum = controller.parameters.values["sauna_min_temperature_c"]
         controller.set_temperature(minimum - 1, at(0))
         controller.set_heater_override(True, at(1))
+        # Entries count only after the session first reached the minimum (E-11).
+        controller.set_temperature(minimum, at(1.5))
+        controller.set_temperature(minimum - 1, at(1.8))
         controller.consume_occupancy_input(selected_occupancy(binary_presence(
             "binary_sensor.presence", "on", at(2), at(2),
         ), at(2)))

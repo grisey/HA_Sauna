@@ -6,6 +6,7 @@ from test_cooling import at, controller
 from test_foundation import event, selected_occupancy
 
 from custom_components.ha_sauna.archive import plain, session_has_gangs
+from custom_components.ha_sauna.core.controller import Controller
 from custom_components.ha_sauna.core.display import phase_timer, start_availability
 from custom_components.ha_sauna.core.light_control import light_phase
 from custom_components.ha_sauna.core.presence import binary_presence
@@ -476,6 +477,36 @@ class DirectPresenceControlTests(unittest.TestCase):
                 self.door(Kind.DOOR_OPEN, 8)
                 self.door(Kind.DOOR_CLOSE, 9)
                 self.assertEqual(self.c.session.timeline.active.gang_id, gang_id)
+
+    def test_cold_entry_before_the_first_minimum_of_the_session_never_starts(self):
+        minimum = self.c.parameters.values["sauna_min_temperature_c"]
+        self.c = Controller(self.c.parameters)
+        self.c.set_temperature(minimum - 1, at(0))
+        self.c.set_operation(True, at(0), session_id="s")
+        self.door(Kind.DOOR_OPEN, 1)
+        self.report("on", 2)
+        self.door(Kind.DOOR_CLOSE, 3)
+        self.assertEqual(self.c.session.timeline.door, Door.CLOSED)
+        self.assertIsNone(self.c.session.timeline.anchor)
+        self.assertIsNone(self.c._presence_entry)
+        self.c.set_temperature(minimum, at(7))
+        self.c.advance(at(8))
+        self.assertIsNone(self.c.session.timeline.active)
+        self.assertEqual(self.c.session.timeline.retracted, ())
+        self.assertFalse(self.c.regulation_inputs.gang_heat_demand)
+        self.assertNotEqual(self.c.phase, "saunagang")
+        self.assertFalse(self.door(Kind.INFUSION, 9).changed)
+        self.assertIsNone(self.c.session.timeline.active)
+        # A later entry with presence at the closing starts as before.
+        self.door(Kind.DOOR_OPEN, 10)
+        self.door(Kind.DOOR_CLOSE, 11)
+        gang = self.c.session.timeline.active
+        self.assertEqual(gang.started_at, at(11))
+        self.assertEqual(gang.recognition_kind, Kind.PRESENCE_ENTRY)
+        self.assertEqual(gang.confirmation, Confirmation.PROVISIONAL)
+        self.door(Kind.INFUSION, 12)
+        self.assertEqual(self.c.session.timeline.active.confirmation, Confirmation.CONFIRMED)
+        self.assertEqual(self.c.session.timeline.active.started_at, at(11))
 
     def test_later_entry_with_presence_replaces_the_unconfirmed_gang(self):
         first = self.enter()

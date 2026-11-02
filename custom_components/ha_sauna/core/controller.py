@@ -153,6 +153,8 @@ class Controller:
         self._phase_key = (None, "aus")
         self._recognition_gates = []
         self._gang_temperature_gates = []
+        # Erstes Erreichen der Mindesttemperatur in der Session; davor kein Eintritt.
+        self._minimum_temperature_reached_at = None
         self._confirmation_batches = 0
         self._delivery_received_at = None
 
@@ -687,6 +689,9 @@ class Controller:
         self._gang_temperature_gates = [
             (at, self._gang_temperature_blocked(at), self._gang_temperature_input()[1])
         ]
+        self._minimum_temperature_reached_at = (
+            at if self._gang_temperature_gates[0][1] is None else None
+        )
         self.light_after_run = None
         self.door_request = TemporaryDoorHeatState()
         self._door_request_pending = False
@@ -867,6 +872,8 @@ class Controller:
             # a gap moves the earliest possible start, without erasing entry.
             since = self._gang_temperature_gates[-1][0]
             self._gang_temperature_gates[-1] = (since, blocked, gate_valid_until)
+        if blocked is None and self._minimum_temperature_reached_at is None:
+            self._minimum_temperature_reached_at = at
         self._latch_readiness(utc(at))
         self._evaluate(utc(at))
 
@@ -1121,6 +1128,13 @@ class Controller:
         ):
             # A door cycle across operation-OFF cannot start a resumed session.
             timeline = replace(timeline, anchor=None, preparation=None)
+        reached = self._minimum_temperature_reached_at
+        if event.kind == Kind.DOOR_CLOSE and (
+            reached is None or event.effective_at < reached
+        ):
+            # Before the session first reaches the minimum temperature, a
+            # closing is no entry (E-11). The door itself stays observed.
+            timeline = replace(timeline, anchor=None, preparation=None)
         if event.kind == Kind.DOOR_OPEN:
             self._presence_entry = None
         self._apply_timeline_transition(
@@ -1318,8 +1332,10 @@ class Controller:
     def _gang_entry_start_at(self, timeline):
         """Entry and minimum temperature must both hold before a gang starts.
 
-        Temperature never erases a physical door cycle. If it becomes valid
-        later, that later boundary is the beginning, not the earlier closure.
+        A closing before the session first reaches the minimum is no entry.
+        After that, temperature never erases a physical door cycle. If it
+        becomes valid later, that later boundary is the beginning, not the
+        earlier closure.
         """
         if not timeline.entry_cycle_available:
             return None

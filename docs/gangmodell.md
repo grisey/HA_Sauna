@@ -33,6 +33,13 @@ wirksame Präsenzquelle.
 Türöffnung und Türschluss werden unabhängig von der Mindesttemperatur erkannt.
 Der initiale Türzustand ist geschlossen; er ersetzt keine beobachtete Öffnung.
 
+Ein Türschluss vor dem ersten Erreichen der Mindesttemperatur in der Sitzung
+ist kein Eintritt. Er bleibt als Türereignis sichtbar, wird aber weder als
+Eintritt gespeichert noch später verwendet; ein so begonnener Aufenthalt zählt
+nicht. Das gilt im Sensorbetrieb und im Proxyverfahren. Nach dem ersten
+Erreichen gelten die folgenden Regeln unverändert, auch wenn die Temperatur
+wieder unter die Mindesttemperatur sinkt.
+
 | Situation | Gangerkennung |
 | --- | --- |
 | Noch kein Gang | Eintritt und Anwesenheitsnachweis; Beginn frühestens bei gültiger Regeltemperatur ab der Mindesttemperatur |
@@ -105,10 +112,11 @@ Quellenwechsel zum Proxyverfahren wirkt ein bestehender vorläufiger Sensorgang
 ohne diese Bedingung und weiterhin ohne Frist; seine Ganganforderung setzt einen
 aktuellen Zustandsbeleg voraus ([Heizpriorität](betrieb.md#heizpriorität)).
 
-Liegt die Temperatur beim Eintritt noch unter der Mindesttemperatur, bleibt der
-Eintritt bis zu einer neuen Türöffnung erhalten. Der vorläufige Gang beginnt
-beim Erreichen der Grenze, ohne erneute Türfolge und ohne Rückdatierung auf den
-kälteren Eintritt.
+Liegt die Temperatur beim Eintritt nach dem ersten Erreichen wieder unter der
+Mindesttemperatur, bleibt der Eintritt bis zu einer neuen Türöffnung erhalten.
+Der vorläufige Gang beginnt beim erneuten Erreichen der Grenze, ohne erneute
+Türfolge und ohne Rückdatierung auf den kälteren Eintritt. Ein Türschluss vor
+dem ersten Erreichen ist [kein Eintritt](#eintritt-aufenthalt-und-verlassen).
 
 Wie im Proxybetrieb beginnt ein bestätigter Gang damit am letzten Eintritt vor
 dem ersten Aufguss, und allein das bestätigte Durchlüften beendet ihn.

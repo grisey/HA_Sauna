@@ -35,6 +35,62 @@ class GangTemperatureTests(unittest.TestCase):
                         self.assertFalse(c.regulation_inputs.gang_heat_demand)
                         self.assertEqual(c.session.timeline.gang_count, 0)
 
+    def cold_session(self):
+        c = Controller(controller().parameters)
+        c.set_temperature(25, at(0))
+        c.set_operation(True, at(0), session_id="s")
+        return c
+
+    def test_closing_before_the_first_minimum_of_the_session_is_no_entry(self):
+        c = self.cold_session()
+        minimum = c.parameters.values["sauna_min_temperature_c"]
+        c.process(event("cold-open", Kind.DOOR_OPEN, 1))
+        c.process(event("cold-close", Kind.DOOR_CLOSE, 2))
+        self.assertEqual(c.session.timeline.door, Door.CLOSED)
+        self.assertIsNone(c.session.timeline.anchor)
+        c.set_temperature(minimum, at(9))
+        self.assertFalse(c.recognition_allowed_at(Kind.INFUSION, at(9)))
+        result = c.process(event("water", Kind.INFUSION, 10))
+        self.assertEqual(result.reason, "entry_context_missing")
+        self.assertIsNone(c.session.timeline.active)
+        self.assertEqual(c.session.timeline.retracted, ())
+        c.process(event("open", Kind.DOOR_OPEN, 11))
+        c.process(event("close", Kind.DOOR_CLOSE, 12))
+        self.assertTrue(c.process(event("water2", Kind.INFUSION, 13)).changed)
+        self.assertEqual(c.session.timeline.active.started_at, at(12))
+        self.assertEqual(c.session.timeline.active.start_source_event_id, "close")
+
+    def test_late_booked_closing_counts_by_its_closing_time(self):
+        for closing, entry in ((8, False), (9, True)):
+            with self.subTest(closing=closing):
+                c = self.cold_session()
+                c.set_temperature(c.parameters.values["sauna_min_temperature_c"], at(9))
+                c.process(Event("open", "s", Kind.DOOR_OPEN, at(7), at(10)))
+                c.process(Event("close", "s", Kind.DOOR_CLOSE, at(closing), at(10)))
+                self.assertEqual(c.session.timeline.anchor is not None, entry)
+                result = c.process(event("water", Kind.INFUSION, 11))
+                self.assertEqual(result.changed, entry)
+                if entry:
+                    self.assertEqual(c.session.timeline.active.started_at, at(9))
+
+    def test_after_the_first_minimum_a_cold_entry_still_waits_for_the_minimum(self):
+        for pause in (False, True):
+            with self.subTest(pause=pause):
+                c = self.cold_session()
+                minimum = c.parameters.values["sauna_min_temperature_c"]
+                c.set_temperature(minimum, at(5))
+                if pause:
+                    c.set_operation(False, at(6))
+                    c.set_operation(True, at(7))
+                c.set_temperature(25, at(8))
+                c.process(event("open", Kind.DOOR_OPEN, 9))
+                c.process(event("close", Kind.DOOR_CLOSE, 10))
+                self.assertEqual(c.session.timeline.anchor.effective_at, at(10))
+                c.set_temperature(minimum, at(15))
+                self.assertTrue(c.process(event("water", Kind.INFUSION, 16)).changed)
+                self.assertEqual(c.session.timeline.active.started_at, at(15))
+                self.assertEqual(c.session.timeline.active.start_basis, "minimum_temperature")
+
     def test_cold_entry_starts_when_temperature_and_new_evidence_are_available(self):
         for kind in (Kind.PERSON_STRONG, Kind.PERSON_WEAK, Kind.INFUSION):
             with self.subTest(kind=kind):
