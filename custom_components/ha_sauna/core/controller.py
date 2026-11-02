@@ -1165,11 +1165,15 @@ class Controller:
                  or previous.timeline.active.gang_id != timeline.active.gang_id
                  or previous.timeline.active.confirmation == Confirmation.PROVISIONAL)
         )
-        if (confirmed and self.control_mode == "automatic"
+        # A new gang with presence at the closing ends the cooling already while
+        # provisional, as soon as it acts (Nutzer 02.11.). Proxy evidence only
+        # limits the cooling; proxy effects of provisional gangs stay (E-03).
+        started = replaced and self.acting_gang is not None
+        if ((confirmed or started) and self.control_mode == "automatic"
                 and (timeline.active.recognition_kind in DIRECT_SIGNALS
                      or (self.direct_presence is not None
                          and self.direct_presence.qualified_presence))):
-            # The confirmed stay proves occupancy behind the closed door.
+            # The stay proves occupancy behind the closed door.
             # A departure requires a new opening.
             self._abort_after_run(at)
         if (previous.active_gang_temperature_id is not None

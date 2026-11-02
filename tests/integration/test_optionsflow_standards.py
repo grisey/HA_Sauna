@@ -589,19 +589,22 @@ class OptionsFlowStandardsTests(unittest.IsolatedAsyncioTestCase):
     async def test_group_restores_preview_hidden_fields_and_preserve_outside_a_s_d(
         self,
     ):
-        hidden = "parameters.strong_humidity_upper"
+        # A stored field hidden in sensor operation: the deadline applies to the
+        # proxy method only (E-02). The values of the former curve recognition
+        # are catalog-bound since 5eba4cf and have no field standard.
+        hidden = "parameters.confirmation_minutes"
         outside = "parameters.nominal_power_kw"
         color = "appearance.colors.event_door"
         for action in ("restore_standard", "restore_factory"):
             with self.subTest(action=action):
                 await self._seed(
                     {
-                        hidden: BY_KEY["strong_humidity_upper"].default + 0.1,
+                        hidden: BY_KEY["confirmation_minutes"].default + 0.1,
                         outside: BY_KEY["nominal_power_kw"].default + 0.1,
                         color: "#102030",
                     },
                     {
-                        hidden: BY_KEY["strong_humidity_upper"].default + 0.2,
+                        hidden: BY_KEY["confirmation_minutes"].default + 0.2,
                         outside: BY_KEY["nominal_power_kw"].default + 0.2,
                         color: "#405060",
                     },
@@ -651,19 +654,19 @@ class OptionsFlowStandardsTests(unittest.IsolatedAsyncioTestCase):
     async def test_global_restores_include_appearance_and_preserve_excluded_owners(
         self,
     ):
-        hidden = "parameters.strong_humidity_upper"
+        hidden = "parameters.confirmation_minutes"
         visible = "parameters.nominal_power_kw"
         color = "appearance.colors.event_door"
         for action in ("restore_standard", "restore_factory"):
             with self.subTest(action=action):
                 await self._seed(
                     {
-                        hidden: BY_KEY["strong_humidity_upper"].default + 0.1,
+                        hidden: BY_KEY["confirmation_minutes"].default + 0.1,
                         visible: BY_KEY["nominal_power_kw"].default + 0.1,
                         color: "#102030",
                     },
                     {
-                        hidden: BY_KEY["strong_humidity_upper"].default + 0.2,
+                        hidden: BY_KEY["confirmation_minutes"].default + 0.2,
                         visible: BY_KEY["nominal_power_kw"].default + 0.2,
                         color: "#405060",
                     },

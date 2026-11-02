@@ -336,9 +336,10 @@ class DirectPresenceControlTests(unittest.TestCase):
         self.assertEqual(second.started_at, at(9))
         self.assertEqual(second.confirmation, Confirmation.PROVISIONAL)
         self.assertEqual(self.c.session.timeline.completed[0].ended_at, at(8))
-        self.assertIsNotNone(self.c.session.after_run)
-        self.door(Kind.INFUSION, 10)
+        # Already the provisional gang ends the cooling (Nutzer 02.11.).
         self.assertIsNone(self.c.session.after_run)
+        self.door(Kind.INFUSION, 10)
+        self.assertEqual(self.c.session.timeline.active.confirmation, Confirmation.CONFIRMED)
         self.report("off", 11)
         self.assertEqual(self.c.session.timeline.active.gang_id, second.gang_id)
 

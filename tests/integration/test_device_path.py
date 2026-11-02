@@ -1360,7 +1360,8 @@ class DevicePathTests(unittest.IsolatedAsyncioTestCase):
         self.assertLessEqual(proof.confirmed_at, closure.detected_at)
         gang = self.runtime.session.timeline.active
         self.assertIsNotNone(gang)
-        self.assertEqual(gang.recognition_kind, Kind.PRESENCE_CONFIRMED)
+        # Presence at the closing opens a provisional gang (57e0ba6).
+        self.assertEqual(gang.recognition_kind, Kind.PRESENCE_ENTRY)
         await door("infusion", Kind.INFUSION)
         self.assertEqual(len(self.runtime.session.timeline.active.infusion_events), 1)
         self.assertFalse(self.heater.is_on)
@@ -1819,12 +1820,40 @@ class DevicePathTests(unittest.IsolatedAsyncioTestCase):
             await self.hass.async_block_till_done()
 
     async def test_additional_door_signal_updates_timeline_without_obsolete_cooling_wait(self):
-        # The existing temperature-only fixture exercises the thermal route.
-        # Unavailable RH is explicit; unchanged valid RH is still evidence.
-        for position in ("upper", "lower"):
-            await self.set_source(f"{position}_humidity", "unavailable")
+        from custom_components.ha_sauna.core.recognition import Detection
+        from custom_components.ha_sauna.core.timeline import DoorCloseEvidence, Kind
+
+        # Sensor values pass the real HA path every second, with unchanged valid
+        # RH: the recognition evaluates a step only with all of its values
+        # (docs/erkennung.md, Messkanäle). The door outcome of these readings is
+        # supplied; the model itself is tested in the core (5eba4cf).
         await self.runtime.set_operation(True)
         await self.hass.async_block_till_done()
+        recognizer = self.runtime.detector
+
+        def at(second):
+            return self.base + timedelta(seconds=second)
+
+        outcome = [
+            (at(21), Detection(Kind.DOOR_OPEN, at(20), at(21), recognizer.channels,
+                               probability=0.99)),
+            (at(41), Detection(Kind.DOOR_CLOSE, at(40), at(41), recognizer.channels,
+                               door_close_evidence=DoorCloseEvidence(at(40), at(41)),
+                               probability=0.99)),
+        ]
+        evaluate = recognizer.advance
+
+        def advance(through_at, **callbacks):
+            out = evaluate(through_at, **callbacks)
+            processed = recognizer.processed_until
+            while outcome and processed is not None and processed >= outcome[0][0]:
+                _, item = outcome.pop(0)
+                recognizer.detections.append(item)
+                callbacks["on_detection"](item)
+                out.append(item)
+            return out
+
+        recognizer.advance = advance
         for second in range(70):
             self.now=self.base+timedelta(seconds=second)
             temperature=50 if second<20 else 50-.08*min(20,second-20)+max(0,second-40)*.03
@@ -1832,7 +1861,7 @@ class DevicePathTests(unittest.IsolatedAsyncioTestCase):
                 await self.set_source(f"{position}_temperature",temperature)
             await self.runtime.tick()
             await self.hass.async_block_till_done()
-        from custom_components.ha_sauna.core.timeline import Kind
+        self.assertEqual(outcome, [])
         doors=[e for e in self.runtime.session.timeline.processed if e.kind in (Kind.DOOR_OPEN,Kind.DOOR_CLOSE)]
         self.assertEqual([e.kind for e in doors],[Kind.DOOR_OPEN,Kind.DOOR_CLOSE])
         self.assertFalse(any(d.purpose == "person_opportunity" for d in self.runtime.session.deadlines))
@@ -1918,7 +1947,10 @@ class DevicePathTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("upper_temperature", self.runtime.device.faults)
         self.assertEqual(self.runtime.controller.protection, set())
         self.assertTrue(self.heater.is_on)
-        self.assertEqual(tuple(p.value for p in self.runtime.detector.active_positions), ("lower",))
+        # The recognition keeps the last value of a channel without a report
+        # (docs/erkennung.md, Messkanäle; 5eba4cf); both positions stay.
+        self.assertEqual(tuple(p.value for p in self.runtime.detector.active_positions),
+                         ("upper", "lower"))
         await self.set_source("upper_temperature", 70)
         await self.time(2)
         self.assertNotIn("upper_temperature", self.runtime.device.faults)

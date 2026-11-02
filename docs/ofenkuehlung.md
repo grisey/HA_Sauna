@@ -17,9 +17,10 @@ Mindestdauer für diesen Kühlzyklus fest. Nur bestätigte AUS-Zeit zählt; Sch�
 unbekannte Rückmeldung pausieren die Uhr, ohne die Heizsperre aufzuheben.
 
 Ein tatsächlich neuer Gang mit Anwesenheit beim Türschluss beendet die Kühlung
-sofort, sobald ein Aufguss ihn bestätigt. Eine Zustandsmeldung allein, ein
-vorläufiger Gang oder im Proxybetrieb eine Bestätigung allein durch Aufguss
-genügt dafür nicht.
+sofort, schon als vorläufiger Gang, sobald er
+[wirkt](gangmodell.md#vorläufiger-gang-im-sensorbetrieb). Eine Zustandsmeldung
+allein oder im Proxybetrieb ein vorläufiger Gang oder eine Bestätigung allein
+durch Aufguss genügt dafür nicht.
 Jeder neue zugelassene einmalige Personenbeleg, einschließlich eines
 Aufgusses als Personenbeleg, begrenzt die laufende Kühlung auf ihre Mindestgesamtdauer.
 Bereits bestätigte AUS-Zeit seit Kühlbeginn wird dabei vollständig angerechnet.

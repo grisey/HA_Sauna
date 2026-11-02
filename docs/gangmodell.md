@@ -93,8 +93,10 @@ Türschluss als Ersatz, durch bestätigtes Durchlüften einer neuen Öffnung ode
 durch Betrieb-AUS.
 
 Er wirkt nur, solange die letzte Zustandsmeldung des Sensors „anwesend“ lautet.
-Das gilt für die Ganganforderung, die Phase **Saunagang** mit ihrem Lichtziel
-und die Anzeige von Gangdauer und Startsperre. Nach einer Abwesenheitsmeldung
+Das gilt für die Ganganforderung, für das Ende einer laufenden
+[Ofenkühlung](ofenkuehlung.md#kühlung-abwarten-oder-vorzeitig-beenden) bei
+seinem Beginn, die Phase **Saunagang** mit ihrem Lichtziel und die Anzeige von
+Gangdauer und Startsperre. Nach einer Abwesenheitsmeldung
 gelten Aufheizen oder Bereit; der vorläufige Gang bleibt bestehen und erscheint
 in Verlauf und Zustandsattributen weiter als vorläufig. Eine spätere
 Anwesenheitsmeldung stellt die Wirkung wieder her. `unknown`, `unavailable` und

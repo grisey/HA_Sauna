@@ -229,8 +229,13 @@ class PresenceRuntimeIntegrationTests(unittest.IsolatedAsyncioTestCase):
         await door("entry-close", Kind.DOOR_CLOSE)
         gang = runtime.session.timeline.active
         self.assertIsNotNone(gang)
-        self.assertEqual(gang.confirmation, Confirmation.CONFIRMED)
-        self.assertEqual(gang.infusion_events, ())
+        # Presence at the closing opens a provisional gang (57e0ba6); there are
+        # no gangs without infusion, the first infusion confirms it (E-01).
+        self.assertEqual((gang.confirmation, gang.recognition_kind),
+                         (Confirmation.PROVISIONAL, Kind.PRESENCE_ENTRY))
+        await door("infusion", Kind.INFUSION)
+        self.assertEqual(runtime.session.timeline.active.gang_id, gang.gang_id)
+        self.assertEqual(runtime.session.timeline.active.confirmation, Confirmation.CONFIRMED)
         self.assertTrue(runtime.controller.regulation_inputs.gang_heat_demand)
 
         await presence("off")
@@ -338,10 +343,13 @@ class PresenceRuntimeIntegrationTests(unittest.IsolatedAsyncioTestCase):
         gang = runtime.session.timeline.active
         self.assertIsNotNone(gang)
         self.assertEqual(gang.started_at, closed_at)
-        self.assertEqual(gang.confirmation, Confirmation.CONFIRMED)
+        # A provisional gang (57e0ba6), confirmed by the first infusion (E-01).
+        self.assertEqual(gang.confirmation, Confirmation.PROVISIONAL)
         self.assertTrue(runtime.controller.regulation_inputs.gang_heat_demand)
         self.assertEqual(runtime.controller.direct_presence.timing.effective_at, state.last_changed)
         await runtime.tick()
+        self.assertEqual(runtime.session.timeline.active.gang_id, gang.gang_id)
+        await self.semantic_door(runtime, "infusion", Kind.INFUSION)
         self.assertEqual(runtime.session.timeline.active.gang_id, gang.gang_id)
         self.assertEqual(sum(e.kind == "gang_confirmed" for e in runtime.consumer_events), 1)
 
@@ -373,7 +381,12 @@ class PresenceRuntimeIntegrationTests(unittest.IsolatedAsyncioTestCase):
 
         await self.semantic_door(runtime, "new-entry-open", Kind.DOOR_OPEN)
         new_closed_at = await self.semantic_door(runtime, "new-entry-close", Kind.DOOR_CLOSE)
-        self.assertEqual(runtime.session.timeline.active.started_at, new_closed_at)
+        gang = runtime.session.timeline.active
+        self.assertEqual(gang.started_at, new_closed_at)
+        # A provisional gang (57e0ba6), confirmed by the first infusion (E-01).
+        self.assertEqual(gang.recognition_kind, Kind.PRESENCE_ENTRY)
+        await self.semantic_door(runtime, "infusion", Kind.INFUSION)
+        self.assertEqual(runtime.session.timeline.active.gang_id, gang.gang_id)
         self.assertEqual(sum(e.kind == "gang_confirmed" for e in runtime.consumer_events), 1)
 
     async def test_temperature_wait_and_return_during_cooling_through_ha_inputs(self):
@@ -406,6 +419,8 @@ class PresenceRuntimeIntegrationTests(unittest.IsolatedAsyncioTestCase):
         self.assertIsNotNone(first)
         self.assertGreaterEqual(first.started_at, threshold_before)
         self.assertLessEqual(first.started_at, runtime._clock())
+        # There are no gangs without infusion; the first one confirms (E-01).
+        await door("first-infusion", Kind.INFUSION)
 
         await door("first-exit", Kind.DOOR_OPEN)
         await presence("off")
@@ -422,7 +437,9 @@ class PresenceRuntimeIntegrationTests(unittest.IsolatedAsyncioTestCase):
         second = runtime.session.timeline.active
         self.assertIsNotNone(second)
         self.assertNotEqual(second.gang_id, first.gang_id)
+        # Already the provisional gang ends the cooling (Nutzer 02.11.).
         self.assertIsNone(runtime.session.after_run)
+        await door("second-infusion", Kind.INFUSION)
 
         await door("second-exit", Kind.DOOR_OPEN)
         await presence("off")

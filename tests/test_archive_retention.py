@@ -7,6 +7,7 @@ from contextlib import closing
 from datetime import timedelta
 from pathlib import Path
 
+from test_archive import writer_error
 from test_foundation import T0, bindings, event, parameters
 
 from custom_components.ha_sauna.archive import Archive
@@ -126,8 +127,7 @@ class ArchiveRetentionTests(unittest.IsolatedAsyncioTestCase):
     async def test_unknown_session_rejection_leaves_archive_usable(self):
         self.save(self.session("historical", True).session)
         await self.archive.flush()
-        with self.assertRaises(KeyError):
-            await self.archive.erase("missing")
+        await writer_error(self.archive.erase("missing"), KeyError)
         self.assertIsNone(self.archive.failure)
         self.assertEqual(await self.archive.erase("historical"), 1)
         await self.archive.flush()

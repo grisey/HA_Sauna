@@ -8,7 +8,7 @@ import unittest
 from unittest.mock import AsyncMock, Mock, patch
 
 import test_device_feedback as fixtures
-from test_sensor_sample import packet, SOURCES, TOPIC, records_for, comparison
+from test_sensor_sample import packet, SOURCES, TOPIC, records_for, comparison, accept
 from climate_fixtures import trace
 from custom_components.ha_sauna.core.sensor_sample import ClimatePacket, archive_measurements
 
@@ -46,9 +46,8 @@ class ShtSamplesTests(unittest.TestCase):
             self.assertEqual(runtime.archive.append.call_count, 2)
             self.assertEqual(runtime._cycle.await_count, 1)
             restored = list(archive_measurements(records_for([item]), archive_id='adapter'))
-            math = comparison()
-            math.accept(restored[0])
-            self.assertEqual(math.probabilities()[0].original_count, 2)
+            # The recognition takes each original once (5eba4cf).
+            self.assertEqual(accept(comparison(), restored[0]), [True, True])
         asyncio.run(exercise())
 
     def test_old_scalar_path_remains_usable_without_optional_mqtt_fields(self):
@@ -68,9 +67,7 @@ class ShtSamplesTests(unittest.TestCase):
             self.assertEqual(original.received_at, clock[0])
             self.assertIsNotNone(original.original_id)
             self.assertEqual(runtime.detector.accept.call_count, 1)
-            math = comparison()
-            math.accept((original,))
-            self.assertEqual(math.probabilities()[0].original_count, 1)
+            self.assertEqual(accept(comparison(), (original,)), [True])
         asyncio.run(exercise())
 
     def test_binding_uses_selected_entities_and_actual_topics_including_swapped_positions(self):
@@ -148,9 +145,7 @@ class ShtSamplesTests(unittest.TestCase):
         adapter.ingest_measurement(old)
         self.assertIsNone(adapter.regulation_measurement(clock[0]))
         self.assertEqual(adapter.measurement_status(clock[0])['upper_temperature']['state'], 'stale')
-        math = comparison()
-        self.assertTrue(math.accept((old,)))
-        self.assertEqual(math.probabilities()[0].original_count, 1)
+        self.assertEqual(accept(comparison(), (old,)), [True])
 
     def test_late_discovery_claims_scalar_source_before_its_first_event_is_consumed(self):
         async def exercise():

@@ -27,6 +27,20 @@ from climate_fixtures import measurement
 from test_settings import async_timeout
 
 
+async def writer_error(awaitable, expected):
+    """Await an archive call that fails with an error of the writer task.
+
+    Unlike assertRaises, this keeps the frames of the traceback. It contains
+    the frame of the suspended writer task; with Python 3.12, clearing that
+    frame finalizes the writer, and later archive calls never complete.
+    """
+    try:
+        await awaitable
+    except expected as error:
+        return error
+    raise AssertionError(f"{expected.__name__} not raised")
+
+
 class ArchiveTests(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self):
         self.temp = tempfile.TemporaryDirectory()
@@ -983,8 +997,7 @@ class ArchiveTests(unittest.IsolatedAsyncioTestCase):
             with self.assertLogs("custom_components.ha_sauna.archive", level="ERROR") as captured:
                 self.record(1)
                 await self.archive.queue.join()
-                with self.assertRaises(sqlite3.OperationalError):
-                    await self.archive.flush()
+                await writer_error(self.archive.flush(), sqlite3.OperationalError)
             self.assertEqual(len(captured.records), 1)
             self.assertIn("database is locked", captured.output[0])
             self.assertIsNotNone(captured.records[0].exc_info)
@@ -1002,8 +1015,8 @@ class ArchiveTests(unittest.IsolatedAsyncioTestCase):
                 "custom_components.ha_sauna.archive.sqlite3.connect",
                 side_effect=lambda *args, **kwargs: connect(*args, **kwargs, timeout=0.01),
             ):
-                with self.assertRaisesRegex(sqlite3.OperationalError, "aktiven Leser"):
-                    await self.archive.pre_backup()
+                error = await writer_error(self.archive.pre_backup(), sqlite3.OperationalError)
+                self.assertRegex(str(error), "aktiven Leser")
             self.assertTrue(self.archive.resume.is_set())
         self.record(2)
         await self.archive.flush()

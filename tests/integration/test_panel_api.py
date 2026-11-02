@@ -1113,8 +1113,9 @@ class PanelAPITests(unittest.IsolatedAsyncioTestCase):
                 state = await response.json()
             self.assertNotIn(entity_id, json.dumps(state))
             active = state["session"]["timeline"]["active"]
+            # Presence at the entry closing opens a provisional gang (57e0ba6).
             recognition = next(item for item in state["session"]["timeline"]["processed"]
-                               if item["kind"] == "presence_confirmed")
+                               if item["kind"] == "presence_entry")
             self.assertEqual(active["recognition_event_id"], recognition["event_id"])
             self.assertEqual(active["session_id"], session_id)
             self.assertEqual(state["session"]["door_cycles"], expected_cycles(active["gang_id"]))
@@ -1146,6 +1147,9 @@ class PanelAPITests(unittest.IsolatedAsyncioTestCase):
             self.assertIs(runtime.session, live_session)
             self.assertEqual(plain(runtime.session), original_live)
 
+            # There are no gangs without infusion: the first infusion confirms the
+            # provisional gang, otherwise the ventilation retracts it (E-01).
+            await door("infusion", Kind.INFUSION, 38)
             await door("exit-open", Kind.DOOR_OPEN, 40)
             await presence("off", 50)
             self.assertIsNotNone(runtime.session.timeline.active)
@@ -2533,13 +2537,16 @@ class PanelAPITests(unittest.IsolatedAsyncioTestCase):
         other_configuration = other.runtime_data.configuration
         presence = "binary_sensor.restore_presence"
         self.hass.states.async_set(presence, "off", {"device_class": "occupancy"})
-        hidden = "parameters.strong_window_seconds"
+        # A stored field hidden in sensor operation: the deadline applies to the
+        # proxy method only (E-02). The values of the former curve recognition
+        # are catalog-bound since 5eba4cf and have no field standard.
+        hidden = "parameters.confirmation_minutes"
         fallback = "parameters.sensor_timeout_seconds"
         power = "parameters.nominal_power_kw"
         color = "appearance.colors.event_door"
         unchanged_factory = "appearance.colors.text"
-        hidden_definition = BY_KEY["strong_window_seconds"]
-        increment = BY_KEY["person_step_seconds"].default
+        hidden_definition = BY_KEY["confirmation_minutes"]
+        increment = hidden_definition.number_step
         catalog = deepcopy(self.entry.options["temperature_programs"])
         catalog.append({**catalog[0], "id": "retained_standard_program", "name": "Erhaltenes Programm"})
         program = catalog[-1]
@@ -2554,7 +2561,7 @@ class PanelAPITests(unittest.IsolatedAsyncioTestCase):
             "temperature_steps": stages,
             "parameters": {
                 **self.entry.options["parameters"],
-                "strong_window_seconds": hidden_definition.default + increment,
+                "confirmation_minutes": hidden_definition.default + increment,
                 "sensor_timeout_seconds": BY_KEY["sensor_timeout_seconds"].default + BY_KEY["sensor_timeout_seconds"].number_step,
                 "nominal_power_kw": power_definition.default + power_definition.number_step,
             },
@@ -2582,6 +2589,7 @@ class PanelAPITests(unittest.IsolatedAsyncioTestCase):
                             self.assertEqual(response.status, 200, await response.text())
                             before = {row["id"]: row for row in (await response.json())["fields"]}
                         self.assertFalse(before[hidden]["applicable"])
+                        self.assertNotIn("parameters.strong_window_seconds", before)
                         self.assertFalse(before[fallback]["has_standard"])
                         self.assertEqual(before[unchanged_factory]["active"], before[unchanged_factory]["factory"])
                         expected_scope = ({hidden} if "field" in scope else
