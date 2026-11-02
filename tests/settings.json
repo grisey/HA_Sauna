@@ -2,7 +2,7 @@
   "schema_version": 1,
   "description": "Exclusive defaults for test infrastructure and synthetic input data. Product settings are read from the product catalogue; independent acceptance criteria stay in their tests.",
   "runner": {
-    "operating_system": "ubuntu-latest",
+    "operating_system": "ubuntu-24.04",
     "python_core": "3.13",
     "python_ha": "3.14.2",
     "prettier": "3.6.2",
