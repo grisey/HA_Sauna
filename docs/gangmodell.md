@@ -67,26 +67,35 @@ Vorschau und Zustandsentität verwenden dafür dieselbe Ableitung.
 
 ## Gang mit dem Präsenzsensor erkennen
 
-Im Sensorbetrieb zählt der Belegungszustand beim Türschluss. Zeitverläufe des
-Sensors nach dem Türschluss, etwa seine Abwesenheitsverzögerung, gehen nicht in
-die Erkennung ein.
+Im Sensorbetrieb zählt der Belegungszustand des Türvorgangs. Für den Eintritt
+zählt Anwesenheit am Beginn des Türschlusskandidaten oder bis zur Bestätigung
+des Türschlusses. Für den Austritt bleibt der Türvorgang verfügbar, bis die
+nächste Öffnung oder der nächste Aufguss ihn ablöst. Die Zuordnung hängt damit
+nicht an einem einzelnen Zeitpunkt, und es gibt keine feste Frist.
 
 | Beleg | Wirkung |
 | --- | --- |
 | Anwesenheit beim Türschluss nach vollständigem Eintritt | Eröffnet mit der Bestätigung des Türschlusses einen vorläufigen Gang; Beginn ist der Türschluss |
+| Anwesenheit, erkannt nach dem Kandidatenbeginn und bis zur Bestätigung des Türschlusses | Eröffnet ebenso einen vorläufigen Gang; Beginn ist der Türschluss |
 | Weiterer Türvorgang mit Anwesenheit beim Türschluss vor der Bestätigung | Ersetzt den vorläufigen Gang; Beginn ist der neue Türschluss |
 | Erster Aufguss im vorläufigen Gang | Bestätigt ihn mit gleichem Beginn |
 | Bestätigtes Durchlüften einer neuen Öffnung | Beendet den bestätigten Gang zum Buchungszeitpunkt; nimmt einen vorläufigen zurück |
-| Abwesenheit, `unknown`, `unavailable` | Kein Übergang; zur Wirkung eines vorläufigen Gangs siehe [unten](#vorläufiger-gang-im-sensorbetrieb) |
+| Abgeschlossener Türvorgang im Gang, nach dessen Öffnung Abwesenheit gemeldet ist und als letzte Meldung gilt, ohne Aufguss danach | Beendet den bestätigten Gang zum Buchungszeitpunkt (Endgrund `absence`); nimmt einen vorläufigen zurück. Der Türvorgang ist kein Eintritt |
+| Abwesenheit ohne Türvorgang, `unknown`, `unavailable` | Kein Übergang; zur Wirkung eines vorläufigen Gangs siehe [unten](#vorläufiger-gang-im-sensorbetrieb) |
 | Betrieb-AUS | Ende des offenen Gangs |
 
 Maßgeblich ist der Zustand am Beginn des Türschlusskandidaten aus dem erhaltenen
 Türschlussbeleg; ein rückblickend zugeordneter Türzeitpunkt ersetzt ihn nicht.
 Erkannt und wirksam wird der Gang frühestens mit der Bestätigung des
 Türschlusses, bei später empfangener Meldung mit deren Empfang.
-Ein Türschluss ohne diesen Beleg eröffnet keinen Gang durch den Sensor. Ein
-unveränderter Zustand `on` gilt ohne weitere Meldung fort; erst nach dem
-Kandidatenbeginn einsetzende Anwesenheit zählt nicht. `unknown`, `unavailable`
+Ein Türschluss ohne diesen Beleg eröffnet keinen Gang durch den Sensor.
+Ohne Anwesenheit am Kandidatenbeginn zählt eine Anwesenheit, die nach dem
+Kandidatenbeginn erkannt wurde und bis zur Bestätigung des Türschlusses
+verwendbar ist. Eine Meldung, die vor dem Kandidatenbeginn erkannt wurde und
+erst danach verwendbar wird, etwa nach einem Quellenwechsel, zählt nicht; später
+erkannte Anwesenheit ebenso wenig. Ein Türvorgang, der einen Gang als Austritt
+beendet hat, ist kein Eintritt. Ein unveränderter Zustand `on` gilt ohne weitere
+Meldung fort. `unknown`, `unavailable`
 oder ein Quellenwechsel vor dem Kandidatenbeginn unterbrechen den Nachweis.
 Gemeldete Zustandszeiten gelten ohne Abzug eines vermuteten Sensorverzugs. Eine
 später empfangene Meldung mit früherer Zustandszeit geht in die Auswertung ein;
@@ -96,8 +105,8 @@ eine Meldung zählt ab ihrer tatsächlichen Quellenfreigabe.
 
 Im Sensorbetrieb hat ein vorläufiger Gang keine Frist. Er endet durch den ersten
 Aufguss als Bestätigung, durch einen weiteren Türvorgang mit Anwesenheit beim
-Türschluss als Ersatz, durch bestätigtes Durchlüften einer neuen Öffnung oder
-durch Betrieb-AUS.
+Türschluss als Ersatz, durch bestätigtes Durchlüften einer neuen Öffnung, durch
+einen abgeschlossenen Türvorgang mit Abwesenheit oder durch Betrieb-AUS.
 
 Er wirkt nur, solange die letzte Zustandsmeldung des Sensors „anwesend“ lautet.
 Das gilt für die Ganganforderung, für das Ende einer laufenden
@@ -119,10 +128,13 @@ Türfolge und ohne Rückdatierung auf den kälteren Eintritt. Ein Türschluss vo
 dem ersten Erreichen ist [kein Eintritt](#eintritt-aufenthalt-und-verlassen).
 
 Wie im Proxybetrieb beginnt ein bestätigter Gang damit am letzten Eintritt vor
-dem ersten Aufguss, und allein das bestätigte Durchlüften beendet ihn.
-Abwesenheit beendet keinen Gang, auch nicht nach einer Türöffnung. Nach einer
-Türöffnung im Gang beendet gemeldete Abwesenheit nur die Ganganforderung
-([Heizpriorität](betrieb.md#heizpriorität)). Eine ältere
+dem ersten Aufguss. Er endet durch bestätigtes Durchlüften oder durch einen
+abgeschlossenen Türvorgang im Gang, nach dessen Öffnung der Sensor Abwesenheit
+gemeldet hat, die bis dahin die letzte Meldung ist. Ein Aufguss nach dieser
+Öffnung oder eine spätere Anwesenheitsmeldung hebt das auf. Abwesenheit ohne
+Türvorgang beendet keinen Gang. Nach einer Türöffnung im Gang beendet gemeldete
+Abwesenheit sofort die Ganganforderung
+([Heizpriorität](betrieb.md#heizpriorität)), den Gang mit dem Türschluss. Eine ältere
 Austrittsfolge kann keinen später begonnenen Gang beenden. Bei einem
 Quellenwechsel bleibt die ursprüngliche Bestätigungsart des Gangs erhalten.
 

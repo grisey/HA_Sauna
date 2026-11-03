@@ -1,4 +1,4 @@
-"""Eintritt braucht beide Türkanten und Präsenz beim Schluss; Austritt durch Lüften oder leere Kabine."""
+"""Eintritt braucht beide Türkanten und Präsenz bis zur Schlussbestätigung; Austritt durch Lüften oder Türvorgang mit Abwesenheit."""
 from dataclasses import replace
 import unittest
 
@@ -168,17 +168,20 @@ class DirectPresenceControlTests(unittest.TestCase):
         self.assertEqual(self.c.session.timeline.gang_count, 0)
         self.assertTrue(self.c.regulation_inputs.gang_heat_demand)
 
-    def test_absence_after_an_opening_does_not_end_the_gang(self):
+    def test_absence_after_an_opening_ends_the_gang_with_the_closing(self):
+        # G8 (K2): a door operation with absence ends the gang in sensor operation.
         self.start()
         self.door(Kind.DOOR_OPEN, 5)
         self.report("off", 6)
+        self.assertIsNotNone(self.c.session.timeline.active)
         self.door(Kind.DOOR_CLOSE, 7)
         self.c.advance(at(4000))
-        self.assertIsNotNone(self.c.session.timeline.active)
-        self.assertEqual(self.c.session.timeline.completed, ())
-        self.assertIsNone(self.c.session.after_run)
+        self.assertIsNone(self.c.session.timeline.active)
+        self.assertEqual(len(self.c.session.timeline.completed), 1)
+        self.assertEqual(self.c.session.timeline.completed[0].end_reason, "absence")
+        self.assertEqual(self.c.session.timeline.completed[0].ended_at, at(7))
 
-    def test_absence_after_an_opening_ends_only_the_gang_heat_until_presence(self):
+    def test_absence_after_an_opening_ends_the_gang_heat_and_the_closing_the_gang(self):
         self.start()
         gang = self.c.session.timeline.active
         self.door(Kind.DOOR_OPEN, 5)
@@ -186,17 +189,19 @@ class DirectPresenceControlTests(unittest.TestCase):
         self.report("off", 6)
         self.assertFalse(self.c.regulation_inputs.gang_heat_demand)
         self.assertNotEqual(self.c.last_decision.reason, "gang_heat_demand")
-        # Neither a closing without presence nor a further opening restores it.
+        # G8 (K2): the closing of this door operation ends the gang.
         self.door(Kind.DOOR_CLOSE, 7)
+        self.assertIsNone(self.c.session.timeline.active)
+        self.assertEqual(self.c.session.timeline.completed[-1].gang_id, gang.gang_id)
+        self.assertEqual(self.c.session.timeline.completed[-1].end_reason, "absence")
+        # A return through a new door operation with presence is a new entry.
         self.door(Kind.DOOR_OPEN, 8)
         self.assertFalse(self.c.regulation_inputs.gang_heat_demand)
         self.report("on", 9)
+        self.door(Kind.DOOR_CLOSE, 10)
+        self.assertNotEqual(self.c.session.timeline.active.gang_id, gang.gang_id)
+        self.assertEqual(self.c.session.timeline.active.confirmation, Confirmation.PROVISIONAL)
         self.assertTrue(self.c.regulation_inputs.gang_heat_demand)
-        self.assertEqual(self.c.last_decision.reason, "gang_heat_demand")
-        self.c.advance(at(4000))
-        self.assertEqual(self.c.session.timeline.active.gang_id, gang.gang_id)
-        self.assertEqual(self.c.session.timeline.completed, ())
-        self.assertIsNone(self.c.session.after_run)
 
     def test_new_closing_with_presence_restores_the_gang_heat(self):
         self.start()
@@ -404,7 +409,9 @@ class DirectPresenceControlTests(unittest.TestCase):
         self.assertEqual(self.c.session.timeline.active.confirmation, Confirmation.PROVISIONAL)
 
     def test_entry_presence_uses_door_time_not_later_confirmation_grid(self):
-        for present_at in (9, 11):
+        # G8 (K1, L-G8-4): presence detected by the confirmation of the closing
+        # still makes the entry; the gang begins at the door time.
+        for present_at, expected in ((9, True), (11, True), (12.5, False)):
             with self.subTest(present_at=present_at):
                 self.setUp()
                 self.door(Kind.DOOR_OPEN, 5)
@@ -412,8 +419,8 @@ class DirectPresenceControlTests(unittest.TestCase):
                 self.c.process(Event("delayed-close", "s", Kind.DOOR_CLOSE,
                                      at(10), at(13), at(13), at(12),
                                      door_close_evidence=DoorCloseEvidence(at(10), at(12))))
-                self.assertEqual(self.c.session.timeline.active is not None, present_at == 9)
-                if present_at == 9:
+                self.assertEqual(self.c.session.timeline.active is not None, expected)
+                if expected:
                     self.assertEqual(self.c.session.timeline.active.started_at, at(10))
 
     def test_presence_before_delayed_entry_does_not_use_old_door_cycle(self):
@@ -527,13 +534,15 @@ class DirectPresenceControlTests(unittest.TestCase):
         self.assertEqual(gang.started_at, at(6))
         self.assertEqual(sum(e.kind == "gang_retracted" for e in self.c.consumer_events), 1)
 
-    def test_later_closing_without_presence_keeps_the_unconfirmed_gang(self):
+    def test_later_closing_with_absence_retracts_the_unconfirmed_gang(self):
+        # G8 (K2): the door operation with absence ends a provisional gang too.
         first = self.enter()
         self.door(Kind.DOOR_OPEN, 5)
         self.report("off", 6)
         self.door(Kind.DOOR_CLOSE, 7)
-        self.assertEqual(self.c.session.timeline.active.gang_id, first.gang_id)
-        self.assertEqual(self.c.session.timeline.retracted, ())
+        self.assertIsNone(self.c.session.timeline.active)
+        self.assertEqual(self.c.session.timeline.retracted[-1].gang_id, first.gang_id)
+        self.assertEqual(self.c.session.timeline.gang_count, 0)
 
     def test_presence_level_at_close_controls_entry(self):
         for state, expected in (("on", True), ("off", False),

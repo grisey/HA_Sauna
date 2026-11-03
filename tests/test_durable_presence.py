@@ -86,15 +86,25 @@ class DurablePresenceControllerTests(unittest.TestCase):
                     item.kind == "gang_confirmed" for item in self.c.consumer_events
                 ))
 
-    def test_presence_starting_inside_the_candidate_does_not_cover_it(self):
-        for onset in (4, 6):
+    def test_presence_detected_by_the_confirmation_makes_the_entry(self):
+        # G8 (K1, L-G8-4): candidate 3, confirmation 6. Presence detected up to
+        # the confirmation makes the entry; later presence does not.
+        for onset, expected in ((4, True), (6, True), (7, False)):
             with self.subTest(onset=onset):
                 self.setUp()
                 self.presence("off", 2)
                 self.presence("on", onset)
-                self.c.process(close_event())
+                closure = close_event()
+                self.c.process(closure)
                 self.c.advance(at(8))
-                self.assert_no_entry()
+                if expected:
+                    gang = self.c.session.timeline.active
+                    self.assertIsNotNone(gang)
+                    self.assertEqual(gang.start_source_event_id, closure.event_id)
+                    self.assertEqual(gang.started_at, closure.effective_at)
+                    self.assertEqual(gang.confirmation, Confirmation.PROVISIONAL)
+                else:
+                    self.assert_no_entry()
 
     def test_retrospective_door_time_does_not_replace_candidate_beginning(self):
         self.presence("on", 2.5)
@@ -181,7 +191,9 @@ class DurablePresenceControllerTests(unittest.TestCase):
             ("unchanged_on", None, True),
             ("still_absent", None, False),
             ("on_before_new_candidate", 9.5, True),
-            ("on_inside_new_candidate", 11, False),
+            # G8 (K1, L-G8-4): presence detected up to the confirmation counts.
+            ("on_inside_new_candidate", 11, True),
+            ("on_after_new_confirmation", 12.5, False),
         )
         for case, next_on, expected in cases:
             with self.subTest(case=case):

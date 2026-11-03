@@ -1,4 +1,4 @@
-"""Gangende mit Präsenzsensor: allein das Lüften der Austrittsöffnung."""
+"""Gangende mit Präsenzsensor: Lüften der Austrittsöffnung oder Türvorgang mit Abwesenheit (G8, K2)."""
 
 import unittest
 
@@ -114,11 +114,28 @@ class PresenceExitTests(unittest.TestCase):
             item.kind == "gang_confirmed" for item in self.c.consumer_events
         ), 1)
 
-    def test_later_absence_cannot_undo_an_established_stay(self):
+    def test_later_absence_ends_the_stay_with_the_last_door_operation(self):
+        # G8 (K2): the sensor reports the departure after the closing; without
+        # an infusion or a new opening in between the door operation is the exit.
         self.c.process(event("exit-open", Kind.DOOR_OPEN, 8))
         self.c.process(close_event(
             candidate=10, confirmed=12, received=13, key="occupied-close",
         ))
+        self.presence("off", 20)
+        self.c.advance(at(4000))
+        self.assertIsNone(self.c.session.timeline.active)
+        self.assertEqual(len(self.c.session.timeline.completed), 1)
+        gang = self.c.session.timeline.completed[0]
+        self.assertEqual(gang.gang_id, self.gang_id)
+        self.assertEqual(gang.end_reason, "absence")
+        self.assertEqual(gang.ended_at, at(20))
+
+    def test_infusion_after_the_door_operation_keeps_the_stay(self):
+        self.c.process(event("exit-open", Kind.DOOR_OPEN, 8))
+        self.c.process(close_event(
+            candidate=10, confirmed=12, received=13, key="occupied-close",
+        ))
+        self.c.process(event("more-water", Kind.INFUSION, 15))
         self.presence("off", 20)
         self.c.advance(at(4000))
         self.assert_still_running()

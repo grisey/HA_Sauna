@@ -34,6 +34,7 @@ class Kind(StrEnum):
     PRESENCE_CONFIRMED = "presence_confirmed"
     PRESENCE_ENDED = "presence_ended"
     PRESENCE_CLOSE_ENDED = "presence_close_ended"
+    ABSENCE_EXIT = "absence_exit"
 
 
 class Door(StrEnum):
@@ -526,6 +527,11 @@ def project_door_cycles(timeline: Timeline | Mapping) -> list[dict]:
             # Frühere Präsenzabschlüsse; nur noch in gespeicherten Abläufen.
             if evidence[current]["started_at"] <= at:
                 exit_cycles[event_id] = current
+        elif current is not None and kind == Kind.ABSENCE_EXIT:
+            # Sensorbetrieb: Türvorgang mit Abwesenheit beendet den Gang (K2).
+            episode = evidence[current]
+            if episode["ended_at"] is not None and episode["ended_at"] <= at:
+                exit_cycles[event_id] = current
 
     for cycle, episode in zip(cycles, evidence, strict=True):
         for prefix in ("ventilation", "ventilation_complete"):
@@ -573,7 +579,8 @@ def project_door_cycles(timeline: Timeline | Mapping) -> list[dict]:
         end_kind, end_reason = get(end_event, "kind"), get(gang, "end_reason")
         expected_reason = (
             "presence_close" if end_kind == Kind.PRESENCE_CLOSE_ENDED else
-            "presence_exit" if end_kind == Kind.PRESENCE_ENDED else "ventilation"
+            "presence_exit" if end_kind == Kind.PRESENCE_ENDED else
+            "absence" if end_kind == Kind.ABSENCE_EXIT else "ventilation"
         )
         if (end_reason not in (None, expected_reason)
                 or episode["started_at"] < started_at
@@ -742,6 +749,18 @@ def apply(
                                    end_event_id=event.event_id, end_reason="ventilation")
                 result = replace(result, active=None,
                                  completed=state.completed + (finished,))
+    elif event.kind == Kind.ABSENCE_EXIT:
+        # Sensorbetrieb (K2): ein abgeschlossener Türvorgang im Gang mit
+        # Abwesenheit als letzter Meldung beendet den Gang; ein vorläufiger
+        # Gang wird zurückgenommen.
+        if state.door != Door.CLOSED or state.closed_opening is None or state.active is None:
+            raise ValueError("Austritt durch Abwesenheit benötigt eine abgeschlossene Türepisode im Gang")
+        if state.active.confirmation == Confirmation.PROVISIONAL:
+            result = replace(state, active=None, retracted=state.retracted + (state.active,))
+        else:
+            finished = replace(state.active, ended_at=event.booking_at,
+                               end_event_id=event.event_id, end_reason="absence")
+            result = replace(state, active=None, completed=state.completed + (finished,))
     elif event.kind == Kind.VENTILATION_COMPLETE:
         if state.door != Door.OPEN:
             raise ValueError("Vollständiges Lüften benötigt eine offene Episode")

@@ -1160,6 +1160,7 @@ class Controller:
                     self._session.session_id, event.booking_at, ends_at
                 )
         if event.kind == Kind.DOOR_CLOSE:
+            self._absence_exit(event.booking_at)
             self._reconcile_direct_presence(event.booking_at, entry_event=event)
         self.advance(event.booking_at, inclusive_confirmation=not defer_confirmation)
         return Result(self._session, True, "gang_model_updated", event.event_id)
@@ -1854,6 +1855,11 @@ class Controller:
     def _presence_at_closing(self, timeline, at, *, departure=True):
         """Sensor operation with presence at the unused closing: the entry criterion.
 
+        Without presence at the closing candidate a presence detected after the
+        candidate and usable by the confirmation of the closing still makes the
+        door operation the entry (K1, decision L-G8-4 of 03.11.2026). A door
+        operation that ended the gang as its exit is no entry.
+
         ``departure`` requires the absence after an exit opening of the same
         door operation; an infusion proves the stay without it.
         """
@@ -1862,6 +1868,10 @@ class Controller:
                 or not timeline.entry_cycle_available):
             return False
         begin = self._closing_candidate(timeline.anchor).timestamp()
+        ended = timeline.completed[-1] if timeline.completed else None
+        if (ended is not None and ended.end_reason == "absence" and ended.ended_at is not None
+                and ended.ended_at >= timeline.closed_opening.effective_at):
+            return False
         states = self._presence_states(at)
         state = None
         for when, value in states:
@@ -1869,7 +1879,16 @@ class Controller:
                 break
             state = value
         if state is not True:
-            return False
+            if (ended is not None and ended.ended_at is not None
+                    and ended.ended_at >= timeline.closed_opening.effective_at):
+                return False
+            proof = timeline.anchor.door_close_evidence
+            if proof is None:
+                return False
+            confirm = proof.confirmed_at.timestamp()
+            if not self._presence_detected_between(begin, confirm, at):
+                return False
+            begin = confirm
         # Ventilation of this door operation ended the gang. Presence that
         # lasted through the whole operation belongs to the departing person;
         # a new entry needs the absence seen after the exit opening.
@@ -1882,12 +1901,31 @@ class Controller:
             return any(since <= when <= begin and value is False for when, value in states)
         return True
 
+    def _presence_detected_between(self, begin, end, at):
+        """A presence report detected after ``begin`` and usable by ``end``.
+
+        A report detected before ``begin`` that only becomes usable later, for
+        example after a source recovery, does not count.
+        """
+        received = self._received_at(at)
+        for report in self._direct_presence_history:
+            timing = report.timing
+            if (timing.effective_at is None or timing.received_at is None
+                    or timing.received_at > received or not report.available
+                    or not report.qualified_presence or report.occupancy != "present"):
+                continue
+            usable = max(timing.effective_at, timing.first_usable_at or timing.effective_at)
+            if begin < timing.effective_at.timestamp() and usable.timestamp() <= end:
+                return True
+        return False
+
     def _absent_since_gang_opening(self, timeline):
         """Sensor operation: absence reported after a door opening in the active gang.
 
-        It ends only the gang heat; the gang still ends by ventilation. A later
-        presence report restores it, as does a new closing with presence, whose
-        presence at the closing candidate is such a report.
+        It ends the gang heat; the gang itself ends with the door operation once
+        it is closed (``_absence_exit``). A later presence report restores it,
+        as does a new closing with presence, whose presence at the closing
+        candidate is such a report.
         """
         current, gang = self.direct_presence, timeline.active
         if current is None or not current.qualified_presence or self._last_at is None:
@@ -1913,8 +1951,9 @@ class Controller:
         Presence at the closing candidate is the entry criterion; the gang
         begins at the closing and may still wait for the minimum temperature.
         An infusion confirms it; until then a later closing with presence
-        replaces it. Absence never ends a gang: the exit is the ventilation of
-        a new opening.
+        replaces it. In sensor operation a closed door operation with absence
+        ends the gang (``_absence_exit``); absence without a door operation
+        never does.
         """
         session = self._session
         if entry_event is not None:
@@ -1956,7 +1995,46 @@ class Controller:
         ))
         return True
 
+    def _absence_exit(self, at):
+        """Sensor operation: a door operation with absence ends the gang (K2).
+
+        The closed door operation of the active gang stays available as its
+        exit until the next opening or infusion; the assignment does not hang
+        on a single instant. Absence reported after its opening that is still
+        the last report ends the gang with this door operation. A provisional
+        gang is retracted. Absence without a door operation never ends a gang.
+        """
+        session = self._session
+        current = self.direct_presence
+        if (session is None or not session.operation_enabled or current is None
+                or not current.qualified_presence):
+            return False
+        t = session.timeline
+        gang, opening, closure = t.active, t.closed_opening, t.anchor
+        if gang is None or opening is None or closure is None or t.door != Door.CLOSED:
+            return False
+        if opening.effective_at <= gang.started_at:
+            return False
+        proof = closure.door_close_evidence
+        if proof is None or at < proof.confirmed_at:
+            return False
+        if any(event.effective_at > opening.effective_at for event in gang.infusion_events):
+            return False
+        since = opening.effective_at.timestamp()
+        states = self._presence_states(at)
+        if not states or states[-1][1] is not False or not any(
+                when > since and value is False for when, value in states):
+            return False
+        event_id = f"{Kind.ABSENCE_EXIT.value}:{closure.event_id}"
+        if any(event.event_id == event_id for event in t.processed):
+            return False
+        self.process(Event(event_id, session.session_id, Kind.ABSENCE_EXIT,
+                           closure.effective_at, self._received_at(at), at))
+        return True
+
     def _evaluate(self, at, *, preserve_override=False, decision_session_id=None):
+        if self._absence_exit(at):
+            return self.last_decision
         if self._reconcile_direct_presence(at):
             return self.last_decision
         created_at = (
