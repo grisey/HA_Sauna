@@ -168,8 +168,9 @@ class DirectPresenceControlTests(unittest.TestCase):
         self.assertEqual(self.c.session.timeline.gang_count, 0)
         self.assertTrue(self.c.regulation_inputs.gang_heat_demand)
 
-    def test_absence_after_an_opening_ends_the_gang_with_the_closing(self):
-        # G8 (K2): a door operation with absence ends the gang in sensor operation.
+    def test_absence_after_an_opening_ends_the_gang_at_the_first_absence(self):
+        # G8 (K2): a door operation with absence ends the gang in sensor operation;
+        # decided with the closing, dated at the first absence (L-G8-5).
         self.start()
         self.door(Kind.DOOR_OPEN, 5)
         self.report("off", 6)
@@ -179,7 +180,7 @@ class DirectPresenceControlTests(unittest.TestCase):
         self.assertIsNone(self.c.session.timeline.active)
         self.assertEqual(len(self.c.session.timeline.completed), 1)
         self.assertEqual(self.c.session.timeline.completed[0].end_reason, "absence")
-        self.assertEqual(self.c.session.timeline.completed[0].ended_at, at(7))
+        self.assertEqual(self.c.session.timeline.completed[0].ended_at, at(6))
 
     def test_absence_after_an_opening_ends_the_gang_heat_and_the_closing_the_gang(self):
         self.start()

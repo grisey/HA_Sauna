@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from contextlib import contextmanager
 from dataclasses import dataclass, replace
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 from math import isfinite
 from uuid import uuid4
 
@@ -2003,6 +2003,8 @@ class Controller:
         on a single instant. Absence reported after its opening that is still
         the last report ends the gang with this door operation. A provisional
         gang is retracted. Absence without a door operation never ends a gang.
+        The decision stays at the closing or the later absence; the gang ends at
+        the first absence reported after the opening (L-G8-5).
         """
         session = self._session
         current = self.direct_presence
@@ -2022,14 +2024,15 @@ class Controller:
             return False
         since = opening.effective_at.timestamp()
         states = self._presence_states(at)
-        if not states or states[-1][1] is not False or not any(
-                when > since and value is False for when, value in states):
+        absent = [when for when, value in states if when > since and value is False]
+        if not states or states[-1][1] is not False or not absent:
             return False
         event_id = f"{Kind.ABSENCE_EXIT.value}:{closure.event_id}"
         if any(event.event_id == event_id for event in t.processed):
             return False
+        left_at = datetime.fromtimestamp(absent[0], UTC)
         self.process(Event(event_id, session.session_id, Kind.ABSENCE_EXIT,
-                           closure.effective_at, self._received_at(at), at))
+                           min(left_at, at), self._received_at(at), at))
         return True
 
     def _evaluate(self, at, *, preserve_override=False, decision_session_id=None):

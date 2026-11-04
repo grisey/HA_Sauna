@@ -80,7 +80,7 @@ nicht an einem einzelnen Zeitpunkt, und es gibt keine feste Frist.
 | Weiterer Türvorgang mit Anwesenheit beim Türschluss vor der Bestätigung | Ersetzt den vorläufigen Gang; Beginn ist der neue Türschluss |
 | Erster Aufguss im vorläufigen Gang | Bestätigt ihn mit gleichem Beginn |
 | Bestätigtes Durchlüften einer neuen Öffnung | Beendet den bestätigten Gang zum Buchungszeitpunkt; nimmt einen vorläufigen zurück |
-| Abgeschlossener Türvorgang im Gang, nach dessen Öffnung Abwesenheit gemeldet ist und als letzte Meldung gilt, ohne Aufguss danach | Beendet den bestätigten Gang zum Buchungszeitpunkt (Endgrund `absence`); nimmt einen vorläufigen zurück. Der Türvorgang ist kein Eintritt |
+| Abgeschlossener Türvorgang im Gang, nach dessen Öffnung Abwesenheit gemeldet ist und als letzte Meldung gilt, ohne Aufguss danach | Beendet den bestätigten Gang (Endgrund `absence`); entschieden beim Türschluss oder bei der späteren Abwesenheit, Gangende ist die erste Abwesenheit nach der Öffnung. Nimmt einen vorläufigen zurück. Der Türvorgang ist kein Eintritt |
 | Abwesenheit ohne Türvorgang, `unknown`, `unavailable` | Kein Übergang; zur Wirkung eines vorläufigen Gangs siehe [unten](#vorläufiger-gang-im-sensorbetrieb) |
 | Betrieb-AUS | Ende des offenen Gangs |
 
@@ -134,7 +134,9 @@ gemeldet hat, die bis dahin die letzte Meldung ist. Ein Aufguss nach dieser
 Öffnung oder eine spätere Anwesenheitsmeldung hebt das auf. Abwesenheit ohne
 Türvorgang beendet keinen Gang. Nach einer Türöffnung im Gang beendet gemeldete
 Abwesenheit sofort die Ganganforderung
-([Heizpriorität](betrieb.md#heizpriorität)), den Gang mit dem Türschluss. Eine ältere
+([Heizpriorität](betrieb.md#heizpriorität)), den Gang mit dem Türschluss.
+Entschieden wird beim Türschluss oder bei der späteren Abwesenheit; als Gangende
+gilt die erste Abwesenheit nach der Öffnung. Eine ältere
 Austrittsfolge kann keinen später begonnenen Gang beenden. Bei einem
 Quellenwechsel bleibt die ursprüngliche Bestätigungsart des Gangs erhalten.
 

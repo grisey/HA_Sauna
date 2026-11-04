@@ -529,8 +529,10 @@ def project_door_cycles(timeline: Timeline | Mapping) -> list[dict]:
                 exit_cycles[event_id] = current
         elif current is not None and kind == Kind.ABSENCE_EXIT:
             # Sensorbetrieb: Türvorgang mit Abwesenheit beendet den Gang (K2).
+            # Sein Zeitpunkt ist die erste Abwesenheit nach der Öffnung
+            # (L-G8-5); sie kann vor dem Schluss liegen.
             episode = evidence[current]
-            if episode["ended_at"] is not None and episode["ended_at"] <= at:
+            if episode["ended_at"] is not None and episode["started_at"] <= at:
                 exit_cycles[event_id] = current
 
     for cycle, episode in zip(cycles, evidence, strict=True):
@@ -752,13 +754,17 @@ def apply(
     elif event.kind == Kind.ABSENCE_EXIT:
         # Sensorbetrieb (K2): ein abgeschlossener Türvorgang im Gang mit
         # Abwesenheit als letzter Meldung beendet den Gang; ein vorläufiger
-        # Gang wird zurückgenommen.
+        # Gang wird zurückgenommen. Das Gangende ist der Ereigniszeitpunkt, die
+        # erste Abwesenheit nach der Öffnung (L-G8-5); entschieden wird beim
+        # Schluss oder bei der späteren Abwesenheit.
         if state.door != Door.CLOSED or state.closed_opening is None or state.active is None:
             raise ValueError("Austritt durch Abwesenheit benötigt eine abgeschlossene Türepisode im Gang")
+        if event.effective_at < state.closed_opening.effective_at:
+            raise ValueError("Austritt durch Abwesenheit liegt vor der Öffnung seines Türvorgangs")
         if state.active.confirmation == Confirmation.PROVISIONAL:
             result = replace(state, active=None, retracted=state.retracted + (state.active,))
         else:
-            finished = replace(state.active, ended_at=event.booking_at,
+            finished = replace(state.active, ended_at=event.effective_at,
                                end_event_id=event.event_id, end_reason="absence")
             result = replace(state, active=None, completed=state.completed + (finished,))
     elif event.kind == Kind.VENTILATION_COMPLETE:
