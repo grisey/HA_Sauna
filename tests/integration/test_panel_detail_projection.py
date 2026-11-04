@@ -52,6 +52,10 @@ class PanelDetailProjectionTests(unittest.IsolatedAsyncioTestCase):
                 "light_ended_at": at,
             },
             "interruption": {"reason": "unload"},
+            "calibration": {
+                "event": "end", "run_id": "run", "at": at,
+                "reason": "cancelled", "valid": False, "user_id": None,
+            },
         }
         for kind, payload in payloads.items():
             runtime.archive.append(kind, at, payload, identity)
@@ -89,6 +93,13 @@ class PanelDetailProjectionTests(unittest.IsolatedAsyncioTestCase):
                 shown = await response.json()
             kinds = {item["kind"] for item in shown["records"]}
             self.assertTrue(set(payloads) <= kinds)
+            calibration = [
+                item for item in shown["records"] if item["kind"] == "calibration"
+            ]
+            self.assertEqual(
+                [item["display"] for item in calibration],
+                [{"reason_text": "abgebrochen"}],
+            )
             powers = [
                 item
                 for item in shown["records"]

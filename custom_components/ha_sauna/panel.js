@@ -9010,6 +9010,7 @@ class SaunaPanel extends HTMLElement {
     );
   }
   detailFieldLabel(key) {
+    const catalog = this.appearanceCatalog();
     return (
       this.state?.parameters?.find((definition) => definition.key === key)?.label ||
       {
@@ -9053,7 +9054,6 @@ class SaunaPanel extends HTMLElement {
         quantity: "Messgröße",
         occupancy: "Belegung",
         assertion: "Art der Präsenzmeldung",
-        confidence: "Sicherheit",
         event_id: "Ereigniskennung",
         report_id: "Meldungskennung",
         session_id: "Sitzungskennung",
@@ -9113,13 +9113,11 @@ class SaunaPanel extends HTMLElement {
         observation: "Rückmeldung",
         override_ends_at: "Übersteuerung bis",
         command: "Befehl",
-        command_pending: "Befehl ausstehend",
         target: "Sollwert",
         mode: "Betriebsart",
         current_target: "Aktueller Sollwert",
         next_target: "Nächster Sollwert",
         confirmation: "Bestätigung",
-        confirmation_at: "Bestätigt am",
         duration_seconds: "Dauer (s)",
         credited_seconds: "Angerechnete Dauer (s)",
         pending_start: "Beginn ausstehend",
@@ -9150,7 +9148,191 @@ class SaunaPanel extends HTMLElement {
         configured_source: "Gewählte Präsenzquelle",
         effective_source: "Wirksame Präsenzquelle",
         external_snapshot: "Präsenzmeldungen beim Start",
+        // Live details: outputs, readiness, environment, cooling.
+        commanded: "Letzte Heizanforderung",
+        blocked_on_reason: "Einschaltsperre",
+        on: "Eingeschaltet",
+        brightness_percent: "Helligkeit (%)",
+        manual_feedback_target: "Rückmeldeziel der manuellen Vorgabe",
+        normal: "Normalhelligkeit",
+        heater: "Ofen",
+        light: "Licht",
+        heating_observation: "Heizrückmeldung",
+        light_after_run: "Licht bei Ofenkühlung",
+        rule_inputs: "Regelbedingungen",
+        temperature_control: "Temperaturregelung",
+        program_mode: "Programmart",
+        scope: "Geltungsbereich",
+        thermostat: "Thermostat",
+        measurements: "Messwerte",
+        measurement_status: "Messstatus",
+        regulation_temperature_position: "Messposition der Regeltemperatur",
+        presence: "Präsenz",
+        environment: "Umgebung",
+        station: "Wetterstation",
+        configured: "Eingerichtet",
+        condition: "Wetterzustand",
+        values: "Werte",
+        key: "Größe",
+        label: "Bezeichnung",
+        unit: "Einheit",
+        id: "Kennung",
+        interpolated: "Interpoliert",
+        measurement_time: "Messzeitpunkt",
+        forecast_time: "Vorhersagezeitpunkt",
+        updated_at: "Aktualisiert",
+        start_availability: "Startbereitschaft",
+        until_ready_seconds: "Zeit bis Bereit (s)",
+        ready_estimated: "Bereitzeit geschätzt",
+        minimum_wait_seconds: "Mindestwartezeit (s)",
+        message: "Meldung",
+        blocker: "Sperrgrund",
+        gang_elapsed_seconds: "Bisherige Gangdauer (s)",
+        energy: "Energie",
+        state_history: "Zustandsverlauf",
+        after_run: "Aktuelle Ofenkühlung",
+        after_run_history: "Kühlphasen",
+        deadlines: "Fristen",
+        requested_at: "Angefordert",
+        required_seconds: "Erforderliche Dauer (s)",
+        remaining_seconds: "Restdauer (s)",
+        minimum_duration_requested: "Mindestdauer angefordert",
+        active_intervals: "Aktive Abschnitte",
+        cooling_calculation: "Kühlberechnung",
+        base_minutes: "Basisdauer (min)",
+        maximum_minutes: "Höchstdauer (min)",
+        half_life_minutes: "Nachwirkung früherer Heizzeiten (min)",
+        heat_idle_ratio: "Heizminuten je zusätzlicher Kühlminute",
+        weighted_heat_minutes: "Gewichtete Heizzeit (min)",
+        weighted_idle_minutes: "Gewichtete Bereitschaftszeit (min)",
+        window_started_at: "Bemessungszeitraum ab",
+        window_ended_at: "Bemessungszeitraum bis",
+        quality: "Belegqualität",
+        // Gang model and recognition.
+        detected_at: "Erkannt",
+        booking_at: "Gebucht",
+        confirmed_at: "Bestätigt",
+        probability: "Wahrscheinlichkeit",
+        door_close_evidence: "Beleg des Türschlusses",
+        recognition_kind: "Art der Erkennung",
+        recognition_event_id: "Erkennungsereignis",
+        start_source_event_id: "Ereignis des Beginns",
+        start_basis: "Grundlage des Beginns",
+        preparation_event_id: "Vorbereitendes Ereignis",
+        end_event_id: "Ereignis des Endes",
+        infusion_events: "Aufgussereignisse",
+        infusions: "Aufgüsse",
+        source_event_id: "Ursprungsereignis",
+        end: "Aufgussende",
+        basis: "Grundlage",
+        time_basis: "Zeitbasis",
+        ventilation_context: "Lüftungszusammenhang",
+        door_temperature_slope: "Türerkennung: Temperaturänderung (°C/min)",
+        door_humidity_delta: "Türerkennung: Feuchteänderung (Prozentpunkte)",
+        // Session state and records.
+        configuration: "Konfiguration",
+        active_gang_temperature_id: "Gang mit aktivem Sollwert",
+        temperature_base_gang_count: "Gangzahl bei Basistemperatur",
+        temperature_program_gangs: "Programmgänge",
+        temperature_program_start_gang_count: "Gangzahl bei Programmstart",
+        sample: "Probe",
+        sample_id: "Probenkennung",
+        sensor_id: "Sensorkennung",
+        boot_id: "Startkennung des Sensors",
+        monotonic_ns: "Monotonzeit (ns)",
+        original_id: "Originalkennung",
+        source_matches_binding: "Quelle entspricht der Zuordnung",
+        device_class: "Geräteklasse",
+        friendly_name: "Anzeigename",
+        event_type: "Ereignistyp",
+        event_types: "Ereignistypen",
+        entity_id: "Entität",
+        contactor: "Schütz",
+        estimated: "Geschätzt",
+        feedback_proves_heating: "Rückmeldung belegt Heizen",
+        delivery: "Zustellung",
+        selection: "Auswahl",
+        selection_id: "Auswahlkennung",
+        change: "Änderung",
+        control_mode: "Betriebsart",
+        previous_value: "Vorheriger Wert",
+        previous_ends_at: "Vorheriges Ende",
+        phase_key: "Phase",
+        previous_phase_key: "Vorherige Phase",
+        previous_session_id: "Vorherige Sitzung",
+        ends_previous_only: "Beendet nur die vorherige Wahl",
+        light_ended_at: "Licht beendet",
+        recording_ends_at: "Aufzeichnung endet",
+        start_temperature_c: "Starttemperatur (°C)",
+        end_temperature_c: "Endtemperatur (°C)",
+        historical_startup_delay_seconds: "Bisherige Anlaufverzögerung (s)",
+        rising: "Anstieg",
+        no_rise: "Ohne Anstieg",
+        // Stored configuration.
+        bindings: "Gerätezuordnung",
+        parameters: "Parameter",
+        appearance: "Darstellung",
+        colors: "Farben",
+        scales: "Skalen",
+        instruments: "Anzeigen",
+        preferences: "Darstellungswerte",
+        field_standards: "Feldstandards",
+        minimum: "Minimum",
+        maximum: "Maximum",
+        control_input: "Taster oder Betriebsschalter",
+        control_input_mode: "Bedienart",
+        button_event_type: "Bedienereignis",
+        button_program: "Tasterprogramm",
+        button_session_gesture: "Sitzungsgeste",
+        presence_source: "Anwesenheit erkennen",
+        audio_output: "Audioziel (vorbereitet)",
+        log_level: "Protokollumfang",
+        upper_status: "Zusätzlicher Sensorstatus oben",
+        lower_status: "Zusätzlicher Sensorstatus unten",
+        environment_weather: "Wetterquelle",
+        environment_temperature: "Außentemperatur",
+        environment_humidity: "Relative Außenfeuchte",
+        environment_absolute_humidity: "Absolute Außenfeuchte",
+        environment_dew_point: "Taupunkt außen",
+        environment_pressure: "Luftdruck",
+        environment_wind_speed: "Windgeschwindigkeit",
+        environment_wind_direction: "Windrichtung",
+        environment_precipitation: "Niederschlagsintensität",
+        environment_measurement_time: "Messzeitpunkt",
+        environment_forecast_time: "Vorhersagezeitpunkt",
+        temperature_programs: "Temperaturprogramme",
+        selected_program_id: "Gewähltes Programm",
+        temperature_steps: "Temperaturstufen",
+        distribution_gangs: "Gänge der Verteilung",
+        start_c: "Starttemperatur (°C)",
+        end_c: "Endtemperatur (°C)",
+        // Calibration protocol.
+        run_id: "Laufkennung",
+        modules: "Module",
+        module: "Modul",
+        user_id: "Benutzer",
+        execution: "Ausführung",
+        step: "Schritt",
+        seq: "Nummer der Anweisung",
+        message_kind: "Art der Anweisung",
+        message_id: "Nachrichtenkennung",
+        transport: "Übertragungsweg",
+        endpoint: "Ziel",
+        handoff_at: "Übergeben",
+        accepted: "Angenommen",
+        evidence: "Nachweis",
+        reference: "Bezugsereignis",
+        closed_at: "Abgeschlossen",
+        outcome: "Ergebnis",
+        action: "Aktion",
+        time_fired: "Ausgelöst",
+        disposition: "Einordnung",
+        valid: "Gültig",
       }[key] ||
+      signalText[key] ||
+      catalog.preferences?.[key]?.label ||
+      catalog.colors?.find((color) => color.id === key)?.label ||
+      catalog.instruments?.[key]?.label ||
       key.replaceAll("_", " ")
     );
   }
@@ -9372,6 +9554,36 @@ class SaunaPanel extends HTMLElement {
             source: "Temperaturprogramm",
             label: "Temperaturvorgaben",
             detail: this.detailValue(program),
+            record,
+          },
+        ];
+      }
+      if (record.kind === "calibration") {
+        // Calibration protocol (administrators only, W-2); one row per entry.
+        // "target" is the message recipient here, not a set point.
+        const { event, run_id: _run, target, ...values } = record.payload || {};
+        Object.assign(values, target);
+        return [
+          {
+            id: `record-${record.id ?? index}`,
+            at: stamp(record.received_at),
+            source: "Kalibrierung",
+            label:
+              {
+                start: "Kalibrierung gestartet",
+                module: "Kalibriermodul begonnen",
+                message: "Kalibrieranweisung übergeben",
+                step: "Kalibrierschritt abgeschlossen",
+                reply: "Antwort auf Kalibrieranweisung",
+                repeat: "Kalibriermodul wiederholt",
+                end: "Kalibrierung beendet",
+              }[event] || "Kalibrierprotokoll",
+            detail:
+              event === "end"
+                ? values.valid
+                  ? "Gültig"
+                  : `Ungültig, ${record.display?.reason_text || this.detailValue(values.reason)}`
+                : this.detailValue(values),
             record,
           },
         ];
@@ -9604,6 +9816,7 @@ class SaunaPanel extends HTMLElement {
         manual_phase_end: "Ofenkühlung beendet",
         manual_session_light_end: "Lichtnachlauf beendet",
         interruption: "Unterbrechung",
+        calibration: "Kalibrierprotokoll",
       }[kind] || this.detailFieldLabel(kind)
     );
   }
@@ -9674,18 +9887,22 @@ class SaunaPanel extends HTMLElement {
         {
           Heizzeit: session.heating,
           Energie: session.energy,
-          Gemessene_Leistung: {
-            started_at: session.timeline.session_started_at,
-            ended_at: session.energy?.accounted_at,
-            mean_w: measuredPower?.mean_w ?? null,
-            peak_w: measuredPower?.peak_w ?? null,
-            measured_seconds: measuredPower?.measured_seconds ?? null,
-            Messbezug: measuredPower
-              ? measuredPower.complete
-                ? "Gesamter Zeitraum"
-                : "Nur gemessene Abschnitte"
-              : "Keine auswertbaren Messintervalle",
-          },
+          ...(this.historyPowerMeasurement(measuredPower)
+            ? {
+                Gemessene_Leistung: {
+                  started_at: session.timeline.session_started_at,
+                  ended_at: session.energy?.accounted_at,
+                  mean_w: measuredPower?.mean_w ?? null,
+                  peak_w: measuredPower?.peak_w ?? null,
+                  measured_seconds: measuredPower?.measured_seconds ?? null,
+                  Messbezug: measuredPower
+                    ? measuredPower.complete
+                      ? "Gesamter Zeitraum"
+                      : "Nur gemessene Abschnitte"
+                    : "Keine auswertbaren Messintervalle",
+                },
+              }
+            : {}),
           Schützverlauf: session.contactor_history,
         },
       ],
@@ -9885,6 +10102,9 @@ class SaunaPanel extends HTMLElement {
               label: e.kind === "door_open" ? "Offen" : "Geschlossen",
               color: e.kind === "door_open" ? color("event-door") : neutral,
             })),
+          // Gang model: the door starts closed (docs/gangmodell.md).
+          "Geschlossen",
+          neutral,
         ),
       ],
       [
@@ -10609,9 +10829,11 @@ class SaunaPanel extends HTMLElement {
               )
               .join(""),
         powerEnd = overview ? content.session.energy?.accounted_at : content.end,
-        powerDetails = measuredPower
-          ? `<p>Gemessene Leistung · ${this.clock(content.start)} – ${powerEnd ? this.clock(powerEnd) : "Ende nicht aufgezeichnet"}${measuredPower.complete ? "" : " · Nur gemessene Abschnitte"}</p><div class="history-information-values">${valueRow("power-mean", "Mittlere gemessene Leistung", measuredPower.mean_w, "W")}${valueRow("power-peak", "Höchste gemessene Leistung", measuredPower.peak_w, "W")}</div>`
-          : '<p class="muted">Gemessene Leistung: Nicht verfügbar</p>';
+        powerDetails = !this.historyPowerMeasurement(measuredPower)
+          ? ""
+          : measuredPower
+            ? `<p>Gemessene Leistung · ${this.clock(content.start)} – ${powerEnd ? this.clock(powerEnd) : "Ende nicht aufgezeichnet"}${measuredPower.complete ? "" : " · Nur gemessene Abschnitte"}</p><div class="history-information-values">${valueRow("power-mean", "Mittlere gemessene Leistung", measuredPower.mean_w, "W")}${valueRow("power-peak", "Höchste gemessene Leistung", measuredPower.peak_w, "W")}</div>`
+            : '<p class="muted">Gemessene Leistung: Nicht verfügbar</p>';
       const statistics = content.sectionStatistics,
         temperature = statistics?.temperature,
         energyKnown =
@@ -10635,7 +10857,7 @@ class SaunaPanel extends HTMLElement {
             : `${metricRow("change", "Temperaturänderung", temperature?.change, "°C", temperature?.reason)}${metricRow("rate", "Temperaturänderung je Minute", temperature?.perMinute, "°C/min", temperature?.reason)}${content.sectionPhase === "aufheizen" ? metricRow("gain-energy", "Temperaturgewinn je Energie", heatingRatio, "°C/kWh", temperature?.reason || "Temperaturgewinn und lückenlose Abschnittsenergie erforderlich") : ""}${Number.isFinite(statistics.humidityLoss?.value) || ["nachlauf", "zwangskühlung"].includes(content.sectionPhase) ? metricRow("humidity-loss", "Feuchteabnahme je °C", statistics.humidityLoss?.value, "(g/m³)/°C", statistics.humidityLoss?.reason) : ""}`,
         sectionDetails = !statistics
           ? ""
-          : `<p>Ausgewertete Messposition: ${this.historyPrimaryPosition(content.session) === "upper" ? "oben" : "unten"}. Zeitraum ${this.clock(content.start)} – ${this.clock(content.end)}.</p><div class="history-information-values">${metricRow("difference", "Mittlere Temperaturdifferenz oben − unten", statistics.difference?.mean, "°C", statistics.difference?.reason)}${metricRow("target-mean", "Mittlere absolute Sollabweichung", statistics.target?.meanAbsolute, "°C", statistics.target?.reason)}${metricRow("target-over", "Größte Sollüberschreitung", statistics.target?.reason ? null : Math.max(0, statistics.target.maximum), "°C", statistics.target?.reason)}${metricRow("target-under", "Größte Sollunterschreitung", statistics.target?.reason ? null : Math.max(0, -statistics.target.minimum), "°C", statistics.target?.reason)}</div>`;
+          : `<p>${this.historyDetail ? `Ausgewertete Messposition: ${this.historyPrimaryPosition(content.session) === "upper" ? "oben" : "unten"}. ` : ""}Zeitraum ${this.clock(content.start)} – ${this.clock(content.end)}.</p><div class="history-information-values">${this.historyDetail ? metricRow("difference", "Mittlere Temperaturdifferenz oben − unten", statistics.difference?.mean, "°C", statistics.difference?.reason) : ""}${metricRow("target-mean", "Mittlere absolute Sollabweichung", statistics.target?.meanAbsolute, "°C", statistics.target?.reason)}${metricRow("target-over", "Größte Sollüberschreitung", statistics.target?.reason ? null : Math.max(0, statistics.target.maximum), "°C", statistics.target?.reason)}${metricRow("target-under", "Größte Sollunterschreitung", statistics.target?.reason ? null : Math.max(0, -statistics.target.minimum), "°C", statistics.target?.reason)}</div>`;
       const selectedGang = singleGang
         ? `<div data-history-selected-gang data-gang-id="${esc(selectedGangRow.gang.gang_id)}" data-start="${esc(selectedGangRow.bounds.startedAt || "")}"><p>${esc(selectedGangRow.label)} · <strong>${esc(selectedGangRow.confirmationText)}</strong></p><p>Beginn · ${selectedGangRow.bounds.startedAt ? `<time datetime="${esc(selectedGangRow.bounds.startedAt)}" title="${esc(this.tooltipWhen(selectedGangRow.originalStarted))}">${this.clock(selectedGangRow.originalStarted)}</time>` : "Nicht belegt"}</p><p>Ende · ${Number.isFinite(selectedGangRow.originalEnded) ? this.clock(selectedGangRow.originalEnded) : selectedGangRow.bounds.ongoing ? "Noch offen" : "Nicht belegt"}</p>${selectedGangRow.bounds.reason ? `<p class="muted">${esc(selectedGangRow.bounds.reason)}. Kennzahlen beziehen sich auf den ausgewählten Zeitraum.</p>` : ""}</div>`
         : "";
@@ -11024,6 +11246,13 @@ class SaunaPanel extends HTMLElement {
       ...model,
       presence: { ...model?.presence, source, direct: source === "ha_presence" },
     };
+  }
+  historyPowerMeasurement(measuredPower) {
+    // Power figures only exist with a configured power measurement. Without a
+    // stored configuration model (normal users, old archives) measured energy
+    // intervals are the only evidence of one.
+    const configured = this.historyConfigurationModel()?.power_sensor_configured;
+    return typeof configured === "boolean" ? configured : !!measuredPower;
   }
   diagnosticPersonDataActive(at = null) {
     const projection = this.historyPresenceProjection();
@@ -15166,7 +15395,7 @@ class SaunaPanel extends HTMLElement {
     const status = run
       ? `<p><strong>${run.kind === "session" ? "Kalibriersitzung" : "Einzelnes Modul"} läuft:</strong> ${esc(this.calibrationProgress(run))}</p><div class="row"><button class="stop" data-action="calibration-cancel" ${state.permissions.control && !busy ? "" : "disabled"}>Kalibrierung abbrechen</button></div><p class="muted">Nach dem Abbruch ist der Lauf ungültig und wird nicht ausgewertet.</p>`
       : last
-        ? `<p><strong>Letztes Ergebnis${last.ended_at ? ` vom ${esc(this.when(last.ended_at))}` : ""}:</strong> ${last.valid ? "gültig" : `ungültig, ${esc(last.reason_text || last.reason || "")}`}</p>${last.valid ? `<p>${esc(this.calibrationTotals(last.totals))}</p>` : ""}<p class="muted">Die Einzelheiten stehen im Archiv der Sitzung.</p>`
+        ? `<p><strong>Letztes Ergebnis${last.ended_at ? ` vom ${esc(this.when(last.ended_at))}` : ""}:</strong> ${last.valid ? "gültig" : `ungültig, ${esc(last.reason_text || last.reason || "")}`}</p>${last.valid ? `<p>${esc(this.calibrationTotals(last.totals))}</p>` : ""}<p class="muted">Die Einzelheiten stehen im Detailverlauf der Sitzung (Details → Detailverlauf).</p>`
         : "";
     this.updateMarkup(
       "#calibration",

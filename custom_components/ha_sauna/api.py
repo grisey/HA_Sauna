@@ -900,7 +900,7 @@ class ArchiveView(HomeAssistantView):
                     "source_state", "heating_observation", "illuminance", "notice",
                     "manual_light", "manual_heater", "heater_override_rejected",
                     "manual_phase_end", "manual_session_light_end", "interruption",
-                    "session",
+                    "session", "calibration",
                 ) if request["hass_user"].is_admin else (
                     "measurement", "source_snapshot", "phase",
                 ),
@@ -953,6 +953,12 @@ class ArchiveView(HomeAssistantView):
                                 if attributes.get("device_class") == "power"
                                 else None
                             }
+                    elif projection == "history" and record["kind"] == "calibration":
+                        record["display"] = {
+                            "reason_text": calibration.INTERRUPTIONS.get(
+                                record["payload"].get("reason")
+                            )
+                        }
                     elif projection == "history" and record["kind"] == "session":
                         # State history keeps the recorded values without
                         # transferring a growing copy of the entire event
