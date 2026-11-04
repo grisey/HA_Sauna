@@ -83,6 +83,39 @@ def recognition_event_id(session_id: str, kind, effective_at: datetime) -> str:
 
 
 @dataclass(frozen=True)
+class RejectedOpening:
+    """Episode von der Öffnungsform verworfener Türkandidaten mit ihrem Schluss (G9, G9b).
+
+    Die Erkennung entscheidet unverändert; sie meldet die Episode nur
+    zusätzlich.  Beginnt ein neuer Kandidat nach dem Schlusskandidaten ``c``
+    eines verworfenen und spätestens im Schlussübergang ``c + T``, gehört er
+    dazu; wird er bestätigt, entfällt die Meldung.  Ohne Folger endet die
+    Episode bei ``ended_at`` = max(letzte Entscheidung, ``c + T``).  Öffnung
+    ist der Beginn des ersten Kandidaten, Schluss die Schlusszeit wie für eine
+    bestätigte Tür über die Episode.  Ob daraus ein Türvorgang wird,
+    entscheidet das Gangmodell.
+    """
+
+    opened_at: datetime
+    closed_at: datetime
+    close_candidate_at: datetime        # c of the last candidate
+    ended_at: datetime                  # E: confirmation of the closing
+    decided_at: datetime                # measurement step of the report (at or after E)
+    candidates: tuple[datetime, ...]
+    channels: tuple[str, ...]
+    door_close_evidence: DoorCloseEvidence
+
+
+@dataclass
+class _RejectedEpisode:
+    first: int                          # start step of the first candidate
+    close: int                          # closing candidate step c of the last candidate
+    decided: datetime                   # decision of the last candidate
+    starts: list = field(default_factory=list)
+    follower: int | None = None         # start step of a candidate in c..c + T not yet decided
+
+
+@dataclass(frozen=True)
 class InfusionUpdate:
     """Ende des Dampfabschnitts zu einem bereits gelieferten Aufguss."""
 
@@ -405,6 +438,8 @@ class ClimateRecognizer:
         self._held: list[Detection] = []                      # infusions confirmed while the door is still open
         self._held_end: InfusionEnd | None = None
         self.updates: list[InfusionUpdate] = []
+        self.rejected_openings: list[RejectedOpening] = []
+        self._episode: _RejectedEpisode | None = None
         self._open: _OpenDoor | None = None
         self._unconfirmed: tuple | None = None    # (step, probability) of an opening the form does not yet show
         self._grid_t: list = []          # seconds since origin for every model step
@@ -469,11 +504,12 @@ class ClimateRecognizer:
         return self._last_time
 
     def advance(self, through: datetime, *, on_detection=None, on_infusion_update=None,
-                **_unused) -> list[Detection]:
+                on_rejected_opening=None, **_unused) -> list[Detection]:
         """Alle bis ``through`` vorliegenden Messwerte auswerten.
 
-        Ereignisse und Aufgussenden werden in ihrer Entstehungsreihenfolge
-        zurückgemeldet, jedes zu seinem Messschritt.
+        Ereignisse, Aufgussenden und verworfene Öffnungen werden in ihrer
+        Entstehungsreihenfolge zurückgemeldet, jedes zu seinem Messschritt.
+        Verworfene Öffnungen sind keine Erkennungen (``detections``).
         """
         through = utc(through)
         pending = sorted((p for p in self._pending if p[0] <= through), key=lambda p: p[0])
@@ -499,6 +535,11 @@ class ClimateRecognizer:
                     self.updates.append(item)
                     if on_infusion_update is not None:
                         on_infusion_update(item)
+                    continue
+                if isinstance(item, RejectedOpening):
+                    self.rejected_openings.append(item)
+                    if on_rejected_opening is not None:
+                        on_rejected_opening(item)
                     continue
                 out.append(item)
                 self.detections.append(item)
@@ -691,6 +732,7 @@ class ClimateRecognizer:
                           what == "start")
             p_open = float(self._posterior(index)[OPEN])
             if what == "start":
+                out.extend(self._follow(index, at))
                 self._unconfirmed = (index, p_open)
                 out.extend(self._confirm_opening(at, self._steps - 1))
                 continue
@@ -700,6 +742,7 @@ class ClimateRecognizer:
                 self.decisions.append({"event": "door_open_rejected", "effective_at":
                                        self._index_time(self._unconfirmed[0]).isoformat(),
                                        "decided_at": at.isoformat(), "reason": "opening_form"})
+                out.extend(self._reject(index, at))
                 self._unconfirmed = None
                 continue
             effective = min(self._closing_time(self._open, index), at)
@@ -712,7 +755,64 @@ class ClimateRecognizer:
             out.extend(self._confirm_opening(at, self._steps - 1))
         if self._held and not self._door_pending():
             out.extend(self._release_held(None, at))      # the opening was not confirmed
+        out.extend(self._episode_due(at))
         return out
+
+    def _closing_transition(self) -> float:
+        """Schlussübergang T in Sekunden: 1/k der gelernten Schlussform der Temperaturkanäle, der größere
+        Wert; ohne gelernte Schlussform 0 (G9b)."""
+        form = self.model_parameters.close_form
+        if not form:
+            return 0.0
+        rates = [float(form[i][0]) for i, c in enumerate(self.channels)
+                 if not is_humidity(c) and form[i] is not None and float(form[i][0]) > 0]
+        return max(1.0 / k for k in rates) if rates else 0.0
+
+    def _follow(self, index: int, at: datetime) -> list:
+        """A new opening candidate: it joins the pending episode when it begins by c + T, else ends it."""
+        episode = self._episode
+        if episode is None:
+            return []
+        if self._grid_t[index] <= self._grid_t[episode.close] + self._closing_transition():
+            episode.follower = index
+            return []
+        return self._finish_episode(at)
+
+    def _reject(self, index: int, at: datetime) -> list:
+        """The opening form rejected the candidate whose closing candidate is ``index``."""
+        start = self._unconfirmed[0]
+        episode = self._episode
+        if episode is not None and episode.follower == start:
+            episode.starts.append(start)
+            episode.close, episode.decided, episode.follower = index, at, None
+            return []
+        out = self._finish_episode(at) if episode is not None else []
+        self._episode = _RejectedEpisode(first=start, close=index, decided=at, starts=[start])
+        return out
+
+    def _episode_due(self, at: datetime) -> list:
+        """Ohne Folger endet die Episode, sobald ``c + T`` erreicht ist und bis dahin kein Kandidat mehr
+        beginnen kann (die Schritte bis ``c + T`` sind entschieden)."""
+        episode = self._episode
+        if episode is None or episode.follower is not None:
+            return []
+        until = self._grid_t[episode.close] + self._closing_transition()
+        if (at - self.origin).total_seconds() < until:
+            return []
+        last = bisect.bisect_right(self._grid_t, until) - 1
+        if not self._door.inside and self._door.floor <= last:
+            return []
+        return self._finish_episode(at)
+
+    def _finish_episode(self, at: datetime) -> list:
+        episode, self._episode = self._episode, None
+        candidate = self._index_time(episode.close)
+        ended = min(max(episode.decided, candidate + timedelta(seconds=self._closing_transition())), at)
+        closed = min(self._closing_time(_OpenDoor(start=episode.first, confirmed=self._steps - 1),
+                                        episode.close), ended)
+        return [RejectedOpening(min(self._index_time(episode.first), at), closed, candidate, ended, at,
+                                tuple(self._index_time(s) for s in episode.starts), self.channels,
+                                DoorCloseEvidence(closed, ended))]
 
     def _confirm_opening(self, at: datetime, through: int) -> list:
         """Bestätigung eines Öffnungskandidaten durch die gelernte Öffnungsform.
@@ -744,6 +844,8 @@ class ClimateRecognizer:
             self.decisions.append({"event": "door_open_form", "effective_at": self._index_time(index).isoformat(),
                                    "decided_at": at.isoformat(), "steps_to_decision": through - index})
         self._unconfirmed = None
+        if self._episode is not None and self._episode.follower == index:
+            self._episode = None                          # a candidate of the episode is the door (G9b-2)
         self._separations.append(index)                   # an opening also separates infusions
         self._open = _OpenDoor(start=index, confirmed=self._steps - 1, next_check=index)
         if self._model is not None:

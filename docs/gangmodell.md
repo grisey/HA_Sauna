@@ -101,6 +101,28 @@ Gemeldete Zustandszeiten gelten ohne Abzug eines vermuteten Sensorverzugs. Eine
 später empfangene Meldung mit früherer Zustandszeit geht in die Auswertung ein;
 eine Meldung zählt ab ihrer tatsächlichen Quellenfreigabe.
 
+### Verworfene Öffnung mit Präsenz
+
+Durch die geschlossene Tür erkennt der Sensor niemanden; eine Meldung
+„anwesend“ nach „abwesend“ belegt eine offene Tür. Eine
+[verworfene Öffnungsepisode](erkennung.md#entscheidung) wird deshalb im
+Sensorbetrieb ein Türvorgang, wenn bei ihrem Ende `E` alle folgenden
+Bedingungen gelten:
+
+1. Betrieb an, kein Gang aktiv (bestätigt oder vorläufig), Tür geschlossen.
+2. Die Mindesttemperatur wurde spätestens beim Schluss der Episode erstmals erreicht.
+3. „Anwesend“ folgt unmittelbar auf „abwesend“, nach dem letzten vorangehenden
+   Ereignis und spätestens beim Schlusskandidaten des letzten Kandidaten.
+4. Seit dem Beginn der Episode ist kein anderes Ereignis gebucht.
+
+Gebucht wird mit der Meldung der Episode eine Tür vom Beginn des ersten Kandidaten bis zum Schluss
+der Episode; im Archiv trägt die Erkennungsmeldung die Herkunft `presence`.
+Die Bestätigung ihres Schlusses ist `E`. Ist bei `E` noch „anwesend“ gemeldet,
+gelten die Eintrittsregeln oben: Ein vorläufiger Gang beginnt am Schluss, der
+erste Aufguss bestätigt ihn. Endet die Präsenz vor `E`, ist der Türvorgang kein
+Eintritt. Im Gang und im Proxyverfahren bleibt die Episode verworfen. Solche
+Türen gehen nicht in die Lernbelege der Erkennung ein.
+
 ### Vorläufiger Gang im Sensorbetrieb
 
 Im Sensorbetrieb hat ein vorläufiger Gang keine Frist. Er endet durch den ersten

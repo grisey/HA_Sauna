@@ -155,6 +155,7 @@ class Controller:
         self._gang_temperature_gates = []
         # Erstes Erreichen der Mindesttemperatur in der Session; davor kein Eintritt.
         self._minimum_temperature_reached_at = None
+        self._closing_without_entry = None        # closing of a rescued door operation without entry (G9-2)
         self._confirmation_batches = 0
         self._delivery_received_at = None
 
@@ -1135,6 +1136,11 @@ class Controller:
             # Before the session first reaches the minimum temperature, a
             # closing is no entry (E-11). The door itself stays observed.
             timeline = replace(timeline, anchor=None, preparation=None)
+        if event.kind == Kind.DOOR_CLOSE:
+            without_entry, self._closing_without_entry = self._closing_without_entry, None
+            if without_entry == event.effective_at:
+                # A rescued door operation without presence at its confirmation (G9-2).
+                timeline = replace(timeline, anchor=None, preparation=None)
         if event.kind == Kind.DOOR_OPEN:
             self._presence_entry = None
         self._apply_timeline_transition(
@@ -1918,6 +1924,50 @@ class Controller:
             if begin < timing.effective_at.timestamp() and usable.timestamp() <= end:
                 return True
         return False
+
+    def rejected_opening_is_door(self, opened_at, closed_at, close_candidate_at, ended_at, at):
+        """Sensor operation: an episode of rejected opening candidates is a door operation (G9, G9b).
+
+        Through the closed door the sensor sees nobody; presence reported after
+        an absence proves an open door (G9-3). Outside a gang and with the
+        minimum temperature reached by the closing (G6a), the episode becomes
+        one door operation when such presence begins after the last preceding
+        event and by the closing candidate of its last candidate (G9-1). An
+        event booked within the episode keeps it rejected. The closing is
+        confirmed at the end of the episode: an entry needs presence still
+        reported then (G9-2), otherwise the door operation is no entry. Within
+        a gang and in the proxy method the episode stays rejected (G9-4).
+        """
+        self._closing_without_entry = None
+        session = self._session
+        current = self.direct_presence
+        if (session is None or not session.operation_enabled or current is None
+                or not current.qualified_presence):
+            return False
+        t = session.timeline
+        reached = self._minimum_temperature_reached_at
+        if (t.active is not None or t.door != Door.CLOSED or reached is None
+                or closed_at < reached or closed_at < opened_at):
+            return False
+        if any(event.effective_at >= opened_at for event in t.processed):
+            return False
+        since = max((event.effective_at for event in t.processed),
+                    default=session.started_at).timestamp()
+        states = self._presence_states(at)
+        state, proven = None, False
+        for when, value in states:
+            if when > close_candidate_at.timestamp():
+                break
+            if value is True and state is False and when > since:
+                proven = True
+                break
+            state = value
+        if not proven:
+            return False
+        reported = [value for when, value in states if when <= ended_at.timestamp() and value is not None]
+        if not reported or reported[-1] is not True:
+            self._closing_without_entry = closed_at
+        return True
 
     def _absent_since_gang_opening(self, timeline):
         """Sensor operation: absence reported after a door opening in the active gang.

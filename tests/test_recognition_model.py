@@ -12,7 +12,7 @@ import numpy as np
 from custom_components.ha_sauna.core.models import Measurement, Position, Quantity
 from custom_components.ha_sauna.core.moisture import absolute_humidity
 from custom_components.ha_sauna.core.recognition import (
-    ClimateRecognizer, InfusionUpdate, _OpenDoor, flattening_probability, recognition_event_id,
+    ClimateRecognizer, InfusionUpdate, RejectedOpening, _OpenDoor, flattening_probability, recognition_event_id,
 )
 from custom_components.ha_sauna.core.recognition_model import (
     CLOSED, DECAY, INFUSION, NM, OPEN, OUTSIDE_TYPICAL, RECOVERY, SHIFT, ModelParameters, StateModel, closing_basis, closing_kink, opening_basis,
@@ -482,9 +482,14 @@ class RecognizerTests(unittest.TestCase):
             rows = [row(CLOSED)] * 10 + [row(OPEN)] * 8 + [row(RECOVERY)] * 12
             recognizer._post, recognizer._post_base = np.array(rows[:k + 1]), 0
             events.extend(recognizer._decide_door(T0 + timedelta(seconds=float(k))))
-        self.assertEqual([e.kind for e in events], [])
+        rejected = [e for e in events if isinstance(e, RejectedOpening)]
+        self.assertEqual([e.kind for e in events if not isinstance(e, RejectedOpening)], [])
         self.assertEqual([d["event"] for d in recognizer.decisions if d["event"].startswith("door_open_")],
                          ["door_open_rejected"])
+        # G9b: the rejected candidate is reported additionally as an episode, not as a detection
+        decision = next(d for d in recognizer.decisions if d["event"] == "door_open_rejected")
+        self.assertEqual([e.opened_at.isoformat() for e in rejected], [decision["effective_at"]])
+        self.assertEqual(recognizer.detections, [])
 
     def test_event_identity_is_stable(self):
         at = T0 + timedelta(seconds=12.5)

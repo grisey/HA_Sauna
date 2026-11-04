@@ -819,7 +819,7 @@ class SaunaRuntime:
             return (self.detector is recognizer and self.session is not None
                     and self.session.session_id == session_id)
 
-        def detected(detection):
+        def detected(detection, origin=None):
             if not current():
                 return
             confirmed = detection.trace_at or detection.detected_at
@@ -869,7 +869,25 @@ class SaunaRuntime:
                     "channels": detection.channels,
                     "trace_at": trace_at,
                     "probability": detection.probability,
+                    **({"origin": origin} if origin is not None else {}),
                 }, session_id)
+
+        def rejected_opening(rejected):
+            # G9, G9b: the gang model may take an episode of rejected openings as
+            # one door operation; opening and closing are booked at its end.
+            if not current():
+                return
+            if self.controller._last_at is None or rejected.decided_at >= self.controller._last_at:
+                self.controller.advance(rejected.decided_at, inclusive_confirmation=False)
+            if not current() or not self.controller.rejected_opening_is_door(
+                    rejected.opened_at, rejected.closed_at, rejected.close_candidate_at,
+                    rejected.ended_at, rejected.decided_at):
+                return
+            detected(Detection(Kind.DOOR_OPEN, rejected.opened_at, rejected.decided_at, rejected.channels,
+                               trace_at=rejected.decided_at), origin="presence")
+            detected(Detection(Kind.DOOR_CLOSE, rejected.closed_at, rejected.decided_at, rejected.channels,
+                               trace_at=rejected.decided_at,
+                               door_close_evidence=rejected.door_close_evidence), origin="presence")
 
         def infusion_updated(update):
             if not current():
@@ -885,7 +903,8 @@ class SaunaRuntime:
 
         # the heater feedback tells the recognition whether a closing shows as recovery
         recognizer.report_heating(self._clock(), self.controller.feedback)
-        recognizer.advance(through, on_detection=detected, on_infusion_update=infusion_updated)
+        recognizer.advance(through, on_detection=detected, on_infusion_update=infusion_updated,
+                           on_rejected_opening=rejected_opening)
         processed = recognizer.processed_until
         if processed is not None and current():
             if self.controller._last_at is None or processed >= self.controller._last_at:

@@ -141,6 +141,22 @@ kurz an. Endet die Episode, bevor die Form das Öffnen zeigt, gilt sie nicht
 als Öffnung; weder Tür auf noch Tür zu wird gemeldet. Der Zeitpunkt bleibt
 der Kandidat; die Meldung folgt kausal danach.
 
+Verworfene Kandidaten meldet die Erkennung zusätzlich als Episode an das
+[Gangmodell](gangmodell.md#verworfene-öffnung-mit-präsenz); ihre eigenen
+Entscheidungen, Ereignisse und Lernbelege ändert das nicht. Beginnt ein neuer
+Öffnungskandidat nach dem Schlusskandidaten `c` eines verworfenen und
+spätestens bei `c + T`, gehört er zur Episode, auch wenn er erst später
+entschieden wird. `T` ist der Schlussübergang, `1/k` der gelernten
+Vergleichsform des Schließens in den Temperaturkanälen, bei verschiedenen
+Werten der größere. Wird ein Kandidat der Episode bestätigt, ist die Tür
+erkannt und die Episode entfällt. Sonst endet sie bei
+`E = max(letzte Entscheidung, c + T)` des letzten Kandidaten, gemeldet am
+ersten Messschritt, an dem bis `c + T` kein Kandidat mehr beginnen kann. Die
+Meldung trägt den Beginn des ersten Kandidaten, den Schlusskandidaten des
+letzten, `E` und die Schlusszeit wie bei einer bestätigten Tür, verglichen ab
+dem ersten Kandidaten. Ohne gelernte Vergleichsform des Schließens ist `T`
+null.
+
 Der Zeitpunkt von Tür zu ist der Knick, an dem der Abfall der offenen Tür
 endet. Die Bestätigung des Übergangs bleibt die Entscheidung und löst die
 Steuerung aus; sie liegt danach. Bei der Bestätigung wird die gelernte

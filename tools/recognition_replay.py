@@ -414,7 +414,11 @@ async def replay(case_dir: Path, parameters: dict | None, *, presence: bool = Fa
     until = now[0]
     booked = sorted((i.started_at, i.ended_at) for session in sessions.values() for i in session.heating.intervals)
     recognizers = [rec for _, rec in finished] + ([runtime.detector] if runtime.detector else [])
-    gangs, retracted, processed, provisional = [], [], [], []
+    gangs, retracted, processed, provisional, rescued = [], [], [], [], []
+    recognized = {}
+    for rec in recognizers:
+        for d in rec.detections:
+            recognized.setdefault(d.kind, set()).add(d.effective_at)
     for session in sessions.values():
         timeline = session.timeline
         for g in (*timeline.completed, *([timeline.active] if timeline.active else [])):
@@ -453,9 +457,16 @@ async def replay(case_dir: Path, parameters: dict | None, *, presence: bool = Fa
                                 "command_s": control_seconds(control, until, g.detected_at, at or until, command_on)})
         processed += [(e.kind.value, iso(e.effective_at), iso(e.booking_at)) for e in timeline.processed
                       if e.event_id.startswith("recognition:")]
+        # G9: door operations the gang model took from rejected openings (origin presence)
+        rescued += [(e.kind.value, (e.effective_at - ORIGIN).total_seconds(), (e.booking_at - ORIGIN).total_seconds())
+                    for e in timeline.processed if e.event_id.startswith("recognition:")
+                    and e.kind in (Kind.DOOR_OPEN, Kind.DOOR_CLOSE)
+                    and e.effective_at not in recognized.get(e.kind, ())]
     provisional.sort(key=lambda g: g["detected"])
     detections = [(d.kind.value, (d.effective_at - ORIGIN).total_seconds(), (d.detected_at - ORIGIN).total_seconds())
                   for rec in recognizers for d in rec.detections]
+    if rescued:
+        detections = sorted(detections + rescued, key=lambda d: d[2])
     decisions = [d for rec in recognizers for d in rec.decisions]
     filtered = [infusion_filter(rec, filters[id(rec)]) for rec in recognizers if id(rec) in filters]
     result = {"recording": case_dir.name, "sessions": len(sessions), "gangs": gangs, "retracted": retracted,
@@ -466,6 +477,11 @@ async def replay(case_dir: Path, parameters: dict | None, *, presence: bool = Fa
                           "intervals": [[iso(a), iso(b)] for a, b in booked]},
               "control": [{"at": iso(row[0]), **dict(zip(CONTROL_COLUMNS, row[1:]))} for row in control],
               "provisional": provisional,
+              "rescued_doors": [{"kind": k, "effective": e, "booked": b, "origin": "presence"} for k, e, b in rescued],
+              "rejected_episodes": [{"candidates": [iso(c) for c in r.candidates], "opened": iso(r.opened_at),
+                                     "closed": iso(r.closed_at), "close_candidate": iso(r.close_candidate_at),
+                                     "ended": iso(r.ended_at), "decided": iso(r.decided_at)}
+                                    for rec in recognizers for r in rec.rejected_openings],
               "infusion_filter": {"separations": [s for f in filtered for s in f["separations"]],
                                   "pours": [p for f in filtered for p in f["pours"]],
                                   "decay_columns": DECAY_COLUMNS,
