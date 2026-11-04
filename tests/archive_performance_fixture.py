@@ -6,6 +6,7 @@ import json
 import sqlite3
 import math
 
+from custom_components.ha_sauna.core.history import HISTORY_CONTEXT_SECONDS
 from custom_components.ha_sauna.core.parameters import Parameters
 from test_settings import fixture
 
@@ -152,3 +153,42 @@ def seed_legacy_evidence(archive, stored, start, *, identity="volume"):
                        "VALUES(?,?,?,?,?)", rows())
     archive._invalidate_projection(identity)
     return legacy, counts
+
+
+def old_prune_context(self, db, now, *, incremental=False):
+    """Frozen context cleanup before AL2: session JSON evaluated per buffered point."""
+    cutoff = now - timedelta(seconds=self.parameters.values["history_context_seconds"])
+    previous = self._context_pruned_before if incremental else None
+    if previous is not None and cutoff <= previous:
+        return
+    lower_bound = " AND julianday(received_at)>=julianday(?)" if previous else ""
+    db.execute(
+        """DELETE FROM records WHERE entry_id=? AND session_id IS NULL
+        AND kind='measurement' AND julianday(received_at)<julianday(?)"""
+        + lower_bound + """
+        AND NOT EXISTS (
+            SELECT 1 FROM sessions s LEFT JOIN configuration_versions c
+                ON c.id=s.configuration_id AND c.entry_id=s.entry_id
+            WHERE s.entry_id=records.entry_id
+            AND julianday(records.received_at)>=julianday(s.started_at)-
+                COALESCE(json_extract(c.payload,'$.parameters.history_context_seconds'),
+                json_extract(s.payload,'$.configuration.parameters.history_context_seconds'),?)/86400.0
+            AND julianday(records.received_at)<=julianday(COALESCE(s.ended_at, s.updated_at))+
+                COALESCE(json_extract(c.payload,'$.parameters.history_context_seconds'),
+                json_extract(s.payload,'$.configuration.parameters.history_context_seconds'),?)/86400.0
+            AND (julianday(records.received_at)<=julianday(s.started_at)
+                OR julianday(records.received_at)>=julianday(COALESCE(s.ended_at, s.updated_at)))
+            AND json_extract(records.payload,'$.position') IN ('upper','lower')
+            AND json_extract(records.payload,'$.quantity') IN ('temperature','humidity')
+            AND COALESCE(json_extract(c.payload,'$.bindings.' ||
+                json_extract(records.payload,'$.position') || '_' ||
+                json_extract(records.payload,'$.quantity')),
+                json_extract(s.payload,'$.configuration.bindings.' ||
+                json_extract(records.payload,'$.position') || '_' ||
+                json_extract(records.payload,'$.quantity')))=json_extract(records.payload,'$.source')
+        )""",
+        (self.entry_id, cutoff.isoformat(),
+         *((previous.isoformat(),) if previous else ()),
+         HISTORY_CONTEXT_SECONDS, HISTORY_CONTEXT_SECONDS),
+    )
+    self._context_pruned_before = cutoff if incremental else None

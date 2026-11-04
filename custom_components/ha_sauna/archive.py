@@ -22,7 +22,7 @@ from math import isfinite
 from pathlib import Path
 
 from .core.history import HISTORY_CONTEXT_SECONDS, measurement_window
-from .core.models import Energy, TimedPhase
+from .core.models import Energy, Position, Quantity, TimedPhase
 from .core.parameters import BY_KEY, Parameters
 from .core.phases import project_archive, project_session
 from .history_humidity import project_absolute_humidity
@@ -614,36 +614,45 @@ class Archive:
         if previous is not None and cutoff <= previous:
             return
         lower_bound = " AND julianday(received_at)>=julianday(?)" if previous else ""
-        db.execute(
-            """DELETE FROM records WHERE entry_id=? AND session_id IS NULL
-            AND kind='measurement' AND julianday(received_at)<julianday(?)"""
-            + lower_bound + """
-            AND NOT EXISTS (
-                SELECT 1 FROM sessions s LEFT JOIN configuration_versions c
-                    ON c.id=s.configuration_id AND c.entry_id=s.entry_id
-                WHERE s.entry_id=records.entry_id
-                AND julianday(records.received_at)>=julianday(s.started_at)-
-                    COALESCE(json_extract(c.payload,'$.parameters.history_context_seconds'),
-                    json_extract(s.payload,'$.configuration.parameters.history_context_seconds'),?)/86400.0
-                AND julianday(records.received_at)<=julianday(COALESCE(s.ended_at, s.updated_at))+
-                    COALESCE(json_extract(c.payload,'$.parameters.history_context_seconds'),
-                    json_extract(s.payload,'$.configuration.parameters.history_context_seconds'),?)/86400.0
-                AND (julianday(records.received_at)<=julianday(s.started_at)
-                    OR julianday(records.received_at)>=julianday(COALESCE(s.ended_at, s.updated_at)))
-                AND json_extract(records.payload,'$.position') IN ('upper','lower')
-                AND json_extract(records.payload,'$.quantity') IN ('temperature','humidity')
-                AND COALESCE(json_extract(c.payload,'$.bindings.' ||
-                    json_extract(records.payload,'$.position') || '_' ||
-                    json_extract(records.payload,'$.quantity')),
-                    json_extract(s.payload,'$.configuration.bindings.' ||
-                    json_extract(records.payload,'$.position') || '_' ||
-                    json_extract(records.payload,'$.quantity')))=json_extract(records.payload,'$.source')
-            )""",
-            (self.entry_id, cutoff.isoformat(),
-             *((previous.isoformat(),) if previous else ()),
-             HISTORY_CONTEXT_SECONDS, HISTORY_CONTEXT_SECONDS),
-        )
+        candidates = db.execute(
+            """SELECT id,julianday(received_at),json_extract(payload,'$.position'),
+            json_extract(payload,'$.quantity'),json_extract(payload,'$.source')
+            FROM records WHERE entry_id=? AND session_id IS NULL
+            AND kind='measurement' AND julianday(received_at)<julianday(?)""" + lower_bound,
+            (self.entry_id, cutoff.isoformat(), *((previous.isoformat(),) if previous else ())),
+        ).fetchall()
         self._context_pruned_before = cutoff if incremental else None
+        if not candidates:
+            return
+        # Session settings are decoded once per session, not once per buffered point.
+        positions, quantities = tuple(Position), tuple(Quantity)
+        roles = [f"{position}_{quantity}" for position in positions for quantity in quantities]
+        context = """COALESCE(json_extract(c.payload,'$.parameters.history_context_seconds'),
+            json_extract(s.payload,'$.configuration.parameters.history_context_seconds'),?)/86400.0"""
+        windows = []
+        for first, last, started, ended, *sources in db.execute(
+            f"""SELECT julianday(s.started_at)-{context},
+            julianday(COALESCE(s.ended_at, s.updated_at))+{context},
+            julianday(s.started_at),julianday(COALESCE(s.ended_at, s.updated_at)),"""
+            + ",".join(f"""COALESCE(json_extract(c.payload,'$.bindings.{key}'),
+                json_extract(s.payload,'$.configuration.bindings.{key}'))""" for key in roles)
+            + """ FROM sessions s LEFT JOIN configuration_versions c
+                ON c.id=s.configuration_id AND c.entry_id=s.entry_id
+            WHERE s.entry_id=?""",
+            (HISTORY_CONTEXT_SECONDS, HISTORY_CONTEXT_SECONDS, self.entry_id),
+        ):
+            # A session without a valid time provides no context.
+            if None not in (first, last, started, ended):
+                windows.append((first, last, started, ended, dict(zip(roles, sources))))
+        db.executemany("DELETE FROM records WHERE id=?", [
+            (identity,) for identity, received, position, quantity, source in candidates
+            if not (
+                position in positions and quantity in quantities and source is not None
+                and any(first <= received <= last and (received <= started or received >= ended)
+                        and bound[f"{position}_{quantity}"] == source
+                        for first, last, started, ended, bound in windows)
+            )
+        ])
 
     def _bump_revision(self, db):
         revision = self.revision + 1

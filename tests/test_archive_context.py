@@ -7,14 +7,17 @@ from contextlib import closing
 from dataclasses import replace
 from datetime import timedelta
 from pathlib import Path
+from unittest.mock import patch
 
 from custom_components.ha_sauna.archive import Archive
 from custom_components.ha_sauna.core.controller import Controller
 from custom_components.ha_sauna.core.history import HISTORY_CONTEXT_SECONDS
 from custom_components.ha_sauna.core.models import Position, Quantity
+from custom_components.ha_sauna.core.parameters import Parameters
 from custom_components.ha_sauna.core.timeline import Kind
 from climate_fixtures import measurement
 from test_foundation import T0, bindings, event, parameters
+from archive_performance_fixture import old_prune_context
 
 
 def at(seconds):
@@ -33,11 +36,11 @@ class ArchiveContextTests(unittest.IsolatedAsyncioTestCase):
         await self.archive.close()
         self.temp.cleanup()
 
-    def save_session(self, identity, start, end=None):
+    def save_session(self, identity, start, end=None, *, gang=True):
         controller = Controller(parameters())
         controller.set_temperature(80, at(start))
         controller.begin_session(identity, at(start))
-        for kind in (Kind.DOOR_OPEN, Kind.DOOR_CLOSE, Kind.INFUSION):
+        for kind in (Kind.DOOR_OPEN, Kind.DOOR_CLOSE, Kind.INFUSION) if gang else ():
             controller.process(event(kind.value, kind, start, session=identity))
         session = controller.session
         if end is not None:
@@ -125,3 +128,57 @@ class ArchiveContextTests(unittest.IsolatedAsyncioTestCase):
         await self.archive.erase(reset=True)
         with closing(sqlite3.connect(self.archive.path)) as db:
             self.assertEqual(db.execute("SELECT count(*) FROM records").fetchone()[0], 0)
+
+    async def cleanup_sequence(self, path):
+        """Startup with a removed session, changed context duration, then live writes."""
+        margin = HISTORY_CONTEXT_SECONDS
+        self.archive = Archive(path, "entry", sessions_only=True)
+        await self.archive.start()
+        self.save_session("first", 0, 60)
+        self.save_session("second", 120, 180)
+        self.save_session("empty", 300, gang=False)
+        for base in (0, 60, 120, 180, 300):
+            for offset in (-margin - 1, -margin, -1, 0, 1, margin, margin + 1):
+                self.record(base + offset)
+                self.record(base + offset, source="sensor.unrelated")
+                self.record(base + offset, position=Position.LOWER)
+        await self.archive.close()
+        snapshots = []
+
+        def snapshot():
+            # Session snapshots may carry generated tokens; measurements are compared in full.
+            with closing(sqlite3.connect(path)) as db:
+                snapshots.append((db.execute(
+                    "SELECT id,session_id,kind,received_at,"
+                    "CASE WHEN kind='measurement' THEN payload END FROM records ORDER BY id").fetchall(),
+                    db.execute("SELECT session_id FROM sessions ORDER BY session_id").fetchall()))
+
+        snapshot()
+        Archive(path, "entry", sessions_only=True)._initialize(now=at(3000))
+        snapshot()
+        Archive(path, "entry", sessions_only=True,
+                parameters=Parameters({"history_context_seconds": margin / 3}))._initialize(now=at(3000))
+        snapshot()
+        self.archive = Archive(path, "entry", sessions_only=True)
+        await self.archive.start()
+        for second in range(-2 * margin, 2 * margin, 60):
+            self.record(180 + second, source="sensor.unrelated" if second % 120 else None)
+        await self.archive.close()
+        snapshot()
+        return snapshots
+
+    async def test_context_cleanup_matches_the_former_statement(self):
+        """AL2: session settings decoded once per session keep and delete the same points."""
+        await self.archive.close()
+        results = {}
+        for name, prune in (("before", old_prune_context), ("after", Archive._prune_context)):
+            with patch.object(Archive, "_prune_context", prune):
+                results[name] = await self.cleanup_sequence(Path(self.temp.name) / f"{name}.sqlite")
+        self.assertEqual(results["before"], results["after"])
+        (seeded, all_sessions), (started, kept_sessions), (shortened, _), (written, _) = results["after"]
+        self.assertEqual(all_sessions, [("empty",), ("first",), ("second",)])
+        self.assertEqual(kept_sessions, [("first",), ("second",)])
+        self.assertLess(len(started), len(seeded))
+        self.assertEqual(shortened, started)
+        self.assertLess(len(written), len(started) + len(range(-2 * HISTORY_CONTEXT_SECONDS, 2 * HISTORY_CONTEXT_SECONDS, 60)))
+        self.assertTrue(any(row[1] is None and row[2] == "measurement" for row in written))
