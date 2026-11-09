@@ -6,13 +6,15 @@ import math
 import unittest
 from unittest.mock import Mock, patch
 
-from test_foundation import T0, bindings, parameters
+from test_foundation import T0, bindings, event, parameters
 
 from custom_components.ha_sauna import archive as archive_module
 from custom_components.ha_sauna import runtime as runtime_module
 from custom_components.ha_sauna.archive import encoded, encoded_plain, plain
 from custom_components.ha_sauna.core.energy import advance
 from custom_components.ha_sauna.core.models import EnergyInterval
+from custom_components.ha_sauna.core.parameters import Parameters
+from custom_components.ha_sauna.core.timeline import Kind
 from custom_components.ha_sauna.runtime import Configuration, SaunaRuntime
 
 
@@ -85,3 +87,62 @@ class ArchiveEncodingTests(unittest.TestCase):
         self.assertEqual(encode.call_count, 2)
         self.assertEqual(runtime._archive_signature, expected)
         runtime.archive.save_session.assert_called_once()
+
+    def test_oven_cooling_counters_do_not_create_session_revisions(self):
+        def at(seconds):
+            return T0 + timedelta(seconds=seconds)
+
+        values = {**parameters().as_dict(), "target_temperature_c": 80}
+        runtime = SaunaRuntime(Configuration(bindings(), Parameters(values)), lambda: T0)
+        runtime.archive = Mock()
+        c = runtime.controller
+        c.set_temperature(70, T0)
+        c.set_operation(True, T0, session_id="s")
+        c.report_contactor(True, at(0))
+        c.report_heating(True, at(0))
+        c.process(event("entry-open", Kind.DOOR_OPEN, 0))
+        c.process(event("close", Kind.DOOR_CLOSE, 1))
+        c.process(event("person", Kind.PERSON_STRONG, 2))
+        c.process(event("infusion", Kind.INFUSION, 3))
+        runtime.persist()
+        saves = runtime.archive.save_session
+
+        def revisions():
+            count = saves.call_count
+            runtime.persist()
+            return saves.call_count - count
+
+        c.advance(at(60))
+        self.assertEqual(revisions(), 0)  # Heizzähler wie bisher ohne Stand.
+        c.process(event("open", Kind.DOOR_OPEN, 70))
+        c.process(event("vent", Kind.VENTILATION, 71))
+        c.report_contactor(False, at(71))
+        c.report_heating(False, at(71))
+        started = c.session.after_run
+        self.assertIsNotNone(started)
+        self.assertFalse(started.pending_start)
+        self.assertEqual(revisions(), 1)  # Beginn der Ofenkühlung.
+        for seconds in (72, 73.5, 90):
+            c.advance(at(seconds))
+            self.assertEqual(revisions(), 0)
+        counted = c.session.after_run
+        self.assertEqual(counted.phase_id, started.phase_id)
+        self.assertGreater(counted.elapsed_seconds, started.elapsed_seconds)
+        self.assertLess(counted.remaining_seconds, started.remaining_seconds)
+        self.assertNotEqual(counted.accounted_at, started.accounted_at)
+        c.report_contactor(None, at(91))  # Andere Änderung: Ablauf ausgesetzt.
+        self.assertIsNone(c.session.after_run.ends_at)
+        self.assertEqual(revisions(), 1)
+        c.report_contactor(False, at(92))
+        self.assertIsNotNone(c.session.after_run.ends_at)
+        self.assertEqual(revisions(), 1)
+        c.advance(at(100))
+        self.assertEqual(revisions(), 0)
+        c.finish_phase("after_run", started.phase_id, at(110))  # Ende der Ofenkühlung.
+        self.assertIsNone(c.session.after_run)
+        self.assertEqual(revisions(), 1)
+        saved = saves.call_args.args[0]
+        self.assertEqual(saved.after_run_history[-1].phase_id, started.phase_id)
+        self.assertEqual(saved.after_run_history[-1].ends_at, at(110))
+        c.advance(at(120))
+        self.assertEqual(revisions(), 0)

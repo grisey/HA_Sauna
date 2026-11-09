@@ -1404,6 +1404,9 @@ class SaunaRuntime:
             signature["heating"].pop("accounted_at")
             signature["heating"].pop("elapsed_seconds")
             signature.pop("energy")  # Counters do not create a revision every second.
+            if signature["after_run"] is not None:
+                for counter in ("remaining_seconds", "elapsed_seconds", "accounted_at"):
+                    signature["after_run"].pop(counter)
             signature = encoded_plain(signature)
             if signature != self._archive_signature:
                 self.archive.save_session(
