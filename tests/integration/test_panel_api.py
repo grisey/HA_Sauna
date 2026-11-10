@@ -1305,6 +1305,11 @@ class PanelAPITests(unittest.IsolatedAsyncioTestCase):
             )
             self.assertEqual(administrative["session"]["timeline"]["completed"][0]["gang_id"], raw_id)
             self.assertEqual(administrative["session"]["door_cycles"], expected_cycles(raw_id, completed=True))
+            # B4d: Fristen und Regeln (K-R2) und gebuchte Gänge nur für Administratoren.
+            rules = administrative["session"]["control_rules"]
+            self.assertEqual([gang["gang_id"] for gang in rules["gangs"]], [raw_id])
+            self.assertIn("heating_pause_minutes", rules)
+            self.assertNotIn("control_rules", archived["session"])
             self.assertEqual(original_archive["session"]["timeline"]["completed"][0]["gang_id"], raw_id)
             self.assertNotIn("door_cycles", original_archive["session"])
 

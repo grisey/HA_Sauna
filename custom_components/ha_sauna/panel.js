@@ -5769,6 +5769,45 @@ class SaunaPanel extends HTMLElement {
       .detail-raw-row button { min-height: 0; padding: ${this.preference("size_2_0_px")}px ${this.preference("layout_space_09_px")}px; border: 0; background: transparent; box-shadow: none; color: var(--accent); font-size: inherit; }
       .detail-raw-body { padding-bottom: ${this.preference("layout_space_13_px")}px; }
       #details .detail-raw > .muted { margin: ${this.preference("layout_space_13_px")}px 0 0; }
+      /* B4d: Details · Steuerung wie das Brett: flache Karten, eine Spur je Frage, Zeitpunkt mit „Danach“, Protokoll mit Filtern. */
+      #control-history:not([hidden]) { display: grid; gap: var(--sauna-surface-gap); --control-pale: ${this.preference("opacity_0_45_ratio")}; }
+      #control-history .card { margin: 0; padding: ${this.preference("layout_space_24_px")}px ${this.preference("surface_padding_px")}px; border-radius: var(--sauna-control-radius); box-shadow: none; }
+      #control-history h2 { margin: 0; font-size: ${this.preference("font_size_body_emphasis_px")}px; font-weight: ${this.preference("font_weight_500_0_ratio")}; }
+      #control-history .control-raw > h2 { margin-bottom: ${this.preference("layout_space_13_px")}px; }
+      #control-state-history .detail-card-head > .muted { margin-inline-end: auto; }
+      .control-legend { display: flex; flex-wrap: wrap; align-items: center; gap: ${this.preference("layout_space_07_px")}px ${this.preference("layout_space_18_px")}px; margin: 0 0 ${this.preference("layout_space_09_px")}px; font-size: ${this.preference("font_size_small_px")}px; }
+      .control-legend-item { display: inline-flex; align-items: center; gap: ${this.preference("layout_space_07_px")}px; }
+      .control-legend-item i, .control-following i { flex: none; width: ${this.preference("size_12_0_px")}px; height: ${this.preference("size_12_0_px")}px; border-radius: ${this.preference("radius_2_0_px")}px; }
+      .control-track-levels, .control-track-sparse { background: color-mix(in srgb, var(--sauna-color-border) 35%, transparent); }
+      .control-track-levels button { top: auto; bottom: 0; }
+      .control-track-bar button { min-height: 0; }
+      .control-temperature { position: relative; height: ${this.preference("size_94_0_px")}px; }
+      .control-temperature svg { position: absolute; inset: 0; width: 100%; height: 100%; overflow: visible; }
+      .control-temperature-ticks span { position: absolute; left: ${this.preference("size_2_0_px")}px; transform: translateY(-100%); font-size: ${this.preference("font_size_fine_px")}px; line-height: 1; color: var(--sauna-card-muted-text); white-space: nowrap; pointer-events: none; }
+      .control-temperature-grid { stroke: var(--sauna-color-border); stroke-width: 1; vector-effect: non-scaling-stroke; }
+      .control-temperature-curve { fill: none; stroke: var(--sauna-color-series-temperature); stroke-width: ${this.preference("stroke_2_0_ratio")}; vector-effect: non-scaling-stroke; }
+      .control-temperature-target { fill: none; stroke: var(--sauna-color-chart-threshold); stroke-width: ${this.preference("stroke_2_0_ratio")}; stroke-dasharray: ${this.preference("threshold_dash_length_px")} ${this.preference("threshold_dash_gap_px")}; vector-effect: non-scaling-stroke; }
+      .control-temperature-cursor { stroke: var(--sauna-card-text); stroke-width: ${this.preference("border_2_0_px")}; vector-effect: non-scaling-stroke; }
+      .control-history-inspection .detail-list { grid-template-columns: max-content minmax(0, 1fr); gap: ${this.preference("layout_space_07_px")}px ${this.preference("layout_space_13_px")}px; }
+      .control-history-inspection .detail-list dd { text-align: left; }
+      .control-moment p { margin: 0; }
+      .control-moment-title { margin: ${this.preference("layout_space_07_px")}px 0 ${this.preference("layout_space_13_px")}px !important; font-size: ${this.preference("font_size_subtitle_px")}px; font-weight: ${this.preference("font_weight_500_0_ratio")}; }
+      .control-moment .control-following-key { margin-top: ${this.preference("layout_space_18_px")}px; }
+      .control-following { list-style: none; margin: ${this.preference("layout_space_07_px")}px 0 0; padding: 0; font-size: ${this.preference("font_size_compact_px")}px; }
+      .control-following li { border-top: ${this.preference("border_1_0_px")}px solid var(--sauna-color-border, var(--divider-color)); }
+      .control-following button { display: grid; grid-template-columns: max-content max-content minmax(0, 1fr); align-items: center; gap: ${this.preference("layout_space_13_px")}px; width: 100%; min-height: 0; padding: ${this.preference("layout_space_07_px")}px 0; border: 0; border-radius: 0; background: transparent; box-shadow: none; color: inherit; font: inherit; font-variant-numeric: tabular-nums; text-align: start; cursor: pointer; }
+      .control-rules .detail-list + .muted { margin: ${this.preference("layout_space_13_px")}px 0 0; }
+      .control-chips { display: flex; flex-wrap: wrap; gap: ${this.preference("layout_space_09_px")}px; margin-top: ${this.preference("layout_space_13_px")}px; }
+      .control-chip { min-height: 0; padding: ${this.preference("size_4_0_px")}px ${this.preference("layout_space_13_px")}px; border: ${this.preference("border_1_0_px")}px solid var(--sauna-color-border); border-radius: ${this.preference("radius_20_0_px")}px; background: transparent; box-shadow: none; color: inherit; font-size: ${this.preference("font_size_compact_px")}px; font-weight: ${this.preference("font_weight_400_0_ratio")}; }
+      .control-chip strong { font-weight: ${this.preference("font_weight_500_0_ratio")}; }
+      #control-history .control-chip[aria-pressed] { background: transparent; color: inherit; border-color: var(--sauna-color-border); }
+      #control-history .control-chip[aria-pressed="true"] { background: var(--sauna-surface-recessed, transparent); }
+      #control-history .control-chip[aria-pressed="false"] { opacity: var(--control-pale); text-decoration: line-through; }
+      .control-protocol details, .control-protocol .control-protocol-pages { margin-top: ${this.preference("layout_space_13_px")}px; }
+      .control-protocol .control-history-events { margin-top: ${this.preference("layout_space_09_px")}px; }
+      #control-history .control-history-events td { white-space: normal; overflow-wrap: anywhere; }
+      #control-history .control-history-events td:first-child { white-space: nowrap; }
+      #control-history .control-history-events td > button { min-height: 0; }
       .gauge-card { padding: ${this.preference("layout_space_32_px")}px ${this.preference("surface_padding_px")}px ${this.preference("surface_padding_px")}px; }
       .gauge-card h2 { font-size: ${this.preference("font_size_compact_px")}px; font-weight: ${this.preference("font_weight_500_0_ratio")}; letter-spacing: ${this.preference("tracking_0_035_em")}em; color: var(--sauna-card-muted-text); margin-bottom: ${this.preference("layout_space_16_px")}px; }
       .gauges { gap: ${this.preference("layout_space_16_px")}px; grid-template-columns: repeat(var(--round-count, 3), minmax(0, 1fr)); align-items: start; }
@@ -11647,10 +11686,7 @@ class SaunaPanel extends HTMLElement {
       pages = Math.max(1, Math.ceil(records.length / size));
     const page = Math.max(0, Math.min(pages - 1, this.detailRecordPage || 0));
     const slice = records.slice(page * size, (page + 1) * size);
-    return `<div class="card"><details id="detail-records"><summary>Einzelbelege · ${records.length} Datensätze</summary><p class="muted">Archivfelder nach Empfangsreihenfolge. Sitzungszustände sind kompakte Auszüge; der Archivexport enthält die vollständigen Originale. Messungen, Regelentscheidungen, Erkennungen, Bedienung und Ausgaben bleiben einzeln prüfbar.</p><div class="row"><button data-action="detail-record-page:${page - 1}" ${page ? "" : "disabled"}>Zurück</button><span>Seite ${page + 1} von ${pages}</span><button data-action="detail-record-page:${page + 1}" ${page + 1 < pages ? "" : "disabled"}>Weiter</button></div><div class="detail-record-list">${slice.map((record, index) => `<details data-record-id="${record.id ?? page * size + index}"><summary>${this.clock(record.received_at)} · ${esc(this.historyRecordLabel(record.kind))}${record.projection ? " · Auszug" : ""}</summary>${this.detailFields(record.payload, `record-${record.id ?? index}`)}</details>`).join("")}</div></details></div>`;
-  }
-  renderSessionEvidence(session) {
-    return `<div class="card" id="control-session-evidence">${this.renderSessionEvidenceContents(session)}</div>`;
+    return `<p class="muted">Archivfelder nach Empfangsreihenfolge. Sitzungszustände sind kompakte Auszüge; der Archivexport enthält die vollständigen Originale.</p><div class="row"><button data-action="detail-record-page:${page - 1}" ${page ? "" : "disabled"}>Zurück</button><span>Seite ${page + 1} von ${pages}</span><button data-action="detail-record-page:${page + 1}" ${page + 1 < pages ? "" : "disabled"}>Weiter</button></div><div class="detail-record-list" id="detail-records">${slice.map((record, index) => `<details data-record-id="${record.id ?? page * size + index}"><summary>${this.clock(record.received_at)} · ${esc(this.historyRecordLabel(record.kind))}${record.projection ? " · Auszug" : ""}</summary>${this.detailFields(record.payload, `record-${record.id ?? index}`)}</details>`).join("")}</div>`;
   }
   renderHeatingCycles(session) {
     if (!Array.isArray(session.heating?.intervals))
@@ -11700,80 +11736,100 @@ class SaunaPanel extends HTMLElement {
         : null;
     return `<section id="detail-heating-cycles"><h3>Heizzyklen · ${selection ? "Ausgewählter Zeitraum" : "Sitzung"}</h3><p>${complete.length} vollständig belegte Ein-/Aus-Intervalle · Mittlere Länge: ${mean === null ? "Kein vollständig belegtes Intervall" : `${this.num(mean, this.preference("detail_value_precision"))} min`}</p><p class="muted">${this.clock(start)} – ${this.clock(end)} · Nicht im Mittel: ${open} offen, ${clipped} angeschnitten, ${unknown} ohne bestätigtes Aus beendet.</p></section>`;
   }
+  renderSessionEvidence(session) {
+    return `<div id="control-session-evidence">${this.renderSessionEvidenceContents(session)}</div>`;
+  }
+  // Rohdaten der Sitzung (B4d): eingeklappt, Inhalt erst nach dem Öffnen.
+  controlRawRow(key, label, content) {
+    const open = this.controlRawOpen?.has(key);
+    return `<div class="detail-raw-row"><span>${label}</span><button type="button" data-action="control-raw:${key}" aria-expanded="${!!open}" aria-controls="session-evidence-${key}">${open ? "schließen" : "öffnen"}</button></div>${open ? `<div class="detail-raw-body" id="session-evidence-${key}">${content()}</div>` : ""}`;
+  }
   renderSessionEvidenceContents(session) {
-    const measuredPower = this.historyMeasuredPower();
     const groups = [
       [
         "energy",
         "Heizzeit und Energie",
-        {
-          Heizzeit: session.heating,
-          Energie: session.energy,
-          ...(this.historyPowerMeasurement(measuredPower)
-            ? {
-                Gemessene_Leistung: {
-                  started_at: session.timeline.session_started_at,
-                  ended_at: session.energy?.accounted_at,
-                  mean_w: measuredPower?.mean_w ?? null,
-                  peak_w: measuredPower?.peak_w ?? null,
-                  measured_seconds: measuredPower?.measured_seconds ?? null,
-                  Messbezug: measuredPower
-                    ? measuredPower.complete
-                      ? "Gesamter Zeitraum"
-                      : "Nur gemessene Abschnitte"
-                    : "Keine auswertbaren Messintervalle",
-                },
-              }
-            : {}),
-          Schützverlauf: session.contactor_history,
+        () => {
+          const measuredPower = this.historyMeasuredPower();
+          return {
+            Heizzeit: session.heating,
+            Energie: session.energy,
+            ...(this.historyPowerMeasurement(measuredPower)
+              ? {
+                  Gemessene_Leistung: {
+                    started_at: session.timeline.session_started_at,
+                    ended_at: session.energy?.accounted_at,
+                    mean_w: measuredPower?.mean_w ?? null,
+                    peak_w: measuredPower?.peak_w ?? null,
+                    measured_seconds: measuredPower?.measured_seconds ?? null,
+                    Messbezug: measuredPower
+                      ? measuredPower.complete
+                        ? "Gesamter Zeitraum"
+                        : "Nur gemessene Abschnitte"
+                      : "Keine auswertbaren Messintervalle",
+                  },
+                }
+              : {}),
+            Schützverlauf: session.contactor_history,
+          };
         },
       ],
       [
         "cooling",
-        "Kühlung und Fristen",
-        {
+        "Ofenkühlung und Fristen",
+        () => ({
           Aktuelle_Ofenkühlung: session.after_run,
           Kühlphasen: session.after_run_history,
           Fristen: session.deadlines,
-        },
+        }),
       ],
       [
         "temperature",
         "Temperaturprogramm",
-        Object.fromEntries(
-          Object.entries(session).filter(
-            ([key]) =>
-              key.includes("temperature") ||
-              key === "thermostat" ||
-              key === "target_history",
+        () =>
+          Object.fromEntries(
+            Object.entries(session).filter(
+              ([key]) =>
+                key.includes("temperature") ||
+                key === "thermostat" ||
+                key === "target_history",
+            ),
           ),
-        ),
       ],
       [
         "recognition",
         "Gänge und Präsenz",
-        {
+        () => ({
           Bestätigte_Gänge: session.timeline.completed,
           Aktiver_Gang: session.timeline.active,
           Aufgehobene_Erkennungen: session.timeline.retracted,
-        },
+        }),
       ],
-      ["configuration", "Einstellungen dieser Sitzung", session.configuration || null],
+      ["configuration", "Gespeicherte Konfiguration der Sitzung", () => session.configuration || null],
     ];
-    return `<h2>Sitzungsdaten</h2><p class="muted">Gespeicherter Sitzungsstand. Nicht aufgezeichnete frühere Einstellungen und Zwischenzustände lassen sich daraus nicht rekonstruieren.</p>${groups.map(([key, label, value]) => `<details id="session-evidence-${key}"><summary>${label}</summary>${key === "energy" ? this.renderHeatingCycles(session) : ""}${this.detailFields(value, `session-${key}`)}</details>`).join("")}`;
+    return groups
+      .map(([key, label, value]) =>
+        this.controlRawRow(
+          key,
+          label,
+          () =>
+            `${key === "energy" ? this.renderHeatingCycles(session) : ""}${this.detailFields(value(), `session-${key}`)}`,
+        ),
+      )
+      .join("");
   }
+  // Protokolltabelle: Seite der gefilterten Einträge; Fehler außerhalb der Seite bleiben sichtbar.
   renderControlEvents(activity, selected) {
     const size = this.preference("detail_events_per_page"),
       pages = Math.max(1, Math.ceil(activity.length / size));
     const page = Math.max(0, Math.min(pages - 1, this.detailEventPage || 0));
     const shown = activity.slice(page * size, (page + 1) * size);
-    const hiddenErrors = activity.filter(
-      (event) => event.error && !shown.includes(event),
-    );
-    const faults = `<div class="card">${this.historyFaultMarkup(this.shown?.records || [], "control")}${hiddenErrors.map((event) => `<p data-record-id="error-${esc(event.id)}"><strong>${this.clock(event.at)} · ${esc(event.label)}</strong> · ${esc(event.detail)}</p>`).join("")}</div><div class="row"><button data-action="detail-event-page:${page - 1}" ${page ? "" : "disabled"}>Frühere Ereignisse</button><span>Ereignisse · Seite ${page + 1} von ${pages}</span><button data-action="detail-event-page:${page + 1}" ${page + 1 < pages ? "" : "disabled"}>Spätere Ereignisse</button></div>`;
-    activity = shown;
-    return `${faults}<div class="card control-history-events"><h2>Bedienung, Regelung und Ausgaben</h2><div class="scroll"><table><thead><tr><th>Uhrzeit</th><th>Quelle</th><th>Ereignis</th><th>Status / Grund</th></tr></thead><tbody>${activity.map((event, index) => `<tr data-record-id="${esc(event.id || event.ref || `activity-${index}`)}" data-selected="${event === selected}" ${event.error ? 'data-error="true"' : ""} ${event.records ? 'data-light-section="true"' : ""}><td><button data-control-time="${event.at}">${this.clock(event.at)}</button></td><td>${esc(event.source)}</td><td>${esc(event.label)}</td><td>${esc(event.detail)}${event.records?.length ? `<details id="commands-${esc(event.id)}"><summary>${event.records.length} Einzelbefehle und Anpassungen</summary>${event.records.map((record, i) => `<p data-record-id="light-command-${record.id ?? i}">Gesendet ${this.clock(record.payload.sent_at || record.received_at)} · Vorgabe ${esc(this.historyLightValue(record))}${record.payload.ends_at ? ` · Planfrist ${this.clock(record.payload.ends_at)}` : ""} · ${record.payload.service_error ? `Dienstfehler: ${esc(record.payload.service_error)}` : `Dienst abgeschlossen ${this.clock(record.payload.completed_at || record.received_at)}; Rückmeldung separat`}</p>`).join("")}</details>` : ""}</td></tr>`).join("")}</tbody></table></div></div>`;
+    const hiddenErrors = activity.filter((event) => event.error && !shown.includes(event));
+    return `${hiddenErrors.map((event) => `<p data-record-id="error-${esc(event.id)}"><strong>${this.clock(event.at)} · ${esc(event.label)}</strong> · ${esc(event.detail)}</p>`).join("")}<div class="row control-protocol-pages"><button data-action="detail-event-page:${page - 1}" ${page ? "" : "disabled"}>Frühere Einträge</button><span>Seite ${page + 1} von ${pages}</span><button data-action="detail-event-page:${page + 1}" ${page + 1 < pages ? "" : "disabled"}>Spätere Einträge</button></div><div class="scroll control-history-events"><table><thead><tr><th>Uhrzeit</th><th>Quelle</th><th>Ereignis</th><th>Status / Grund</th></tr></thead><tbody>${shown.map((event, index) => `<tr data-record-id="${esc(event.id || event.ref || `activity-${index}`)}" data-selected="${event === selected}" ${event.error ? 'data-error="true"' : ""} ${event.records ? 'data-light-section="true"' : ""}><td><button data-control-time="${event.at}" aria-label="Zeitpunkt ${this.clock(event.at)} wählen">${this.clockSeconds(event.at)}</button></td><td>${esc(event.source)}</td><td>${esc(event.label)}</td><td>${esc(event.detail)}${event.records?.length ? `<details id="commands-${esc(event.id)}"><summary>${event.records.length} Einzelbefehle und Anpassungen</summary>${event.records.map((record, i) => `<p data-record-id="light-command-${record.id ?? i}">Gesendet ${this.clock(record.payload.sent_at || record.received_at)} · Vorgabe ${esc(this.historyLightValue(record))}${record.payload.ends_at ? ` · Planfrist ${this.clock(record.payload.ends_at)}` : ""} · ${record.payload.service_error ? `Dienstfehler: ${esc(record.payload.service_error)}` : `Dienst abgeschlossen ${this.clock(record.payload.completed_at || record.received_at)}; Rückmeldung separat`}</p>`).join("")}</details>` : ""}</td></tr>`).join("")}</tbody></table></div>`;
   }
+  // Details · Steuerung (B4d, Brett „Details · Steuerung“): Betriebsverlauf mit einer
+  // Spur je Frage, Zeitpunkt mit „Danach“, Fristen und Regeln (Backend, K-R2),
+  // Protokoll je Typ filterbar und die Rohdaten der Sitzung.
   renderControlHistory() {
     const { session, records, phase_projection: projection } = this.shown;
     const timeline = session.timeline;
@@ -11796,6 +11852,7 @@ class SaunaPanel extends HTMLElement {
       session.ended_at,
       session.contactor_history,
       session.gang_intervals,
+      session.control_rules,
       Number.isFinite(this.state.gang_duration_seconds),
       (projection?.intervals || []).map((item) => [
         item.phase,
@@ -11811,6 +11868,9 @@ class SaunaPanel extends HTMLElement {
       this.detailEventPage || 0,
       this.historyValueSelection,
       this.appearanceValue(),
+      [...(this.controlRawOpen || [])],
+      !!this.controlProtocolOpen,
+      [...(this.controlProtocolHidden || [])],
     ]);
     const retained = this.controlHistoryRenderCache;
     const evidenceTick = Math.floor(
@@ -11824,7 +11884,7 @@ class SaunaPanel extends HTMLElement {
     ) {
       if (this.shadowRoot && this.controlEvidenceTick !== evidenceTick) {
         // Counters may change without an archive record. Refresh just their
-        // retained detail card at the archive cadence, leaving plots alone.
+        // retained raw data at the archive cadence, leaving plots alone.
         this.updateMarkup(
           "#control-session-evidence",
           this.renderSessionEvidenceContents(session),
@@ -11837,9 +11897,7 @@ class SaunaPanel extends HTMLElement {
     const neutral = "var(--sauna-color-card-background, var(--card-background-color))";
     const color = (role) => `var(--sauna-color-${role})`;
     const changes = (items, initial = "Unbekannt", initialColor = null) => {
-      const sorted = items
-        .filter((v) => Number.isFinite(v.at))
-        .sort((a, b) => a.at - b.at);
+      const sorted = items.filter((v) => Number.isFinite(v.at)).sort((a, b) => a.at - b.at);
       const spans = [];
       let previous = { at: start, label: initial, color: initialColor };
       for (const item of sorted) {
@@ -11850,6 +11908,11 @@ class SaunaPanel extends HTMLElement {
       spans.push({ ...previous, end });
       return spans.filter((v) => v.end >= v.at);
     };
+    const spanAt = (spans) =>
+      spans
+        .slice()
+        .reverse()
+        .find((v) => v.at <= cursor && (v.end > cursor || (cursor === end && v.end === end)));
     const presenceProjection = this.historyPresenceProjection(),
       presenceReports = this.historyPresenceReports(start, end);
     const occupancy = (r) =>
@@ -11887,8 +11950,25 @@ class SaunaPanel extends HTMLElement {
         "Ohne Begründung"
       );
     };
-    const phaseIntervals = projection?.intervals || [],
-      physicalGangs = this.historyGangRows().map((row) => row.bounds);
+    // Farbe des gespeicherten Grunds (Legende des Bretts); kräftig = heizen, blass = nicht heizen.
+    const reasonGroups = [
+      ["heat", "Unter Einschaltgrenze, Mindestheizzeit", "var(--sauna-color-ui-heater-on)", ["below_target", "minimum_heating"]],
+      ["gang", "Aktiver Gang", color("phase-session"), ["gang_heat_demand", "gang_active", "person_present"]],
+      ["door", "Türhilfe", color("event-door"), ["temporary_door_heat"]],
+      ["reached", "Obere Regeltemperatur erreicht", color("phase-ready"), ["temperature_reached"]],
+      ["band", "Regelband, Heizpause", "color-mix(in srgb, var(--sauna-color-phase-ready) 45%, var(--sauna-color-border))", ["hysteresis_band", "thermostat_cooldown"]],
+      ["cooling", "Ofenkühlung", color("phase-cooling"), ["after_run"]],
+      ["manual", "Manuelle Vorgabe", "var(--sauna-chart-focus, var(--accent))", ["manual_override", "manual_mode"]],
+      ["off", "Betrieb Aus", color("phase-idle"), ["operation_off"]],
+    ];
+    const reasonGroup = (reason) =>
+      reasonGroups.find((group) => group[3].includes(reason)) || [
+        "other",
+        "Störung oder fehlende Einstellung",
+        color("status-error"),
+        [],
+      ];
+    const phaseIntervals = projection?.intervals || [];
     const coolingState = (phase, at) => ({
       at,
       label:
@@ -11904,234 +11984,429 @@ class SaunaPanel extends HTMLElement {
             ? color("phase-cooling")
             : neutral,
     });
-    const coolingChanges = phaseIntervals.map((p) =>
-      coolingState(p.phase, stamp(p.started_at)),
+    const coolingChanges = phaseIntervals.map((p) => coolingState(p.phase, stamp(p.started_at)));
+    const live =
+      !session.ended_at && this.state.session?.timeline?.session_id === timeline.session_id;
+    if (live) coolingChanges.push(coolingState(this.state.phase, latest));
+    const phaseSpans = changes(
+      phaseIntervals.map((p) => ({
+        at: stamp(p.started_at),
+        label: phases[p.phase] || "Unbekannt",
+        color: `var(--sauna-color-${(phaseAppearance[p.phase]?.color || "phase_idle").replaceAll("_", "-")})`,
+      })),
     );
-    if (
-      !session.ended_at &&
-      this.state.session?.timeline?.session_id === timeline.session_id
-    ) {
-      coolingChanges.push(coolingState(this.state.phase, latest));
-    }
-    const lanes = [
-      [
-        "Tür",
-        changes(
-          (timeline.processed || [])
-            .filter((e) => ["door_open", "door_close"].includes(e.kind))
-            .map((e) => ({
-              at: stamp(e.effective_at),
-              label: e.kind === "door_open" ? "Offen" : "Geschlossen",
-              color: e.kind === "door_open" ? color("event-door") : neutral,
-            })),
-          // Gang model: the door starts closed (docs/gangmodell.md).
-          "Geschlossen",
+    const doorSpans = changes(
+      (timeline.processed || [])
+        .filter((e) => ["door_open", "door_close"].includes(e.kind))
+        .map((e) => ({
+          at: stamp(e.effective_at),
+          label: e.kind === "door_open" ? "Offen" : "Geschlossen",
+          color: e.kind === "door_open" ? color("event-door") : neutral,
+        })),
+      // Gang model: the door starts closed (docs/gangmodell.md).
+      "Geschlossen",
+      neutral,
+    );
+    const presenceSpans = changes(
+      presenceReports.map(({ at, report }) => ({
+        at,
+        label: occupancy(report),
+        color: report?.available
+          ? report.occupancy === "present"
+            ? color("phase-ready")
+            : report.occupancy === "absent"
+              ? neutral
+              : null
+          : null,
+      })),
+    );
+    const demandSpans = changes(
+      decisions.map((d) => {
+        const group = reasonGroup(d.reason);
+        return {
+          at: stamp(d.at),
+          label: `${d.heat ? "Ein" : "Aus"} · ${cause(d.reason)}`,
+          color: group[2],
+          pale: !d.heat,
+          group: group[0],
+        };
+      }),
+    );
+    const intervals = Array.isArray(session.heating?.intervals) ? session.heating.intervals : null;
+    const feedbackSpans = intervals
+      ? changes(
+          intervals.flatMap((interval) => [
+            { at: stamp(interval.started_at), label: "Ein", color: color("ui-heater-on") },
+            ...(interval.ended_at
+              ? [{ at: stamp(interval.ended_at), label: "Aus", color: neutral }]
+              : []),
+          ]),
+          "Aus",
           neutral,
-        ),
-      ],
-      [
-        "Präsenz",
-        changes(
-          presenceReports.map(({ at, report }) => ({
-            at,
-            label: occupancy(report),
-            color: report?.available
-              ? report.occupancy === "present"
-                ? color("phase-ready")
-                : report.occupancy === "absent"
-                  ? neutral
-                  : null
-              : null,
-          })),
-        ),
-      ],
-      [
-        "Saunagang",
-        changes(
-          physicalGangs
-            .filter((bounds) => bounds.complete || bounds.ongoing)
-            .flatMap((bounds) => [
-              {
-                at: bounds.start,
-                label: bounds.ongoing ? "Laufend" : "Aktiv",
-                color: color("phase-session"),
-              },
-              ...(bounds.complete
-                ? [{ at: bounds.end, label: "Kein belegter Gang", color: null }]
-                : []),
-            ]),
-          "Kein belegter Gang",
-        ),
-      ],
-      [
-        "Heizanforderung",
-        changes(
-          decisions.map((d) => ({
-            at: stamp(d.at),
-            label: `${d.heat ? "Ein" : "Aus"} · ${cause(d.reason)}`,
-            color: d.heat ? color("ui-heater-on") : neutral,
-          })),
-        ),
-      ],
-      [
-        "Ofenschalter",
-        changes(
+        )
+      : changes(
           (session.contactor_history || []).map((m) => ({
             at: stamp(m.at),
             label: m.state === true ? "Ein" : m.state === false ? "Aus" : "Unbekannt",
             color: m.state == null ? null : m.state ? color("ui-heater-on") : neutral,
           })),
-        ),
-      ],
-      ["Ofenkühlung", changes(coolingChanges)],
-    ];
-    const observations = records.filter(
-      (record) => record.kind === "heating_observation",
+        );
+    const series = this.historyValueSeries(records),
+      currentPosition = live ? this.state.regulation_temperature_position : null,
+      temperatureSeries = [currentPosition, "upper", "lower"]
+        .filter(Boolean)
+        .map((position) => series.find((item) => item.key === `${position}:temperature`))
+        .find((item) => item?.values.some((point) => point.value != null)),
+      lightSeries = ["light-observed", "light-command"]
+        .map((key) => series.find((item) => item.key === key))
+        .find((item) => item?.values.length),
+      lightSpans = lightSeries
+        ? changes(
+            lightSeries.values.map((point) => ({
+              at: point.time,
+              label: point.value == null ? "Unbekannt" : `${this.num(point.value, this.preference("percentage_precision"))} %`,
+              color: point.value == null ? null : color("series-light"),
+              level: point.value,
+            })),
+          )
+        : [];
+    const manualSpans = [...this.historyManualActivity(records).values()]
+      .filter((item) => item.value !== null && item.value !== undefined && Number.isFinite(item.at))
+      .map((item) => ({
+        at: Math.max(start, item.at),
+        end: Math.min(end, Number.isFinite(item.endedAt) ? item.endedAt : end),
+        label: `${item.kind === "manual_light" ? "Licht" : "Ofen"} von Hand ${item.value === true ? "ein" : item.value === false ? "aus" : `${this.num(item.value, this.preference("percentage_precision"))} %`}`,
+        color: "var(--sauna-chart-focus, var(--accent))",
+      }))
+      .filter((span) => span.end > span.at);
+    const coolingSpans = changes(coolingChanges);
+    const presenceName = this.historyConfigurationModel()?.presence?.direct
+      ? "Präsenzsensor"
+      : "Präsenz";
+    const bar = (name, spans, extra = "") =>
+      `<div class="control-track-bar${extra}">${spans.map((v) => `<button type="button" data-control-time="${v.at}" style="left:${pct(v.at)}%;width:${Math.max(0, pct(v.end) - pct(v.at))}%;${v.color ? `background:${v.pale ? `color-mix(in srgb, ${v.color} ${this.preference("opacity_0_45_ratio") * 100}%, ${neutral})` : v.color}` : "background:transparent"}${Number.isFinite(v.level) ? `;height:${Math.max(0, Math.min(100, v.level))}%` : ""}" title="${esc(`${name}: ${v.label} · ${this.clock(v.at)} – ${this.clock(v.end)}`)}" aria-label="${esc(`${name}: ${v.label} ab ${this.clock(v.at)}`)}"></button>`).join("")}<i style="left:${pct(cursor)}%"></i></div>`;
+    const track = (name, content, key = name) =>
+      `<div class="control-track" data-detail-key="lane-${esc(key)}"><span>${esc(name)}</span>${content}</div>`;
+    // Temperatur gegen Soll auf der eingestellten Temperaturskala; das Panel zeichnet nur.
+    const scale = this.appearanceScale("temperature"),
+      temperatureLane = (() => {
+        if (!scale) return bar("Temperatur", []);
+        const width = 1000,
+          height = 100,
+          x = (time) => ((time - start) / (end - start)) * width,
+          y = (value) =>
+            height - ((Math.max(scale.minimum, Math.min(scale.maximum, value)) - scale.minimum) / (scale.maximum - scale.minimum || 1)) * height,
+          precision = this.preference("chart_coordinate_precision"),
+          points = (temperatureSeries?.values || []).filter(
+            (point) => point.time >= start && point.time <= end,
+          ),
+          segments = [];
+        let segment = [];
+        for (const point of points) {
+          if (point.value == null) {
+            if (segment.length) segments.push(segment);
+            segment = [];
+          } else segment.push(point);
+        }
+        if (segment.length) segments.push(segment);
+        const path = segments
+          .map((values) =>
+            reduceHistorySegment(values, x)
+              .map((point, index) => `${index ? "L" : "M"}${x(point.time).toFixed(precision)},${y(point.value).toFixed(precision)}`)
+              .join(" "),
+          )
+          .join(" ");
+        const targets = (session.target_history || [])
+            .map((mark) => ({ at: stamp(mark.at), value: mark.target_c }))
+            .filter((mark) => Number.isFinite(mark.at) && Number.isFinite(mark.value)),
+          target = targets
+            .map((mark, index) => {
+              const left = Math.max(start, mark.at),
+                right = Math.min(end, targets[index + 1]?.at ?? end);
+              return right > left
+                ? `M${x(left).toFixed(precision)},${y(mark.value).toFixed(precision)} H${x(right).toFixed(precision)}`
+                : "";
+            })
+            .join(" "),
+          ticks = this.temperatureTickValues(scale);
+        return `<div class="control-temperature"><div class="control-temperature-ticks" aria-hidden="true">${ticks
+          .filter((_, index) => index % 2 === (ticks.length - 1) % 2)
+          .map((value) => `<span style="top:${(y(value) / height) * 100}%">${this.num(value)} °C</span>`)
+          .join("")}</div><svg viewBox="0 0 ${width} ${height}" preserveAspectRatio="none" role="img" aria-label="Temperatur gegen Soll · ${this.clock(start)} bis ${this.clock(end)}">${ticks.map((value) => `<line class="control-temperature-grid" x1="0" x2="${width}" y1="${y(value).toFixed(precision)}" y2="${y(value).toFixed(precision)}"/>`).join("")}${target ? `<path class="control-temperature-target" d="${target}"/>` : ""}<path class="control-temperature-curve" d="${path}"/><line class="control-temperature-cursor" x1="${x(cursor).toFixed(precision)}" x2="${x(cursor).toFixed(precision)}" y1="0" y2="${height}"/></svg></div>`;
+      })();
+    const lanes = [
+      track("Phase", bar("Phase", phaseSpans)),
+      track("Temperatur", temperatureLane),
+      track("Heizanforderung", bar("Heizanforderung", demandSpans)),
+      track("Ofen (Rückmeldung)", bar("Ofen (Rückmeldung)", feedbackSpans), "Ofen"),
+      track("Ofenkühlung", bar("Ofenkühlung", coolingSpans)),
+      track("Tür", bar("Tür", doorSpans)),
+      track(presenceName, bar(presenceName, presenceSpans), "Präsenz"),
+      ...(lightSpans.length ? [track("Licht", bar("Licht", lightSpans, " control-track-levels"))] : []),
+      ...(manualSpans.length
+        ? [track("Manuelle Eingriffe", bar("Manuelle Eingriffe", manualSpans, " control-track-sparse"))]
+        : []),
+    ].join("");
+    const usedGroups = new Set(decisions.map((d) => reasonGroup(d.reason)[0]));
+    const legend = [...reasonGroups, ["other", "Störung oder fehlende Einstellung", color("status-error"), []]]
+      .filter((group) => usedGroups.has(group[0]))
+      .map((group) => `<span class="control-legend-item"><i style="background:${group[2]}"></i>${esc(group[1])}</span>`)
+      .join("");
+    // Protokoll (K-R3): Einträge je Typ; Kalibrierzeilen stehen unter Details · Kalibrierung.
+    const rules = session.control_rules || null,
+      gangName = (gang) => (gang.number ? `Gang ${gang.number}` : "Vorläufiger Gang"),
+      endReasons = {
+        ventilation: "Durchlüften",
+        absence: "Abwesenheit",
+        absent: "Abwesenheit",
+        manual: "von Hand beendet",
+        ausgeschaltet: "Betrieb ausgeschaltet",
+      };
+    const typed = (type, items) => items.map((item) => ({ ...item, type }));
+    const additional = this.historyAdditionalActivity(records).filter(
+      (item) => item.record?.kind !== "calibration",
     );
-    if (observations.length)
-      lanes.splice(5, 0, [
-        "Heizrückmeldung",
-        changes(
-          observations.map((record) => ({
-            at: stamp(record.received_at),
-            label:
-              record.payload.heating === true
-                ? "Heizt"
-                : record.payload.heating === false
-                  ? "Heizt nicht"
-                  : "Unbekannt",
-            color:
-              record.payload.heating == null
-                ? null
-                : record.payload.heating
-                  ? color("ui-heater-on")
-                  : neutral,
-          })),
-        ),
-      ]);
+    const additionalType = (item) =>
+      item.record?.kind === "session"
+        ? "program"
+        : item.record?.kind === "heating_observation"
+          ? "observation"
+          : item.record?.kind?.startsWith("manual_") ||
+              item.record?.kind === "heater_override_rejected"
+            ? "manual"
+            : "other";
     const activity = [
-      ...records
-        .filter((r) => r.kind === "command")
-        .map((r) => ({
-          id: `command-${r.id ?? r.received_at}`,
-          at: stamp(r.received_at),
-          effective: r.payload.sent_at || r.received_at,
-          label: `Ofenbefehl ${r.payload.heat ? "Ein" : "Aus"}`,
-          source: "Geräteausgabe",
-          error: !!r.payload.service_error,
-          detail: r.payload.service_error
-            ? `Dienstfehler: ${r.payload.service_error}`
-            : "Dienst abgeschlossen; Rückmeldung separat",
+      ...typed(
+        "command",
+        records
+          .filter((r) => r.kind === "command")
+          .map((r) => ({
+            id: `command-${r.id ?? r.received_at}`,
+            at: stamp(r.received_at),
+            effective: r.payload.sent_at || r.received_at,
+            label: `Ofenbefehl ${r.payload.heat ? "Ein" : "Aus"}`,
+            source: "Geräteausgabe",
+            error: !!r.payload.service_error,
+            heat: r.payload.heat,
+            detail: r.payload.service_error
+              ? `Dienstfehler: ${r.payload.service_error}`
+              : "Dienst abgeschlossen; Rückmeldung separat",
+          })),
+      ),
+      ...typed("light", this.historyLightActivity(records)),
+      ...additional.map((item) => ({ ...item, type: additionalType(item) })),
+      ...typed("fault", this.historyFaultEvents(records).events),
+      ...typed(
+        "recognition",
+        (timeline.processed || [])
+          .filter(
+            (event) =>
+              !["person_strong", "person_weak"].includes(event.kind) ||
+              presenceProjection.sourceForEvent(event) === "proxy" ||
+              !presenceProjection.hasSourceInformation,
+          )
+          .map((e) => ({
+            id: e.event_id,
+            at: stamp(e.detected_at),
+            effective: e.effective_at,
+            label: events[e.kind] || e.kind,
+            source: "Erkennung",
+            detail:
+              {
+                door_open: "Türöffnung erkannt",
+                door_close: "Türschluss erkannt",
+                presence_entry: "Türschluss mit Anwesenheit · vorläufig",
+                presence_confirmed: "Türvorgang abgeschlossen · Präsenz belegt",
+                presence_ended: "Austrittsöffnung · Abwesenheit und Durchlüften belegt",
+                presence_close_ended: "Türschluss · keine dauerhafte Sensoranwesenheit",
+                absence_exit: "Türvorgang abgeschlossen · Abwesenheit gemeldet",
+                manual_gang_end: "Gang beenden auf der Steuerungsseite",
+                infusion: "Feuchteanstieg erkannt",
+              }[e.kind] ||
+              events[e.kind] ||
+              e.kind,
+            ref: e.event_id,
+          })),
+      ),
+      ...typed(
+        "presence",
+        presenceReports
+          .filter((item) => item.report)
+          .map(({ at, report }) => ({
+            id: `${report.report_id || "presence"}:${at}`,
+            at,
+            effective: report.effective_at,
+            label: occupancy(report),
+            source: report.assertion === "direct_presence" ? "Präsenzsensor" : "Indirekte Präsenz",
+            detail: report.source,
+          })),
+      ),
+      ...typed(
+        "decision",
+        decisions.map((d, index) => ({
+          id: `decision-${decisionRecords[index].id ?? index}`,
+          at: stamp(d.at),
+          effective: d.at,
+          label: `Heizanforderung ${d.heat ? "Ein" : "Aus"}`,
+          source: "Steuerung",
+          detail: `${cause(d.reason)}${d.created_at && d.created_at !== d.at ? ` · Entschieden ${this.clock(d.created_at)}` : ""}`,
         })),
-      ...this.historyLightActivity(records),
-      ...this.historyAdditionalActivity(records),
-      ...this.historyFaultEvents(records).events,
-      ...(timeline.processed || [])
-        .filter(
-          (event) =>
-            !["person_strong", "person_weak"].includes(event.kind) ||
-            presenceProjection.sourceForEvent(event) === "proxy" ||
-            !presenceProjection.hasSourceInformation,
-        )
-        .map((e) => ({
-          id: e.event_id,
-          at: stamp(e.detected_at),
-          effective: e.effective_at,
-          label: events[e.kind] || e.kind,
-          source: "Erkennung",
-          detail:
-            {
-              door_open: "Türöffnung erkannt",
-              door_close: "Türschluss erkannt",
-              presence_entry: "Türschluss mit Anwesenheit · vorläufig",
-              presence_confirmed: "Türvorgang abgeschlossen · Präsenz belegt",
-              presence_ended: "Austrittsöffnung · Abwesenheit und Durchlüften belegt",
-              presence_close_ended: "Türschluss · keine dauerhafte Sensoranwesenheit",
-              absence_exit: "Türvorgang abgeschlossen · Abwesenheit gemeldet",
-              manual_gang_end: "Gang beenden auf der Steuerungsseite",
-              infusion: "Feuchteanstieg erkannt",
-            }[e.kind] ||
-            events[e.kind] ||
-            e.kind,
-          ref: e.event_id,
+      ),
+      ...typed(
+        "contactor",
+        (session.contactor_history || []).map((m) => ({
+          id: `contactor-${m.at}`,
+          at: stamp(m.at),
+          effective: m.at,
+          label: `Ofenschalter ${m.state === true ? "Ein" : m.state === false ? "Aus" : "unbekannt"}`,
+          source: "Schütz",
+          detail: "Bestätigte Schalterstellung",
         })),
-      ...presenceReports
-        .filter((item) => item.report)
-        .map(({ at, report }) => ({
-          id: `${report.report_id || "presence"}:${at}`,
-          at,
-          effective: report.effective_at,
-          label: occupancy(report),
-          source:
-            report.assertion === "direct_presence"
-              ? "Präsenzsensor"
-              : "Indirekte Präsenz",
-          detail: report.source,
+      ),
+      // Gebuchte Gang- und Bestätigungszeiten aus dem Backend (K-R2, gang_bookings).
+      ...typed(
+        "gang",
+        (rules?.gangs || []).map((gang) => ({
+          id: `gang-${gang.gang_id}`,
+          at: stamp(gang.detected_at || gang.started_at),
+          effective: gang.started_at,
+          label: `${gangName(gang)} gebucht`,
+          source: "Gangmodell",
+          detail: [
+            `Beginn ${this.clockSeconds(gang.started_at)}`,
+            gang.confirmed_at ? `bestätigt ${this.clockSeconds(gang.confirmed_at)}` : "vorläufig",
+            gang.ended_at
+              ? `Ende ${this.clockSeconds(gang.ended_at)}${endReasons[gang.end_reason] ? ` (${endReasons[gang.end_reason]})` : ""}`
+              : gang.active
+                ? "läuft"
+                : "Ende nicht gebucht",
+          ].join(" · "),
         })),
-      ...decisions.map((d, index) => ({
-        id: `decision-${decisionRecords[index].id ?? index}`,
-        at: stamp(d.at),
-        effective: d.at,
-        label: `Heizanforderung ${d.heat ? "Ein" : "Aus"}`,
-        source: "Steuerung",
-        detail: `${cause(d.reason)}${d.created_at && d.created_at !== d.at ? ` · Entschieden ${this.clock(d.created_at)}` : ""}`,
-      })),
-      ...(session.contactor_history || []).map((m) => ({
-        id: `contactor-${m.at}`,
-        at: stamp(m.at),
-        effective: m.at,
-        label: `Ofenschalter ${m.state === true ? "Ein" : m.state === false ? "Aus" : "unbekannt"}`,
-        source: "Schütz",
-        detail: "Bestätigte Schalterstellung",
-      })),
+      ),
     ]
       .filter((e) => Number.isFinite(e.at))
       .sort((a, b) => a.at - b.at);
-    const selected = activity.filter((e) => e.at <= cursor).at(-1);
-    const signature = (spans) => {
-      const values = [];
-      for (const span of spans) {
-        const status = span.label.startsWith("Ein")
-          ? "Ein"
-          : span.label.startsWith("Aus")
-            ? "Aus"
-            : "Unbekannt";
-        if (values.at(-1)?.status !== status) values.push({ at: span.at, status });
-      }
-      return JSON.stringify(values);
-    };
-    const sameHeaterEvidence = signature(lanes[3][1]) === signature(lanes[4][1]);
-    const combinedLanes = sameHeaterEvidence
-      ? lanes
-          .filter((_, index) => index !== 4)
-          .map((lane, index) =>
-            index === 3 ? ["Anforderung / Schütz", lane[1]] : lane,
-          )
-      : lanes;
-    const laneMarkup = combinedLanes
-      .map(
-        ([name, spans]) =>
-          `<div class="control-track" data-detail-key="lane-${esc(name)}"><span>${esc(name)}</span><div class="control-track-bar">${spans.map((v) => `<button type="button" data-control-time="${v.at}" style="left:${pct(v.at)}%;width:${pct(v.end) - pct(v.at)}%;${v.color ? `background:${v.color}` : "background:transparent"}" title="${esc(`${name}: ${v.label} · ${this.clock(v.at)} – ${this.clock(v.end)}`)}" aria-label="${esc(`${name}: ${v.label} ab ${this.clock(v.at)}`)}"></button>`).join("")}<i style="left:${pct(cursor)}%"></i></div></div>`,
-      )
-      .join("");
-    const stateMarkup = lanes
-      .map(
-        ([name, spans]) =>
-          `<dt>${esc(name)}</dt><dd>${esc(
-            spans
-              .slice()
-              .reverse()
-              .find(
-                (v) =>
-                  v.at <= cursor &&
-                  (v.end > cursor || (cursor === end && v.end === end)),
-              )?.label || "Unbekannt",
-          )}</dd>`,
-      )
-      .join("");
+    const protocolTypes = [
+      ["decision", "Heizentscheidungen"],
+      ["command", "Ofenbefehle"],
+      ["light", "Lichtbefehle"],
+      ["presence", "Präsenzmeldungen"],
+      ["manual", "Bedienungen"],
+      ["gang", "Gänge"],
+      ["recognition", "Erkennungen"],
+      ["contactor", "Schaltausgang"],
+      ["observation", "Heizrückmeldungen"],
+      ["fault", "Fehler"],
+      ["program", "Temperaturvorgaben"],
+      ["other", "Betrieb und Hinweise"],
+    ];
+    const hidden = this.controlProtocolHidden || new Set(),
+      filtered = activity.filter((item) => !hidden.has(item.type)),
+      selected = filtered.filter((e) => e.at <= cursor).at(-1),
+      chips = protocolTypes
+        .map(([type, label]) => [type, label, activity.filter((item) => item.type === type).length])
+        .filter(([, , count]) => count)
+        .map(([type, label, count]) => `<button type="button" class="control-chip" data-action="control-protocol-type:${type}" aria-pressed="${!hidden.has(type)}"><strong>${this.num(count, 0)}</strong> ${label}</button>`)
+        .join("");
+    // Zeitpunkt (K-R1): Zustand am gewählten Zeitpunkt aus gespeicherten Belegen.
+    const lastDecision = decisions.filter((d) => stamp(d.at) <= cursor).at(-1),
+      phaseSpan = spanAt(phaseSpans),
+      temperature = temperatureSeries?.values.filter((point) => point.time <= cursor).at(-1),
+      target = (session.target_history || []).filter((mark) => stamp(mark.at) <= cursor).at(-1),
+      command = records.filter((r) => r.kind === "command" && stamp(r.received_at) <= cursor).at(-1),
+      feedback = spanAt(feedbackSpans),
+      gangAt = (rules?.gangs || []).find(
+        (gang) =>
+          stamp(gang.started_at) <= cursor &&
+          cursor < (stamp(gang.ended_at) ?? (gang.active ? end + 1 : -Infinity)),
+      ),
+      lower = (text) => (text || "unbekannt").toLowerCase();
+    const moments = [
+      [
+        "Phase",
+        phaseSpan && phaseSpan.label !== "Unbekannt"
+          ? `${phaseSpan.label} seit ${this.clockSeconds(phaseSpan.at)}`
+          : "nicht aufgezeichnet",
+      ],
+      [
+        "Temperatur",
+        `${temperature?.value == null ? "–" : `${this.num(temperature.value, this.preference("value_precision"))} °C`}${target ? ` bei Soll ${this.num(target.target_c, this.preference("value_precision"))} °C` : ""}`,
+      ],
+      [
+        "Ofen",
+        `Befehl ${command ? (command.payload.heat ? "Ein" : "Aus") : "keiner"}, Rückmeldung ${feedback?.label || "unbekannt"}`,
+      ],
+      ["Tür, Präsenz", `${lower(spanAt(doorSpans)?.label)}, ${lower(spanAt(presenceSpans)?.label)}`],
+      ...(gangAt
+        ? [
+            [
+              "Gang",
+              `${gangName(gangAt)} seit ${this.clockSeconds(gangAt.started_at)}${gangAt.confirmed_at && stamp(gangAt.confirmed_at) <= cursor ? `, bestätigt ${this.clockSeconds(gangAt.confirmed_at)}` : ", vorläufig"}`,
+            ],
+          ]
+        : []),
+    ];
+    const following = [];
+    let previous = lastDecision;
+    for (const decision of decisions) {
+      if (stamp(decision.at) <= cursor) continue;
+      if (previous && previous.reason === decision.reason && previous.heat === decision.heat) continue;
+      following.push({
+        at: stamp(decision.at),
+        label: `${cause(decision.reason)}${!previous || previous.heat !== decision.heat ? `: Ofen ${decision.heat ? "ein" : "aus"}` : ""}`,
+        color: reasonGroup(decision.reason)[2],
+      });
+      previous = decision;
+      if (following.length >= this.preference("control_following_entries")) break;
+    }
+    const momentCard = `<section class="card control-moment" aria-label="Zeitpunkt"><p class="stat-key">Zeitpunkt ${this.clockSeconds(cursor)}</p><p class="control-moment-title">${lastDecision ? `Ofen ${lastDecision.heat ? "ein" : "aus"}: ${esc(cause(lastDecision.reason))}` : "Noch keine Heizentscheidung"}</p><dl class="detail-list">${moments.map(([label, value]) => `<dt>${label}</dt><dd>${esc(value)}</dd>`).join("")}</dl>${following.length ? `<p class="stat-key control-following-key">Danach</p><ol class="control-following">${following.map((item) => `<li><button type="button" data-control-time="${item.at}"><span>${this.clockSeconds(item.at)}</span><i style="background:${item.color}"></i><span>${esc(item.label)}</span></button></li>`).join("")}</ol>` : ""}</section>`;
+    // Fristen und Regeln (K-R2) aus der gespeicherten Konfiguration der Sitzung; gerechnet im Backend.
+    const minutes = (value) =>
+      value == null ? "–" : `${this.num(value, this.preference("value_precision"))} min`;
+    const celsius = (value) =>
+      value == null ? "–" : `${this.num(value, this.preference("value_precision"))} °C`;
+    const coolingText = (rules?.oven_cooling || []).map((item) =>
+      item.pending
+        ? "wartet auf Schütz-Aus"
+        : `${this.clockSeconds(item.started_at)} – ${item.ended_at ? this.clockSeconds(item.ended_at) : "…"}${item.minutes == null ? "" : `, ${minutes(item.minutes)}`}${item.gang ? ` nach Gang ${item.gang}` : ""}${item.running ? ", läuft" : ""}`,
+    );
+    const program = rules?.program,
+      targetsText = rules?.targets?.length
+        ? `${rules.targets.map((value) => this.num(value, this.preference("value_precision"))).join(" → ")} °C`
+        : "–",
+      band = rules?.band;
+    const ruleRows = rules
+      ? [
+          ["Ofenkühlung", coolingText.length ? coolingText.join("<br>") : "keine"],
+          [
+            "Dauer der Ofenkühlung",
+            `${minutes(rules.oven_cooling_minimum_minutes)} bis ${minutes(rules.oven_cooling_maximum_minutes)} je nach Heizzeit`,
+          ],
+          ["Heizpause", `${minutes(rules.heating_pause_minutes)} nach dem Abschalten`],
+          ["Mindestheizzeit", minutes(rules.minimum_heating_minutes)],
+          [
+            "Regelband",
+            !band
+              ? "–"
+              : band.below_c === band.above_c
+                ? `Soll ± ${celsius(band.above_c)}`
+                : `Soll − ${celsius(band.below_c)} bis Soll + ${celsius(band.above_c)}`,
+          ],
+          ["Mindesttemperatur", `${celsius(rules.minimum_temperature_c)} für Gänge`],
+          [
+            "Soll",
+            program?.kind === "manual"
+              ? `Handbetrieb · ${targetsText}`
+              : `${targetsText}${program?.kind === "program" && program.name ? ` (${esc(program.name)})` : program?.kind === "constant" ? " (konstant)" : ""}`,
+          ],
+        ]
+      : [];
+    const rulesCard = `<section class="card control-rules" aria-label="Fristen und Regeln"><h2>Fristen und Regeln</h2>${rules ? `<dl class="detail-list">${ruleRows.map(([label, value]) => `<dt>${label}</dt><dd>${value}</dd>`).join("")}</dl><p class="muted">${rules.configured ? "Werte aus der Konfiguration der Sitzung." : "Für diese Sitzung ist keine Konfiguration gespeichert."}</p>` : '<p class="muted">Für diese Sitzung liegen keine Fristen und Regeln vor.</p>'}</section>`;
+    const protocolCard = `<section class="card control-protocol" aria-label="Protokoll"><div class="detail-card-head"><h2>Protokoll</h2><button type="button" data-action="control-protocol" aria-expanded="${!!this.controlProtocolOpen}">${this.controlProtocolOpen ? "Einträge ausblenden" : "Einträge zeigen"}</button></div>${this.historyFaultMarkup(records, "control")}${chips ? `<div class="control-chips" role="group" aria-label="Protokoll nach Typ filtern">${chips}</div>` : '<p class="muted">Keine Einträge aufgezeichnet.</p>'}${this.controlProtocolOpen ? this.renderControlEvents(filtered, selected) : ""}</section>`;
+    const rawCard = `<section class="card detail-raw control-raw" aria-label="Rohdaten der Sitzung"><h2>Rohdaten der Sitzung</h2>${this.renderSessionEvidence(session)}${this.controlRawRow("values", "Messwerte und Lichtverlauf", () => this.renderHistoryValues(records, start, end, cursor))}${this.controlRawRow("records", `Einzelbelege · ${this.num(records.length, 0)} Datensätze, seitenweise`, () => this.renderHistoryRecords(records))}</section>`;
     this.updateMarkup(
       "#control-history",
-      `<div class="card" id="control-state-history"><div class="row"><h2>Betriebsverlauf</h2><span class="muted">${this.clock(start)} – ${this.clock(end)}</span><button data-action="detail-follow" ${latest > end ? "" : "disabled"}>Bis zum neuesten Stand</button></div><div class="control-history-lanes">${laneMarkup}<div class="control-time-axis">${[0, 0.25, 0.5, 0.75, 1].map((f) => `<span>${this.clock(start + (end - start) * f)}</span>`).join("")}</div><div class="control-cursor-row"><input id="control-history-cursor" class="control-cursor" type="range" min="0" max="${end - start}" step="1" value="${cursor - start}" aria-label="Zeitpunkt im Betriebsverlauf" aria-valuetext="${this.clock(cursor)}"></div></div><p class="muted">Schraffiert: kein belegter Zustand. Regelgründe zeigen die gespeicherte priorisierte Entscheidung.${sameHeaterEvidence ? " Anforderung und Schütz haben hier denselben Verlauf." : " Anforderung und Schütz sind getrennte Belege."}</p><div class="control-history-inspection"><div><h3>Status · ${this.clock(cursor)}</h3><dl>${stateMarkup}</dl></div><div><h3>Letztes Ereignis${selected ? ` · ${this.clock(selected.at)}` : ""}</h3>${selected ? `<p>${esc(selected.label)}</p><p class="muted">${esc(selected.detail)}</p>` : '<p class="muted">Noch kein Ereignis.</p>'}</div></div></div>${this.renderHistoryValues(records, start, end, cursor)}${this.renderControlEvents(activity, selected)}${this.renderSessionEvidence(session)}${this.renderHistoryRecords(records)}`,
+      `<section class="card" id="control-state-history" aria-label="Betriebsverlauf"><div class="detail-card-head"><h2>Betriebsverlauf</h2><span class="muted">${this.clock(start)} – ${this.clock(end)}</span><button data-action="detail-follow" ${latest > end ? "" : "disabled"}>Bis zum neuesten Stand</button></div>${legend ? `<div class="control-legend">${legend}<span class="muted">kräftig = heizen, blass = nicht heizen</span></div>` : ""}<div class="control-history-lanes">${lanes}<div class="control-time-axis">${[0, 0.25, 0.5, 0.75, 1].map((f) => `<span>${this.clock(start + (end - start) * f)}</span>`).join("")}</div><div class="control-cursor-row"><input id="control-history-cursor" class="control-cursor" type="range" min="0" max="${end - start}" step="1" value="${cursor - start}" aria-label="Zeitpunkt im Betriebsverlauf" aria-valuetext="${this.clock(cursor)}"></div></div></section><div class="control-history-inspection">${momentCard}${rulesCard}</div>${protocolCard}${rawCard}`,
     );
     this.controlHistoryRenderCache = { records, count: records.length, key: renderKey };
     this.controlEvidenceTick = evidenceTick;
@@ -18481,6 +18756,25 @@ class SaunaPanel extends HTMLElement {
         this.drawHistory();
         void this.loadDetailOverview();
       }
+      return;
+    }
+    if (
+      action === "control-protocol" ||
+      action.startsWith("control-protocol-type:") ||
+      action.startsWith("control-raw:")
+    ) {
+      if (!this.state?.permissions?.admin || !this.shown) return;
+      if (action === "control-protocol") this.controlProtocolOpen = !this.controlProtocolOpen;
+      else {
+        const [kind, key] = [action.slice(0, action.indexOf(":")), action.slice(action.indexOf(":") + 1)];
+        const set =
+          kind === "control-raw"
+            ? (this.controlRawOpen ??= new Set())
+            : (this.controlProtocolHidden ??= new Set());
+        if (!set.delete(key)) set.add(key);
+        if (kind === "control-protocol-type") this.detailEventPage = 0;
+      }
+      this.renderControlHistory();
       return;
     }
     if (action.startsWith("detail-raw:")) {

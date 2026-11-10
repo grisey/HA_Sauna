@@ -325,35 +325,40 @@ const operational = Object.assign(fixturePanel(Panel), {
     this.html = html;
   },
 });
+// B4d: Protokoll geöffnet; Zustand am Zeitpunkt in „Zeitpunkt“, Ofenkühlung als Spur.
+operational.controlProtocolOpen = true;
 operational.renderControlHistory();
 assert.match(operational.html, /Betriebsverlauf/);
 assert.match(operational.html, /<th>Uhrzeit<\/th>/);
 assert.doesNotMatch(operational.html, /Beobachtet|Verarbeitet/);
-assert.match(operational.html, /<dt>Präsenz<\/dt><dd>Nicht verfügbar<\/dd>/);
-assert.match(operational.html, /<dt>Heizanforderung<\/dt><dd>Aus · Ofenkühlung<\/dd>/);
-assert.match(operational.html, /<dt>Ofenschalter<\/dt><dd>Aus<\/dd>/);
+assert.match(operational.html, /<dt>Tür, Präsenz<\/dt><dd>geschlossen, nicht verfügbar<\/dd>/);
+assert.match(operational.html, /<p class="control-moment-title">Ofen aus: Ofenkühlung<\/p>/);
+assert.match(operational.html, /<dt>Ofen<\/dt><dd>Befehl keiner, Rückmeldung Aus<\/dd>/);
 assert.doesNotMatch(operational.html, /session-chart|Temperaturkurve/);
+const lastCooling = (html) =>
+  [...html.match(/data-detail-key="lane-Ofenkühlung">(.*?)<i /)[1].matchAll(/aria-label="Ofenkühlung: ([^"]*) ab /g)].at(-1)[1];
 operational.shown.phase_projection.intervals = [
   { started_at: t, ended_at: end, phase: "nachlauf" },
 ];
 operational.renderControlHistory();
-assert.match(
-  operational.html,
-  /<dt>Ofenkühlung<\/dt><dd>Aktiv<\/dd>/,
+assert.equal(
+  lastCooling(operational.html),
+  "Aktiv",
   "the projection cutoff does not fabricate a cooling end",
 );
+assert.match(operational.html, /<dt>Phase<\/dt><dd>Ofenkühlung seit /);
 operational.state.session = operational.shown.session;
 operational.state.phase = "bereit";
 operational.renderControlHistory();
-assert.match(
-  operational.html,
-  /<dt>Ofenkühlung<\/dt><dd>Inaktiv<\/dd>/,
+assert.equal(
+  lastCooling(operational.html),
+  "Inaktiv",
   "a current phase change at the right boundary is reflected",
 );
 operational.controlHistoryCursor = Date.parse(t) + 1000;
 operational.renderControlHistory();
-assert.match(operational.html, /<dt>Präsenz<\/dt><dd>Anwesend<\/dd>/);
-assert.match(operational.html, /<dt>Ofenschalter<\/dt><dd>Ein<\/dd>/);
+assert.match(operational.html, /<dt>Tür, Präsenz<\/dt><dd>geschlossen, anwesend<\/dd>/);
+assert.match(operational.html, /<dt>Ofen<\/dt><dd>Befehl keiner, Rückmeldung Ein<\/dd>/);
 
 // These are the codes emitted by thermostat.evaluate and Controller._evaluate_manual.
 operational.controlHistoryCursor = null;
@@ -374,7 +379,7 @@ for (const [reason, label] of [
   ];
   operational.renderControlHistory();
   assert.ok(
-    operational.html.includes(`<dt>Heizanforderung</dt><dd>Aus · ${label}</dd>`),
+    operational.html.includes(`<p class="control-moment-title">Ofen aus: ${label}</p>`),
     `${reason} has its German label in the state at the selected time`,
   );
   assert.ok(
@@ -442,6 +447,8 @@ const presenceHistoryPanel = (records, finish) =>
       phase_projection: { intervals: [] },
       records,
     },
+    // B4d: Protokoll geöffnet, damit die Einträge in der Tabelle stehen.
+    controlProtocolOpen: true,
     updateMarkup(_selector, html) {
       this.html = html;
     },
@@ -508,7 +515,8 @@ test("control history follows source markers through repeated fallback and paged
     history.renderControlHistory();
     history.controlHistoryCursor = Date.parse(at(second));
     history.renderControlHistory();
-    assert.ok(history.html.includes(`<dt>Präsenz</dt><dd>${label}</dd>`));
+    // B4d: Zustand am Zeitpunkt in der Karte „Zeitpunkt“ (Tür, Präsenz).
+    assert.ok(history.html.includes(`<dt>Tür, Präsenz</dt><dd>geschlossen, ${label.toLowerCase()}</dd>`));
   };
   expectOccupancy(1, "Abwesend");
   expectOccupancy(firstProxyAt, "Unbekannt");
@@ -593,7 +601,7 @@ test("control history follows source markers through repeated fallback and paged
   delete history.shown.session.configuration;
   history.renderControlHistory();
   assert.equal(history.historyConfigurationModel(), null);
-  assert.match(history.html, /<dt>Präsenz<\/dt><dd>Unbekannt<\/dd>/);
+  assert.match(history.html, /<dt>Tür, Präsenz<\/dt><dd>geschlossen, unbekannt<\/dd>/);
   assert.match(
     history.html.split('id="detail-records"')[0],
     /data-record-id="legacy-person"/,
@@ -676,7 +684,7 @@ test("the final proxy evidence before a same-time recovery marker remains histor
   history.renderControlHistory();
   history.controlHistoryCursor = Date.parse(report.effective_at);
   history.renderControlHistory();
-  assert.match(history.html, /<dt>Präsenz<\/dt><dd>Anwesend<\/dd>/);
+  assert.match(history.html, /<dt>Tür, Präsenz<\/dt><dd>geschlossen, anwesend<\/dd>/);
   const ordinary = history.html.split('id="detail-records"')[0];
   assert.match(ordinary, /data-record-id="last-person"/);
   assert.match(ordinary, /data-record-id="record-3"/);
@@ -696,7 +704,7 @@ test("the final proxy evidence before a same-time recovery marker remains histor
   );
   history.controlHistoryCursor = Date.parse(at(recovery));
   history.renderControlHistory();
-  assert.match(history.html, /<dt>Präsenz<\/dt><dd>Abwesend<\/dd>/);
+  assert.match(history.html, /<dt>Tür, Präsenz<\/dt><dd>geschlossen, abwesend<\/dd>/);
   // A blocked direct-era input may remain in processed without a presence record.
   history.shown.session.timeline.processed.push({
     event_id: "blocked-person",

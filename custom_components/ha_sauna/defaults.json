@@ -1673,6 +1673,18 @@
         "unit": "Einträge",
         "configuration_surface": "panel"
       },
+      "control_following_entries": {
+        "label": "Folgende Wechsel am Zeitpunkt",
+        "description": "Anzahl der nächsten Wechsel der Heizanforderung unter „Danach“ in Details · Steuerung. Gilt für die Darstellung dieser Sauna-Instanz.",
+        "group": "Verlauf",
+        "default": 4,
+        "minimum": 1,
+        "maximum": 20,
+        "step": 1,
+        "integer": true,
+        "unit": "Einträge",
+        "configuration_surface": "catalog"
+      },
       "typeahead_reset_ms": {
         "label": "Pause der Auswahlsuche",
         "description": "Pause der Auswahlsuche. Gilt für die Darstellung dieser Sauna-Instanz.",

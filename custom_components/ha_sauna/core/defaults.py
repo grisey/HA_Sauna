@@ -211,6 +211,7 @@ _PREFERENCE_KEYS = frozenset(
         "history_cache_records",
         "detail_records_per_page",
         "detail_events_per_page",
+        "control_following_entries",
         "typeahead_reset_ms",
         "program_saved_feedback_ms",
         "settings_reload_attempts",

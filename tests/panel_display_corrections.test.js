@@ -78,11 +78,12 @@ test("the door lane starts closed until the first door event", () => {
   const status = (second) => {
     p.controlHistoryCursor = Date.parse(iso(second));
     p.renderControlHistory();
-    return p.markup["#control-history"].match(/<dt>Tür<\/dt><dd>([^<]*)<\/dd>/)[1];
+    // B4d: Tür und Präsenz am Zeitpunkt in der Karte „Zeitpunkt“.
+    return p.markup["#control-history"].match(/<dt>Tür, Präsenz<\/dt><dd>([^,<]*),/)[1];
   };
-  assert.equal(status(5), "Geschlossen");
-  assert.equal(status(25), "Offen");
-  assert.equal(status(40), "Geschlossen");
+  assert.equal(status(5), "geschlossen");
+  assert.equal(status(25), "offen");
+  assert.equal(status(40), "geschlossen");
   const lane = p.markup["#control-history"].match(
     /data-detail-key="lane-Tür">(.*?)<i /,
   )[1];
@@ -269,6 +270,8 @@ test("power rows require a power measurement in detail history and leave the his
     const summary = p.markup["[data-history-session-summary]"];
     assert.doesNotMatch(summary, /Gemessene Leistung|Energie/, JSON.stringify(model));
     p.historyMeasuredPower = () => measuredPower;
+    assert.doesNotMatch(p.renderSessionEvidenceContents(shown.session), /Gemessene/);
+    p.controlRawOpen = new Set(["energy"]);
     const detail = p.renderSessionEvidenceContents(shown.session);
     assert.equal(
       /Gemessene Leistung|Messbezug|Gemessene mittlere Leistung/.test(detail),

@@ -15,6 +15,7 @@ from .archive import ExportUnavailable, energy_interval_delta, plain
 from .const import DOMAIN
 from .core import calibration
 from .core.configuration_model import ConfigurationModel, temperature_control
+from .core.control_rules import control_rules
 from .core.notification_recipients import ActorRef
 from .notification_options import CONF_NOTIFICATION_ASSIGNMENTS
 from .core.display import (
@@ -965,6 +966,8 @@ class ArchiveView(HomeAssistantView):
             )
             session["measurement_context"] = historical_measurement_context(session)
             if request["hass_user"].is_admin:
+                # K-R2 (B4d): Fristen und Regeln aus der gespeicherten Sitzungskonfiguration.
+                session["control_rules"] = control_rules(session)
                 try:
                     stored_configuration = Configuration.from_options(
                         session.get("configuration"), historical=True

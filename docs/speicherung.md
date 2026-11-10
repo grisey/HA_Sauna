@@ -240,9 +240,30 @@ Archiv und Start (Sitzungen und Datensätze im Archiv, Dateigröße, Startdauer 
 Archivs beim Laden der Integration) und die aktuellen Fehler. Die Rohdaten sind
 eingeklappt und werden erst beim Öffnen aufbereitet. Archivumfang und Mittelwerte
 liefert `GET …/archive/overview` (Administratoren) im Takt der
-Verlaufsaktualisierung. **Erkennung** ist die [Erkennungskontrolle](erkennung.md#erkennungskontrolle), **Steuerung** der Verlauf der
-Sitzung mit Regelentscheidungen, Fristen und Protokoll, **Kalibrierung** Start,
+Verlaufsaktualisierung. **Erkennung** ist die [Erkennungskontrolle](erkennung.md#erkennungskontrolle), **Kalibrierung** Start,
 Lauf und Raster der [Kalibrierung](kalibrierung.md#start-und-abbruch).
+
+**Steuerung** zeigt die gewählte Sitzung aus dem Archiv. Der Betriebsverlauf hat
+eine Spur je Frage: Phase, Temperatur gegen Soll, Heizanforderung (gefärbt nach dem
+gespeicherten Grund, kräftig für Heizen, blass für Nicht-Heizen), Ofenrückmeldung
+aus den Heizintervallen, Ofenkühlung, Tür, Präsenz, Licht und manuelle Eingriffe.
+Für den gewählten Zeitpunkt stehen der Grund der letzten Heizentscheidung, Phase
+und Beginn, Temperatur und Soll, Ofenbefehl und Rückmeldung, Tür und Präsenz, ein
+laufender Gang sowie unter **Danach** die nächsten Wechsel der Heizanforderung.
+**Fristen und Regeln** stehen einmal: Ofenkühlungen mit Beginn, Ende, Dauer und
+auslösendem Gang, Dauerrahmen der Ofenkühlung, Heizpause, Mindestheizzeit,
+Regelband, Mindesttemperatur und Sollfolge mit Programm, gerechnet aus dem
+gespeicherten Sitzungsstand und der gespeicherten Konfiguration der Sitzung
+(`control_rules` in der Archivantwort für Administratoren); die heutige Einstellung
+gilt nicht rückwirkend. Das **Protokoll** ist eingeklappt und je Typ filterbar
+(Heizentscheidungen, Ofenbefehle, Lichtbefehle, Präsenzmeldungen, Bedienungen,
+gebuchte Gänge mit Beginn, Bestätigung und Ende, Erkennungen, Schaltausgang,
+Heizrückmeldungen, Fehler im Sitzungsverlauf, Temperaturvorgaben, Betrieb und
+Hinweise); ein Klick auf die Uhrzeit setzt den Zeitpunkt. Kalibrierzeilen stehen
+unter **Kalibrierung**. Die Rohdaten der Sitzung (Heizzeit und Energie,
+Ofenkühlung und Fristen, Temperaturprogramm, Gänge und Präsenz, gespeicherte
+Konfiguration, Messwerte und Lichtverlauf, Einzelbelege) werden erst beim Öffnen
+aufbereitet.
 
 Die Details zeigen gespeicherte Werte mit ihrer Herkunft. Nicht aufgezeichnete
 Messverläufe lassen sich rückwirkend nicht ergänzen; fehlende Angaben erscheinen

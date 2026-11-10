@@ -455,6 +455,8 @@ test("status-only counter updates patch evidence at the slower cadence without r
     plots++;
     return "";
   };
+  // B4d: Rohdaten der Sitzung erst nach dem Öffnen; geöffnet Energie und Messreihen.
+  p.controlRawOpen = new Set(["energy", "values"]);
   p.renderControlHistory();
   p.state.now = iso(41);
   p.renderControlHistory(); // Enable the explicit newest-data button once.
