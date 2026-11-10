@@ -241,7 +241,9 @@ offener, beginnt keinen neuen Gang mehr; der nächste Gang beginnt wie immer mit
 der nächsten Tür. Ein von Hand beendeter Gang hat keinen Austritts-Türvorgang;
 seine Austrittstemperatur gilt wie ohne erkannte Tür am Gangende
 ([Kennzahlen](kennzahlen.md#sitzung-und-gang)). Läuft der angezeigte Gang
-inzwischen nicht mehr, wird der Tastendruck abgelehnt.
+inzwischen nicht mehr, wird der Tastendruck abgelehnt. Während einer
+[Kalibrierung](kalibrierung.md#gültigkeit) ist die Taste gesperrt, weil die
+Kalibrierung gegen das Gangmodell prüft.
 
 ## Gang zählen und nächste Temperaturstufe beginnen
 

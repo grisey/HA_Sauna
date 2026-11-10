@@ -7242,16 +7242,17 @@ class SaunaPanel extends HTMLElement {
     const alert = notices ? `<div class="notice" role="alert">${notices}</div>` : "";
     const calibrationRun = s.calibration?.active;
     const calibrationHint = calibrationRun
-      ? `<p class="muted calibration-hint" role="status">Kalibrierung läuft: ${esc(this.calibrationProgress(calibrationRun, { waiting: false }))}</p>`
+      ? `<p class="muted calibration-hint" role="status">Kalibrierung läuft: ${esc(this.calibrationProgress(calibrationRun, { waiting: false }))}${active && s.operation_enabled ? " · „Gang beenden“ ist währenddessen gesperrt" : ""}</p>`
       : "";
     const finishPhase =
       session?.after_run && s.operation_enabled && !manualMode
         ? `<button class="tile operation" data-action="end-phase:after_run:${esc(encodeURIComponent(session.after_run.phase_id))}" ${permissions.control ? "" : "disabled"}>Kühlung beenden</button>`
         : "";
-    // GE1: Gang von Hand beenden, Folgen wie bei einem erkannten Gangende.
+    // GE1: Gang von Hand beenden, Folgen wie bei einem erkannten Gangende;
+    // während einer Kalibrierung gesperrt (GE1a).
     const endGang =
       active && s.operation_enabled
-        ? `<button class="tile operation" data-action="end-gang:${esc(encodeURIComponent(active.gang_id))}" ${permissions.control ? "" : "disabled"}>Gang beenden</button>`
+        ? `<button class="tile operation" data-action="end-gang:${esc(encodeURIComponent(active.gang_id))}" ${permissions.control && !calibrationRun ? "" : "disabled"}>Gang beenden</button>`
         : "";
     const operation = manualMode
       ? endGang
@@ -17801,6 +17802,7 @@ class SaunaPanel extends HTMLElement {
         action.startsWith("finish-session:") ||
         action.startsWith("end-gang:")) &&
         !permissions.control) ||
+      (action.startsWith("end-gang:") && this.state.calibration?.active) ||
       (action.startsWith("preset:") && !permissions.temperature) ||
       (action === "program-apply" && !permissions.program) ||
       (action === "button-gesture" &&

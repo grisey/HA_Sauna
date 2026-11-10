@@ -2166,6 +2166,11 @@ class SaunaRuntime:
         """Den laufenden Gang von Hand beenden (GE1); Folgen wie bei einem erkannten Gangende."""
         async with self.serialized():
             self._require_open()
+            if any(run.active for run in self._calibration_runs):
+                # GE1a: die Kalibrierung prüft gegen das Gangmodell.
+                raise ValueError(
+                    "Während einer Kalibrierung lässt sich ein Gang nicht von Hand beenden."
+                )
             now = self._clock()
             ended = self.controller.end_gang(gang_id, now)
             self._record_notification_participant(actor)

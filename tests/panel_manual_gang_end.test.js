@@ -42,8 +42,10 @@ function state({
   control = true,
   active = true,
   afterRun = false,
+  calibration = null,
 } = {}) {
   return {
+    calibration: calibration ? { active: calibration } : {},
     now: "2026-01-01T00:20:00Z",
     operation_enabled: true,
     phase: active ? "saunagang" : "bereit",
@@ -153,6 +155,14 @@ assert.match(
   /data-action="end-gang:s%3Agang%2F1" disabled>Gang beenden/,
 );
 
+// GE1a: während einer Kalibrierung gesperrt, mit Grund in der Zustandszeile.
+const calibrating = render({
+  calibration: { kind: "module", module: "A1", step: 1, steps: 4, waiting: "reply" },
+});
+assert.match(calibrating, /data-action="end-gang:s%3Agang%2F1" disabled>Gang beenden/);
+assert.match(calibrating, /„Gang beenden“ ist währenddessen gesperrt/);
+assert.doesNotMatch(render(), /währenddessen gesperrt/);
+
 (async () => {
   const calls = [];
   const panel = Object.assign(fixturePanel(Panel), {
@@ -166,6 +176,10 @@ assert.match(
   assert.deepEqual(JSON.parse(JSON.stringify(calls)), [
     ["/entry-1/end_gang", "POST", { gang_id: "s:gang/1" }],
   ]);
+  panel.state.calibration = { active: { kind: "module" } };
+  await panel.action("end-gang:s%3Agang%2F1");
+  assert.equal(calls.length, 1);
+  panel.state.calibration = {};
   panel.state.permissions.control = false;
   await panel.action("end-gang:s%3Agang%2F1");
   assert.equal(calls.length, 1);

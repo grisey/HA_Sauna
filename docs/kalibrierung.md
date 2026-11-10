@@ -79,6 +79,9 @@ angeforderte, noch nicht gelaufene Wiederholung. Ein Modul, das bei Betrieb AUS
 in der Wiederaufnahmefrist, im manuellen Modus oder während einer manuellen
 Ofenwahl gestartet wird, ist damit sofort unterbrochen.
 
+**Gang beenden** auf der Steuerungsseite ist während einer Kalibrierung gesperrt,
+weil sie gegen das Gangmodell prüft ([Gang von Hand beenden](gangmodell.md#gang-von-hand-beenden)).
+
 Mit der Unterbrechung endet die Kalibrierung und sendet keine Anweisung mehr.
 Das Protokoll trägt sie als ungültig mit dem Grund. Statt der Auswertung folgt
 nur eine Nachricht, dass die Kalibrierung ungültig ist; nach Entladen oder

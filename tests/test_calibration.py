@@ -748,6 +748,40 @@ class CalibrationRuntimeTests(unittest.TestCase):
         clock[0] = START + timedelta(seconds=651)
         await runtime.tick()
 
+    def test_gang_cannot_be_ended_by_hand_during_calibration(self):
+        # GE1a (Nutzer 10.11.2026): die Kalibrierung prüft gegen das Gangmodell.
+        async def exercise():
+            clock = [START]
+            runtime = self.runtime(clock)
+            runtime.controller.set_temperature(80, START)
+            await runtime.set_operation(True, actor=ActorRef(USER, "ha_context"))
+            sid = runtime.session.session_id
+            for kind, seconds, name in ((Kind.DOOR_OPEN, 10, "entry-open"),
+                                        (Kind.DOOR_CLOSE, 14, "entry-close")):
+                if name == "entry-close":
+                    clock[0] = START + timedelta(seconds=12)
+                    await runtime.accept_presence(binary_presence(
+                        "binary_sensor.presence", "on", clock[0], clock[0]))
+                clock[0] = START + timedelta(seconds=seconds)
+                await runtime.receive(Event(
+                    name, sid, kind, clock[0], clock[0],
+                    door_close_evidence=DoorCloseEvidence(clock[0], clock[0])
+                    if kind == Kind.DOOR_CLOSE else None))
+            gang = runtime.session.timeline.active
+            self.assertIsNotNone(gang)
+            await runtime.start_calibration(actor=ActorRef(USER, "ha_context"), module="A1")
+            with self.assertRaisesRegex(ValueError, "Kalibrierung"):
+                await runtime.end_gang(gang.gang_id)
+            self.assertEqual(runtime.session.timeline.active, gang)
+            await runtime.cancel_calibration(actor=ActorRef(USER, "ha_context"))
+            await self.settle(runtime)
+            clock[0] = START + timedelta(seconds=30)
+            await runtime.end_gang(gang.gang_id)
+            self.assertIsNone(runtime.session.timeline.active)
+            await runtime.close()
+
+        asyncio.run(exercise())
+
     def test_single_module_waits_for_the_gang_and_leaves_control_unchanged(self):
         async def exercise(calibrate):
             clock = [START]

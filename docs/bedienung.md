@@ -94,7 +94,8 @@ Automatik neben **Ausschalten**, im Handbetrieb über Ofen und Licht. Die Taste
 beendet den laufenden Gang zum Zeitpunkt des Drückens, mit denselben Folgen wie
 ein erkanntes Gangende ([Gangmodell](gangmodell.md#gang-von-hand-beenden)). Sie
 ist für den Fall gedacht, dass die Steuerung einen Austritt nicht erkennt. Der
-nächste Gang beginnt mit der nächsten Tür.
+nächste Gang beginnt mit der nächsten Tür. Während einer Kalibrierung ist die
+Taste gesperrt.
 
 ## Dauerhaft manuell betreiben
 
