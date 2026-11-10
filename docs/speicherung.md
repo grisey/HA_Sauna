@@ -249,6 +249,7 @@ für die jeweilige Sauna (`entry_id`).
 | `GET /api/ha_sauna/{entry_id}/archive` | Leserechte; ohne `session_id` die Sitzungsliste, mit `session_id` Sitzungsstand und Datensätze. |
 | `GET /api/ha_sauna/{entry_id}/export` | Administrator; ZIP-Export als fortlaufende Übertragung. Mit `check=1` nur die Prüfung bis zum festgelegten Stand, Antwort `{"success":true}`. Fehler vor Beginn der Übertragung als JSON `{"error":"…"}`; ein bereits laufender Export oder ein Abbruch durch ein Backup ergibt 409. |
 | `POST /api/ha_sauna/{entry_id}/archive/erase` | Administrator; `{"session_id":"…"}` löscht eine Sitzung, `{"reset":true}` das gesamte Archiv. |
+| `POST /api/ha_sauna/{entry_id}/archive/label` | Administrator; `{"session_id":"…","test":true}` kennzeichnet eine abgeschlossene Sitzung als [Testbetrieb](kennzahlen.md#testbetrieb), `false` hebt das auf. Unbekannte Sitzung 404, laufende 409. |
 | `GET /api/ha_sauna/{entry_id}/key-figures?session_id=…` | Leserechte; [Kennzahlen](kennzahlen.md) einer abgeschlossenen Sitzung, sonst 404. |
 | `GET /api/ha_sauna/{entry_id}/statistics` | Leserechte; [Statistik](kennzahlen.md#statistik) über alle abgeschlossenen Sitzungen, mit `season` (Anfangsjahr) über eine Saison, mit `season` und `part` (`autumn`, `winter`, `spring`) über eine Jahreszeit, mit `summer` über einen Sommer. `periods` nennt alle Saisons mit ihren Jahreszeiten und alle Sommer mit ausgewerteten Sitzungen. |
 

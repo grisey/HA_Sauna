@@ -90,9 +90,21 @@ ausgewertete Sitzungen liegen.
 Jeder Wert nennt die Zahl der Sitzungen, auf denen er beruht (`sessions`).
 Summen (Sitzungen, Betriebszeit, Saunazeit, Gänge, Aufgüsse, Energie, Kosten,
 Energie je Saunastunde, Heizanteil) gelten über alle Sitzungen. Mittel,
-Vergleiche und Rekorde beruhen auf den verglichenen Sitzungen; das sind heute
-dieselben. Aufheizen, Regelung und Sollabweichung stehen zusätzlich getrennt
+Vergleiche und Rekorde beruhen auf den verglichenen Sitzungen: allen außer denen
+im Testbetrieb. Aufheizen, Regelung und Sollabweichung stehen zusätzlich getrennt
 nach Programmart (`by_program`: Handbetrieb, Konstant, Programm).
+
+### Testbetrieb
+
+Eine abgeschlossene Sitzung lässt sich als Testbetrieb kennzeichnen (Verlauf,
+Unteransicht Sitzung, nur Administratoren). Eine Sitzung mit Kalibrierprotokoll
+gilt automatisch als Testbetrieb; die Kennzeichnung lässt sich aufheben. Sie
+zählt dann in den Summen (K-T1 bis K-T4, K-T8), nicht in Mitteln, Vergleichen,
+Gewohnheiten, Gruppen, Rekorden und nicht im Vergleich des Aufheizens mit
+früheren Sitzungen. `test_sessions` nennt ihre Zahl, `test_session_ids` die
+Sitzungen; `key-figures` liefert je Sitzung `test` und `test_source`
+(`calibration` oder `user`). Die Kennzeichnung ist ein eigener Archiveintrag
+`session_label`; der Originalbestand bleibt unverändert.
 
 | Bereich | Werte |
 | --- | --- |

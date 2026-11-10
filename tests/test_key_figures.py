@@ -550,6 +550,29 @@ class StatisticsTests(unittest.TestCase):
         self.assertEqual(result["habits"]["sessions"][0]["weekday"], 1)
         self.assertEqual(result["habits"]["sessions"][0]["local_start"], "17:00:00")
 
+    def test_test_sessions_count_in_sums_only(self):
+        # G25 (Nutzer 10.11.2026): Testbetrieb zählt in Summen (K-T1 bis K-T4, K-T8),
+        # nicht in Mitteln, Vergleichen und Rekorden.
+        regular = self.figures("a", T0, gangs=(kf.GangInput(1800.0, 2700.0),))
+        test = {**self.figures("t", T0 + timedelta(days=1),
+                               gangs=(kf.GangInput(1800.0, 5400.0, (2000.0, 2100.0)),),
+                               duration=9000.0, upper_temperature=flat(80, end=9000)),
+                "test": True}
+        both = kf.statistics_figures([regular, test], BERLIN)
+        alone = kf.statistics_figures([regular], BERLIN)
+        self.assertEqual(both["sessions"]["value"], 2)
+        self.assertEqual(both["test_sessions"]["value"], 1)
+        self.assertEqual(both["gangs"]["value"], 2)
+        self.assertEqual(both["infusions"]["value"], 2)
+        self.assertEqual(both["sauna_time_seconds"]["value"], 900.0 + 3600.0)
+        self.assertEqual(both["energy_kwh"]["value"], 4.0)
+        for key in ("gangs_per_session", "infusions_per_gang", "infusions_most",
+                    "gang_duration", "gang_infusions", "rest", "habits", "records",
+                    "warmup", "door_classes", "door_entry_exit", "per_session", "by_program"):
+            with self.subTest(key=key):
+                self.assertEqual(both[key], alone[key])
+        self.assertEqual(alone["test_sessions"]["value"], 0)
+
     def test_comparisons_are_separated_by_program_kind(self):
         manual = self.figures("m", T0, phases=((0.0, "manuell"), (7000.0, "aus")),
                               gangs=(kf.GangInput(3000.0, 3600.0),))
@@ -947,6 +970,51 @@ class ArchiveInputTests(unittest.TestCase):
         self.assertEqual(other["session_ids"], [])
         # Die angebotenen Zeiträume gelten unabhängig vom gewählten.
         self.assertEqual(other["periods"], periods)
+
+
+class TestSessionLabelTests(unittest.TestCase):
+    """G25: Kennzeichnung im Archiv; automatisch bei einem Kalibrierprotokoll (Nutzer 10.11.)."""
+
+    setUp = ArchiveInputTests.setUp
+    tearDown = ArchiveInputTests.tearDown
+    at = staticmethod(ArchiveInputTests.at)
+    event = ArchiveInputTests.event
+    payload = ArchiveInputTests.payload
+    write = ArchiveInputTests.write
+
+    def test_label_by_hand_and_by_calibration(self):
+        import asyncio
+
+        self.write()
+        self.assertEqual(self.archive.session_key_figures("s1")["test"], False)
+        with closing(sqlite3.connect(self.path)) as db, db:
+            db.execute("INSERT INTO records(entry_id,session_id,kind,received_at,payload) "
+                       "VALUES('entry','s1','calibration',?,?)", (self.at(100), "{}"))
+        result = self.archive.session_key_figures("s1")
+        self.assertEqual((result["test"], result["test_source"]), (True, "calibration"))
+        statistics = self.archive.key_figure_statistics(BERLIN)
+        self.assertEqual(statistics["test_session_ids"], ["s1"])
+        self.assertEqual(statistics["figures"]["test_sessions"]["value"], 1)
+
+        self.write("s2", started=(T0 + timedelta(days=1)).isoformat(), ended=False)
+        revision = self.archive.revision
+
+        async def exercise():
+            await self.archive.start()
+            try:
+                self.assertFalse(await self.archive.label_session("s1", False, T0, "user"))
+                with self.assertRaises(KeyError):
+                    await self.archive.label_session("missing", True, T0)
+                with self.assertRaisesRegex(ValueError, "Abschluss"):
+                    await self.archive.label_session("s2", True, T0)
+            finally:
+                await self.archive.close()
+
+        asyncio.run(exercise())
+        self.assertGreater(self.archive.revision, revision)
+        result = self.archive.session_key_figures("s1")
+        self.assertEqual((result["test"], result["test_source"]), (False, "user"))
+        self.assertEqual(self.archive.key_figure_statistics(BERLIN)["test_session_ids"], [])
 
 
 class ProgramTests(unittest.TestCase):

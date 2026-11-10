@@ -925,9 +925,8 @@ def statistics_figures(
     ``None`` je Sitzung.
     """
     # Summen (K-T1 bis K-T4, K-T8) zählen alle Sitzungen. Mittel, Vergleiche und
-    # Rekorde verwenden ``compared``; ein Kennzeichen „Testbetrieb“ (Folgepaket)
-    # nimmt Sitzungen nur dort aus.
-    compared = sessions
+    # Rekorde verwenden ``compared``: ohne Sitzungen im Testbetrieb (G25).
+    compared = [s for s in sessions if not s.get("test")]
 
     def basis(selected):
         return len({item["session_id"] for item in selected})
@@ -974,6 +973,7 @@ def statistics_figures(
 
     return {
         "sessions": {"value": len(sessions), "sessions": len(sessions)},
+        "test_sessions": {"value": len(sessions) - len(compared), "sessions": len(sessions)},
         "operating_time_seconds": total("duration_seconds"),
         "sauna_time_seconds": total("sauna_time_seconds"),
         "gangs": {"value": len(all_gangs), "sessions": len(sessions)},

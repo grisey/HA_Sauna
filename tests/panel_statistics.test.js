@@ -601,3 +601,16 @@ test("smooth axes use 1, 2, 2.5 and 5 steps and give the curve the most height",
     ["0", "1 h", "2 h", "3 h", "4 h", "5 h", "6 h"],
   );
 });
+
+// G25: Testbetrieb zählt nur in Summen; die Karte „Sitzungen“ nennt die Zahl, die
+// Gewohnheiten beziehen sich auf die übrigen Sitzungen.
+test("test sessions are named in the session card and left out of habits", () => {
+  const result = statistics();
+  result.figures.test_sessions = shown(1, 1, "count", { sessions: 2 });
+  const panel = fixturePanel(Panel);
+  const html = panel.statisticsMarkup(result);
+  assert.match(html, /davon 1 im Testbetrieb, nur in Summen/);
+  assert.match(html, /\(1 von 1 Sitzungen\)/);
+  result.figures.test_sessions = shown(0, 0, "count", { sessions: 2 });
+  assert.doesNotMatch(panel.statisticsMarkup(result), /Testbetrieb/);
+});

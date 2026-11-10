@@ -147,6 +147,7 @@ SESSION = {
 EARLIER_WARMUP = {"median_seconds": "h:mm"}
 STATISTICS = {
     "sessions": {"value": "count"},
+    "test_sessions": {"value": "count"},
     "operating_time_seconds": {"value": "h:mm"},
     "sauna_time_seconds": {"value": "h:mm"},
     "gangs": {"value": "count"},

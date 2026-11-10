@@ -1133,6 +1133,34 @@ class EraseArchiveView(HomeAssistantView):
                           "archive_revision": runtime.archive.revision})
 
 
+class SessionLabelView(HomeAssistantView):
+    """Testbetrieb (G25): abgeschlossene Sitzung kennzeichnen oder Kennzeichnung aufheben."""
+
+    url = "/api/ha_sauna/{entry_id}/archive/label"
+    name = "api:ha_sauna:archive:label"
+    requires_auth = True
+
+    async def post(self, request, entry_id):
+        if not request["hass_user"].is_admin:
+            raise web.HTTPForbidden()
+        body = await json_body(request)
+        if not (isinstance(body, dict) and set(body) == {"session_id", "test"}
+                and isinstance(body["session_id"], str) and body["session_id"]
+                and isinstance(body["test"], bool)):
+            raise web.HTTPBadRequest(text="Eine Sitzungs-ID und test=true oder false sind erforderlich.")
+        runtime = runtime_for(request.app[KEY_HASS], entry_id)
+        try:
+            test = await runtime.label_session(
+                body["session_id"], body["test"], actor=request_actor(request),
+            )
+        except KeyError as error:
+            raise web.HTTPNotFound() from error
+        except ValueError as error:
+            return self.json({"error": str(error)}, status_code=409)
+        return self.json({"success": True, "test": test,
+                          "archive_revision": runtime.archive.revision})
+
+
 _RUNTIME_ERRORS = {
     404: "Diese Sauna ist nicht eingerichtet.",
     503: "Die Sauna-Integration wird gerade neu geladen. Bitte kurz warten.",
@@ -1332,6 +1360,7 @@ def register(hass):
     hass.http.register_view(ControlView)
     hass.http.register_view(FinishPhaseView)
     hass.http.register_view(EndGangView)
+    hass.http.register_view(SessionLabelView)
     hass.http.register_view(FinishSessionView)
     hass.http.register_view(ParametersView)
     hass.http.register_view(TemperatureView)

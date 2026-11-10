@@ -5884,6 +5884,8 @@ class SaunaPanel extends HTMLElement {
       .history-subviews button { white-space: nowrap; }
       .history-figure-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(${this.preference("size_150_0_px")}px, 1fr)); gap: ${this.preference("layout_space_13_px")}px; }
       .history-figure-grid[data-history-figures="plant"] { grid-template-columns: repeat(auto-fit, minmax(${this.preference("size_270_0_px")}px, 1fr)); }
+      .history-test-row { display: flex; flex-wrap: wrap; align-items: center; gap: ${this.preference("layout_space_13_px")}px; margin-top: ${this.preference("layout_space_13_px")}px; }
+      .history-test-row p { margin: 0; }
       .history-figure-grid > .card, .history-gang-row > .card { margin: 0; }
       .history-figure-card .stat-value small, .history-gang-card .stat-value small { color: var(--sauna-card-muted-text); }
       .history-figure-list { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: ${this.preference("layout_space_07_px")}px ${this.preference("layout_space_13_px")}px; margin: 0; font-size: ${this.preference("font_size_compact_px")}px; align-items: baseline; }
@@ -7928,6 +7930,9 @@ class SaunaPanel extends HTMLElement {
     const sums = `<div class="stat-cards">${[
       card("Sitzungen", big(f.sessions), [
         `${esc(this.statisticNumber(f.operating_time_seconds))} in Betrieb`,
+        f.test_sessions?.display
+          ? `davon ${esc(this.statisticNumber(f.test_sessions, false))} im Testbetrieb, nur in Summen`
+          : "",
       ]),
       card("Saunazeit", big(f.sauna_time_seconds), [
         "Summe aller Gänge",
@@ -8071,7 +8076,7 @@ class SaunaPanel extends HTMLElement {
       quartiles = habits.start_quartiles_seconds,
       text = [
         frequent.length
-          ? `Meist ${frequent.map((value) => this.num(value, 0)).join(" oder ")} ${frequent.length === 1 && frequent[0] === 1 ? "Gang" : "Gänge"}${habits.most_frequent_gang_count_sessions?.display != null ? ` (${this.num(habits.most_frequent_gang_count_sessions.display, 0)} von ${this.num(f.sessions?.display, 0)} Sitzungen)` : ""}`
+          ? `Meist ${frequent.map((value) => this.num(value, 0)).join(" oder ")} ${frequent.length === 1 && frequent[0] === 1 ? "Gang" : "Gänge"}${habits.most_frequent_gang_count_sessions?.display != null ? ` (${this.num(habits.most_frequent_gang_count_sessions.display, 0)} von ${this.num((f.sessions?.display ?? 0) - (f.test_sessions?.display ?? 0), 0)} Sitzungen)` : ""}`
           : "",
         Array.isArray(quartiles) && quartiles.length === 2
           ? `Beginn meist zwischen ${this.statisticNumber(quartiles[0], false)} und ${this.statisticNumber(quartiles[1])}`
@@ -8553,6 +8558,18 @@ class SaunaPanel extends HTMLElement {
       ];
     return `<div class="history-figure-grid" data-history-figures="session">${cards.join("")}</div>`;
   }
+  // Testbetrieb (G25): Kennzeichen mit seiner Wirkung; Administratoren setzen oder heben es auf.
+  historyTestMarkup(result) {
+    if (!result?.session_id) return "";
+    const admin = !!this.state?.permissions?.admin,
+      text = result.test
+        ? `<p class="history-test"><strong>Testbetrieb</strong>${result.test_source === "calibration" ? " (Kalibrierung)" : ""}: zählt in der Statistik in Summen, nicht in Mitteln, Vergleichen und Rekorden.</p>`
+        : "",
+      button = admin
+        ? `<button type="button" data-action="session-test:${esc(encodeURIComponent(result.session_id))}:${result.test ? 0 : 1}">${result.test ? "Testbetrieb aufheben" : "Als Testbetrieb kennzeichnen"}</button>`
+        : "";
+    return text || button ? `<div class="history-test-row">${text}${button}</div>` : "";
+  }
   // Gänge im Vergleich: je Gang Dauer, Aufgüsse, Soll, Eintritt, Austritt, Höchste,
   // Feuchteanstieg und Wasser je Aufguss; dazwischen die Ruhe.
   historyGangsMarkup(f) {
@@ -8846,7 +8863,7 @@ class SaunaPanel extends HTMLElement {
       const f = data.result.figures;
       figures = plant
         ? this.historyPlantFiguresMarkup(f, data.result.settings)
-        : this.historySessionFiguresMarkup(f, session);
+        : this.historySessionFiguresMarkup(f, session) + this.historyTestMarkup(data.result);
       gangs = plant ? "" : this.historyGangsMarkup(f);
     } else if (data?.error)
       figures = `<div class="notice" role="alert"><p>${esc(data.error)}</p></div>`;
@@ -17803,6 +17820,7 @@ class SaunaPanel extends HTMLElement {
         action.startsWith("end-gang:")) &&
         !permissions.control) ||
       (action.startsWith("end-gang:") && this.state.calibration?.active) ||
+      (action.startsWith("session-test:") && !permissions.admin) ||
       (action.startsWith("preset:") && !permissions.temperature) ||
       (action === "program-apply" && !permissions.program) ||
       (action === "button-gesture" &&
@@ -18138,6 +18156,19 @@ class SaunaPanel extends HTMLElement {
         gang_id: decodeURIComponent(action.slice("end-gang:".length)),
       });
       await this.refresh();
+      return;
+    }
+    if (action.startsWith("session-test:")) {
+      const [, id, value] = action.split(":");
+      const result = await this.api(`/${this.entry}/archive/label`, "POST", {
+        session_id: decodeURIComponent(id),
+        test: value === "1",
+      });
+      if (result?.archive_revision != null) this.archiveRevision = result.archive_revision;
+      this.keyFigureData = null;
+      this.statisticsData = null;
+      this.historyFiguresKey = null;
+      await this.loadHistoryKeyFigures();
       return;
     }
     if (action.startsWith("finish-session:")) {

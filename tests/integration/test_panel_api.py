@@ -84,6 +84,40 @@ class PanelAPITests(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual((await response.json())["button_session_gestures"], [])
             self.assertEqual(runtime.configuration.button_session_gesture, "long")
 
+    async def test_session_label_permissions_and_revision(self):
+        # G25 (Nutzer 10.11.2026): Testbetrieb kennzeichnen.
+        from harness import retain_session
+
+        runtime = self.entry.runtime_data
+        url = self.base + "/" + self.entry.entry_id + "/archive/label"
+        user = await self.hass.auth.async_create_user("Label reader", group_ids=[GROUP_ID_USER])
+        token = await self.hass.auth.async_create_refresh_token(user, client_id="http://localhost/")
+        headers = {"Authorization": "Bearer " + self.hass.auth.async_create_access_token(token)}
+        async with (
+            ClientSession(headers=headers) as client,
+            client.post(url, json={"session_id": "x", "test": True}) as response,
+        ):
+            self.assertEqual(response.status, 403)
+        async with ClientSession(headers=self.headers) as client:
+            for body in ({}, {"session_id": "x"}, {"session_id": "x", "test": 1}):
+                async with client.post(url, json=body) as response:
+                    self.assertEqual(response.status, 400)
+            async with client.post(url, json={"session_id": "missing", "test": True}) as response:
+                self.assertEqual(response.status, 404)
+            await runtime.set_operation(True)
+            identity = runtime.session.session_id
+            retain_session(runtime)
+            await runtime.set_operation(False)
+            runtime.controller.finish_session(runtime._clock(), light_after_run=False)
+            await runtime._cycle()
+            await runtime.archive.flush()
+            revision = runtime.archive.revision
+            async with client.post(url, json={"session_id": identity, "test": True}) as response:
+                self.assertEqual(response.status, 200, await response.text())
+                body = await response.json()
+            self.assertEqual(body["test"], True)
+            self.assertGreater(body["archive_revision"], revision)
+
     async def test_archive_erase_permissions_session_guard_and_memory_invalidation(self):
         from harness import retain_session
 

@@ -605,8 +605,8 @@ class Archive:
             try:
                 if kind == "stop":
                     return
-                future = payload[2] if kind == "erase" else payload
-                if kind in {"fence", "pause", "erase"} and future.cancelled():
+                future = payload[-1] if kind in {"erase", "label"} else payload
+                if kind in {"fence", "pause", "erase", "label"} and future.cancelled():
                     continue
                 # A long-lived SQLite reader can make each attempt block for
                 # seconds.  While records already form one queue burst, keep
@@ -617,7 +617,7 @@ class Archive:
                 if not await self._drain_failed_records():
                     if kind == "record":
                         self.failed_records.append(payload)
-                    elif kind in {"fence", "pause", "erase"} and not future.cancelled():
+                    elif kind in {"fence", "pause", "erase", "label"} and not future.cancelled():
                         future.set_exception(self.failure)
                     continue
                 if kind in {"fence", "pause"} and payload.cancelled():
@@ -626,6 +626,10 @@ class Archive:
                     await asyncio.to_thread(self._write, payload)
                 elif kind == "erase":
                     result = await asyncio.to_thread(self._erase, payload[0], payload[1])
+                    if not future.cancelled():
+                        future.set_result(result)
+                elif kind == "label":
+                    result = await asyncio.to_thread(self._label, *payload[:-1])
                     if not future.cancelled():
                         future.set_result(result)
                 elif kind == "pause":
@@ -637,11 +641,11 @@ class Archive:
                     payload.set_result(None)
                     await self.resume.wait()
             except Exception as error:
-                if kind != "erase" or not isinstance(error, (KeyError, ValueError)):
+                if kind not in {"erase", "label"} or not isinstance(error, (KeyError, ValueError)):
                     self._report_failure(error)
                 if kind == "record":
                     self.failed_records.append(payload)
-                elif kind in {"fence", "pause", "erase"} and not future.cancelled():
+                elif kind in {"fence", "pause", "erase", "label"} and not future.cancelled():
                     future.set_exception(error)
             finally:
                 self.queue.task_done()
@@ -867,6 +871,34 @@ class Archive:
         future = asyncio.get_running_loop().create_future()
         self.queue.put_nowait(("erase", (session_id, reset, future)))
         return await asyncio.shield(future)
+
+    async def label_session(self, session_id, test, at, user_id=None):
+        """Testbetrieb (G25): eine abgeschlossene Sitzung kennzeichnen oder die Kennzeichnung
+        aufheben. Der Eintrag ``session_label`` ergänzt die Sitzung; der Originalbestand bleibt."""
+        if self.closed:
+            raise RuntimeError("Archiv ist geschlossen")
+        future = asyncio.get_running_loop().create_future()
+        self.queue.put_nowait(("label", (session_id, bool(test), at, user_id, future)))
+        return await asyncio.shield(future)
+
+    def _label(self, session_id, test, at, user_id):
+        with closing(sqlite3.connect(self.path)) as db:
+            row = db.execute(
+                "SELECT ended_at FROM sessions WHERE entry_id=? AND session_id=?",
+                (self.entry_id, session_id),
+            ).fetchone()
+        if row is None:
+            raise KeyError(session_id)
+        if row[0] is None:
+            raise ValueError("Testbetrieb lässt sich erst nach Abschluss der Sitzung kennzeichnen.")
+        self._write(("session_label", at.isoformat(),
+                     encoded_plain({"test": test, "user_id": user_id}), session_id))
+        with closing(sqlite3.connect(self.path)) as db, db:
+            revision = self._bump_revision(db)
+            db.commit()
+        self.revision = revision
+        self._invalidate_projection(session_id)
+        return test
 
     async def _barrier(self, kind):
         future = asyncio.get_running_loop().create_future()
@@ -1482,6 +1514,22 @@ class Archive:
             door_sensor_lag=door_sensor_lag(),
         )
 
+    def _test_label(self, db, session_id):
+        """Testbetrieb (G25): letzte Kennzeichnung von Hand, sonst automatisch bei einem
+        Kalibrierprotokoll (Nutzer 10.11.)."""
+        row = db.execute(
+            "SELECT json_extract(payload,'$.test') FROM records WHERE entry_id=? "
+            "AND session_id=? AND kind='session_label' ORDER BY id DESC LIMIT 1",
+            (self.entry_id, session_id),
+        ).fetchone()
+        if row is not None:
+            return {"test": bool(row[0]), "test_source": "user"}
+        calibrated = db.execute(
+            "SELECT 1 FROM records WHERE entry_id=? AND session_id=? AND kind='calibration' "
+            "LIMIT 1", (self.entry_id, session_id),
+        ).fetchone() is not None
+        return {"test": calibrated, "test_source": "calibration" if calibrated else None}
+
     def key_figures(self, *, volume_m3=None, price_eur_per_kwh=None):
         """Raw key figures of all finished sessions, oldest first.
 
@@ -1499,7 +1547,7 @@ class Archive:
                 with self._figure_lock:
                     cached = self._figure_cache.get(entry["session_id"])
                 if cached is not None and cached[0] == identity:
-                    figures = cached[1]
+                    figures, label = cached[1], cached[2]
                 else:
                     try:
                         figures = session_figures(self._key_figure_input(
@@ -1510,9 +1558,12 @@ class Archive:
                         _LOGGER.debug("Kennzahlen für %s nicht auswertbar: %s",
                                       entry["session_id"], error)
                         figures = None
+                    # Eine neue Kennzeichnung ändert die letzte Eintrags-ID und damit
+                    # die Revision; sie wird mit den Kennzahlen zwischengespeichert.
+                    label = self._test_label(db, entry["session_id"])
                     with self._figure_lock:
-                        self._figure_cache[entry["session_id"]] = (identity, figures)
-                result.append({**entry, "figures": figures})
+                        self._figure_cache[entry["session_id"]] = (identity, figures, label)
+                result.append({**entry, **label, "figures": figures})
         with self._figure_lock:
             current = {entry["session_id"] for entry in entries}
             for session_id in set(self._figure_cache) - current:
@@ -1526,11 +1577,14 @@ class Archive:
                       if entry["session_id"] == session_id), None)
         if index is None or sessions[index]["figures"] is None:
             return None
+        # Vergleiche ohne Sitzungen im Testbetrieb (G25).
         earlier = [entry["figures"] for entry in sessions[:index]
-                   if entry["figures"] is not None]
+                   if entry["figures"] is not None and not entry["test"]]
         return {
             "session_id": session_id,
             "revision": sessions[index]["revision"][0],
+            "test": sessions[index]["test"],
+            "test_source": sessions[index]["test_source"],
             "settings": {"volume_m3": volume_m3, "electricity_price_eur_per_kwh": price_eur_per_kwh},
             "figures": present_session(
                 sessions[index]["figures"],
@@ -1555,7 +1609,8 @@ class Archive:
         )
         entries = self.key_figures(volume_m3=volume_m3, price_eur_per_kwh=price_eur_per_kwh)
         sessions = [entry for entry in entries if in_period(entry["started_at"], period)]
-        evaluated = [entry["figures"] for entry in sessions if entry["figures"] is not None]
+        evaluated = [{**entry["figures"], "test": entry["test"]}
+                     for entry in sessions if entry["figures"] is not None]
         grouping = "season" if not period else "part" if set(period) == {"season"} else None
         return {
             "period": period,
@@ -1563,6 +1618,8 @@ class Archive:
                 [entry["started_at"] for entry in entries if entry["figures"] is not None]
             ),
             "session_ids": [figures["session_id"] for figures in evaluated],
+            "test_session_ids": [figures["session_id"] for figures in evaluated
+                                 if figures["test"]],
             "not_evaluated": [entry["session_id"] for entry in sessions
                               if entry["figures"] is None],
             "settings": {"volume_m3": volume_m3, "electricity_price_eur_per_kwh": price_eur_per_kwh},

@@ -1423,6 +1423,19 @@ class SaunaRuntime:
         if completed and self.device:
             self.device.invalidate_historical_warmup()
 
+    async def label_session(self, session_id, test, *, actor: ActorRef | None = None):
+        """Testbetrieb (G25): eine abgeschlossene Sitzung kennzeichnen oder die Kennzeichnung
+        aufheben. Sie zählt dann in Summen, nicht in Mitteln, Vergleichen und Rekorden."""
+        self._require_open()
+        if self.archive is None:
+            raise ValueError("Kein Sitzungsarchiv verfügbar.")
+        result = await self.archive.label_session(
+            session_id, test, self._clock(), actor.user_id if actor else None,
+        )
+        self.log.info("session_labelled", "Testbetrieb für Sitzung %s: %s.",
+                      session_id, "ja" if result else "nein")
+        return result
+
     async def erase_archive(self, session_id=None, *, reset=False):
         task = asyncio.create_task(self._erase_archive(session_id, reset=reset))
         try:
