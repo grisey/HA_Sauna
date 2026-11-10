@@ -5988,6 +5988,7 @@ class SaunaPanel extends HTMLElement {
       #history[data-main="history"] .history-figure-card .history-test-row button { min-height: 0; padding: ${this.preference("size_2_0_px")}px ${this.preference("layout_space_13_px")}px; font-size: ${this.preference("font_size_small_px")}px; font-weight: ${this.preference("font_weight_500_0_ratio")}; box-shadow: none; }
       #history[data-main="history"] .history-gang-card { gap: ${this.preference("layout_space_10_px")}px; }
       #history[data-main="history"] .history-gang-card .stat-value { margin: 0; }
+      #history[data-main="history"] .history-gang-card .history-figure-list dd { overflow-wrap: normal; }
       .calibration-module h3 { margin: ${this.preference("layout_space_13_px")}px 0 ${this.preference("layout_space_07_px")}px; }
       .calibration-steps { display: grid; grid-template-columns: repeat(auto-fill, minmax(${this.preference("size_120_0_px")}px, 1fr)); gap: ${this.preference("layout_space_07_px")}px; list-style: none; margin: 0; padding: 0; }
       .calibration-step { display: grid; gap: 2px; padding: ${this.preference("layout_space_07_px")}px; border: 1px solid var(--sauna-color-border); border-radius: var(--sauna-control-radius); }
@@ -6087,7 +6088,7 @@ class SaunaPanel extends HTMLElement {
       .history-diamonds { display: flex; flex-wrap: wrap; gap: ${this.preference("layout_space_07_px")}px; min-height: ${this.preference("size_12_0_px")}px; margin: 0; }
       .history-gangs { display: grid; align-content: start; gap: ${this.preference("layout_space_09_px")}px; min-width: 0; }
       .history-gang-row { display: flex; flex-wrap: wrap; gap: ${this.preference("control_group_gap_px")}px; align-items: stretch; }
-      .history-gang-card { flex: 1 1 ${this.preference("size_150_0_px")}px; display: grid; align-content: start; gap: ${this.preference("layout_space_09_px")}px; }
+      .history-gang-card { flex: 1 1 ${this.preference("size_180_0_px")}px; display: grid; align-content: start; gap: ${this.preference("layout_space_09_px")}px; }
       .history-gang-card .stat-value { font-size: ${this.preference("font_size_display_emphasis_px")}px; }
       .history-gang-card[data-selected="true"] { border-color: var(--sauna-chart-focus, var(--accent)); }
       .history-gang-card[data-selected="true"] > .stat-line:first-child { color: var(--sauna-chart-focus, var(--accent)); }
