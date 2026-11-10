@@ -35,12 +35,17 @@ Companion-Ziele prüft das Panel nach dem Laden und auf **Companion-Ziele erneut
 prüfen**.
 
 **Modul starten** ist außerdem gesperrt, solange ein Zustand besteht, der das
-Modul sofort ungültig beenden würde ([Gültigkeit](#gültigkeit)): der manuelle
-Modus, eine manuelle Ofenwahl und, mit Präsenzsensor, ein Präsenzzustand
-„unbekannt“ oder „nicht verfügbar“ oder noch keine Meldung. Die Karte nennt den
-Grund. Der Dienst startet in diesen Zuständen; das Modul endet dann sofort
-ungültig. **Kalibriersitzung starten** bleibt im manuellen Modus startbar, weil
-die Kalibriersitzung auf Automatik wechselt.
+Modul sofort ungültig beenden würde ([Gültigkeit](#gültigkeit)): Betrieb AUS in
+der Wiederaufnahmefrist, der manuelle Modus, eine manuelle Ofenwahl und, mit
+Präsenzsensor, ein Präsenzzustand „unbekannt“ oder „nicht verfügbar“ oder noch
+keine Meldung. Ebenso gesperrt ist es, bis die Sitzung zum ersten Mal die
+Mindesttemperatur erreicht: Vorher zählt kein Eintritt
+([Gangmodell](gangmodell.md)), der Gang des Moduls fehlte in der Auswertung.
+**Kalibriersitzung starten** ist mit Präsenzsensor gesperrt, solange kein
+bekannter Präsenzzustand vorliegt; im manuellen Modus bleibt sie startbar, weil
+die Kalibriersitzung auf Automatik wechselt. Die Karte nennt jeweils den Grund.
+Der Dienst startet in diesen Zuständen weiterhin; ein solcher Lauf endet sofort
+ungültig, ein Modul vor der Mindesttemperatur wertet seinen Gang als fehlend.
 
 Die Antwort auf den Start enthält `run_id`, `kind` (`session` oder `module`),
 `session_id`, die gewählten Module und die Ziele.

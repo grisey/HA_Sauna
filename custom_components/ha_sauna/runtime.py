@@ -600,16 +600,16 @@ class SaunaRuntime:
         ``active``: the running run, if any. ``last``: the last ended run with
         its validity and reason; after its session ended also the totals of
         the evaluation. ``modules``: the modules on offer, P only with a
-        presence sensor. ``blocked``: in a running session the state that
-        would end a single module started now at once, with its reason
-        (W-2d); the panel locks the module start while it holds.
+        presence sensor. ``blocked``: the reason the start offered now is
+        locked, with its text (W-2d, W-2e): without a session the calibration
+        session, in a session the single module.
         """
         active = next((run for run in self._calibration_runs if run.active), None)
         ended = [run for run in self._calibration_runs if not run.active]
         presence = self.configuration_model.direct_presence
-        blocked = self._calibration_blocking(
+        blocked = self._calibration_start_lock(
             presence_known=not presence or self._calibration_presence() is not None,
-        ) if self.session is not None else None
+        )
         return {
             "active": active.status() if active is not None else None,
             "last": {**ended[-1].status(), "totals": None} if ended else self._calibration_last,
@@ -620,10 +620,42 @@ class SaunaRuntime:
                             "expects": list(step.expects)} for step in module.steps]}
                 for module in calibration.select_modules(None, presence=presence)
             ],
-            "blocked": {
-                "reason": blocked, "reason_text": calibration.INTERRUPTIONS[blocked],
-            } if blocked is not None else None,
+            "blocked": self._calibration_lock_status(blocked),
         }
+
+    def _calibration_start_lock(self, *, presence_known):
+        """Reason the start offered now is locked, else ``None`` (W-2d, W-2e).
+
+        Without a session the calibration session is offered; it switches to
+        automatic itself and needs a known presence state. In a session the
+        single module is offered: locked in every state that would interrupt
+        it at once (Betrieb AUS in the resumption window included) and before
+        the session first reaches the minimum temperature, when its entry
+        would not count (L-G6a-2). The service keeps its behaviour.
+        """
+        if self.session is None:
+            return None if presence_known else "presence_unavailable"
+        if not self.session.operation_enabled:
+            return "operation_off"
+        blocked = self._calibration_blocking(presence_known=presence_known)
+        if blocked is None and self.controller.minimum_temperature_reached_at is None:
+            return "minimum_temperature_pending"
+        return blocked
+
+    def _calibration_lock_status(self, reason):
+        if reason is None:
+            return None
+        if reason in calibration.START_LOCKS:
+            text = calibration.START_LOCKS[reason]
+            return {"reason": reason, "reason_text": text, "text": (
+                "Modul starten ist bis zum ersten Erreichen der Mindesttemperatur gesperrt: "
+                "vorher zählt kein Eintritt, der Gang des Moduls fehlte."
+            )}
+        text = calibration.INTERRUPTIONS[reason]
+        subject = ("Ein jetzt gestartetes Modul" if self.session is not None
+                   else "Eine jetzt gestartete Kalibriersitzung")
+        return {"reason": reason, "reason_text": text,
+                "text": f"{subject} wäre sofort ungültig: {text}."}
 
     @property
     def notification_recipients(self):

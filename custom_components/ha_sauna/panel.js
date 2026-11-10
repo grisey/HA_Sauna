@@ -16955,7 +16955,8 @@ class SaunaPanel extends HTMLElement {
             : targets === undefined
               ? "Companion-Ziele werden geprüft …"
               : blocked
-                ? `Ein jetzt gestartetes Modul wäre sofort ungültig: ${blocked.reason_text}.`
+                ? blocked.text ||
+                  `Ein jetzt gestartetes Modul wäre sofort ungültig: ${blocked.reason_text}.`
                 : "";
     const disabled = locked || busy ? "disabled" : "";
     let start;

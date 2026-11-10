@@ -359,6 +359,11 @@ class Controller:
     def session(self) -> Session | None:
         return self._session
 
+    @property
+    def minimum_temperature_reached_at(self) -> datetime | None:
+        """Erstes Erreichen der Mindesttemperatur in der Sitzung (G6a); davor kein Eintritt."""
+        return self._minimum_temperature_reached_at
+
     def record_infusion_end(
         self, session_id: str, source_event_id: str, end: InfusionEnd | None,
     ) -> bool:

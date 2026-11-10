@@ -913,8 +913,10 @@ class CalibrationRuntimeTests(unittest.TestCase):
 
         async def started(runtime, reason):
             # The lock reason is the reason the started module ends with.
+            text = calibration.INTERRUPTIONS[reason]
             self.assertEqual(runtime.calibration_status["blocked"], {
-                "reason": reason, "reason_text": calibration.INTERRUPTIONS[reason]})
+                "reason": reason, "reason_text": text,
+                "text": f"Ein jetzt gestartetes Modul wäre sofort ungültig: {text}."})
             await runtime.start_calibration(actor=actor, module="A1")
             await self.settle(runtime)
             run = runtime.calibration_runs[-1]
@@ -927,10 +929,10 @@ class CalibrationRuntimeTests(unittest.TestCase):
             entry = SimpleNamespace(runtime_data=runtime,
                                     options=runtime.configuration.as_options())
             await async_set_control_mode(_FakeHass(), entry, "manual", actor=actor)
-            # Without a session the calibration session stays startable.
-            self.assertIsNone(runtime.calibration_status["blocked"])
             await runtime.accept_presence(binary_presence(
                 "binary_sensor.presence", "off", START, START))
+            # Without a session the calibration session stays startable in manual mode.
+            self.assertIsNone(runtime.calibration_status["blocked"])
             await runtime.set_heater_override(True, actor=actor)
             self.assertIsNotNone(runtime.session)
             await started(runtime, "manual_mode")
@@ -963,6 +965,64 @@ class CalibrationRuntimeTests(unittest.TestCase):
             runtime.controller.set_temperature(80, clock[0])
             await runtime.set_operation(True, actor=actor)
             self.assertIsNone(runtime.calibration_status["blocked"])
+            await runtime.close()
+
+        asyncio.run(exercise())
+
+    def test_w2e_start_locks_without_immediate_interruption_or_lost_gang(self):
+        # W-2e (Nutzer 10.11.2026): L-G6a-2 und die Lücken aus W-2d.
+        actor = ActorRef(USER, "ha_context")
+
+        async def exercise():
+            # Kalibriersitzung ohne bekannten Präsenzzustand
+            clock = [START]
+            runtime = self.runtime(clock)
+            runtime.controller.set_temperature(80, START)
+            text = calibration.INTERRUPTIONS["presence_unavailable"]
+            self.assertIsNone(runtime.session)
+            self.assertEqual(runtime.calibration_status["blocked"], {
+                "reason": "presence_unavailable", "reason_text": text,
+                "text": f"Eine jetzt gestartete Kalibriersitzung wäre sofort ungültig: {text}."})
+            await runtime.accept_presence(binary_presence(
+                "binary_sensor.presence", "off", START, START))
+            self.assertIsNone(runtime.calibration_status["blocked"])
+            await runtime.close()
+
+            # Einzelnes Modul vor dem ersten Erreichen der Mindesttemperatur
+            clock = [START]
+            runtime = self.runtime(clock)
+            minimum = runtime.configuration.parameters.values["sauna_min_temperature_c"]
+            runtime.controller.set_temperature(minimum - 20, START)
+            await runtime.accept_presence(binary_presence(
+                "binary_sensor.presence", "off", START, START))
+            await runtime.set_operation(True, actor=actor)
+            self.assertIsNone(runtime.controller.minimum_temperature_reached_at)
+            self.assertEqual(runtime.calibration_status["blocked"], {
+                "reason": "minimum_temperature_pending",
+                "reason_text": "Mindesttemperatur noch nicht erreicht",
+                "text": "Modul starten ist bis zum ersten Erreichen der Mindesttemperatur "
+                        "gesperrt: vorher zählt kein Eintritt, der Gang des Moduls fehlte."})
+            clock[0] += timedelta(seconds=30)
+            runtime.controller.set_temperature(minimum + 1, clock[0])
+            self.assertEqual(runtime.controller.minimum_temperature_reached_at, clock[0])
+            self.assertIsNone(runtime.calibration_status["blocked"])
+            # Einmal erreicht, bleibt das Modul startbar, auch wenn die Temperatur fällt.
+            clock[0] += timedelta(seconds=30)
+            runtime.controller.set_temperature(minimum - 5, clock[0])
+            self.assertIsNone(runtime.calibration_status["blocked"])
+
+            # Einzelnes Modul in der Wiederaufnahmefrist nach Betrieb AUS
+            await runtime.set_operation(False, actor=actor)
+            self.assertIsNotNone(runtime.session)
+            text = calibration.INTERRUPTIONS["operation_off"]
+            self.assertEqual(runtime.calibration_status["blocked"], {
+                "reason": "operation_off", "reason_text": text,
+                "text": f"Ein jetzt gestartetes Modul wäre sofort ungültig: {text}."})
+            # Der Dienst bleibt unverändert: ein solcher Start endet sofort ungültig.
+            await runtime.start_calibration(actor=actor, module="A1")
+            await self.settle(runtime)
+            run = runtime.calibration_runs[-1]
+            self.assertEqual((run.phase, run.end_reason), ("invalid", "operation_off"))
             await runtime.close()
 
         asyncio.run(exercise())

@@ -238,6 +238,40 @@ test("in a running session the module start is locked while a module would end a
   }
 });
 
+test("W-2e: the integration's lock text is shown for module and calibration session", async () => {
+  // Modul vor der Mindesttemperatur und in der Wiederaufnahmefrist
+  for (const text of [
+    "Modul starten ist bis zum ersten Erreichen der Mindesttemperatur gesperrt: vorher zählt kein Eintritt, der Gang des Moduls fehlte.",
+    "Ein jetzt gestartetes Modul wäre sofort ungültig: Betrieb aus.",
+  ]) {
+    const { p, requests, html } = fixture({
+      session: { session_id: "s" },
+      calibration: { blocked: { reason: "x", reason_text: "y", text } },
+    });
+    await p.action("calibration-targets");
+    assert.ok(html().includes(`<p class="muted">${text}</p>`));
+    assert.match(html(), /data-action="calibration-start" disabled>Modul starten/);
+    await p.action("calibration-start");
+    assert.equal(sent(requests).length, 1, "only the target check, no start");
+  }
+  // Kalibriersitzung ohne bekannten Präsenzzustand
+  const { p, requests, html } = fixture({
+    calibration: {
+      blocked: {
+        reason: "presence_unavailable",
+        reason_text: "Präsenzsensor unbekannt oder nicht verfügbar",
+        text: "Eine jetzt gestartete Kalibriersitzung wäre sofort ungültig: Präsenzsensor unbekannt oder nicht verfügbar.",
+      },
+    },
+  });
+  await p.action("calibration-targets");
+  assert.match(html(), /Eine jetzt gestartete Kalibriersitzung wäre sofort ungültig/);
+  assert.match(html(), /data-calibration-module="P" checked disabled>/);
+  assert.match(html(), /data-action="calibration-start" disabled>Kalibriersitzung starten/);
+  await p.action("calibration-start");
+  assert.equal(sent(requests).length, 1);
+});
+
 test("a rejected start shows the reason of the integration", async () => {
   const { p, html } = fixture();
   await p.action("calibration-targets");

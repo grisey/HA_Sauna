@@ -58,6 +58,12 @@ INTERRUPTIONS = {
     "presence_unavailable": "Präsenzsensor unbekannt oder nicht verfügbar",
 }
 
+# W-2e: Startsperren ohne Unterbrechung. Vor dem ersten Erreichen der
+# Mindesttemperatur zählt kein Eintritt (G6a); der Gang des Moduls fehlte.
+START_LOCKS = {
+    "minimum_temperature_pending": "Mindesttemperatur noch nicht erreicht",
+}
+
 # Bewertete Erkennungen; Lüften gehört zum Gangende.
 DOOR_OPEN = "door_open"
 DOOR_CLOSE = "door_close"
