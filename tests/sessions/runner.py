@@ -14,7 +14,6 @@ import hashlib
 import json
 import math
 import os
-import shutil
 import sqlite3
 import sys
 from bisect import bisect_right
@@ -814,19 +813,18 @@ class SessionRun:
     async def _export_archive(self, folder):
         """Keep the original run archive before teardown can finalize a session."""
         folder.mkdir(parents=True, exist_ok=True)
-        exported, staged = None, None
+        staged = None
         try:
-            exported = Path(await self.runtime.archive.export())
             with NamedTemporaryFile(dir=folder, prefix=".sauna-session-", suffix=".zip",
                                     delete=False) as handle:
                 staged = Path(handle.name)
-            shutil.move(exported, staged)
+                async with self.runtime.archive.export() as stream:
+                    async for block in stream:
+                        handle.write(block)
             staged.replace(folder / f"{self.case['id']}.archive.zip")
         finally:
             if staged is not None:
                 staged.unlink(missing_ok=True)
-            if exported is not None:
-                exported.unlink(missing_ok=True)
 
     def _observe_recording_history(self, sessions):
         """Preserve accumulated evidence; do not prescribe a switching schedule."""

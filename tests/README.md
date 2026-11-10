@@ -251,7 +251,10 @@ Home-Assistant-Routine ein Core-Backup und stellt es in einem getrennten
 Konfigurationsverzeichnis wieder her. Der Test startet dort eine neue Instanz
 und vergleicht Optionen, Originaldaten und Sitzungszuordnungen. So wird der
 vollständige HA-Wiederherstellungsweg geprüft; die SQLite-Snapshotprüfung gehört
-daneben zum Archivexport.
+daneben zum Archivexport. Dieselbe Datei prüft den Export über HTTP: Vorprüfung,
+JSON-Fehler vor dem ersten Byte, Abbruch ohne Chunked-Endstück, Verbindungsabbruch
+und Vorrang des Backups. Lesestand, Blöcke, ZIP64 und Abbruchwege des Erzeugers
+prüft `test_archive.py` ohne HTTP.
 
 ## Browser
 

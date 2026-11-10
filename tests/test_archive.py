@@ -1,20 +1,19 @@
 import asyncio
-from concurrent.futures import ThreadPoolExecutor
 from contextlib import closing
 from dataclasses import replace
 from datetime import UTC, timedelta, timezone
+import io
 import json
 from pathlib import Path
 import shutil
 import sqlite3
 import tempfile
-import threading
 import unittest
 from unittest.mock import AsyncMock, patch
 from types import SimpleNamespace
 import zipfile
 
-from custom_components.ha_sauna.archive import Archive, encoded, plain
+from custom_components.ha_sauna.archive import Archive, ExportUnavailable, encoded, plain
 from custom_components.ha_sauna.core.controller import Controller
 from custom_components.ha_sauna.core.energy import advance
 from custom_components.ha_sauna.core.timeline import Kind
@@ -39,6 +38,12 @@ async def writer_error(awaitable, expected):
     except expected as error:
         return error
     raise AssertionError(f"{expected.__name__} not raised")
+
+
+async def export_bytes(archive, chunk_bytes=None):
+    """The complete streamed ZIP, consumed through the production export."""
+    async with archive.export(chunk_bytes) as stream:
+        return b"".join([block async for block in stream])
 
 
 class ArchiveTests(unittest.IsolatedAsyncioTestCase):
@@ -873,7 +878,7 @@ class ArchiveTests(unittest.IsolatedAsyncioTestCase):
         )
         for n in range(30):
             self.record(n)
-        task = asyncio.create_task(self.archive.export())
+        task = asyncio.create_task(export_bytes(self.archive))
         energy = advance(
             energy, T0 + step * 2, power_w=rate * 1000,
             valid_until=T0 + step * 2, heating=False,
@@ -884,49 +889,46 @@ class ArchiveTests(unittest.IsolatedAsyncioTestCase):
         )
         for n in range(30, 60):
             self.record(n)
-        path = await task
-        try:
-            with zipfile.ZipFile(path) as export:
-                self.assertEqual(set(export.namelist()), {"manifest.json", "records.jsonl", "sessions.jsonl", "measurements.csv"})
-                rows = [json.loads(line) for line in export.read("records.jsonl").decode().splitlines()]
-                count = sum(r["kind"] == "measurement" for r in rows)
-                self.assertGreaterEqual(count, 30)
-                self.assertLessEqual(count, 60)
-                csv_rows = export.read("measurements.csv").decode().splitlines()
-                self.assertEqual(len(csv_rows), count + 1)
-                self.assertEqual(len({r["id"] for r in rows}), len(rows))
-                sessions = [
-                    json.loads(line)
-                    for line in export.read("sessions.jsonl").decode().splitlines()
-                ]
-                saved_energy = sessions[0]["energy"]
-                self.assertEqual(
-                    saved_energy["accounted_at"], (T0 + step * 2).isoformat(),
-                )
-                self.assertAlmostEqual(
-                    saved_energy["measured_kwh"],
-                    rate * step.total_seconds() * 2 / 3600,
-                )
-                self.assertEqual(saved_energy["intervals"], [{
-                    "started_at": T0.isoformat(),
-                    "ended_at": (T0 + step * 2).isoformat(),
-                    "source": "measured", "power_kw": rate,
-                }])
-                originals = [
-                    row["payload"]["energy"] for row in rows
-                    if row["kind"] == "session"
-                ]
-                self.assertTrue(all("intervals" not in item for item in originals))
-                self.assertEqual(
-                    [item["interval_delta"]["from"] for item in originals],
-                    [None, T0.isoformat(), (T0 + step).isoformat()],
-                )
-                self.assertEqual(
-                    [len(item["interval_delta"]["intervals"]) for item in originals],
-                    [0, 1, 1],
-                )
-        finally:
-            path.unlink()
+        zip_bytes = await task
+        with zipfile.ZipFile(io.BytesIO(zip_bytes)) as export:
+            self.assertEqual(set(export.namelist()), {"manifest.json", "records.jsonl", "sessions.jsonl", "measurements.csv"})
+            rows = [json.loads(line) for line in export.read("records.jsonl").decode().splitlines()]
+            count = sum(r["kind"] == "measurement" for r in rows)
+            self.assertGreaterEqual(count, 30)
+            self.assertLessEqual(count, 60)
+            csv_rows = export.read("measurements.csv").decode().splitlines()
+            self.assertEqual(len(csv_rows), count + 1)
+            self.assertEqual(len({r["id"] for r in rows}), len(rows))
+            sessions = [
+                json.loads(line)
+                for line in export.read("sessions.jsonl").decode().splitlines()
+            ]
+            saved_energy = sessions[0]["energy"]
+            self.assertEqual(
+                saved_energy["accounted_at"], (T0 + step * 2).isoformat(),
+            )
+            self.assertAlmostEqual(
+                saved_energy["measured_kwh"],
+                rate * step.total_seconds() * 2 / 3600,
+            )
+            self.assertEqual(saved_energy["intervals"], [{
+                "started_at": T0.isoformat(),
+                "ended_at": (T0 + step * 2).isoformat(),
+                "source": "measured", "power_kw": rate,
+            }])
+            originals = [
+                row["payload"]["energy"] for row in rows
+                if row["kind"] == "session"
+            ]
+            self.assertTrue(all("intervals" not in item for item in originals))
+            self.assertEqual(
+                [item["interval_delta"]["from"] for item in originals],
+                [None, T0.isoformat(), (T0 + step).isoformat()],
+            )
+            self.assertEqual(
+                [len(item["interval_delta"]["intervals"]) for item in originals],
+                [0, 1, 1],
+            )
 
     async def test_session_and_records_share_one_read_snapshot(self):
         # The production journal permits a second connection to commit while
@@ -1502,63 +1504,233 @@ class ArchiveTests(unittest.IsolatedAsyncioTestCase):
 
 
 class ExportShutdownTests(unittest.TestCase):
-    def test_cancelled_export_is_removed_even_after_all_loop_tasks_are_cancelled(self):
-        for finished in (False, True):
-            with self.subTest(writer_already_finished=finished):
-                self.cancel_export(finished)
-
-    def cancel_export(self, finished):
-        # A dedicated loop lets shutdown cancel every task before the real
-        # thread finishes, without cancelling this suite's own test runner.
+    def test_worker_ends_even_when_loop_shutdown_cancels_every_task(self):
+        # A dedicated loop lets shutdown cancel every task while the worker
+        # waits for a slow consumer, without cancelling this suite's runner.
         with tempfile.TemporaryDirectory() as directory:
             loop = asyncio.new_event_loop()
-            executor = ThreadPoolExecutor()
-            loop.set_default_executor(executor)
             archive = Archive(Path(directory) / "sessions.sqlite", "entry")
-            started, release = threading.Event(), threading.Event()
-            paths = []
-            original_export = archive._export
-
-            def blocked_export():
-                started.set()
-                release.wait()
-                path = original_export()
-                paths.append(path)
-                return path
-
-            archive._export = blocked_export
 
             async def start_request():
                 await archive.start()
-                request = asyncio.create_task(archive.export())
-                self.assertTrue(await asyncio.to_thread(started.wait, 2))
-                await archive.close()
+                for n in range(40):
+                    m = measurement(Position.UPPER, Quantity.TEMPERATURE, 70 + n / 1000, n / 1000)
+                    archive.append("measurement", m.received_at, m, "s")
+                taken = asyncio.Event()
+
+                async def consume():
+                    async with archive.export(BY_KEY["archive_export_chunk_bytes"].minimum) as stream:
+                        async for _ in stream:
+                            taken.set()
+                            await asyncio.Event().wait()
+
+                request = asyncio.create_task(consume())
+                await asyncio.wait_for(taken.wait(), async_timeout("background"))
                 return request
 
             try:
-                request = loop.run_until_complete(start_request())
-                if finished:
-                    # Finish the real writer while the loop cannot deliver
-                    # its result. Cancellation must still remove that result.
-                    release.set()
-                    executor.shutdown(wait=True)
-                request.cancel()
-                with self.assertRaises(asyncio.CancelledError):
-                    loop.run_until_complete(request)
+                loop.run_until_complete(start_request())
                 pending = asyncio.all_tasks(loop)
                 for task in pending:
                     task.cancel()
-                if pending:
-                    loop.run_until_complete(
-                        asyncio.gather(*pending, return_exceptions=True)
-                    )
+                loop.run_until_complete(asyncio.gather(*pending, return_exceptions=True))
             finally:
-                release.set()
-                loop.run_until_complete(loop.shutdown_default_executor())
+                loop.run_until_complete(
+                    loop.shutdown_default_executor(async_timeout("background"))
+                )
                 loop.close()
+            self.assertIsNone(archive._running_export)
+            with closing(sqlite3.connect(archive.path, timeout=0)) as db:
+                self.assertEqual(db.execute("PRAGMA wal_checkpoint(TRUNCATE)").fetchone()[0], 0)
+
+
+class StreamedExportTests(unittest.IsolatedAsyncioTestCase):
+    """X1: one read transaction on the original, blocks on demand, stop paths."""
+
+    async def asyncSetUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.archive = Archive(Path(self.temp.name) / "sessions.sqlite", "entry")
+        await self.archive.start()
+        controller = Controller(parameters())
+        controller.begin_session("s", T0)
+        self.session = controller.session
+        self.config = {"parameters": parameters().as_dict(), "bindings": bindings().as_dict()}
+        self.archive.save_session(self.session, T0, self.config)
+        for n in range(40):
+            self.record(n)
+        await self.archive.flush()
+        # Smallest permitted block: many blocks from little data.
+        self.block = BY_KEY["archive_export_chunk_bytes"].minimum
+
+    async def asyncTearDown(self):
+        await self.archive.close()
+        self.temp.cleanup()
+
+    def record(self, n):
+        m = measurement(Position.UPPER, Quantity.TEMPERATURE, 70 + n / 1000, n / 1000)
+        self.archive.append("measurement", m.received_at, m, "s")
+
+    def record_ids(self):
+        with closing(sqlite3.connect(self.archive.path)) as db:
+            return [row[0] for row in db.execute("SELECT id FROM records ORDER BY id")]
+
+    def checkpoint_busy(self):
+        # Without waiting: 1 while any reader still holds a WAL snapshot.
+        with closing(sqlite3.connect(self.archive.path, timeout=0)) as db:
+            return db.execute("PRAGMA wal_checkpoint(TRUNCATE)").fetchone()[0]
+
+    async def test_snapshot_stays_fixed_while_records_are_committed(self):
+        before = self.record_ids()
+        async with self.archive.export(self.block) as stream:
+            blocks = [await anext(stream)]
+            for n in range(40, 50):
+                self.record(n)
+            self.archive.save_session(self.session, T0 + timedelta(seconds=1), self.config)
+            await self.archive.flush()
+            self.assertEqual(self.checkpoint_busy(), 1)
+            blocks += [block async for block in stream]
+        self.assertEqual(self.checkpoint_busy(), 0)
+        self.assertIsNone(self.archive._running_export)
+        self.assertEqual({len(block) for block in blocks[:-1]}, {self.block})
+        self.assertEqual(len(self.record_ids()), len(before) + 11)
+        with zipfile.ZipFile(io.BytesIO(b"".join(blocks))) as bundle:
+            self.assertIsNone(bundle.testzip())
+            rows = [json.loads(line) for line in bundle.read("records.jsonl").splitlines()]
+            csv_ids = [int(line.split(",")[0])
+                       for line in bundle.read("measurements.csv").decode().splitlines()[1:]]
+        self.assertEqual([row["id"] for row in rows], before)
+        self.assertEqual(csv_ids, [row["id"] for row in rows if row["kind"] == "measurement"])
+
+    async def test_writer_failure_is_raised_before_the_first_block(self):
+        original = self.archive._write
+
+        def fail(record):
+            raise sqlite3.OperationalError("database or disk is full")
+
+        self.archive._write = fail
+        self.record(300)
+        export = self.archive.export(self.block)
+        await writer_error(export.start(), sqlite3.OperationalError)
+        await export.close()
+        self.assertIsNone(self.archive._running_export)
+        self.archive._write = original
+        await self.archive.flush()
+
+    async def test_failure_mid_stream_leaves_no_complete_zip_and_no_reader(self):
+        original = self.archive._decode_record
+        decoded = 0
+
+        def failing(db, row, *, cache=None):
+            nonlocal decoded
+            decoded += 1
+            if decoded > 20:
+                raise ValueError("Datensatz nicht lesbar")
+            return original(db, row, cache=cache)
+
+        received = []
+        with patch.object(self.archive, "_decode_record", failing):
+            async with self.archive.export(self.block) as stream:
+                with self.assertRaisesRegex(ValueError, "nicht lesbar"):
+                    async for block in stream:
+                        received.append(block)
+        self.assertTrue(received)
+        with self.assertRaises(zipfile.BadZipFile):
+            zipfile.ZipFile(io.BytesIO(b"".join(received)))
+        self.assertEqual(self.checkpoint_busy(), 0)
+        self.assertIsNone(self.archive._running_export)
+
+    async def test_consumer_leaving_after_the_first_block_ends_the_read(self):
+        async with self.archive.export(self.block) as stream:
+            await anext(stream)
+            self.record(300)
+            await self.archive.flush()
+            self.assertEqual(self.checkpoint_busy(), 1)
+        self.assertEqual(self.checkpoint_busy(), 0)
+        self.assertIsNone(self.archive._running_export)
+
+    async def test_cancelled_consumer_stops_the_worker(self):
+        taken = asyncio.Event()
+
+        async def consume():
+            async with self.archive.export(self.block) as stream:
+                async for _ in stream:
+                    taken.set()
+                    await asyncio.Event().wait()  # a client that stopped reading
+
+        task = asyncio.create_task(consume())
+        await asyncio.wait_for(taken.wait(), async_timeout("background"))
+        task.cancel()
+        with self.assertRaises(asyncio.CancelledError):
+            await task
+        self.assertIsNone(self.archive._running_export)
+        self.assertEqual(self.checkpoint_busy(), 0)
+
+    async def test_entries_beyond_the_zip64_limit_stay_readable(self):
+        expected = await export_bytes(self.archive, self.block)
+        # Without ZIP64 data descriptors zipfile would fail at the entry end.
+        with patch.object(zipfile, "ZIP64_LIMIT", self.block):
+            zip_bytes = await export_bytes(self.archive, self.block)
+        with zipfile.ZipFile(io.BytesIO(zip_bytes)) as bundle, \
+                zipfile.ZipFile(io.BytesIO(expected)) as reference:
+            self.assertIsNone(bundle.testzip())
+            self.assertGreater(bundle.getinfo("records.jsonl").file_size, self.block)
+            self.assertEqual(bundle.namelist(), reference.namelist())
+            for name in reference.namelist():
+                self.assertEqual(bundle.read(name), reference.read(name))
+
+    async def test_backup_preparation_stops_a_running_export(self):
+        async with self.archive.export(self.block) as stream:
+            await anext(stream)
+            self.record(300)
+            await self.archive.flush()
+            await asyncio.wait_for(self.archive.pre_backup(), async_timeout("background"))
             try:
-                self.assertEqual(len(paths), 1)
-                self.assertFalse(paths[0].exists())
+                # The backup copies a standalone main database.
+                wal = Path(f"{self.archive.path}-wal")
+                self.assertFalse(wal.exists() and wal.stat().st_size)
+                with self.assertRaisesRegex(ExportUnavailable, "Home-Assistant-Backup"):
+                    async for _ in stream:
+                        pass
+                self.assertIsNone(self.archive._running_export)
+                waiting = asyncio.create_task(export_bytes(self.archive, self.block))
+                await asyncio.sleep(0)
+                self.assertFalse(waiting.done())
             finally:
-                for path in paths:
-                    path.unlink(missing_ok=True)
+                self.archive.release_backup()
+        with zipfile.ZipFile(io.BytesIO(await waiting)) as bundle:
+            self.assertIsNone(bundle.testzip())
+            self.assertEqual(len(bundle.read("records.jsonl").splitlines()), len(self.record_ids()))
+
+    async def test_second_concurrent_export_is_rejected(self):
+        async with self.archive.export(self.block) as stream:
+            with self.assertRaisesRegex(ExportUnavailable, "läuft bereits"):
+                await self.archive.export(self.block).start()
+            first = b"".join([block async for block in stream])
+        later = await export_bytes(self.archive, self.block)
+        for zip_bytes in (first, later):
+            with zipfile.ZipFile(io.BytesIO(zip_bytes)) as bundle:
+                self.assertIsNone(bundle.testzip())
+
+    async def test_session_lines_carry_the_identity_and_all_previous_fields(self):
+        with zipfile.ZipFile(io.BytesIO(await export_bytes(self.archive))) as bundle:
+            lines = bundle.read("sessions.jsonl").decode().splitlines()
+        self.assertEqual(len(lines), 1)
+        self.assertTrue(lines[0].startswith('{"session_id":"s",'))
+        line = json.loads(lines[0])
+        self.assertEqual(line.pop("session_id"), "s")
+        self.assertEqual(line["timeline"]["session_id"], "s")
+        # Energy intervals are assembled differently for reads; all other fields match.
+        stored = self.archive.read("s")["session"]
+        self.assertEqual(set(line), set(stored))
+        self.assertEqual({key: value for key, value in line.items() if key != "energy"},
+                         {key: value for key, value in stored.items() if key != "energy"})
+
+    async def test_check_fixes_a_snapshot_without_blocks_and_requires_wal(self):
+        async with self.archive.export(check_only=True) as check:
+            self.assertEqual([block async for block in check], [])
+        self.assertEqual(self.checkpoint_busy(), 0)
+        with closing(sqlite3.connect(self.archive.path)) as db:
+            self.assertEqual(db.execute("PRAGMA journal_mode=DELETE").fetchone()[0], "delete")
+        with self.assertRaisesRegex(sqlite3.OperationalError, "WAL"):
+            await self.archive.export(check_only=True).start()
+        self.assertIsNone(self.archive._running_export)

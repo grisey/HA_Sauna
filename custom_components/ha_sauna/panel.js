@@ -16867,6 +16867,8 @@ class SaunaPanel extends HTMLElement {
       await this.sendControlCommand("operation", enabled, "control", { enabled });
     }
     if (action === "export") {
+      // Vorprüfung: Fehler vor dem ersten Byte erscheinen als Meldung, nicht als gespeicherte Datei.
+      await this.api(`/${this.entry}/export?check=1`);
       const signed = await this.hass.callWS({
         type: "auth/sign_path",
         path: `/api/ha_sauna/${this.entry}/export`,

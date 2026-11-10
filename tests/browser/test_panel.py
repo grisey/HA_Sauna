@@ -3394,6 +3394,7 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
         self.assertIsNone(await download.failure())
         with zipfile.ZipFile(await download.path()) as archive:
             session = json.loads(archive.read("sessions.jsonl").splitlines()[0])
+            self.assertEqual(session["session_id"], identity)
             self.assertEqual(session["timeline"]["session_id"], identity)
             self.assertEqual(session["timeline"]["active"]["gang_id"], gang_id)
             self.assertGreater(len(archive.read("measurements.csv").splitlines()), 50)

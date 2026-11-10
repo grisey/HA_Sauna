@@ -36,12 +36,25 @@ Bereits gespeicherte Prüfverläufe bleiben lesbar und im Export enthalten.
 
 **Archiv als ZIP herunterladen** unter **Einstellungen → Daten und Wartung**
 erfordert Administratorrechte.
-Er enthält einen konsistenten Stand, auch während einer laufenden Aufzeichnung.
+Er enthält einen konsistenten Stand, auch während einer laufenden Aufzeichnung:
+den Stand bei Beginn des Exports. Später eingehende Daten werden weiter
+gespeichert und sind im nächsten Export enthalten.
+
+Der Export liest diesen Stand in einer Lesetransaktion direkt aus der
+Archivdatei und überträgt das ZIP schon während der Erzeugung. Er legt weder
+eine Kopie noch eine temporäre Datei an. Vor dem Download prüft das Panel, ob
+der Export beginnen kann; ein Fehler bis dahin erscheint als Meldung im Panel.
+Bricht der Export während der Übertragung ab, endet der Download unvollständig,
+und das Home-Assistant-Protokoll enthält einen Fehlereintrag.
+
+Je Sauna läuft höchstens ein Export; ein weiterer wird mit einer Meldung
+abgelehnt. Ein beginnendes Home-Assistant-Backup hat Vorrang: Es beendet einen
+laufenden Export, der Export endet mit Fehler.
 
 | Datei | Inhalt |
 | --- | --- |
 | `manifest.json` | Schema, Instanz, Auflösung und Zeitformat |
-| `sessions.jsonl` | Neuester Stand jeder Sitzung einschließlich ihrer Konfiguration |
+| `sessions.jsonl` | Neuester Stand jeder Sitzung mit Sitzungs-ID (`session_id`) einschließlich ihrer Konfiguration |
 | `records.jsonl` | Alle Datensätze und gespeicherten Revisionen in Aufzeichnungsreihenfolge |
 | `measurements.csv` | Originalmessungen mit Datensatz-/Sitzungs-ID, Empfangs-/Messzeit, Messort, Messgröße, Quelle, Wert und Rohwert |
 
@@ -49,7 +62,8 @@ Er enthält einen konsistenten Stand, auch während einer laufenden Aufzeichnung
 
 Je Sauna liegt eine SQLite-Datei unter
 `<HA-Konfigurationsverzeichnis>/ha_sauna/<entry-id>.sqlite`.
-Sie wird im Home-Assistant-Backup konsistent gesichert.
+Sie wird im Home-Assistant-Backup konsistent gesichert; ein laufender
+[Export](#sitzungen-exportieren) wird dafür beendet.
 
 Die Datenbank speichert vollständige Konfigurationen in einer gemeinsamen
 Tabelle unveränderlicher Versionen. Jeder Sitzungsschnappschuss verweist auf
@@ -204,7 +218,7 @@ für die jeweilige Sauna (`entry_id`).
 | Endpunkt | Zugriff und Bedeutung |
 | --- | --- |
 | `GET /api/ha_sauna/{entry_id}/archive` | Leserechte; ohne `session_id` die Sitzungsliste, mit `session_id` Sitzungsstand und Datensätze. |
-| `GET /api/ha_sauna/{entry_id}/export` | Administrator; ZIP-Export. |
+| `GET /api/ha_sauna/{entry_id}/export` | Administrator; ZIP-Export als fortlaufende Übertragung. Mit `check=1` nur die Prüfung bis zum festgelegten Stand, Antwort `{"success":true}`. Fehler vor Beginn der Übertragung als JSON `{"error":"…"}`; ein bereits laufender Export oder ein Abbruch durch ein Backup ergibt 409. |
 | `POST /api/ha_sauna/{entry_id}/archive/erase` | Administrator; `{"session_id":"…"}` löscht eine Sitzung, `{"reset":true}` das gesamte Archiv. |
 | `GET /api/ha_sauna/{entry_id}/key-figures?session_id=…` | Leserechte; [Kennzahlen](kennzahlen.md) einer abgeschlossenen Sitzung, sonst 404. |
 | `GET /api/ha_sauna/{entry_id}/statistics` | Leserechte; Statistik über alle abgeschlossenen Sitzungen, mit `year` über ein Jahr, mit `year` und `month` über einen Monat. |

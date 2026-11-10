@@ -1,6 +1,7 @@
 """Personensignale dürfen nur zum aktuellen Türschluss einen Gang beginnen."""
 
 import asyncio
+import io
 import json
 import unittest
 import zipfile
@@ -200,21 +201,19 @@ class EntryContextArchiveTests(unittest.IsolatedAsyncioTestCase):
                     ["entry-open", "close", "old-strong"],
                 )
 
-                export_path = await archive.export()
-                try:
-                    with zipfile.ZipFile(export_path) as export:
-                        exported = json.loads(
-                            export.read("sessions.jsonl").decode().strip()
-                        )
-                    timeline = exported["timeline"]
-                    self.assertIsNone(timeline["active"])
-                    self.assertEqual(timeline["retracted"], [])
-                    self.assertEqual(
-                        [item["event_id"] for item in timeline["processed"]],
-                        ["entry-open", "close", "old-strong"],
+                async with archive.export() as stream:
+                    zip_bytes = b"".join([block async for block in stream])
+                with zipfile.ZipFile(io.BytesIO(zip_bytes)) as export:
+                    exported = json.loads(
+                        export.read("sessions.jsonl").decode().strip()
                     )
-                finally:
-                    export_path.unlink()
+                timeline = exported["timeline"]
+                self.assertIsNone(timeline["active"])
+                self.assertEqual(timeline["retracted"], [])
+                self.assertEqual(
+                    [item["event_id"] for item in timeline["processed"]],
+                    ["entry-open", "close", "old-strong"],
+                )
             finally:
                 await archive.close()
 

@@ -3,17 +3,17 @@
 from __future__ import annotations
 
 import asyncio
+import concurrent.futures
 import csv
 import io
 import json
 import logging
 import sqlite3
-import tempfile
 import threading
 import zipfile
 from collections import OrderedDict, deque
 from collections.abc import Mapping
-from contextlib import closing
+from contextlib import closing, suppress
 from dataclasses import fields, is_dataclass
 from datetime import UTC, datetime, timedelta
 from enum import Enum
@@ -171,37 +171,186 @@ def session_has_gangs(session):
                or gang.get("recognition_kind") == "presence_confirmed" for gang in gangs)
 
 
-class _ExportWork:
-    """Own the temporary file across both thread completion and caller cancellation."""
+class ExportUnavailable(RuntimeError):
+    """The export cannot start now, or it was stopped before its last block."""
 
-    def __init__(self, create):
-        self.create = create
-        self.lock = threading.Lock()
-        self.abandoned = False
-        self.path = None
 
-    def run(self):
-        path = self.create()
-        with self.lock:
-            if not self.abandoned:
-                self.path = path
-                return path
-        self._remove(path)
-        return None
+class _ExportStream(io.RawIOBase):
+    """Non-seekable ZIP target that hands complete blocks over one at a time.
 
-    def discard(self):
-        with self.lock:
-            self.abandoned = True
-            path, self.path = self.path, None
-        if path is not None:
-            self._remove(path)
+    The last written byte stays buffered until ``finish``. A ZIP stopped by an
+    error therefore never ends with a complete end-of-central-directory record.
+    """
 
-    @staticmethod
-    def _remove(path):
+    def __init__(self, put, size):
+        super().__init__()
+        self._put = put
+        self._size = size
+        self._buffer = bytearray()
+
+    def writable(self):
+        return True
+
+    def write(self, data):
+        self._buffer += data
+        while len(self._buffer) > self._size:
+            block = bytes(self._buffer[: self._size])
+            del self._buffer[: self._size]
+            self._put(block)
+        return memoryview(data).nbytes
+
+    def finish(self):
+        if self._buffer:
+            self._put(bytes(self._buffer))
+            self._buffer.clear()
+
+
+class ArchiveExport:
+    """One ZIP export from a read transaction on the archive itself.
+
+    ``async with archive.export(chunk_bytes) as export`` returns once the
+    snapshot is fixed; every failure up to then precedes the first byte.
+    ``async for block in export`` yields the ZIP. The worker waits until each
+    block is taken. Leaving stops the worker and waits until its read
+    transaction has ended.
+    """
+
+    def __init__(self, archive, chunk_bytes, check_only):
+        self._archive = archive
+        self._chunk_bytes = chunk_bytes
+        self._check_only = check_only
+        self._loop = None
+        self._worker = None
+        self._ready = None
+        self._stop = threading.Event()
+        self._reason = None
+        self._accepted = None
+        self._offer = None
+        self._wakeup = None
+
+    async def __aenter__(self):
+        await self.start()
+        return self
+
+    async def __aexit__(self, *_):
+        await self.close()
+
+    async def start(self):
+        archive = self._archive
+        self._loop = asyncio.get_running_loop()
+        await archive.flush()
+        # Same loop step as the backup's ownership in pre_backup: either the
+        # backup sees and stops this export, or this export sees the backup.
+        if archive._running_export is not None:
+            raise ExportUnavailable("Ein Archivexport läuft bereits.")
+        if not archive.resume.is_set() or archive.closed:
+            raise ExportUnavailable("Das Archiv wird gerade gesichert oder geschlossen.")
+        archive._running_export = self
+        self._ready = self._loop.create_future()
+        self._worker = self._loop.run_in_executor(None, self._produce)
+        self._worker.add_done_callback(self._finished)
         try:
-            path.unlink(missing_ok=True)
-        except OSError:
-            _LOGGER.exception("Abgebrochenen Saunaexport konnte nicht entfernt werden")
+            await asyncio.wait((self._ready, self._worker),
+                               return_when=asyncio.FIRST_COMPLETED)
+            if not self._ready.done():
+                self._worker.result()
+                raise RuntimeError("Archivexport endete vor dem Lesestand")
+        except BaseException:
+            self.abort("Der Archivexport wurde vor dem Senden beendet.")
+            raise
+
+    def abort(self, reason):
+        """Stop at the next block; a waiting worker is released immediately."""
+        if self._reason is None:
+            self._reason = reason
+        self._stop.set()
+        accepted = self._accepted
+        if accepted is not None:
+            # Already taken: the worker continues to its next stop check.
+            with suppress(concurrent.futures.InvalidStateError):
+                accepted.set_exception(ExportUnavailable(self._reason))
+        self._offer = None
+        self._wake()
+
+    async def close(self, reason="Der Archivexport wurde beendet."):
+        if self._worker is None:
+            return
+        if not self._worker.done():
+            self.abort(reason)
+        # Its error was raised by start or iteration, or results from abort.
+        with suppress(Exception):
+            await asyncio.shield(self._worker)
+
+    def __aiter__(self):
+        return self
+
+    async def __anext__(self):
+        while self._offer is None:
+            if self._worker.done():
+                self._worker.result()
+                raise StopAsyncIteration
+            self._wakeup = self._loop.create_future()
+            try:
+                await self._wakeup
+            finally:
+                self._wakeup = None
+        block, accepted = self._offer
+        self._offer = None
+        accepted.set_result(None)
+        return block
+
+    def _wake(self):
+        if self._wakeup is not None and not self._wakeup.done():
+            self._wakeup.set_result(None)
+
+    def _finished(self, worker):
+        # Surfaced by start or iteration; a stopped export needs no extra report.
+        worker.exception()
+        if self._archive._running_export is self:
+            self._archive._running_export = None
+        self._wake()
+
+    def _signal_ready(self):
+        if not self._ready.done():
+            self._ready.set_result(None)
+
+    def _deliver(self, block, accepted):
+        if accepted.done():
+            return
+        if self._stop.is_set():
+            accepted.set_exception(ExportUnavailable(self._reason))
+            return
+        self._offer = (block, accepted)
+        self._wake()
+
+    def _put(self, block):
+        # Publish before checking: abort either sees this future or the
+        # worker sees the stop request.
+        accepted = concurrent.futures.Future()
+        self._accepted = accepted
+        if self._stop.is_set():
+            raise ExportUnavailable(self._reason)
+        self._loop.call_soon_threadsafe(self._deliver, block, accepted)
+        accepted.result()
+
+    def _produce(self):
+        with closing(sqlite3.connect(self._archive.path, isolation_level=None)) as db:
+            db.row_factory = sqlite3.Row
+            db.execute("PRAGMA query_only=ON")
+            # Outside WAL a long reader would block every archive write.
+            if db.execute("PRAGMA journal_mode").fetchone()[0] != "wal":
+                raise sqlite3.OperationalError("Archiv steht nicht im WAL-Modus")
+            db.execute("BEGIN")
+            try:
+                # The first read fixes the snapshot; later commits stay invisible.
+                db.execute("SELECT count(*) FROM sqlite_master").fetchone()
+                self._loop.call_soon_threadsafe(self._signal_ready)
+                if not self._check_only:
+                    stream = _ExportStream(self._put, self._chunk_bytes)
+                    self._archive._write_export(db, stream)
+                    stream.finish()
+            finally:
+                db.execute("ROLLBACK")
 
 
 class Archive:
@@ -234,6 +383,8 @@ class Archive:
         self._figure_lock = threading.Lock()
         self.revision = 0
         self._context_pruned_before = None
+        # At most one export holds a read transaction; the backup stops it.
+        self._running_export = None
 
     async def start(self):
         await asyncio.to_thread(self._initialize)
@@ -733,6 +884,7 @@ class Archive:
             # Closing rejects new records, but its queued writes may still be
             # running. Finish them before the backup may copy this database.
             await asyncio.shield(self._close_task)
+            await self._stop_export()
             await asyncio.to_thread(self._checkpoint_backup)
             return
         if not self.resume.is_set():
@@ -741,10 +893,19 @@ class Archive:
         # catching up must not be lost when it eventually reaches the pause.
         self.resume.clear()
         try:
+            await self._stop_export()
             await self._barrier("pause")
         except BaseException:
             self.release_backup()
             raise
+
+    async def _stop_export(self):
+        # The backup takes precedence: its checkpoint needs an empty read view.
+        export = self._running_export
+        if export is not None:
+            await export.close(
+                "Der Archivexport wurde für ein Home-Assistant-Backup abgebrochen."
+            )
 
     def release_backup(self):
         """Release a backup pause without waiting for pending writes."""
@@ -1526,116 +1687,92 @@ class Archive:
                     continue
         return tuple(episodes)
 
-    async def export(self):
-        await self.flush()
-        work = _ExportWork(self._export)
-        try:
-            return await asyncio.to_thread(work.run)
-        except asyncio.CancelledError:
-            # The actual writer owns cleanup, not a cancellable asyncio proxy.
-            # This still removes its result after final loop task cancellation.
-            work.discard()
-            raise
+    def export(self, chunk_bytes=None, *, check_only=False):
+        """Prepare one streamed ZIP export; ``check_only`` stops at the fixed snapshot."""
+        if chunk_bytes is None:
+            chunk_bytes = self.parameters.values["archive_export_chunk_bytes"]
+        return ArchiveExport(self, chunk_bytes, check_only)
 
-    def _export(self):
-        # SQLite-Backup liest einen konsistenten Stand, während neue Eingänge
-        # weiter geschrieben werden. Die exportierte Datei ist niemals öffentlich.
-        with tempfile.TemporaryDirectory(prefix="ha-sauna-export-") as directory:
-            snapshot = Path(directory) / "snapshot.sqlite"
-            with (
-                closing(sqlite3.connect(self.path)) as source,
-                closing(sqlite3.connect(snapshot)) as target,
-            ):
-                source.backup(target)
-            handle = tempfile.NamedTemporaryFile(
-                prefix="ha-sauna-", suffix=".zip", delete=False
+    def _write_export(self, db, target):
+        # One read transaction on the archive itself is the consistent state,
+        # while new records keep being written. No copy, no temporary file.
+        with zipfile.ZipFile(target, "w", zipfile.ZIP_DEFLATED) as archive:
+            configuration_column = self._configuration_column(db)
+            configuration_cache = OrderedDict()
+            archive.writestr(
+                "manifest.json",
+                encoded(
+                    {
+                        "schema": 1,
+                        "entry_id": self.entry_id,
+                        "resolution": "original_received",
+                        "timestamps": "ISO-8601 with timezone",
+                        "records": "append-only; session records preserve prior assignments",
+                    }
+                ),
             )
-            path = Path(handle.name)
-            handle.close()
-            try:
-                with (
-                    closing(sqlite3.connect(snapshot)) as db,
-                    zipfile.ZipFile(path, "w", zipfile.ZIP_DEFLATED) as archive,
+            # Unknown sizes go to data descriptors; ZIP64 keeps entries over 2 GiB valid.
+            with archive.open("sessions.jsonl", "w", force_zip64=True) as out:
+                for row in db.execute(
+                    "SELECT session_id,payload" + configuration_column
+                    + " FROM sessions WHERE entry_id=? ORDER BY started_at",
+                    (self.entry_id,),
                 ):
-                    db.row_factory = sqlite3.Row
-                    configuration_column = self._configuration_column(db)
-                    configuration_cache = OrderedDict()
-                    archive.writestr(
-                        "manifest.json",
-                        encoded(
-                            {
-                                "schema": 1,
-                                "entry_id": self.entry_id,
-                                "resolution": "original_received",
-                                "timestamps": "ISO-8601 with timezone",
-                                "records": "append-only; session records preserve prior assignments",
-                            }
-                        ),
+                    session = self._decode_payload(
+                        db, row["payload"], row["configuration_id"] if configuration_column else None,
+                        cache=configuration_cache,
                     )
-                    with archive.open("sessions.jsonl", "w") as out:
-                        for row in db.execute(
-                            "SELECT session_id,payload" + configuration_column
-                            + " FROM sessions WHERE entry_id=? ORDER BY started_at",
-                            (self.entry_id,),
-                        ):
-                            session = self._decode_payload(
-                                db, row["payload"], row["configuration_id"] if configuration_column else None,
-                                cache=configuration_cache,
-                            )
-                            delta = self._read_energy_delta(db, row["session_id"], session)
-                            if delta is not None:
-                                session["energy"]["intervals"] = delta["intervals"]
-                            out.write((encoded_plain(session) + "\n").encode())
-                    with archive.open("records.jsonl", "w") as out:
-                        for row in db.execute(
-                            "SELECT * FROM records WHERE entry_id=? ORDER BY id",
-                            (self.entry_id,),
-                        ):
-                            data = self._decode_record(db, row, cache=configuration_cache)
-                            out.write((encoded(data) + "\n").encode())
-                    with archive.open("measurements.csv", "w") as raw:
-                        out = io.TextIOWrapper(raw, encoding="utf-8", newline="")
-                        writer = csv.writer(out)
-                        writer.writerow(
-                            (
-                                "record_id",
-                                "session_id",
-                                "received_at",
-                                "measured_at",
-                                "position",
-                                "quantity",
-                                "source",
-                                "value",
-                                "raw_value",
+                    delta = self._read_energy_delta(db, row["session_id"], session)
+                    if delta is not None:
+                        session["energy"]["intervals"] = delta["intervals"]
+                    line = {"session_id": row["session_id"], **session}
+                    out.write((encoded_plain(line) + "\n").encode())
+            with archive.open("records.jsonl", "w", force_zip64=True) as out:
+                for row in db.execute(
+                    "SELECT * FROM records WHERE entry_id=? ORDER BY id",
+                    (self.entry_id,),
+                ):
+                    data = self._decode_record(db, row, cache=configuration_cache)
+                    out.write((encoded(data) + "\n").encode())
+            with archive.open("measurements.csv", "w", force_zip64=True) as raw:
+                out = io.TextIOWrapper(raw, encoding="utf-8", newline="")
+                writer = csv.writer(out)
+                writer.writerow(
+                    (
+                        "record_id",
+                        "session_id",
+                        "received_at",
+                        "measured_at",
+                        "position",
+                        "quantity",
+                        "source",
+                        "value",
+                        "raw_value",
+                        "sensor_id", "boot_id", "sample_id", "monotonic_ns",
+                        "original_id",
+                    )
+                )
+                for row in db.execute(
+                    "SELECT * FROM records WHERE entry_id=? AND kind='measurement' ORDER BY id",
+                    (self.entry_id,),
+                ):
+                    data = json.loads(row["payload"])
+                    writer.writerow(
+                        (
+                            row["id"],
+                            row["session_id"],
+                            data["received_at"],
+                            data["measured_at"],
+                            data["position"],
+                            data["quantity"],
+                            data["source"],
+                            data["value"],
+                            data["raw_value"],
+                            *((data.get("sample") or {}).get(key) for key in (
                                 "sensor_id", "boot_id", "sample_id", "monotonic_ns",
-                                "original_id",
-                            )
+                            )),
+                            data.get("original_id"),
                         )
-                        for row in db.execute(
-                            "SELECT * FROM records WHERE entry_id=? AND kind='measurement' ORDER BY id",
-                            (self.entry_id,),
-                        ):
-                            data = json.loads(row["payload"])
-                            writer.writerow(
-                                (
-                                    row["id"],
-                                    row["session_id"],
-                                    data["received_at"],
-                                    data["measured_at"],
-                                    data["position"],
-                                    data["quantity"],
-                                    data["source"],
-                                    data["value"],
-                                    data["raw_value"],
-                                    *((data.get("sample") or {}).get(key) for key in (
-                                        "sensor_id", "boot_id", "sample_id", "monotonic_ns",
-                                    )),
-                                    data.get("original_id"),
-                                )
-                            )
-                        out.flush()
-                        out.detach()
-                return path
-            except BaseException:
-                path.unlink(missing_ok=True)
-                raise
+                    )
+                out.flush()
+                out.detach()

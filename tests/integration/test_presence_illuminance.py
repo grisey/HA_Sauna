@@ -1,11 +1,11 @@
 """Illuminance keeps original HA reports in the session archive only."""
 import asyncio
+import io
 import json
 import sqlite3
 import unittest
 import zipfile
 from contextlib import closing
-from pathlib import Path
 
 from harness import create_sauna, retain_session, start_hass
 from test_settings import async_timeout
@@ -60,14 +60,12 @@ class PresenceIlluminanceTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(payload["attributes"], dict(state.attributes))
             self.assertEqual(payload["last_reported"], state.last_reported.isoformat())
             self.assertFalse(payload["session_start_snapshot"])
-        exported = await self.runtime.archive.export()
-        try:
-            with zipfile.ZipFile(exported) as archive:
-                reports = [json.loads(line) for line in archive.read("records.jsonl").splitlines()]
-                saved = [record["payload"] for record in reports if record["kind"] == "illuminance"]
-                self.assertEqual(saved, [payload for _, payload in records])
-        finally:
-            Path(exported).unlink()
+        async with self.runtime.archive.export() as stream:
+            zip_bytes = b"".join([block async for block in stream])
+        with zipfile.ZipFile(io.BytesIO(zip_bytes)) as archive:
+            reports = [json.loads(line) for line in archive.read("records.jsonl").splitlines()]
+            saved = [record["payload"] for record in reports if record["kind"] == "illuminance"]
+            self.assertEqual(saved, [payload for _, payload in records])
 
     async def test_physical_start_before_queued_report_preserves_start_snapshot(self):
         now = self.runtime._clock()

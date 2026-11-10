@@ -1,6 +1,7 @@
 """Authentifizierte Archiv-/Exportansicht; keine Dateien unter www."""
 
 import asyncio
+import logging
 from dataclasses import asdict
 
 from aiohttp import web
@@ -10,7 +11,7 @@ from homeassistant.helpers import entity_registry as er
 from homeassistant.util import dt as dt_util
 
 from .appearance import APPEARANCE_CATALOG, frontend_preferences
-from .archive import energy_interval_delta, plain
+from .archive import ExportUnavailable, energy_interval_delta, plain
 from .const import DOMAIN
 from .core import calibration
 from .core.configuration_model import ConfigurationModel, temperature_control
@@ -54,6 +55,8 @@ from .settings import (
     async_set_temperature_steps,
 )
 
+
+_LOGGER = logging.getLogger(__name__)
 
 
 def request_actor(request):
@@ -1094,44 +1097,81 @@ class EraseArchiveView(HomeAssistantView):
                           "archive_revision": runtime.archive.revision})
 
 
+_RUNTIME_ERRORS = {
+    404: "Diese Sauna ist nicht eingerichtet.",
+    503: "Die Sauna-Integration wird gerade neu geladen. Bitte kurz warten.",
+}
+
+
 class ExportView(HomeAssistantView):
+    """Stream the ZIP export; ``check`` runs only the steps before the first byte.
+
+    Every failure before the first byte is a JSON error. A failure after it
+    ends the connection without the chunked terminator.
+    """
+
     url = "/api/ha_sauna/{entry_id}/export"
     name = "api:ha_sauna:export"
     requires_auth = True
 
     async def get(self, request, entry_id):
         if not request["hass_user"].is_admin:
-            raise web.HTTPForbidden()
-        runtime = runtime_for(request.app[KEY_HASS], entry_id)
-        async with runtime._lock:
-            if runtime.session:
-                runtime.archive.save_session(
-                    runtime.session,
-                    runtime._clock(),
-                    runtime.configuration.as_snapshot(),
-                )
-        path = await runtime.archive.export()
-        response = web.StreamResponse(
-            headers={
-                "Content-Type": "application/zip",
-                "Content-Disposition": 'attachment; filename="ha-sauna-archive.zip"',
-                "Cache-Control": "no-store",
-            }
-        )
+            return self.json({"error": "Der Archivexport erfordert Administratorrechte."},
+                             status_code=403)
         try:
-            await response.prepare(request)
-            handle = await asyncio.to_thread(path.open, "rb")
+            runtime = runtime_for(request.app[KEY_HASS], entry_id)
+        except web.HTTPException as error:
+            return self.json({"error": _RUNTIME_ERRORS.get(error.status, error.reason)},
+                             status_code=error.status)
+        check = "check" in request.query
+        export = None
+        try:
             try:
-                while chunk := await asyncio.to_thread(
-                    handle.read, runtime.configuration.parameters.values["archive_export_chunk_bytes"]
-                ):
-                    await response.write(chunk)
-            finally:
-                await asyncio.to_thread(handle.close)
-            await response.write_eof()
+                if not check:
+                    async with runtime._lock:
+                        if runtime.session:
+                            runtime.archive.save_session(
+                                runtime.session,
+                                runtime._clock(),
+                                runtime.configuration.as_snapshot(),
+                            )
+                export = runtime.archive.export(
+                    runtime.configuration.parameters.values["archive_export_chunk_bytes"],
+                    check_only=check,
+                )
+                await export.start()
+            except ExportUnavailable as error:
+                return self.json({"error": str(error)}, status_code=409)
+            except Exception as error:
+                _LOGGER.exception("Archivexport konnte nicht beginnen")
+                return self.json(
+                    {"error": f"Archivexport nicht möglich ({type(error).__name__}): {error}"},
+                    status_code=500,
+                )
+            if check:
+                return self.json({"success": True})
+            response = web.StreamResponse(
+                headers={
+                    "Content-Type": "application/zip",
+                    "Content-Disposition": 'attachment; filename="ha-sauna-archive.zip"',
+                    "Cache-Control": "no-store",
+                }
+            )
+            await response.prepare(request)
+            try:
+                async for block in export:
+                    await response.write(block)
+                await response.write_eof()
+            except Exception:
+                # Re-raise: returning the response would send the chunked
+                # terminator and make the truncated ZIP look complete.
+                _LOGGER.exception("Archivexport nach Beginn der Übertragung abgebrochen")
+                raise
             return response
         finally:
-            await asyncio.to_thread(path.unlink, missing_ok=True)
+            # Also on client disconnect: the read transaction ends with the request.
+            if export is not None:
+                await export.close()
 
 
 class RecognitionSessionsView(HomeAssistantView):

@@ -5,6 +5,7 @@ from copy import deepcopy
 from dataclasses import replace
 from datetime import timedelta
 from functools import partial
+import io
 import json
 from pathlib import Path
 import shutil
@@ -101,15 +102,13 @@ class ArchiveConfigurationTests(unittest.IsolatedAsyncioTestCase):
         for index, snapshot in enumerate(snapshots):
             page = self.archive.read("settings-session", after=index, limit=1, humidity_display=True)
             self.assertEqual(page["records"][0]["payload"], snapshot)
-        path = await self.archive.export()
-        try:
-            with zipfile.ZipFile(path) as archive:
-                records = [json.loads(line) for line in archive.read("records.jsonl").splitlines()]
-                sessions = [json.loads(line) for line in archive.read("sessions.jsonl").splitlines()]
-            self.assertEqual([row["payload"] for row in records], list(snapshots))
-            self.assertIsNone(sessions[0]["configuration"])
-        finally:
-            path.unlink()
+        async with self.archive.export() as stream:
+            zip_bytes = b"".join([block async for block in stream])
+        with zipfile.ZipFile(io.BytesIO(zip_bytes)) as archive:
+            records = [json.loads(line) for line in archive.read("records.jsonl").splitlines()]
+            sessions = [json.loads(line) for line in archive.read("sessions.jsonl").splitlines()]
+        self.assertEqual([row["payload"] for row in records], list(snapshots))
+        self.assertIsNone(sessions[0]["configuration"])
 
     async def test_configuration_change_mid_session_keeps_energy_deltas_and_paging(self):
         p = parameters()
@@ -168,18 +167,17 @@ class ArchiveConfigurationTests(unittest.IsolatedAsyncioTestCase):
             expected = self.archive.read("settings-session", limit=1000)
         self.assertEqual(sum(query.startswith("SELECT payload FROM configuration_versions")
                              for query in queries), 2)
-        path = await self.archive.export()
-        try:
-            with zipfile.ZipFile(path) as archive:
-                self.assertEqual(json.loads(archive.read("manifest.json"))["schema"], 1)
-                records = [json.loads(line) for line in archive.read("records.jsonl").splitlines()]
-                sessions = [json.loads(line) for line in archive.read("sessions.jsonl").splitlines()]
-            self.assertEqual(records, expected["records"])
-            self.assertEqual(sessions, [expected["session"]])
-            self.assertTrue(all(set(record) == {"id", "entry_id", "session_id", "kind", "received_at", "payload"}
-                                for record in records))
-        finally:
-            path.unlink()
+        async with self.archive.export() as stream:
+            zip_bytes = b"".join([block async for block in stream])
+        with zipfile.ZipFile(io.BytesIO(zip_bytes)) as archive:
+            self.assertEqual(json.loads(archive.read("manifest.json"))["schema"], 1)
+            records = [json.loads(line) for line in archive.read("records.jsonl").splitlines()]
+            sessions = [json.loads(line) for line in archive.read("sessions.jsonl").splitlines()]
+        self.assertEqual(records, expected["records"])
+        # X1-f: the export line carries the session identity in front of the snapshot.
+        self.assertEqual(sessions, [{"session_id": "settings-session", **expected["session"]}])
+        self.assertTrue(all(set(record) == {"id", "entry_id", "session_id", "kind", "received_at", "payload"}
+                            for record in records))
 
     async def test_hash_collision_never_reuses_different_json_values(self):
         first = {"value": True, "label": "historical"}
@@ -321,13 +319,14 @@ class ArchiveConfigurationTests(unittest.IsolatedAsyncioTestCase):
         expected = reader.read("legacy", now=T0)
         self.assertEqual(expected["records"][0]["id"], 71)
         self.assertEqual(expected["session"]["configuration"], self.configuration)
-        exported = reader._export()
-        try:
-            with zipfile.ZipFile(exported) as archive:
-                self.assertEqual([json.loads(line) for line in archive.read("records.jsonl").splitlines()],
-                                 expected["records"])
-        finally:
-            exported.unlink()
+        # Encoding of an unmodified schema-1 archive; the transport needs a started writer.
+        buffer = io.BytesIO()
+        with closing(sqlite3.connect(path)) as db:
+            db.row_factory = sqlite3.Row
+            reader._write_export(db, buffer)
+        with zipfile.ZipFile(buffer) as archive:
+            self.assertEqual([json.loads(line) for line in archive.read("records.jsonl").splitlines()],
+                             expected["records"])
         self.assertEqual(path.read_bytes(), before)
         writer = Archive(path, "entry")
         await writer.start()

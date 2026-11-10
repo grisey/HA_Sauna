@@ -280,18 +280,16 @@ class SampleArchiveTests(unittest.IsolatedAsyncioTestCase):
                 old['measured_at'] = None
                 archive.append('measurement', physical.received_at, old, None)
                 await archive.flush()
-                path = await archive.export()
-                try:
-                    with zipfile.ZipFile(path) as output:
-                        rows = [json.loads(line) for line in output.read('records.jsonl').splitlines()]
-                        rows = [row for row in rows if row['kind'] == 'measurement']
-                        self.assertEqual(Measurement.from_payload(rows[0]['payload']), physical.measurements[0])
-                        self.assertIsNone(Measurement.from_payload(rows[-1]['payload']).sample)
-                        csv_rows = list(csv.DictReader(io.StringIO(output.read('measurements.csv').decode())))
-                        self.assertEqual(csv_rows[0]['boot_id'], physical.measurements[0].sample.boot_id)
-                        self.assertEqual(csv_rows[0]['sample_id'], '61')
-                        self.assertEqual(csv_rows[-1]['sample_id'], '')
-                finally:
-                    path.unlink()
+                async with archive.export() as stream:
+                    zip_bytes = b"".join([block async for block in stream])
+                with zipfile.ZipFile(io.BytesIO(zip_bytes)) as output:
+                    rows = [json.loads(line) for line in output.read('records.jsonl').splitlines()]
+                    rows = [row for row in rows if row['kind'] == 'measurement']
+                    self.assertEqual(Measurement.from_payload(rows[0]['payload']), physical.measurements[0])
+                    self.assertIsNone(Measurement.from_payload(rows[-1]['payload']).sample)
+                    csv_rows = list(csv.DictReader(io.StringIO(output.read('measurements.csv').decode())))
+                    self.assertEqual(csv_rows[0]['boot_id'], physical.measurements[0].sample.boot_id)
+                    self.assertEqual(csv_rows[0]['sample_id'], '61')
+                    self.assertEqual(csv_rows[-1]['sample_id'], '')
             finally:
                 await archive.close()

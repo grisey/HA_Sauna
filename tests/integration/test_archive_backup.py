@@ -1,15 +1,17 @@
 """Echter HA-HTTP-Abruf und Core-Backup mit Restore in separater Installation."""
 import asyncio
+from contextlib import closing
 from datetime import UTC, datetime, timedelta
 import io
 import json
 from pathlib import Path
+import sqlite3
 import tempfile
 import unittest
 import zipfile
 from unittest.mock import patch
 
-from aiohttp import ClientSession
+from aiohttp import ClientPayloadError, ClientSession
 from homeassistant.setup import async_setup_component
 from homeassistant.components.backup import async_get_manager
 from homeassistant.components.backup.manager import CoreBackupReaderWriter
@@ -18,7 +20,10 @@ from custom_components.ha_sauna.core.models import Measurement, Position, Quanti
 from harness import create_sauna, credentials, start_hass, retain_session
 from test_settings import async_timeout
 from custom_components.ha_sauna import backup
+from custom_components.ha_sauna.archive import ArchiveExport, ExportUnavailable
 from custom_components.ha_sauna.const import DOMAIN
+
+API_LOGGER = "custom_components.ha_sauna.api"
 
 
 class ArchiveIntegrationTests(unittest.IsolatedAsyncioTestCase):
@@ -116,8 +121,125 @@ class ArchiveIntegrationTests(unittest.IsolatedAsyncioTestCase):
                 rows = archive.read("measurements.csv").decode().splitlines()
                 self.assertEqual(len(rows), 21)
                 session = json.loads(archive.read("sessions.jsonl").splitlines()[0])
+                self.assertEqual(session["session_id"], self.session_id)
                 self.assertEqual(session["timeline"]["session_id"], self.session_id)
                 self.assertEqual(session["configuration"], self.runtime.configuration.as_snapshot())
+
+    async def export_access(self):
+        token = await credentials(self.hass)
+        url = (f"http://127.0.0.1:{self.hass.http.server_port}"
+               f"/api/ha_sauna/{self.entry.entry_id}/export")
+        return url, {"Authorization": "Bearer " + token}
+
+    def assert_no_reader(self):
+        archive = self.runtime.archive
+        self.assertIsNone(archive._running_export)
+        # Waits for short runtime reads or writes; a remaining export reader keeps busy=1.
+        with closing(sqlite3.connect(archive.path)) as db:
+            self.assertEqual(db.execute("PRAGMA wal_checkpoint(TRUNCATE)").fetchone()[0], 0)
+
+    def held_first_block(self, aborted, stopped):
+        """The worker keeps its first block until the export was stopped."""
+        original_put, original_abort = ArchiveExport._put, ArchiveExport.abort
+        first = []
+
+        def put(export, block):
+            if not first:
+                first.append(block)
+                export._stop.wait(async_timeout("background"))
+            original_put(export, block)
+
+        def abort(export, reason):
+            aborted.append((export, reason))
+            stopped.set()
+            original_abort(export, reason)
+
+        return (patch.object(ArchiveExport, "_put", put),
+                patch.object(ArchiveExport, "abort", abort))
+
+    async def test_export_check_and_failures_before_the_first_byte_are_json(self):
+        url, headers = await self.export_access()
+        archive = self.runtime.archive
+        async with ClientSession(headers=headers) as client:
+            async with client.get(url, params={"check": "1"}) as response:
+                self.assertEqual(response.status, 200, await response.text())
+                self.assertEqual(await response.json(), {"success": True})
+            async with archive.export():
+                for params in ({"check": "1"}, {}):
+                    async with client.get(url, params=params) as response:
+                        self.assertEqual(response.status, 409)
+                        self.assertEqual(response.content_type, "application/json")
+                        self.assertEqual(await response.json(),
+                                         {"error": "Ein Archivexport läuft bereits."})
+            self.assert_no_reader()
+            original = archive._write
+
+            def fail(record):
+                raise sqlite3.OperationalError("database or disk is full")
+
+            archive._write = fail
+            try:
+                archive.append("diagnostic", self.now, {"before_export": True}, self.session_id)
+                with self.assertLogs(API_LOGGER, "ERROR"):
+                    async with client.get(url) as response:
+                        self.assertEqual(response.status, 500)
+                        self.assertEqual(response.content_type, "application/json")
+                        self.assertIn("database or disk is full", (await response.json())["error"])
+            finally:
+                archive._write = original
+            await archive.flush()
+        self.assert_no_reader()
+
+    async def test_failure_after_the_first_byte_ends_without_chunked_terminator(self):
+        url, headers = await self.export_access()
+
+        def failing(db, row, *, cache=None):
+            raise ValueError("Datensatz nicht lesbar")
+
+        with patch.object(self.runtime.archive, "_decode_record", failing), \
+                self.assertLogs(API_LOGGER, "ERROR") as logs:
+            async with ClientSession(headers=headers) as client, client.get(url) as response:
+                self.assertEqual(response.status, 200)
+                self.assertEqual(response.content_type, "application/zip")
+                with self.assertRaises(ClientPayloadError):
+                    await response.read()
+        self.assertIn("nach Beginn der Übertragung", logs.records[0].getMessage())
+        self.assertIsInstance(logs.records[0].exc_info[1], ValueError)
+        self.assert_no_reader()
+
+    async def test_client_disconnect_ends_the_export_read(self):
+        url, headers = await self.export_access()
+        aborted, stopped = [], asyncio.Event()
+        put, abort = self.held_first_block(aborted, stopped)
+        with put, abort:
+            async with ClientSession(headers=headers) as client:
+                response = await client.get(url)
+                self.assertEqual(response.status, 200)
+                response.close()
+            # The server notices the closed connection and cancels the handler.
+            await asyncio.wait_for(stopped.wait(), async_timeout("background"))
+            export, reason = aborted[0]
+            await asyncio.wait_for(export.close(), async_timeout("background"))
+        self.assertEqual(reason, "Der Archivexport wurde beendet.")
+        self.assert_no_reader()
+
+    async def test_ha_backup_stops_a_running_export(self):
+        url, headers = await self.export_access()
+        aborted = []
+        put, abort = self.held_first_block(aborted, asyncio.Event())
+        with put, abort, self.assertLogs(API_LOGGER, "ERROR") as logs:
+            async with ClientSession(headers=headers) as client, client.get(url) as response:
+                self.assertEqual(response.status, 200)
+                await asyncio.wait_for(backup.async_pre_backup(self.hass),
+                                       async_timeout("background"))
+                try:
+                    with self.assertRaises(ClientPayloadError):
+                        await response.read()
+                finally:
+                    await backup.async_post_backup(self.hass)
+        self.assertIn("Home-Assistant-Backup", aborted[0][1])
+        self.assertIsInstance(logs.records[0].exc_info[1], ExportUnavailable)
+        self.assert_no_reader()
 
     async def test_actual_ha_backup_and_restore_to_new_installation(self):
         assert await async_setup_component(self.hass, "backup", {})

@@ -1,6 +1,7 @@
 """F4 regression: physical cooling evidence and logical cooling phase differ."""
 
 import asyncio
+import io
 import json
 import tempfile
 import unittest
@@ -175,10 +176,10 @@ class CoolingEvidenceTests(unittest.TestCase):
                 archive.save_session(value.session, at(BASE * 6 / 5), {})
                 await archive.flush()
                 read = archive.read("s")
-                exported = await archive.export()
-                with zipfile.ZipFile(exported) as bundle:
+                async with archive.export() as stream:
+                    zip_bytes = b"".join([block async for block in stream])
+                with zipfile.ZipFile(io.BytesIO(zip_bytes)) as bundle:
                     saved = json.loads(bundle.read("sessions.jsonl").decode().strip())
-                exported.unlink()
                 await archive.close()
             return read, saved
 

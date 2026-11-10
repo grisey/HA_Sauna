@@ -1,8 +1,10 @@
 import asyncio
 from contextlib import closing
+import io
 import sqlite3
 import tempfile
 import unittest
+import zipfile
 from unittest.mock import patch
 from datetime import UTC, datetime
 from pathlib import Path
@@ -151,11 +153,10 @@ class BackupReleaseTests(unittest.IsolatedAsyncioTestCase):
                 first.append("diagnostic", now, {"archive": "recovered"})
                 await first.flush()
                 self.assertEqual(await asyncio.to_thread(count_records, first.path), 2)
-                export = await first.export()
-                try:
-                    self.assertTrue(export.exists())
-                finally:
-                    export.unlink()
+                async with first.export() as stream:
+                    zip_bytes = b"".join([block async for block in stream])
+                with zipfile.ZipFile(io.BytesIO(zip_bytes)) as bundle:
+                    self.assertIsNone(bundle.testzip())
                 await first.close()
                 reopened = Archive(first.path, "first")
                 await reopened.start()

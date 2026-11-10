@@ -1,5 +1,6 @@
 """Full detector traces are opt-in; live and semantic evidence stay identical."""
 
+import io
 import json
 import tempfile
 import unittest
@@ -157,14 +158,12 @@ class ArchiveTraceProfileTests(unittest.IsolatedAsyncioTestCase):
                 stored = archive.read("historical", now=T0)
                 self.assertEqual([item["payload"] for item in stored["records"]
                                   if item["kind"] == "detector_trace"], [expected])
-                exported = await archive.export()
-                try:
-                    with zipfile.ZipFile(exported) as bundle:
-                        rows = [json.loads(line) for line in bundle.read("records.jsonl").splitlines()]
-                    self.assertEqual([item["payload"] for item in rows
-                                      if item["kind"] == "detector_trace"], [expected])
-                finally:
-                    exported.unlink()
+                async with archive.export() as stream:
+                    zip_bytes = b"".join([block async for block in stream])
+                with zipfile.ZipFile(io.BytesIO(zip_bytes)) as bundle:
+                    rows = [json.loads(line) for line in bundle.read("records.jsonl").splitlines()]
+                self.assertEqual([item["payload"] for item in rows
+                                  if item["kind"] == "detector_trace"], [expected])
             finally:
                 await archive.close()
 

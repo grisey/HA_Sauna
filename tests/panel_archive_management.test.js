@@ -4,9 +4,19 @@ const test = require("node:test");
 const fs = require("node:fs");
 const vm = require("node:vm");
 let Panel;
+const links = [];
 vm.runInNewContext(fs.readFileSync("custom_components/ha_sauna/panel.js", "utf8"), {
   HTMLElement: class {},
   customElements: { get: () => null, define: (_, p) => (Panel = p) },
+  document: {
+    createElement: (tag) => {
+      const link = { tag, clicked: false, removed: false };
+      link.click = () => (link.clicked = true);
+      link.remove = () => (link.removed = true);
+      links.push(link);
+      return link;
+    },
+  },
 });
 function fixture() {
   const writes = [],
@@ -86,4 +96,48 @@ test("archive revision changes clear caches even when the latest session identit
   assert.equal(p.cache.size, 0);
   assert.equal(p.sessions, null);
   assert.equal(p.archiveRevision, 2);
+});
+function exportFixture(check) {
+  const calls = [];
+  const { p, nodes } = fixture();
+  nodes["#message"] = {};
+  links.length = 0;
+  p.api = async (path) => {
+    calls.push(path);
+    return check();
+  };
+  p.hass = {
+    callWS: async (message) => {
+      calls.push(message);
+      return { path: `${message.path}?authSig=signed` };
+    },
+  };
+  p.shadowRoot = { ...p.shadowRoot, append() {} };
+  return { p, nodes, calls };
+}
+test("a failed export pre-check is shown as a message and nothing is downloaded", async () => {
+  const { p, nodes, calls } = exportFixture(() => {
+    throw { status_code: 409, body: { error: "Ein Archivexport läuft bereits." } };
+  });
+  p.runPanelAction(() => p.action("export"));
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.deepEqual(calls, ["/e/export?check=1"]);
+  assert.equal(links.length, 0);
+  assert.equal(nodes["#message"].className, "notice error");
+  assert.equal(nodes["#message"].textContent, "Ein Archivexport läuft bereits.");
+});
+test("after a successful pre-check the export downloads through the signed path", async () => {
+  const { p, nodes, calls } = exportFixture(() => ({ success: true }));
+  await p.action("export");
+  // The message object comes from the panel's own context.
+  assert.deepEqual(JSON.parse(JSON.stringify(calls)), [
+    "/e/export?check=1",
+    { type: "auth/sign_path", path: "/api/ha_sauna/e/export" },
+  ]);
+  assert.equal(links.length, 1);
+  assert.equal(links[0].tag, "a");
+  assert.equal(links[0].href, "/api/ha_sauna/e/export?authSig=signed");
+  assert.equal(links[0].download, "ha-sauna-archive.zip");
+  assert.ok(links[0].clicked && links[0].removed);
+  assert.equal(nodes["#message"].textContent, "");
 });

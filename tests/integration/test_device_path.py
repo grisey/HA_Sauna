@@ -1,5 +1,6 @@
 """Echter HA-Pfad: Entity -> Listener -> Detektor/Kern -> Service -> Aktorfeedback."""
 import asyncio
+import io
 from datetime import UTC, datetime, timedelta
 from math import ceil
 import unittest
@@ -716,14 +717,12 @@ class DevicePathTests(unittest.IsolatedAsyncioTestCase):
                 "sent_at": completed_at.isoformat(), "service_error": None,
             })
             self.assertEqual(commands[1]["received_at"], completed_at.isoformat())
-        path = await self.runtime.archive.export()
-        try:
-            with zipfile.ZipFile(path) as archive:
-                exported = [json.loads(line) for line in archive.read("records.jsonl").splitlines()]
-            ids = {record["id"] for record in commands}
-            self.assertEqual([record for record in exported if record["id"] in ids], commands)
-        finally:
-            path.unlink()
+        async with self.runtime.archive.export() as stream:
+            zip_bytes = b"".join([block async for block in stream])
+        with zipfile.ZipFile(io.BytesIO(zip_bytes)) as archive:
+            exported = [json.loads(line) for line in archive.read("records.jsonl").splitlines()]
+        ids = {record["id"] for record in commands}
+        self.assertEqual([record for record in exported if record["id"] in ids], commands)
 
     async def test_cancelled_pending_due_off_is_consumed_after_wait(self):
         await self._assert_pending_due_off_completion("cancel")
@@ -1293,17 +1292,15 @@ class DevicePathTests(unittest.IsolatedAsyncioTestCase):
         self.assertAlmostEqual(self.light.brightness, 255 * .35, delta=1)
         self.assertIsNone(self.runtime.device.light_output.manual_ends_at)
         await self.expire_recording_gap()
-        path = await self.runtime.archive.export()
-        try:
-            with zipfile.ZipFile(path) as archive:
-                records = [json.loads(line) for line in archive.read("records.jsonl").splitlines()]
-                self.assertEqual(archive.read("sessions.jsonl"), b"")
-            # Without a confirmed gang the completed recording is discarded; context stays.
-            self.assertTrue(records)
-            self.assertEqual({record["kind"] for record in records}, {"measurement"})
-            self.assertTrue(all(record["session_id"] is None for record in records))
-        finally:
-            path.unlink()
+        async with self.runtime.archive.export() as stream:
+            zip_bytes = b"".join([block async for block in stream])
+        with zipfile.ZipFile(io.BytesIO(zip_bytes)) as archive:
+            records = [json.loads(line) for line in archive.read("records.jsonl").splitlines()]
+            self.assertEqual(archive.read("sessions.jsonl"), b"")
+        # Without a confirmed gang the completed recording is discarded; context stays.
+        self.assertTrue(records)
+        self.assertEqual({record["kind"] for record in records}, {"measurement"})
+        self.assertTrue(all(record["session_id"] is None for record in records))
 
     async def test_manual_recognition_emits_no_actor_services_and_archives_operator_inputs(self):
         from custom_components.ha_sauna.core.timeline import DoorCloseEvidence, Event, Kind
@@ -3217,15 +3214,13 @@ class DevicePathTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(
             command["payload"]["service_error"], "HomeAssistantError" if fails else None
         )
-        path = await self.runtime.archive.export()
-        try:
-            with zipfile.ZipFile(path) as archive:
-                exported = [json.loads(line) for line in archive.read("records.jsonl").splitlines()]
-            self.assertEqual(
-                [record for record in exported if record["id"] == command["id"]], [command]
-            )
-        finally:
-            path.unlink()
+        async with self.runtime.archive.export() as stream:
+            zip_bytes = b"".join([block async for block in stream])
+        with zipfile.ZipFile(io.BytesIO(zip_bytes)) as archive:
+            exported = [json.loads(line) for line in archive.read("records.jsonl").splitlines()]
+        self.assertEqual(
+            [record for record in exported if record["id"] == command["id"]], [command]
+        )
 
     async def test_cancelled_light_success_keeps_one_original_session_record(self):
         await self._assert_cancelled_light_completion_is_archived(fails=False)
@@ -3375,15 +3370,13 @@ class DevicePathTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(command["payload"]["completed_at"], self.now.isoformat())
         self.assertEqual(command["received_at"], self.now.isoformat())
         self.assertIsNone(command["payload"]["service_error"])
-        path = await self.runtime.archive.export()
-        try:
-            with zipfile.ZipFile(path) as archive:
-                exported = [json.loads(line) for line in archive.read("records.jsonl").splitlines()]
-            self.assertEqual(
-                [record for record in exported if record["id"] == command["id"]], [command]
-            )
-        finally:
-            path.unlink()
+        async with self.runtime.archive.export() as stream:
+            zip_bytes = b"".join([block async for block in stream])
+        with zipfile.ZipFile(io.BytesIO(zip_bytes)) as archive:
+            exported = [json.loads(line) for line in archive.read("records.jsonl").splitlines()]
+        self.assertEqual(
+            [record for record in exported if record["id"] == command["id"]], [command]
+        )
 
     async def test_normal_session_light_completion_archives_original_deadline(self):
         await self._assert_session_light_deadline_is_archived("normal")
@@ -3984,13 +3977,11 @@ class DevicePathTests(unittest.IsolatedAsyncioTestCase):
         ]
         self.assertTrue(automatic_commands, "real automatic after-run output remains archived")
         self.assertTrue(all(record["session_id"] == identity for record in automatic_commands))
-        path = await self.runtime.archive.export()
-        try:
-            with zipfile.ZipFile(path) as archive:
-                exported = [json.loads(line) for line in archive.read("records.jsonl").splitlines()]
-            self.assertTrue(all(record in exported for record in commands))
-            self.assertTrue(any(record["kind"] == "manual_light" and record["session_id"] == identity
-                                for record in exported))
-            self.assertTrue(all(record in exported for record in automatic_commands))
-        finally:
-            path.unlink()
+        async with self.runtime.archive.export() as stream:
+            zip_bytes = b"".join([block async for block in stream])
+        with zipfile.ZipFile(io.BytesIO(zip_bytes)) as archive:
+            exported = [json.loads(line) for line in archive.read("records.jsonl").splitlines()]
+        self.assertTrue(all(record in exported for record in commands))
+        self.assertTrue(any(record["kind"] == "manual_light" and record["session_id"] == identity
+                            for record in exported))
+        self.assertTrue(all(record in exported for record in automatic_commands))
