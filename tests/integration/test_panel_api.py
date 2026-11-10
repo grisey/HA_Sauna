@@ -232,6 +232,43 @@ class PanelAPITests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual([part["id"] for part in calibration["procedure"]],
                              [part.module_id for part in procedure(presence=presence)])
 
+    async def test_notification_settings_and_test_message_permissions(self):
+        # BN: Anlässe und Werte nur für Administratoren, Testnachricht mit Steuerberechtigung.
+        url = self.base + "/" + self.entry.entry_id + "/notifications"
+        async with ClientSession(headers=self.headers) as client:
+            async with client.get(url) as response:
+                self.assertEqual(response.status, 200, await response.text())
+                body = await response.json()
+                self.assertEqual(body["settings"]["timer_runtime_minutes"], 240)
+                self.assertEqual(body["settings"]["timer_lead_minutes"], 15)
+                self.assertEqual(body["settings"]["overtemperature_c"], 105)
+                self.assertTrue(all(body["settings"]["occasions"].values()))
+                self.assertEqual(body["test"], None)
+                self.assertTrue(body["can_edit"])
+            for invalid in ([], {"timer_lead_minutes": 240}, {"occasions": {"x": True}}):
+                async with client.post(url, json=invalid) as response:
+                    self.assertEqual(response.status, 400)
+            async with client.post(url, json={"occasions": {"idle": False},
+                                              "timer_repeat_minutes": 5}) as response:
+                self.assertEqual(response.status, 200, await response.text())
+                saved = (await response.json())["settings"]
+                self.assertFalse(saved["occasions"]["idle"])
+                self.assertEqual(saved["timer_repeat_minutes"], 5)
+            async with client.post(url + "/test", json={"x": 1}) as response:
+                self.assertEqual(response.status, 400)
+            async with client.post(url + "/test", json={}) as response:
+                # Ohne zugeordnetes Ziel gibt es keine Testnachricht.
+                self.assertEqual(response.status, 409)
+        user = await self.hass.auth.async_create_user("Notification reader", group_ids=[GROUP_ID_USER])
+        token = await self.hass.auth.async_create_refresh_token(user, client_id="http://localhost/")
+        headers = {"Authorization": "Bearer " + self.hass.auth.async_create_access_token(token)}
+        async with ClientSession(headers=headers) as client:
+            async with client.get(url) as response:
+                self.assertEqual(response.status, 200)
+                self.assertFalse((await response.json())["can_edit"])
+            async with client.post(url, json={"occasions": {"idle": True}}) as response:
+                self.assertEqual(response.status, 403)
+
     async def test_archive_erase_permissions_session_guard_and_memory_invalidation(self):
         from harness import retain_session
 

@@ -81,4 +81,8 @@ Empfänger. Eine Gerätebezeichnung oder Anwesenheit ersetzt keine Benutzerident
 
 Die Auswahl unterscheidet einfache Nachrichten und die Companion-Anbindung mit
 offenen Daten und Antworten. Die [Benachrichtigungen](benachrichtigungen.md)
-beschreiben Versandgrenzen und Client-Voraussetzungen.
+beschreiben Versandgrenzen und Client-Voraussetzungen. Antworten wie **Uhr ist
+gestellt** oder **Gang beenden** setzen ein Ziel **Companion: Daten und
+Antworten** voraus. Für Nachrichten an anwesende Geräte liest die Integration die
+Standortentität der Companion-App auf demselben Gerät
+([Anwesenheit](benachrichtigungen.md#anwesenheit)).

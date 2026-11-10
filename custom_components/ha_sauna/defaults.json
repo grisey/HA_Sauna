@@ -5560,6 +5560,11 @@
         "surface": "panel"
       },
       {
+        "id": "notifications",
+        "label": "Benachrichtigungen",
+        "surface": "panel"
+      },
+      {
         "id": "personal",
         "label": "Persönlich",
         "surface": "panel"

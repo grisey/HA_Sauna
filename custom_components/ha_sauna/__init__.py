@@ -56,14 +56,29 @@ async def async_setup_entry(
         )
         from .calibration_services import register as register_calibration
         from .core.calibration import is_action
+        from .core.notification_rules import is_action as is_notification_action
         from .notification_services import register as register_notifications
-        from .notifications import HomeAssistantNotifications, async_resolve_recipients
+        from .notifications import (
+            HomeAssistantNotifications,
+            async_can_control,
+            async_resolve_recipients,
+            async_setup_sauna_notifications,
+        )
 
         def calibration_reply(association):
             # Only calibration actions reach the run; every reply stays an event.
             key = association.reply.reply_key
             if key is not None and is_action(key.value):
                 hass.async_create_task(runtime.calibration_reply(association))
+            elif key is not None and is_notification_action(key.value):
+                # BN: effects only with the replying user's control permission.
+                async def notification_reply():
+                    permitted = await async_can_control(
+                        hass, entry.entry_id, association.reply.actor.user_id
+                    )
+                    await runtime.notification_reply(association, permitted=permitted)
+
+                hass.async_create_task(notification_reply())
 
         runtime.notification_entry_id = entry.entry_id
         runtime.notification_resolutions = await async_resolve_recipients(hass)
@@ -71,6 +86,7 @@ async def async_setup_entry(
             hass, entry.entry_id, calibration_reply
         )
         runtime.notification_transport = notifications
+        await async_setup_sauna_notifications(hass, entry, runtime)
         runtime.on_close(notifications.close)
         await notifications.async_start()
         register_notifications(hass)

@@ -387,3 +387,71 @@ class HomeAssistantNotifications:
             target={"entity_id": endpoint},
             blocking=True,
         )
+
+
+def present_targets(hass: HomeAssistant, targets) -> frozenset[TargetIdentity]:
+    """Targets whose Companion device reports its location as ``home`` (BN-5).
+
+    The location entity is the ``device_tracker`` of the Companion app on the
+    same HA device as the target. A target without such an entity is absent.
+    """
+    registry = er.async_get(hass)
+    present = set()
+    for target in targets:
+        entity = registry.async_get(target.endpoint)
+        device_id = entity.device_id if entity is not None else target.endpoint
+        if not device_id:
+            continue
+        trackers = [
+            item.entity_id for item in er.async_entries_for_device(registry, device_id)
+            if item.domain == "device_tracker" and item.platform == "mobile_app"
+            and item.disabled_by is None
+        ]
+        if any(
+            (state := hass.states.get(entity_id)) is not None and state.state == "home"
+            for entity_id in trackers
+        ):
+            present.add(target)
+    return frozenset(present)
+
+
+async def async_can_control(hass: HomeAssistant, entry_id: str, user_id: str | None) -> bool:
+    """Control permission of a replying user for this instance's operation entity."""
+    from homeassistant.auth.permissions.const import POLICY_CONTROL
+
+    from .const import DOMAIN
+
+    if user_id is None:
+        return False
+    user = await hass.auth.async_get_user(user_id)
+    operation = er.async_get(hass).async_get_entity_id(
+        "switch", DOMAIN, f"{entry_id}_operation"
+    )
+    return bool(
+        user is not None and user.is_active and operation
+        and user.permissions.check_entity(operation, POLICY_CONTROL)
+    )
+
+
+async def async_setup_sauna_notifications(hass: HomeAssistant, entry, runtime) -> None:
+    """Load the notification settings and start the occasions of this instance (BN)."""
+    from zoneinfo import ZoneInfo
+
+    from homeassistant.helpers.storage import Store
+
+    from .core.notification_rules import NotificationSettings
+
+    store = Store(hass, 1, f"ha_sauna.notifications.{entry.entry_id}")
+    try:
+        settings = NotificationSettings.from_dict(await store.async_load())
+    except (TypeError, ValueError):
+        settings = NotificationSettings()
+    try:
+        zone = ZoneInfo(hass.config.time_zone)
+    except (KeyError, ValueError):
+        zone = None
+    runtime.enable_notifications(settings, zone)
+    runtime.notification_presence = lambda targets: present_targets(hass, targets)
+    runtime.save_notification_settings = lambda data: hass.async_create_task(
+        store.async_save(data)
+    )

@@ -95,7 +95,9 @@ beendet den laufenden Gang zum Zeitpunkt des Drückens, mit denselben Folgen wie
 ein erkanntes Gangende ([Gangmodell](gangmodell.md#gang-von-hand-beenden)). Sie
 ist für den Fall gedacht, dass die Steuerung einen Austritt nicht erkennt. Der
 nächste Gang beginnt mit der nächsten Tür. Während einer Kalibrierung ist die
-Taste gesperrt.
+Taste gesperrt. Dieselbe Wirkung hat die Antwort **Gang beenden** auf die
+[Rückfrage zum Gangende](benachrichtigungen.md#anlässe-der-sauna), mit der
+Steuerberechtigung des Antwortenden.
 
 ## Dauerhaft manuell betreiben
 

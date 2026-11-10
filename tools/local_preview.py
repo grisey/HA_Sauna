@@ -17,6 +17,7 @@ from math import isfinite
 from pathlib import Path
 from types import SimpleNamespace
 from urllib.parse import parse_qs, urlparse
+from zoneinfo import ZoneInfo
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
@@ -28,7 +29,7 @@ from custom_components.ha_sauna.archive import (
     session_has_gangs,
 )
 from custom_components.ha_sauna.bindings import Bindings
-from custom_components.ha_sauna.core import calibration, calibration_runs
+from custom_components.ha_sauna.core import calibration, calibration_runs, notification_rules
 from custom_components.ha_sauna.core.configuration_model import (
     ConfigurationModel,
     temperature_control,
@@ -124,12 +125,23 @@ def load_preview_defaults(path=PREVIEW_DEFAULTS_PATH):
 
 
 PREVIEW_DEFAULTS = load_preview_defaults()
+# BN: Anzeigename des synthetischen Vorschaubenutzers in Antworten.
+PREVIEW_USER_NAME = "Vorschau-Benutzer"
 
 
 class PreviewRuntime(SaunaRuntime):
     """Supply the simulated event entity's advertised Shelly RPC capabilities."""
 
     calibration_sink = None
+    notification_sink = None
+
+    def _archive_bn(self):
+        """The preview keeps the notification protocol with its own records (BN)."""
+        if self.notifier is None:
+            return
+        for record in self.notifier.take_records():
+            if self.notification_sink is not None:
+                self.notification_sink(record)
 
     def _archive_calibration(self, run):
         """The preview keeps the calibration protocol with its own records (B4e)."""
@@ -170,14 +182,17 @@ class Preview:
     def __init__(self):
         self.admin = True
         self.companion = True
+        # BN: Anlässe der Sauna nur auf Wunsch (Simulation „notifications“).
+        self.notifications = False
         self.reset(PREVIEW_DEFAULTS["initial"]["scenario"])
 
     def run(self, awaitable):
         """Run one runtime call; its calibration handoffs finish within it (W-2c)."""
         async def settled():
             result = await awaitable
-            while self.runtime._calibration_tasks:
-                await asyncio.gather(*tuple(self.runtime._calibration_tasks))
+            while self.runtime._calibration_tasks or self.runtime._bn_tasks:
+                await asyncio.gather(*tuple(self.runtime._calibration_tasks),
+                                     *tuple(self.runtime._bn_tasks))
                 await asyncio.sleep(0)
             return result
         return asyncio.run(settled())
@@ -203,6 +218,38 @@ class Preview:
             self.runtime.configuration.notification_assignments,
             self.runtime.notification_resolutions,
         ))
+
+    def notification_view(self):
+        """Like GET …/notifications: settings, descriptions and the test status (BN)."""
+        user = PREVIEW_DEFAULTS["calibration"]["user_id"]
+        status = self.runtime.notification_status(user)
+        if status is None:
+            raise ValueError("Benachrichtigungen sind in der Vorschau ausgeschaltet.")
+        test = status["test"]
+        if test is not None and test.get("replied_by"):
+            test["replied_by_name"] = PREVIEW_USER_NAME
+        return plain({**status, **notification_rules.describe(),
+                      "can_edit": self.admin, "can_test": True})
+
+    def notification_reply(self):
+        """Answer the latest notification that offers an action, like its user."""
+        notification = next((item for item in reversed(self.transport.sent)
+                             if notification_rules.is_action(
+                                 (item.payload.get("data", {}).get("actions") or [{}])[0].get("action"))),
+                            None)
+        if notification is None:
+            raise ValueError("Keine Benachrichtigung wartet auf eine Antwort.")
+        action = notification.payload["data"]["actions"][0]["action"]
+        reply = ReplyEnvelope(
+            None, None, None, None, None,
+            ActorRef(PREVIEW_DEFAULTS["calibration"]["user_id"], "lokale Vorschau"),
+            {"action": action}, observed_at=self.now,
+            reply_key=ReplyKey("home_assistant", action),
+        )
+        self.run(self.runtime.notification_reply(
+            ReplyAssociation(ReplyDisposition.ACCEPTED, reply, notification, True),
+            permitted=True))
+        self.sample()
 
     def calibration_reply(self):
         """Answer the current instruction like a person following it."""
@@ -258,6 +305,12 @@ class Preview:
         self.runtime.calibration_sink = lambda record, session_id: self.record(
             "calibration", record, session_id=session_id, received_at=record["at"])
         self.attach_notifications()
+        # BN: Anlässe mit Vorgaben; das Vorschautelefon meldet „home“.
+        if self.notifications:
+            self.runtime.enable_notifications(zone=ZoneInfo("Europe/Berlin"))
+        self.runtime.notification_presence = frozenset
+        self.runtime.notification_sink = lambda record: self.record(
+            "notification", record, session_id=record["session_id"], received_at=record["at"])
         self.entry = SimpleNamespace(
             runtime_data=self.runtime, options=self.runtime.configuration.as_options(),
         )
@@ -399,6 +452,11 @@ class Preview:
                 if r["kind"] in ("measurement", "source_snapshot") else r
                 for r in records if r["kind"] in ("measurement", "source_snapshot", "phase")
             ]
+        records = [
+            {**r, "display": {"user": PREVIEW_USER_NAME}}
+            if r["kind"] == "notification" and r["payload"].get("user_id") else r
+            for r in records
+        ]
         return {"session": session, "phase_projection": projection, "measurement_window": window,
                 "records": records, "next_after": None}
 
@@ -715,6 +773,14 @@ class Preview:
             if action == "calibration_reply":
                 self.calibration_reply()
                 return {}
+            if action == "notifications":
+                self.notifications = bool(body.get("value", not self.notifications))
+                self.reset(self.scenario)
+                return {}
+            if action == "notification_reply":
+                self.step(PREVIEW_DEFAULTS["sequence"]["action_seconds"])
+                self.notification_reply()
+                return {}
             if action == "companion":
                 self.companion = not self.companion
                 self.attach_notifications()
@@ -747,6 +813,16 @@ class Preview:
                     raise ValueError("Ungültige Ofenrückmeldung")
             else:
                 raise ValueError("Unbekannter Simulationseingang")
+        elif path.endswith("/notifications/test"):
+            result = self.run(self.runtime.send_test_notification(
+                actor=ActorRef(PREVIEW_DEFAULTS["calibration"]["user_id"], "lokale Vorschau")))
+            self.sample()
+            return result
+        elif path.endswith("/notifications"):
+            if not self.admin:
+                raise ValueError("Nur Administratoren ändern die Benachrichtigungen.")
+            return {"success": True,
+                    "settings": self.run(self.runtime.set_notification_settings(body))}
         elif path.endswith("/calibration/cancel"):
             if not isinstance(body, dict) or not set(body) <= {"run_id"}:
                 raise ValueError("Der Abbruch erwartet ein leeres Objekt oder die run_id des Laufs.")
@@ -945,6 +1021,11 @@ class Handler(BaseHTTPRequestHandler):
             self.send(result)
         elif path.endswith("/calibration"):
             self.send({"targets": preview.calibration_targets()})
+        elif path.endswith("/notifications"):
+            try:
+                self.send(preview.notification_view())
+            except ValueError as error:
+                self.send({"error": str(error)}, status_code=503)
         elif path.endswith("/standards"):
             try:
                 self.send(preview.standards())

@@ -6165,6 +6165,20 @@ class SaunaPanel extends HTMLElement {
       .appearance-instruments { display: grid; grid-template-columns: repeat(auto-fit, minmax(${this.preference("size_180_0_px")}px, 1fr)); gap: ${this.preference("layout_space_20_px")}px; margin-bottom: ${this.preference("surface_gap_px")}px; }
       .appearance-instruments label { display: grid; gap: ${this.preference("layout_space_12_px")}px; font-size: ${this.preference("font_size_compact_px")}px; }
       .appearance-instruments :is(select, .sauna-select-trigger) { width: 100%; min-width: 0; }
+      /* BN: Benachrichtigungen (Einstellungen › Benachrichtigungen, Details · Steuerung). */
+      .notification-settings h3 { margin: ${this.preference("layout_space_18_px")}px 0 ${this.preference("layout_space_07_px")}px; }
+      .notification-test-status { margin: ${this.preference("layout_space_07_px")}px 0 0; padding: 0; list-style: none; display: grid; gap: ${this.preference("layout_space_07_px")}px; }
+      .notification-occasions { display: grid; gap: 0; }
+      .notification-occasions label { display: grid; grid-template-columns: auto minmax(0, 1fr); align-items: start; gap: ${this.preference("layout_space_10_px")}px; padding: ${this.preference("layout_space_09_px")}px 0; border-top: ${this.preference("border_1_0_px")}px solid var(--sauna-color-border); }
+      .notification-occasions label > span { display: grid; gap: 2px; min-width: 0; }
+      .notification-occasions small { color: var(--sauna-card-muted-text); font-size: ${this.preference("font_size_small_px")}px; }
+      .notification-values { display: grid; grid-template-columns: repeat(auto-fit, minmax(${this.preference("size_180_0_px")}px, 1fr)); gap: ${this.preference("layout_space_13_px")}px; }
+      .notification-values label { display: grid; gap: ${this.preference("layout_space_07_px")}px; font-size: ${this.preference("font_size_compact_px")}px; }
+      .notification-values input { width: 100%; min-width: 0; }
+      .control-notifications ol { margin: 0; padding: 0; list-style: none; display: grid; gap: ${this.preference("layout_space_07_px")}px; }
+      .control-notifications li { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: ${this.preference("layout_space_10_px")}px; }
+      .control-notifications li > span:first-child { color: var(--sauna-card-muted-text); font-variant-numeric: tabular-nums; }
+      .control-notifications .notification-reply { color: var(--sauna-card-muted-text); }
       @container (max-width: ${this.preference("breakpoint_450_0_px")}px) {
         .gauges { grid-template-columns: minmax(0, 1fr); }
         .measurement-instrument[data-instrument-style="linear"] { padding: ${this.preference("layout_space_16_px")}px ${this.preference("layout_space_18_px")}px; }
@@ -11894,6 +11908,68 @@ class SaunaPanel extends HTMLElement {
   // Details · Steuerung (B4d, Brett „Details · Steuerung“): Betriebsverlauf mit einer
   // Spur je Frage, Zeitpunkt mit „Danach“, Fristen und Regeln (Backend, K-R2),
   // Protokoll je Typ filterbar und die Rohdaten der Sitzung.
+  // BN: Nachrichten, Bestätigungen und Antworten der Sitzung aus dem Archiv.
+  controlNotificationEntries(records) {
+    const notifications = records.filter((record) => record.kind === "notification"),
+      recipients = new Map(
+        notifications
+          .filter((record) => record.payload?.event === "recipients")
+          .map((record) => [record.payload.seq, record.payload]),
+      );
+    return notifications.flatMap((record, index) => {
+      const payload = record.payload || {},
+        at = payload.at || record.received_at;
+      if (payload.event === "message") {
+        const addressed = recipients.get(payload.seq);
+        return [
+          {
+            id: `notification-${record.id ?? index}`,
+            seq: payload.seq,
+            at: stamp(at),
+            effective: at,
+            label: payload.occasion_label || "Benachrichtigung",
+            source: "Benachrichtigung",
+            detail: `${payload.text || ""}${addressed ? ` · an ${this.num(addressed.count, 0)} ${addressed.count === 1 ? "Ziel" : "Ziele"} (${addressed.basis})` : ""}`,
+          },
+        ];
+      }
+      if (payload.event === "reply")
+        return [
+          {
+            id: `notification-reply-${record.id ?? index}`,
+            seq: payload.seq,
+            reply: true,
+            at: stamp(at),
+            effective: at,
+            label: `Antwort „${payload.action}“`,
+            source: "Benachrichtigung",
+            detail: `${payload.outcome_text}${record.display?.user ? ` · ${record.display.user}` : ""}`,
+          },
+        ];
+      return [];
+    });
+  }
+  controlNotificationCard(records) {
+    const entries = this.controlNotificationEntries(records).filter((entry) =>
+      Number.isFinite(entry.at),
+    );
+    if (!entries.length) return "";
+    const replies = entries.filter((entry) => entry.reply);
+    const rows = entries
+      .filter((entry) => !entry.reply)
+      .map((entry) => {
+        const answers = replies
+          .filter((reply) => reply.seq === entry.seq)
+          .map(
+            (reply) =>
+              `<br><span class="notification-reply">${esc(reply.label)} ${this.clockSeconds(reply.at)}: ${esc(reply.detail)}</span>`,
+          )
+          .join("");
+        return `<li><span>${this.clockSeconds(entry.at)}</span><span><strong>${esc(entry.label)}</strong> · ${esc(entry.detail)}${answers}</span></li>`;
+      })
+      .join("");
+    return `<section class="card control-notifications" aria-label="Benachrichtigungen"><h2>Benachrichtigungen</h2><ol>${rows}</ol></section>`;
+  }
   renderControlHistory() {
     const { session, records, phase_projection: projection } = this.shown;
     const timeline = session.timeline;
@@ -12258,6 +12334,7 @@ class SaunaPanel extends HTMLElement {
           })),
       ),
       ...typed("light", this.historyLightActivity(records)),
+      ...typed("notification", this.controlNotificationEntries(records)),
       ...additional.map((item) => ({ ...item, type: additionalType(item) })),
       ...typed("fault", this.historyFaultEvents(records).events),
       ...typed(
@@ -12360,6 +12437,7 @@ class SaunaPanel extends HTMLElement {
       ["recognition", "Erkennungen"],
       ["contactor", "Schaltausgang"],
       ["observation", "Heizrückmeldungen"],
+      ["notification", "Benachrichtigungen"],
       ["fault", "Fehler"],
       ["program", "Temperaturvorgaben"],
       ["other", "Betrieb und Hinweise"],
@@ -12470,7 +12548,7 @@ class SaunaPanel extends HTMLElement {
     const rawCard = `<section class="card detail-raw control-raw" aria-label="Rohdaten der Sitzung"><h2>Rohdaten der Sitzung</h2>${this.renderSessionEvidence(session)}${this.controlRawRow("values", "Messwerte und Lichtverlauf", () => this.renderHistoryValues(records, start, end, cursor))}${this.controlRawRow("records", `Einzelbelege · ${this.num(records.length, 0)} Datensätze, seitenweise`, () => this.renderHistoryRecords(records))}</section>`;
     this.updateMarkup(
       "#control-history",
-      `<section class="card" id="control-state-history" aria-label="Betriebsverlauf"><div class="detail-card-head"><h2>Betriebsverlauf</h2><span class="muted">${this.clock(start)} – ${this.clock(end)}</span><button data-action="detail-follow" ${latest > end ? "" : "disabled"}>Bis zum neuesten Stand</button></div>${legend ? `<div class="control-legend">${legend}<span class="muted">kräftig = heizen, blass = nicht heizen</span></div>` : ""}<div class="control-history-lanes">${lanes}<div class="control-time-axis">${[0, 0.25, 0.5, 0.75, 1].map((f) => `<span>${this.clock(start + (end - start) * f)}</span>`).join("")}</div><div class="control-cursor-row"><input id="control-history-cursor" class="control-cursor" type="range" min="0" max="${end - start}" step="1" value="${cursor - start}" aria-label="Zeitpunkt im Betriebsverlauf" aria-valuetext="${this.clock(cursor)}"></div></div></section><div class="control-history-inspection">${momentCard}${rulesCard}</div>${protocolCard}${rawCard}`,
+      `<section class="card" id="control-state-history" aria-label="Betriebsverlauf"><div class="detail-card-head"><h2>Betriebsverlauf</h2><span class="muted">${this.clock(start)} – ${this.clock(end)}</span><button data-action="detail-follow" ${latest > end ? "" : "disabled"}>Bis zum neuesten Stand</button></div>${legend ? `<div class="control-legend">${legend}<span class="muted">kräftig = heizen, blass = nicht heizen</span></div>` : ""}<div class="control-history-lanes">${lanes}<div class="control-time-axis">${[0, 0.25, 0.5, 0.75, 1].map((f) => `<span>${this.clock(start + (end - start) * f)}</span>`).join("")}</div><div class="control-cursor-row"><input id="control-history-cursor" class="control-cursor" type="range" min="0" max="${end - start}" step="1" value="${cursor - start}" aria-label="Zeitpunkt im Betriebsverlauf" aria-valuetext="${this.clock(cursor)}"></div></div></section><div class="control-history-inspection">${momentCard}${rulesCard}</div>${this.controlNotificationCard(records)}${protocolCard}${rawCard}`,
     );
     this.controlHistoryRenderCache = { records, count: records.length, key: renderKey };
     this.controlEvidenceTick = evidenceTick;
@@ -17234,13 +17312,15 @@ class SaunaPanel extends HTMLElement {
     if (this.settingsEntry !== this.entry || this.settingsAdmin !== admin) {
       const groups = state.frontend_defaults.settings_groups.filter(
         ({ id, surface }) =>
-          surface !== "integration" && (admin || ["programs", "personal"].includes(id)),
+          surface !== "integration" &&
+          (admin || ["programs", "notifications", "personal"].includes(id)),
       );
       const parameterGroup = (group) => this.settingsParameterGroup(group);
       const contents = {
         programs: `<div class="card"><h2>Start über Taster oder Betriebsschalter</h2><div id="button-settings"></div></div><div class="card settings-programs"><h2>Programme</h2><div id="program-library"></div></div>`,
         appearance: admin ? this.appearanceSettingsMarkup() : "",
         maintenance: `<div class="card"><h2>Sitzungsarchiv ${this.infoButton("archive-retention", "Gespeicherte Sitzungen", "Nur Sitzungen mit bestätigtem Saunagang oder mit Kalibrierprotokoll bleiben im Archiv.")}</h2><button class="confirm" data-action="export">Archiv als ZIP herunterladen</button><div id="archive-management"></div></div><div class="card"><h2>Lernsitzungen ${this.infoButton("recognition-learning", "Freigabe für das Nachlernen", "Nach jeder Sitzung werden Lernbelege der Erkennung gespeichert, zunächst nicht freigegeben. Nur freigegebene Sitzungen gehen in die Aktion „Erkennung nachlernen“ ein.")}</h2><div id="recognition-learning"></div></div><div class="card"><h2>Protokollierung ${this.infoButton("logging", "Protokollumfang", "Home-Assistant-Protokoll, unabhängig vom Sitzungsarchiv. Betriebsereignisse enthalten auch Fehler und Warnungen; Diagnose ergänzt Messwerte und Erkennungsprüfungen.")}</h2><div class="row"><label for="log-level">Umfang</label><select id="log-level"><option value="ERROR">Fehler</option><option value="INFO">Betriebsereignisse</option><option value="DEBUG">Detaillierte Diagnose</option></select><button data-action="logging" class="confirm">Übernehmen</button></div><a href="/config/logs">Home-Assistant-Protokoll öffnen</a></div><div class="card"><h2>Standards und Werkseinstellungen</h2><p>Vorschau für alle gespeicherten Felder einschließlich ausgeblendeter Einstellungen. Programmbibliothek und Gerätezuordnung werden in ihren eigenen Bereichen verwaltet.</p>${this.standardMenuButton({ all: true }, "Standards für alle Bereiche")}</div>`,
+        notifications: `<div class="card notification-settings" id="notification-settings"></div>`,
         personal: `<div class="card"><h2>Persönliche Startseite ${this.infoButton("start-page", "Gültigkeit der Startseite", "Gilt nur für das aktuelle Home-Assistant-Profil.")}</h2><button data-action="default-page" class="confirm">Als Startseite festlegen</button><p id="start-page-status" class="muted" role="status"></p></div>`,
       };
       this.$("#settings").innerHTML =
@@ -17284,6 +17364,7 @@ class SaunaPanel extends HTMLElement {
     }
     this.renderProgramLibrary();
     this.drawButtonProgram();
+    this.refreshNotificationSettings();
     if (this.hass.userData?.default_panel === "ha-sauna") {
       const button = this.$('[data-action="default-page"]');
       button.disabled = true;
@@ -17840,6 +17921,124 @@ class SaunaPanel extends HTMLElement {
     return offered.some((module) => module.id === this.calibrationModule)
       ? this.calibrationModule
       : offered[0]?.id;
+  }
+  // BN: Benachrichtigungen der Sauna. Das Backend liefert Anlässe, Werte,
+  // Bezeichnungen und den Teststatus; das Panel formatiert nur.
+  refreshNotificationSettings() {
+    if (this.settingsSection !== "notifications" || !this.$("#notification-settings")) return;
+    this.drawNotificationSettings();
+    if (!this.notificationLoading) this.runPanelAction(() => this.loadNotificationSettings());
+  }
+  async loadNotificationSettings() {
+    if (this.notificationLoading || !this.state) return;
+    const entry = this.entry,
+      generation = this.generation;
+    this.notificationLoading = true;
+    try {
+      const result = await this.api(`/${entry}/notifications`);
+      if (entry === this.entry && generation === this.generation) {
+        if (this.notificationSettings?.entry !== entry) this.notificationDraft = null;
+        this.notificationSettings = { ...result, entry };
+      }
+    } catch (error) {
+      if (entry === this.entry && generation === this.generation)
+        this.notificationMessage = errorText(error);
+    } finally {
+      this.notificationLoading = false;
+      this.drawNotificationSettings();
+    }
+  }
+  notificationTestLines(test) {
+    if (!test) return ["Noch keine Testnachricht gesendet."];
+    const count = (value) => this.num(value || 0, 0),
+      targets = test.addressed ?? test.targets;
+    return [
+      `Gesendet um ${this.clockSeconds(test.sent_at)} an ${count(targets)} ${targets === 1 ? "Ziel" : "Ziele"}`,
+      test.targets
+        ? `Übergeben: ${count(test.accepted)} von ${count(test.targets)}`
+        : "Wird übergeben …",
+      test.replied_at
+        ? `Antwort empfangen um ${this.clockSeconds(test.replied_at)}${test.replied_by_name ? ` von ${test.replied_by_name}` : ""}`
+        : "Noch keine Antwort",
+    ];
+  }
+  drawNotificationSettings() {
+    if (!this.$("#notification-settings")) return;
+    const data =
+      this.notificationSettings?.entry === this.entry ? this.notificationSettings : null;
+    if (!data) {
+      this.updateMarkup(
+        "#notification-settings",
+        `<h2>Benachrichtigungen</h2><p class="muted">${esc(this.notificationMessage || "Lade Benachrichtigungen …")}</p>`,
+      );
+      return;
+    }
+    const settings = this.notificationDraft || data.settings,
+      editable = data.can_edit && !this.notificationBusy,
+      disabled = editable ? "" : "disabled",
+      testDisabled =
+        !data.can_test || !data.targets || this.notificationBusy ? "disabled" : "";
+    const occasions = (data.occasions || [])
+      .map(
+        (item) =>
+          `<label><input type="checkbox" data-notification-occasion="${esc(item.id)}" ${settings.occasions?.[item.id] ? "checked" : ""} ${disabled}><span><strong>${esc(item.label)}</strong><small>${esc(item.description)}</small></span></label>`,
+      )
+      .join("");
+    const values = (data.values || [])
+      .map(
+        (item) =>
+          `<label><span>${esc(item.label)} ${this.infoButton(`notification:${item.key}`, `${item.label} erklären`, item.description)}</span>${unitInput(`<input type="number" step="any" min="0" data-notification-value="${esc(item.key)}" aria-label="${esc(item.label)} (${esc(item.unit)})" value="${esc(settings[item.key] ?? "")}" ${disabled}>`, item.unit)}</label>`,
+      )
+      .join("");
+    const message = this.notificationMessage
+      ? `<p class="muted" role="status">${esc(this.notificationMessage)}</p>`
+      : "";
+    this.updateMarkup(
+      "#notification-settings",
+      `<h2>Benachrichtigungen</h2><h3>Testnachricht</h3><p class="muted">Geht an die eigenen zugeordneten Ziele; Companion-Ziele bieten die Antwort „Empfangen“.</p><div class="row"><button class="confirm" data-action="notification-test" ${testDisabled}>Testnachricht senden</button>${data.targets ? "" : '<span class="muted">Diesem Benutzer ist kein Ziel zugeordnet.</span>'}</div><ul class="notification-test-status" aria-live="polite">${this.notificationTestLines(data.test).map((line) => `<li>${esc(line)}</li>`).join("")}</ul><h3>Anlässe</h3><div class="notification-occasions" role="group" aria-label="Anlässe">${occasions}</div><h3>Zeitschaltuhr und Sicherheit</h3><div class="notification-values">${values}</div>${data.can_edit ? `<div class="row"><button class="confirm" data-action="notification-save" ${disabled}>Benachrichtigungen speichern</button></div>` : ""}${message}`,
+    );
+  }
+  notificationChoice() {
+    const data = this.notificationSettings;
+    const settings = { ...(this.notificationDraft || data.settings) };
+    settings.occasions = { ...settings.occasions };
+    for (const input of this.shadowRoot.querySelectorAll("[data-notification-occasion]"))
+      settings.occasions[input.dataset.notificationOccasion] = !!input.checked;
+    for (const input of this.shadowRoot.querySelectorAll("[data-notification-value]"))
+      settings[input.dataset.notificationValue] = Number(input.value);
+    return settings;
+  }
+  async notificationRequest(path, body) {
+    const entry = this.entry,
+      generation = this.generation;
+    this.notificationBusy = true;
+    this.notificationMessage = "";
+    this.drawNotificationSettings();
+    try {
+      return await this.api(`/${entry}/notifications${path}`, "POST", body);
+    } catch (error) {
+      if (entry === this.entry && generation === this.generation)
+        this.notificationMessage = errorText(error);
+      return null;
+    } finally {
+      this.notificationBusy = false;
+      if (entry === this.entry && generation === this.generation)
+        await this.loadNotificationSettings();
+    }
+  }
+  async sendTestNotification() {
+    if (!this.notificationSettings?.can_test || this.notificationBusy) return;
+    await this.notificationRequest("/test", {});
+  }
+  async saveNotificationSettings() {
+    if (!this.notificationSettings?.can_edit || this.notificationBusy) return;
+    this.notificationDraft = this.notificationChoice();
+    const result = await this.notificationRequest("", this.notificationDraft);
+    if (result) {
+      this.notificationDraft = null;
+      this.notificationMessage = "Benachrichtigungen gespeichert.";
+      this.drawNotificationSettings();
+    }
   }
   async loadCalibrationTargets() {
     const permissions = this.state?.permissions;
@@ -18978,6 +19177,8 @@ class SaunaPanel extends HTMLElement {
         );
       return;
     }
+    if (action === "notification-test") return this.sendTestNotification();
+    if (action === "notification-save") return this.saveNotificationSettings();
     if (action === "calibration-targets") return this.loadCalibrationTargets();
     if (action === "calibration-start") return this.startCalibration();
     if (action === "calibration-cancel") return this.cancelCalibration();
@@ -19320,6 +19521,7 @@ class SaunaPanel extends HTMLElement {
     if (action.startsWith("settings-section:")) {
       this.selectSettingsSection(action.slice(17));
       this.setSettingsMenu(false, true);
+      this.refreshNotificationSettings();
       return;
     }
     if (action === "settings-menu" || action === "settings-menu-close") {

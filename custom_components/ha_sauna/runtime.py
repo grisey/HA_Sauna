@@ -46,7 +46,7 @@ from .core.input_handoff import (
     OperationInput,
     TemperatureInput,
 )
-from .core import calibration
+from .core import calibration, notification_rules
 from .core.models import Position, Session
 from .core.sensor_sample import ClimatePacket, SampleStream
 from .core.notification_exchange import NotificationEnvelope
@@ -69,7 +69,7 @@ from .core.program_catalog import (
     validate_programs,
 )
 from .core.temperature_program import temperature_steps as validate_temperature_steps
-from .core.timeline import Event, Kind
+from .core.timeline import Confirmation, Door, Event, Kind
 from .log import LEVELS, SaunaLog
 from .presentation import (
     EVENTS,
@@ -588,6 +588,7 @@ class SaunaRuntime:
         self._calibration_tasks = set()
         # Display state of the last run ended with its session (W-2c).
         self._calibration_last = None
+        self._init_notifications()
 
     @property
     def calibration_runs(self) -> tuple[calibration.CalibrationRun, ...]:
@@ -875,6 +876,7 @@ class SaunaRuntime:
         if self.device:
             await self.device.apply(now)
         self._advance_calibration(now)
+        self._advance_notifications(now)
         self.notify()
 
     def _advance_presence_source(self, at):
@@ -2572,6 +2574,361 @@ class SaunaRuntime:
             return
         for record in records:
             self.archive.append("calibration", record["at"], record, run.session_id)
+
+    # -- BN: Benachrichtigungen der Sauna ------------------------------------
+    # Der Ablauf (core/notification_rules.py) liest den Zustand nur. Antworten
+    # mit Wirkung gehen über end_gang und set_operation mit der Steuerberechtigung
+    # des Antwortenden. Ohne geladene Einstellungen (``notifier`` None) ruht er.
+
+    def _init_notifications(self):
+        self.notifier = None
+        # callable(targets) -> frozenset der Ziele, deren Companion-Gerät „home“ meldet
+        self.notification_presence = None
+        self.save_notification_settings = None
+        self._bn_tasks = set()
+        self._bn_participants = (None, frozenset())
+        self._bn_starters = {}
+        self._bn_last_present = None
+
+    def enable_notifications(self, settings=None, zone=None):
+        """Start the occasions with the loaded settings (HA setup, preview, tests)."""
+        self.notifier = notification_rules.Notifier(settings, zone)
+
+    @property
+    def notification_settings(self):
+        return self.notifier.settings if self.notifier is not None else None
+
+    async def set_notification_settings(self, data):
+        """Change occasions and values; effective at once, also during a session."""
+        async with self._lock:
+            self._require_open()
+            if self.notifier is None:
+                raise ValueError("Benachrichtigungen sind nicht verfügbar")
+            settings = notification_rules.replace_settings(self.notifier.settings, data)
+            self.notifier.configure(settings)
+            if self.save_notification_settings is not None:
+                self.save_notification_settings(settings.as_dict())
+            return settings.as_dict()
+
+    def _user_targets(self, user_id, *, interactive=False):
+        if user_id is None:
+            return frozenset()
+        references = {
+            reference
+            for assignment in self.configuration.notification_assignments
+            if assignment.user_id == user_id
+            for reference in assignment.recipients
+        }
+        return frozenset(
+            item.recipient.target for item in self.notification_resolutions
+            if item.reference in references and item.recipient is not None
+            and item.recipient.capability.sendable
+            and (not interactive or item.recipient.capability.interactive)
+        )
+
+    def _assigned_targets(self):
+        users = {assignment.user_id for assignment in self.configuration.notification_assignments}
+        return frozenset().union(*(self._user_targets(user) for user in users)) if users else frozenset()
+
+    def _interactive(self, target):
+        return any(
+            item.recipient is not None and item.recipient.target == target
+            and item.recipient.capability.interactive
+            for item in self.notification_resolutions
+        )
+
+    async def send_test_notification(self, *, actor, resolutions=None):
+        """Testnachricht an die eigenen Ziele des Benutzers (BN-1, Anlass T)."""
+        async with self._lock:
+            self._require_open()
+            if resolutions is not None:
+                self.notification_resolutions = resolutions
+            if self.notifier is None or self.notification_transport is None:
+                raise ValueError("Benachrichtigungen sind nicht verfügbar")
+            user_id = actor.user_id if actor else None
+            targets = self._user_targets(user_id)
+            if not targets:
+                raise ValueError("Diesem Benutzer ist kein Benachrichtigungsziel zugeordnet")
+            message = self.notifier.test(self._clock(), user_id)
+            self._send_bn(message, targets, "eigene Ziele")
+            self._archive_bn()
+            return {"seq": message.seq, "targets": len(targets)}
+
+    def notification_status(self, user_id):
+        """Test status of this user and the timer state of the session."""
+        if self.notifier is None:
+            return None
+        return {
+            "settings": self.notifier.settings.as_dict(),
+            "test": dict(self.notifier.tests[user_id]) if user_id in self.notifier.tests else None,
+            "targets": len(self._user_targets(user_id)),
+            "timer": self.notifier.timer,
+        }
+
+    def _notification_facts(self, now):
+        session, controller, device = self.session, self.controller, self.device
+        upper = None
+        upper_failed = False
+        heating_against_off = False
+        if device is not None:
+            measurement = device.regulation_measurement(now)
+            if measurement is not None and measurement.position == Position.UPPER:
+                upper = measurement
+            state = device.measurement_status(now).get("upper_temperature", {}).get("state")
+            upper_failed = state in ("unavailable", "stale")
+            faults = device.faults
+            heating_against_off = (
+                faults.get("heater_still_heating") == "confirmed"
+                or (faults.get("heater_feedback_mismatch") == "confirmed"
+                    and device.command is False and controller.contactor is True)
+            )
+        report = (self.presence.external.get(self.configuration.bindings.values.get("presence"))
+                  if self.configuration_model.direct_presence else None)
+        presence = None
+        if report is not None and report.available and report.occupancy in ("present", "absent"):
+            presence = (report.occupancy, report.effective_at)
+            if report.occupancy == "present":
+                self._bn_last_present = max(
+                    self._bn_last_present or report.effective_at, report.effective_at)
+        common = {
+            "now": now, "contactor": controller.contactor,
+            "upper_temperature_c": upper.value if upper is not None else None,
+            "upper_failed": upper_failed, "heating_against_off": heating_against_off,
+            "presence": presence,
+        }
+        if session is None:
+            return notification_rules.Facts(**common)
+        timeline = session.timeline
+        active = timeline.active
+        acting = controller.acting_gang
+        gang = None
+        if active is not None:
+            gang = notification_rules.GangFact(
+                active.gang_id, active.started_at, timeline.gang_count + 1,
+                acting is not None and acting.gang_id == active.gang_id,
+            )
+        ends = [item.ended_at for item in timeline.completed
+                if item.ended_at is not None and item.confirmation == Confirmation.CONFIRMED]
+        return notification_rules.Facts(
+            **common,
+            session_id=session.session_id,
+            session_started_at=timeline.session_started_at,
+            operation_enabled=session.operation_enabled,
+            ready_marks=tuple((mark.at, mark.ready) for mark in session.ready_history),
+            target_c=controller.target_temperature,
+            gang=gang,
+            gang_count=timeline.gang_count,
+            last_gang_end=max(ends, default=None),
+            door_open=timeline.door == Door.OPEN,
+            door_events=tuple(
+                (event.kind.value, event.effective_at) for event in timeline.processed
+                if event.kind in (Kind.DOOR_OPEN, Kind.DOOR_CLOSE)
+            ),
+            last_present_at=self._bn_last_present,
+            heating=tuple((item.started_at, item.ended_at) for item in session.heating.intervals),
+            switch_offs=notification_rules.upper_switch_offs(
+                (item.at, item.heat, item.reason) for item in controller.decisions
+                if item.session_id == session.session_id
+            ),
+            temperature=(upper.received_at, upper.value) if upper is not None else None,
+        )
+
+    def _advance_notifications(self, now):
+        """Send the due occasions of this cycle; never part of the control decision."""
+        if self.notifier is None or self.closed:
+            return
+        try:
+            session = self.session
+            if session is not None:
+                participants = self.notification_recipients
+                if participants is not None:
+                    self._bn_participants = (session.session_id, participants.targets)
+                if session.session_id not in self._bn_starters:
+                    # Ziele des startenden Benutzers; ohne Benutzer gilt die Anwesenheit.
+                    self._bn_starters = {session.session_id: (
+                        participants.targets if participants is not None else frozenset())}
+            else:
+                self._bn_last_present = None
+            messages, ended = self.notifier.advance(self._notification_facts(now))
+            if ended is not None:
+                self._bn_session_end(now, ended)
+            for message in messages:
+                targets, basis = self._bn_targets(message)
+                self._send_bn(message, targets, basis)
+            self._archive_bn()
+        except Exception as error:  # noqa: BLE001 - Benachrichtigungen dürfen den Zyklus nie stören.
+            self.log.logger.error("Benachrichtigung fehlgeschlagen: %s", error,
+                                  extra={"sauna_event": "notification_failed"})
+
+    def _bn_targets(self, message):
+        audience = message.audience
+        if audience == "assigned":
+            return self._assigned_targets(), "alle Zugeordneten"
+        if audience == "participants":
+            session_id, targets = self._bn_participants
+            return (targets if session_id == message.session_id else frozenset()), "Teilnehmer"
+        if audience == "timer":
+            started = self._bn_starters.get(message.session_id) or frozenset()
+            if started:
+                return started, "startender Benutzer"
+            assigned = self._assigned_targets()
+            present = (frozenset(self.notification_presence(assigned))
+                       if self.notification_presence is not None else frozenset())
+            if present:
+                return present, "anwesende Geräte"
+            return assigned, "alle Zugeordneten (kein Gerät anwesend)"
+        return frozenset(), "keine"
+
+    def _bn_session_end(self, now, session_id):
+        """Sauna aus (E): text with the key figures of the archived session."""
+        if self.notifier is None or not self.notifier.settings.enabled("session_end"):
+            return
+        _, participants = self._bn_participants
+        if self._bn_participants[0] != session_id:
+            participants = frozenset()
+        heater_off = (False if self.controller.contactor is True
+                      else True if self.controller.contactor is False else None)
+        self._bn_starters.pop(session_id, None)
+
+        async def compose():
+            figures = None
+            archive = self.archive
+            if archive is not None:
+                try:
+                    await archive.flush()
+                    values = self.configuration.parameters.values
+                    result = await asyncio.to_thread(
+                        archive.session_key_figures, session_id,
+                        volume_m3=values.get("cabin_volume_m3"),
+                        price_eur_per_kwh=values.get("electricity_price_eur_per_kwh"),
+                    )
+                    figures = result["figures"] if result else None
+                except Exception as error:  # noqa: BLE001 - ohne Kennzahlen bleibt die Kopfzeile.
+                    self.log.logger.info("Kennzahlen nicht verfügbar: %s", error,
+                                         extra={"sauna_event": "notification_figures"})
+            async with self._lock:
+                if self.closed or self.notifier is None:
+                    return
+                message = self.notifier.session_end(
+                    self._clock(), session_id,
+                    notification_rules.summary(figures, heater_off=heater_off),
+                )
+                if message is not None:
+                    self._send_bn(message, participants, "Teilnehmer")
+                    self._archive_bn()
+
+        task = asyncio.get_running_loop().create_task(compose())
+        self._bn_tasks.add(task)
+        task.add_done_callback(self._bn_tasks.discard)
+
+    def _send_bn(self, message, targets, basis):
+        """Register each copy now; its handoff runs outside the control lock."""
+        self.notifier.addressed(message, len(targets), basis)
+        transport = self.notification_transport
+        if not targets or transport is None or self.notification_entry_id is None:
+            return
+        loop = asyncio.get_running_loop()
+        for target in sorted(targets, key=lambda item: (item.transport, item.endpoint)):
+            message_id = uuid4().hex
+            payload = {"title": message.title, "message": message.text}
+            if message.actions and self._interactive(target):
+                payload["data"] = {"actions": [
+                    {"action": f"{notification_rules.ACTION_PREFIX}{message_id}_{message.seq}_{kind.upper()}",
+                     "title": notification_rules.ACTION_LABELS[kind]}
+                    for kind in message.actions
+                ]}
+            envelope = NotificationEnvelope(
+                message_id, f"notification:{message.seq}", self.notification_entry_id,
+                target, payload, message.session_id,
+            )
+            try:
+                prepared = transport.prepare_handoff(envelope)
+            except Exception as error:  # noqa: BLE001 - ein Ziel hindert die anderen nicht.
+                self.notifier.handed_off(message, {"transport": target.transport,
+                                                   "endpoint": target.endpoint},
+                                         False, f"{type(error).__name__}: {error}", message_id)
+                continue
+            task = loop.create_task(self._dispatch_bn(transport, message, envelope, prepared))
+            self._bn_tasks.add(task)
+            task.add_done_callback(self._bn_tasks.discard)
+
+    async def _dispatch_bn(self, transport, message, envelope, prepared):
+        try:
+            handoff = await transport.dispatch(prepared)
+            accepted, evidence = handoff.accepted, handoff.evidence
+        except Exception as error:  # noqa: BLE001 - die Übergabe wird als Fehlschlag protokolliert.
+            accepted, evidence = False, f"{type(error).__name__}: {error}"
+        async with self._lock:
+            if self.closed or self.notifier is None:
+                return
+            self.notifier.handed_off(
+                message, {"transport": envelope.target.transport,
+                          "endpoint": envelope.target.endpoint},
+                accepted, evidence, envelope.message_id,
+            )
+            self._archive_bn()
+
+    def _archive_bn(self):
+        if self.notifier is None:
+            return
+        records = self.notifier.take_records()
+        if self.archive is None:
+            return
+        for record in records:
+            self.archive.append("notification", record["at"], record, record["session_id"])
+
+    async def notification_reply(self, association, *, permitted):
+        """Apply a reply to a sauna notification (BN).
+
+        Confirmations change only the notification state. „Gang beenden“ and
+        „Ausschalten“ use end_gang and set_operation with the replying user, and
+        only with that user's control permission; a reply that no longer applies
+        stays without effect and is recorded.
+        """
+        reply = association.reply
+        action = reply.reply_key.value if reply.reply_key is not None else None
+        if not notification_rules.is_action(action) or association.notification is None:
+            return None
+        try:
+            _, seq, kind = action[len(notification_rules.ACTION_PREFIX):].split("_", 2)
+            seq, kind = int(seq), kind.lower()
+        except ValueError:
+            return "unknown"
+        at = reply.observed_at or self._clock()
+        user_id = reply.actor.user_id
+        async with self._lock:
+            if self.closed or self.notifier is None:
+                return None
+            outcome = self.notifier.reply(
+                seq, kind, at, user_id,
+                current_session=self.session.session_id if self.session else None,
+            )
+            message = self.notifier.message(seq)
+            if outcome != "effect":
+                self.notifier.replied(seq, kind, at, user_id, outcome)
+                self._archive_bn()
+                return outcome
+            if not permitted:
+                self.notifier.replied(seq, kind, at, user_id, "no_permission")
+                self._archive_bn()
+                return "no_permission"
+        actor = ActorRef(user_id, "notification_reply")
+        try:
+            if kind == notification_rules.END_GANG:
+                await self.end_gang(message.gang_id, actor=actor)
+            else:
+                if (self.session is None or self.session.session_id != message.session_id
+                        or not self.session.operation_enabled):
+                    raise ValueError("Der Betrieb ist bereits aus.")
+                await self.set_operation(False, actor=actor)
+            outcome, detail = "effect", None
+        except (ValueError, RuntimeError) as error:
+            outcome, detail = "late", f"wirkungslos: {error}"
+        async with self._lock:
+            if self.notifier is not None and not self.closed:
+                self.notifier.replied(seq, kind, at, user_id, outcome, detail)
+                self._archive_bn()
+        return outcome
 
     async def tick(self, _at=None):
         # HA schedules each interval independently. Keep at most one current

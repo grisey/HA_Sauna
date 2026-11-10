@@ -13,7 +13,7 @@ from homeassistant.util import dt as dt_util
 from .appearance import APPEARANCE_CATALOG, frontend_preferences
 from .archive import ExportUnavailable, energy_interval_delta, plain
 from .const import DOMAIN
-from .core import calibration
+from .core import calibration, notification_rules
 from .core.configuration_model import ConfigurationModel, temperature_control
 from .core.control_rules import control_rules
 from .core.notification_recipients import ActorRef
@@ -945,7 +945,7 @@ class ArchiveView(HomeAssistantView):
                     "source_state", "heating_observation", "illuminance", "notice",
                     "manual_light", "manual_heater", "heater_override_rejected",
                     "manual_phase_end", "manual_gang_end", "manual_session_light_end",
-                    "interruption", "session", "calibration",
+                    "interruption", "session", "calibration", "notification",
                 ) if request["hass_user"].is_admin else (
                     "measurement", "source_snapshot", "phase",
                 ),
@@ -966,6 +966,14 @@ class ArchiveView(HomeAssistantView):
             )
             session["measurement_context"] = historical_measurement_context(session)
             if request["hass_user"].is_admin:
+                # BN: Namen der Antwortenden zu den Benachrichtigungen der Sitzung.
+                names = await user_names(request.app[KEY_HASS], {
+                    record["payload"].get("user_id") for record in result["records"]
+                    if record["kind"] == "notification"
+                })
+                for record in result["records"]:
+                    if record["kind"] == "notification" and record["payload"].get("user_id"):
+                        record["display"] = {"user": names.get(record["payload"]["user_id"])}
                 # K-R2 (B4d): Fristen und Regeln aus der gespeicherten Sitzungskonfiguration.
                 session["control_rules"] = control_rules(session)
                 try:
@@ -1485,6 +1493,89 @@ class CalibrationPauseView(HomeAssistantView):
         return self.json(result)
 
 
+
+async def user_names(hass, user_ids):
+    """Display names of HA users for replies (BN); unknown ids stay absent."""
+    wanted = {user_id for user_id in user_ids if user_id}
+    if not wanted:
+        return {}
+    return {
+        user.id: user.name or user.id
+        for user in await hass.auth.async_get_users()
+        if user.id in wanted
+    }
+
+
+class NotificationsView(HomeAssistantView):
+    """Benachrichtigungen der Sauna (BN): Einstellungen der Anlässe und eigene Testnachricht.
+
+    GET liefert Anlässe, Werte mit Bezeichnungen und den Teststatus des
+    anfragenden Benutzers. POST ändert Anlässe und Werte (nur Administratoren),
+    jederzeit, auch während einer Sitzung.
+    """
+
+    url = "/api/ha_sauna/{entry_id}/notifications"
+    name = "api:ha_sauna:notifications"
+    requires_auth = True
+
+    async def get(self, request, entry_id):
+        require_read(request, entry_id)
+        hass = request.app[KEY_HASS]
+        runtime = runtime_for(hass, entry_id)
+        if runtime.notifier is None:
+            raise web.HTTPServiceUnavailable()
+        resolutions = await async_resolve_recipients(hass)
+        async with runtime._lock:
+            runtime.notification_resolutions = resolutions
+            status = runtime.notification_status(request["hass_user"].id)
+        test = status["test"]
+        if test is not None and test.get("replied_by"):
+            names = await user_names(hass, {test["replied_by"]})
+            test["replied_by_name"] = names.get(test["replied_by"])
+        return self.json(plain({
+            **status, **notification_rules.describe(),
+            "can_edit": request["hass_user"].is_admin,
+            "can_test": can_control(request, entry_id),
+        }))
+
+    async def post(self, request, entry_id):
+        if not request["hass_user"].is_admin:
+            raise web.HTTPForbidden()
+        body = await json_body(request)
+        if not isinstance(body, dict):
+            raise web.HTTPBadRequest(text="Ein Objekt mit Anlässen oder Werten ist erforderlich.")
+        runtime = runtime_for(request.app[KEY_HASS], entry_id)
+        try:
+            settings = await runtime.set_notification_settings(body)
+        except (TypeError, ValueError) as error:
+            return self.json({"error": str(error)}, status_code=400)
+        return self.json({"success": True, "settings": settings})
+
+
+class NotificationTestView(HomeAssistantView):
+    """Testnachricht an die eigenen Ziele (BN-1); Steuerberechtigung wie der Versand."""
+
+    url = "/api/ha_sauna/{entry_id}/notifications/test"
+    name = "api:ha_sauna:notifications:test"
+    requires_auth = True
+
+    async def post(self, request, entry_id):
+        require_control(request, entry_id)
+        body = await json_body(request)
+        if body != {}:
+            raise web.HTTPBadRequest(text="Die Testnachricht erwartet ein leeres Objekt.")
+        hass = request.app[KEY_HASS]
+        runtime = runtime_for(hass, entry_id)
+        try:
+            result = await runtime.send_test_notification(
+                actor=request_actor(request),
+                resolutions=await async_resolve_recipients(hass),
+            )
+        except ValueError as error:
+            return self.json({"error": str(error)}, status_code=409)
+        return self.json(result)
+
+
 def register(hass):
     data = hass.data.setdefault(DOMAIN, {})
     if data.get("api_registered"):
@@ -1521,4 +1612,6 @@ def register(hass):
     hass.http.register_view(CalibrationView)
     hass.http.register_view(CalibrationCancelView)
     hass.http.register_view(CalibrationPauseView)
+    hass.http.register_view(NotificationsView)
+    hass.http.register_view(NotificationTestView)
     data["api_registered"] = True
