@@ -115,6 +115,29 @@ Archivrevision und verkleinert die Datei. Sitzungen, Messwerte und alle übrigen
 Einträge bleiben unverändert; die Quelle wird nicht verändert. Ausgetauscht wird
 die Datei bei angehaltenem Home Assistant Core.
 
+### Archiv neu aufbauen
+
+Das Werkzeug [`tools/archive_rebuild.py`](../tools/archive_rebuild.py) rechnet
+alle Sitzungen einer Archivkopie mit dem aktuellen Stand nach und schreibt ein
+neues Archiv; die Quelle bleibt unverändert. Je Sitzung läuft die Laufzeit auf
+den aufgezeichneten Eingaben: Messwerte oben und unten, Präsenz,
+Schützrückmeldung, Betrieb an und aus, manuelle Ofenwahl und Solländerungen.
+Neu entstehen Erkennung, Gänge, Phasen, Entscheidungen, Sitzungsstände,
+Zustandsverlauf und verworfene Kandidaten; Heizzeit und Energie folgen der
+aufgezeichneten Schützrückmeldung. Messwerte, Quellzustände,
+Heizbeobachtungen, Schaltbefehle, Umgebung und die Kennzeichnung Testbetrieb
+werden unverändert übernommen. Dass die aufgezeichnete Schützstellung nicht zur
+neu gerechneten Steuerung passt, ist dabei hinzunehmen.
+
+Nachträge des Nutzers (`--nachtraege`, je Sitzung etwa
+`{"name": "end_gang", "at": "…"}` für einen Gang, der von Hand hätte beendet
+werden sollen) gehen wie Bedienungen ein. Jede Sitzung behält ihre Kennung und
+erhält einen internen Herkunftseintrag `rebuild` mit dem Stand; das Panel zeigt
+ihn nicht. Die neue Datei ersetzt das Archiv; einen Umschalter auf das Original
+gibt es nicht, die alte Datei bleibt nur als Sicherung. Die Archivrevision liegt
+über der Quelle, damit geöffnete Ansichten neu laden. Ausgetauscht wird die
+Datei wie beim Bereinigen bei angehaltenem Home Assistant Core.
+
 ## Sitzungen löschen
 
 Administratoren können einzelne abgeschlossene oder durch Neustart unterbrochene
