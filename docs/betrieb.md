@@ -25,6 +25,14 @@ Eine vorläufige Gangerkennung
 bewahrt sie; ein bestätigter Gang beendet sie. Nach Gang und Kühlung kann sie
 neu entstehen ([Gangerkennung](gangmodell.md)).
 
+Im manuellen Modus gilt dieselbe Regel. Bereit wird dort nur im Sitzungsstand
+gespeichert; Phase **Manuell**, Ofen, Licht, Benachrichtigungen und
+Phasenanzeige bleiben davon unberührt. In beiden Betriebsarten hält der
+Sitzungsstand das aktuelle Bereit (`ready_at`) und jedes Erreichen und jede
+Rücknahme im Bereitverlauf (`ready_history`), den Sollwert im Sollverlauf
+(`target_history`). Ein im manuellen Modus erreichtes Bereit bleibt beim Wechsel
+zur Automatik bestehen und endet nur nach den Regeln oben.
+
 ## Heizpriorität
 
 Im Automatikbetrieb gilt, von oben nach unten:

@@ -110,6 +110,8 @@ class SessionInput:
     # Gelernter Nachlauf des Temperaturfühlers nach dem Türschließen (K-S21)
     door_sensor_lag: float | None = None
     program: Mapping | None = None  # K-S25
+    # Bereit-Verlauf (Zeit, gesetzt) aus ``ready_history``; None = nicht aufgezeichnet
+    readiness: tuple[tuple[float, bool], ...] | None = None
     upper_absolute_humidity: Series = field(init=False)
     lower_absolute_humidity: Series = field(init=False)
 
@@ -175,9 +177,40 @@ def _complete(values):
 
 
 def phase_intervals(session: SessionInput, name: str) -> list[tuple[float, float]]:
+    if not session.phases:
+        return []
     ends = [t for t, _ in session.phases[1:]] + [session.duration]
     return [(t, end) for (t, phase), end in zip(session.phases, ends, strict=True)
             if phase == name]
+
+
+def ready_intervals(session: SessionInput) -> list[tuple[float, float]]:
+    """Bereit-Intervalle bei eingeschaltetem Betrieb (K-S9, K-S10, K-S19).
+
+    Aus dem Bereit-Verlauf des Sitzungsstands, in Automatik und Handbetrieb;
+    ohne Verlauf (ältere Sitzungen) die Phase „bereit“ aus ``base_phases``.
+    """
+    if session.readiness is None:
+        return phase_intervals(session, "bereit")
+    intervals, since = [], None
+    for t, ready in sorted(session.readiness, key=lambda mark: mark[0]):
+        if ready and since is None:
+            since = t
+        elif not ready and since is not None:
+            intervals.append((since, t))
+            since = None
+    if since is not None:
+        intervals.append((since, session.duration))
+    clipped = [(max(a, 0.0), min(b, session.duration)) for a, b in intervals]
+    return _subtract(clipped, phase_intervals(session, "aus"))
+
+
+def first_ready(session: SessionInput) -> float | None:
+    """Erstes Bereit: aus dem Bereit-Verlauf, sonst erste Phase „bereit“."""
+    if session.readiness is None:
+        return next((t for t, phase in session.phases if phase == "bereit"), None)
+    intervals = ready_intervals(session)
+    return intervals[0][0] if intervals else None
 
 
 def target_at(session: SessionInput, t: float) -> float | None:
@@ -469,7 +502,7 @@ def control_in_ready(session: SessionInput) -> dict | None:
     if hysteresis is None or offset is None or any(None in gang for gang in gangs):
         return None
     window = _subtract(
-        phase_intervals(session, "bereit"),
+        ready_intervals(session),
         gangs + list(session.oven_cooling) + door_pairs(session),
     )
     points = [
@@ -535,7 +568,7 @@ def session_figures(session: SessionInput) -> dict:
     parameters = session.parameters
     manual = session.manual
     heating_start = min((a for a, _ in session.heating), default=None)
-    ready = next((t for t, phase in session.phases if phase == "bereit"), None)
+    ready = first_ready(session)
     warmup_end, warmup_kind = warmup_end_of(session, ready)
     heating_time = sum(min(b, session.duration) - max(a, 0) for a, b in session.heating)
     power = parameters.get("nominal_power_kw")
@@ -634,7 +667,7 @@ def session_figures(session: SessionInput) -> dict:
             if gang_time else None
         ),
         "oven_cooling": oven,
-        "control_in_ready": control_in_ready(session) if manual is False else None,
+        "control_in_ready": control_in_ready(session),
         "outside_temperature_c": outside_at(session.outside_temperature, 0.0),
         "doors": doors,
         "door_classes": door_summary(doors),
@@ -1056,4 +1089,9 @@ def session_input_from_archive(
         session_id=timeline.get("session_id"),
         door_sensor_lag=door_sensor_lag,
         program=session_program(session, configuration, phases),
+        readiness=(
+            tuple((_seconds(start, mark["at"]), mark["ready"])
+                  for mark in session["ready_history"])
+            if session.get("ready_history") is not None else None
+        ),
     )

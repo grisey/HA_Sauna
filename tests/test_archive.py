@@ -140,6 +140,51 @@ class ArchiveTests(unittest.IsolatedAsyncioTestCase):
             self.assertNotIn("state_history", payload["heating"])
             self.assertNotIn("target_history", payload)
 
+    async def test_manual_readiness_changes_are_archived_as_session_revisions(self):
+        p = Parameters({**parameters().as_dict(), "target_temperature_c": 80})
+        now = T0
+        runtime = SaunaRuntime(
+            Configuration(bindings(), p, control_mode="manual"), lambda: now,
+        )
+        runtime.archive = self.archive
+        c = runtime.controller
+        c.set_temperature(70, now)
+        c.set_heater_override(True, now)
+        runtime.persist()
+        session_id = c.session.session_id
+        raised = Parameters({**p.as_dict(), "target_temperature_c": 85})
+        for seconds, change in (
+            (1, lambda at: c.set_temperature(80, at)),
+            (2, lambda at: c.update_temperature_parameters(raised, at, explicit_target=True)),
+            (3, lambda at: c.set_temperature(85, at)),
+        ):
+            now = T0 + timedelta(seconds=seconds)
+            change(now)
+            runtime.persist()
+        await self.archive.flush()
+        with closing(sqlite3.connect(self.archive.path)) as db:
+            revisions = db.execute(
+                "SELECT received_at,json_extract(payload,'$.ready_at') FROM records "
+                "WHERE session_id=? AND kind='session' ORDER BY id", (session_id,),
+            ).fetchall()
+            phases = db.execute(
+                "SELECT json_extract(payload,'$.phase') FROM records "
+                "WHERE session_id=? AND kind='phase' ORDER BY id", (session_id,),
+            ).fetchall()
+        reached, raised_at, reached_again = (
+            (T0 + timedelta(seconds=seconds)).isoformat() for seconds in (1, 2, 3)
+        )
+        self.assertEqual(revisions, [
+            (T0.isoformat(), None), (reached, reached), (raised_at, None),
+            (reached_again, reached_again),
+        ])
+        self.assertEqual(phases, [("manuell",)])
+        stored = (await asyncio.to_thread(self.archive.read, session_id))["session"]
+        self.assertEqual(stored["ready_history"], [
+            {"at": reached, "ready": True}, {"at": raised_at, "ready": False},
+            {"at": reached_again, "ready": True},
+        ])
+
     async def test_energy_tail_and_metadata_cursor_preserve_original_boundaries(self):
         p = parameters()
         seconds = p.values["sensor_timeout_seconds"]

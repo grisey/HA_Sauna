@@ -5,8 +5,11 @@ from datetime import timedelta
 
 from test_foundation import T0, event, parameters, selected_occupancy
 
+from custom_components.ha_sauna.archive import plain
 from custom_components.ha_sauna.core.controller import Controller
 from custom_components.ha_sauna.core.display import phase_timer, start_availability
+from custom_components.ha_sauna.core.light_control import light_phase
+from custom_components.ha_sauna.core.models import ReadinessMark, TemperatureTargetMark
 from custom_components.ha_sauna.core.parameters import Parameters
 from custom_components.ha_sauna.core.presence import binary_presence
 from custom_components.ha_sauna.core.timeline import Kind
@@ -182,6 +185,119 @@ class ManualModeTests(unittest.TestCase):
         self.assertEqual(controller.session.timeline.gang_count, 1)
         self.assertTrue(controller.last_decision.heat)
         self.assertIsNone(controller.session.after_run)
+
+    def manual_target(self, controller, value, second):
+        controller.update_temperature_parameters(
+            Parameters({**controller.parameters.as_dict(), "target_temperature_c": value}),
+            at(second), explicit_target=True,
+        )
+
+    def test_manual_readiness_is_only_stored_at_the_first_setpoint_crossing(self):
+        # Same rule as automatic; in manual operation readiness is only stored.
+        controller = self.controller(target_temperature_c=80)
+        controller.set_temperature(70, at(0))
+        controller.set_heater_override(True, at(1))
+        consumer_events = len(controller.consumer_events)
+        observed = []
+        for second, temperature in (
+            (2, 79.9), (3, 80), (4, 80.9), (5, 81), (6, 79.5), (7, 79), (8, 80),
+        ):
+            controller.set_temperature(temperature, at(second))
+            observed.append((
+                controller.session.ready_at, controller.last_decision.heat,
+                controller.last_decision.reason, controller.phase,
+                light_phase(controller, at(second))[1],
+                phase_timer(controller, at(second))["kind"],
+                start_availability(controller, at(second))["message"],
+            ))
+        manual = ("manuell", "manual", "manual", "Ofen und Licht werden manuell bedient.")
+        self.assertEqual(observed, [
+            (None, True, "hysteresis_band", *manual),
+            (at(3), True, "hysteresis_band", *manual),
+            (at(3), True, "hysteresis_band", *manual),
+            (at(3), False, "temperature_reached", *manual),
+            (at(3), False, "hysteresis_band", *manual),
+            (at(3), True, "below_target", *manual),
+            (at(3), True, "hysteresis_band", *manual),
+        ])
+        self.assertEqual(plain(controller.session)["ready_at"], at(3).isoformat())
+        self.assertEqual(controller.session.ready_history, (ReadinessMark(at(3), True),))
+        self.assertEqual(
+            [mark.phase for mark in controller.session.base_phases], ["manuell"],
+        )
+        projection = controller.phase_projection(at(8))
+        self.assertEqual({item.phase for item in projection.intervals}, {"manuell"})
+        self.assertEqual(projection.readiness_pauses, ())
+        self.assertEqual(len(controller.consumer_events), consumer_events)
+
+    def test_manual_target_raise_withdraws_readiness_and_targets_are_recorded(self):
+        controller = self.controller(target_temperature_c=80)
+        controller.set_temperature(70, at(0))
+        controller.set_heater_override(True, at(1))
+        controller.set_temperature(80, at(2))
+        self.assertEqual(controller.session.ready_at, at(2))
+        self.manual_target(controller, 85, 3)
+        self.assertIsNone(controller.session.ready_at)
+        self.assertEqual(controller.phase, "manuell")
+        self.assertTrue(controller.last_decision.heat)
+        controller.set_temperature(85, at(4))
+        self.assertEqual(controller.session.ready_at, at(4))
+        # Lowering, or raising to at most the temperature, keeps readiness.
+        self.manual_target(controller, 82, 5)
+        self.manual_target(controller, 84, 6)
+        self.assertEqual(controller.session.ready_at, at(4))
+        self.assertEqual(controller.session.ready_history, (
+            ReadinessMark(at(2), True), ReadinessMark(at(3), False),
+            ReadinessMark(at(4), True),
+        ))
+        self.assertEqual(controller.session.target_history, (
+            TemperatureTargetMark(at(1), 80), TemperatureTargetMark(at(3), 85),
+            TemperatureTargetMark(at(5), 82), TemperatureTargetMark(at(6), 84),
+        ))
+
+    def test_manual_confirmed_gang_consumes_readiness_like_automatic(self):
+        controller = self.controller(target_temperature_c=80)
+        controller.set_temperature(70, at(0))
+        controller.set_heater_override(True, at(1))
+        controller.set_temperature(80, at(2))
+        controller.consume_occupancy_input(selected_occupancy(binary_presence(
+            "binary_sensor.presence", "on", at(3), at(3),
+        ), at(3)))
+        self.observe(controller, "entry-open", Kind.DOOR_OPEN, 4)
+        self.observe(controller, "entry-close", Kind.DOOR_CLOSE, 5)
+        self.assertIsNotNone(controller.session.timeline.active)
+        self.assertEqual(controller.session.ready_at, at(2))
+        self.observe(controller, "water", Kind.INFUSION, 6)
+        self.assertIsNone(controller.session.ready_at)
+        controller.set_temperature(81, at(7))
+        self.assertIsNone(controller.session.ready_at)
+        self.assertEqual(controller.phase, "saunagang")
+        self.observe(controller, "exit", Kind.DOOR_OPEN, 8)
+        controller.consume_occupancy_input(selected_occupancy(binary_presence(
+            "binary_sensor.presence", "off", at(9), at(9),
+        ), at(9)))
+        self.observe(controller, "ventilation", Kind.VENTILATION, 10)
+        self.assertEqual(controller.session.timeline.gang_count, 1)
+        self.assertIsNone(controller.session.after_run)
+        controller.set_temperature(80, at(11))
+        self.assertEqual(controller.session.ready_at, at(11))
+        self.assertEqual(controller.phase, "manuell")
+        self.assertEqual(controller.session.ready_history, (
+            ReadinessMark(at(2), True), ReadinessMark(at(6), False),
+            ReadinessMark(at(11), True),
+        ))
+
+    def test_manual_readiness_remains_after_switching_to_automatic(self):
+        controller = self.controller(target_temperature_c=80)
+        controller.set_temperature(70, at(0))
+        controller.set_heater_override(True, at(1))
+        controller.set_temperature(80, at(2))
+        controller.set_temperature(79.5, at(3))
+        controller.set_control_mode("automatic", at(4))
+        # No new rule: the readiness reached in manual operation stays.
+        self.assertEqual(controller.session.ready_at, at(2))
+        self.assertEqual(controller.phase, "bereit")
+        self.assertEqual(controller.session.ready_history, (ReadinessMark(at(2), True),))
 
     def test_external_heating_feedback_alone_does_not_begin_a_recording(self):
         controller = self.controller()

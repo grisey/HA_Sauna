@@ -90,6 +90,8 @@ Ofen-EIN aktiviert die Temperaturregelung um den am Instrument eingestellten
 Sollwert. Sie verwendet dieselben Hystereseabstände wie die Automatik, jedoch
 ohne Mindestheizzeit oder Heizpause. Ofen-AUS beendet die Regelung sofort.
 Gangheizung, Türhilfe, Kühlung und Lichtautomatik bleiben deaktiviert.
+Bereit und Sollwert werden wie in Automatik gespeichert, ohne Phase oder Ofen zu
+beeinflussen ([Bereitschaft](betrieb.md#aufheizen-und-bereitschaft)).
 Die umrandete Ofenwahl zeigt, ob die Regelung eingeschaltet ist; die Tastenfarbe
 zeigt weiterhin die tatsächliche Ofenrückmeldung.
 

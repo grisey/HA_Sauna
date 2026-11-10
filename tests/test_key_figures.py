@@ -205,6 +205,37 @@ class SessionFigureTests(unittest.TestCase):
         self.assertEqual((control["lowest_c"], control["lowest_at"]), (-2.0, 1000))
         self.assertEqual((control["highest_c"], control["highest_at"]), (2.5, 3000))
 
+    def test_ready_history_gives_ready_and_control_window_also_in_manual_operation(self):
+        figures = kf.session_figures(session(
+            phases=((0.0, "manuell"), (4000.0, "aus"), (4200.0, "manuell"), (7000.0, "aus")),
+            readiness=((1000.0, True), (2500.0, False), (3000.0, True)),
+            gangs=(kf.GangInput(2500.0, 2800.0),),
+            doors=(("door_open", 2400.0), ("door_close", 2500.0)),
+        ))
+        self.assertTrue(figures["manual"])
+        self.assertEqual(figures["ready_at"], 1000.0)
+        self.assertEqual((figures["warmup_end_at"], figures["warmup_end_kind"]), (1000.0, "ready"))
+        control = figures["control_in_ready"]
+        # Bereit bei eingeschaltetem Betrieb, ohne Gang und offene Tür.
+        self.assertEqual(control["window_seconds"], 1400 + 1000 + 2800)
+        self.assertEqual((control["mean_c"], control["within"]), (0.0, 1.0))
+
+    def test_ready_history_replaces_phase_ready_and_agrees_with_it_in_automatic(self):
+        temperature = series([(1000, 78), (2000, 80), (3000, 82.5), (4000, 80)])
+        keys = ("ready_at", "warmup_end_at", "warmup_end_kind", "warmup_seconds",
+                "control_in_ready")
+        phases = kf.session_figures(session(upper_temperature=temperature))
+        history = kf.session_figures(session(upper_temperature=temperature,
+                                             readiness=((1000.0, True),)))
+        self.assertEqual({k: history[k] for k in keys}, {k: phases[k] for k in keys})
+        never = kf.session_figures(session(readiness=()))
+        self.assertIsNone(never["ready_at"])
+        self.assertIsNone(never["control_in_ready"])
+        # Ohne Phasen und ohne Verlauf (ältere Sitzungen) gibt es kein Bereit.
+        without = kf.session_figures(session(phases=()))
+        self.assertIsNone(without["ready_at"])
+        self.assertIsNone(without["control_in_ready"])
+
     def test_targets_until_operation_off(self):
         figures = kf.session_figures(session(targets=((0.0, 85.0), (3000.0, 88.0),
                                                       (7000.0, 90.0))))
@@ -568,6 +599,14 @@ class ArchiveInputTests(unittest.TestCase):
         self.assertEqual(figures["program"], {"kind": "constant"})
         self.assertEqual(figures["parameter_origin"], "session")
         self.assertIsNone(figures["outside_temperature_c"])
+
+    def test_ready_from_the_stored_ready_history_else_from_phases(self):
+        self.write()
+        self.assertEqual(self.archive.key_figures()[0]["figures"]["ready_at"], 1000.0)
+        payload = self.payload()
+        payload["ready_history"] = [{"at": self.at(900), "ready": True}]
+        self.write(payload=payload, updated="u2")
+        self.assertEqual(self.archive.key_figures()[0]["figures"]["ready_at"], 900.0)
 
     def test_cache_until_a_new_session_revision(self):
         self.write()

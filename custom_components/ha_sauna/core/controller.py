@@ -27,6 +27,7 @@ from .models import (
     Deadline,
     Energy,
     LightAfterRun,
+    ReadinessMark,
     Session,
     TemperatureTargetMark,
     ThermostatState,
@@ -591,7 +592,13 @@ class Controller:
         self._evaluate(utc(at))
 
     def _latch_readiness(self, at, *, previous_target=...):
-        """Remember the first permitted measurement at the current setpoint."""
+        """Remember the first permitted measurement at the current setpoint.
+
+        The same rule applies in automatic and manual operation. Every
+        latch and release is also kept in ``ready_history``. In manual
+        operation readiness is only stored in the session state: phase,
+        heater, light, notifications and the phase display do not read it.
+        """
         session = self._session
         target = self.target_temperature
         temperature = self.temperature
@@ -608,13 +615,12 @@ class Controller:
             or not isfinite(temperature)
             or temperature < target
         ):
-            self._clear_readiness()
+            self._clear_readiness(at)
             session = self._session
         if (
             session is None
             or session.ready_at is not None
             or not session.operation_enabled
-            or self.control_mode != "automatic"
             or self.protection
             or self.inhibits
             or (
@@ -631,11 +637,18 @@ class Controller:
             or temperature < target
         ):
             return
-        self._session = replace(session, ready_at=at)
+        self._session = replace(
+            session, ready_at=at,
+            ready_history=session.ready_history + (ReadinessMark(at, True),),
+        )
 
-    def _clear_readiness(self):
-        if self._session is not None and self._session.ready_at is not None:
-            self._session = replace(self._session, ready_at=None)
+    def _clear_readiness(self, at):
+        session = self._session
+        if session is not None and session.ready_at is not None:
+            self._session = replace(
+                session, ready_at=None,
+                ready_history=session.ready_history + (ReadinessMark(at, False),),
+            )
 
     @property
     def acting_gang(self):
@@ -1231,7 +1244,7 @@ class Controller:
                 or previous.timeline.active.confirmation == Confirmation.PROVISIONAL
             )
         ):
-            self._clear_readiness()
+            self._clear_readiness(at)
         if (active is None or active.confirmation == Confirmation.CONFIRMED
                 or active.recognition_kind in DIRECT_SIGNALS):
             # The confirmation deadline belongs to the proxy method. A

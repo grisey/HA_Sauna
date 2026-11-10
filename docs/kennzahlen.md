@@ -14,7 +14,7 @@ die Oberfläche setzt nur Einheit, Dezimalkomma und Zeitformat. Die Nummern
 | --- | --- |
 | Messwerte | Temperatur und relative Feuchte oben und unten der Sitzung mit ihrer Empfangszeit. Absolute Feuchte aus Temperatur und relativer Feuchte derselben Position. |
 | Erkennung | Türvorgänge und Aufgüsse aus den archivierten Erkennungen, Aufgussende aus `infusion_update`, Gänge aus der Gangprojektion der Zeitleiste ([Gangmodell](gangmodell.md)). |
-| Steuerung | Letzter Sitzungsstand: Phasen, Sollverlauf, Heizintervalle, Energie, Ofenkühlungen. |
+| Steuerung | Letzter Sitzungsstand: Phasen, Bereitverlauf, Sollverlauf, Heizintervalle, Energie, Ofenkühlungen. |
 | Parameter | Gespeicherte Konfiguration der Sitzung. Fehlt sie, gilt die der nächsten späteren Sitzung; die Herkunft steht als `parameter_origin` dabei. Die heutige Einstellung gilt nicht rückwirkend. |
 | Einstellungen | **Kabinenvolumen** und **Strompreis** aus der aktuellen Integrationskonfiguration ([Einstellungen](parameter.md)). |
 | Gelernte Größe | Nachlauf des Temperaturfühlers nach dem Türschließen (siehe unten). |
@@ -34,6 +34,14 @@ kommt. Fehlende Daten ergeben einen fehlenden Wert, nicht 0.
 | Aufheizen (K-S9 bis K-S11, K-S15, K-S16, K-S22, K-S23) | Vom ersten Heizintervall bis zum ersten Bereit oder zum Öffnen der Eintrittstür des ersten Gangs, je nachdem was früher kommt; Art, Temperatur und Soll am Ende, Energie davor und danach, Türöffnungen, Anstieg je kWh. |
 | Anlage (K-S12 bis K-S14, K-S17 bis K-S19, K-S24, K-S25) | Heizzeit und Heizanteil, Energie mit Gegenprobe und Kosten, Heizen in den Gängen, Ofenkühlungen mit auslösendem Gang, Regelung im Bereit, Sollwerte und Programmart. |
 | Türvorgänge (K-S21) | Alle Paare Öffnen → Schließen der Sitzung mit Klasse Eintritt, Austritt, Schlusslüften oder sonstige; offen, Verlust und Wiedererreichen. |
+
+Bereit stammt aus dem Bereitverlauf des Sitzungsstands (`ready_history`), in
+Automatik und im manuellen Modus
+([Bereitschaft](betrieb.md#aufheizen-und-bereitschaft)); gezählt wird es nur bei
+eingeschaltetem Betrieb. Ältere Sitzungen ohne diesen Verlauf verwenden die
+Phase Bereit aus `base_phases`; im manuellen Modus haben sie keine, ihr Aufheizen
+endet beim ersten Gang. Die Regelung im Bereit verwendet dieselben
+Bereit-Intervalle.
 
 Eintritt ist der Türvorgang, dessen Schließen genau der Gangbeginn ist;
 Austritt die letzte Öffnung im Gang; Schlusslüften eine Öffnung nach dem Ende

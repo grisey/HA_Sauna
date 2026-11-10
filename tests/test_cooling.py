@@ -85,6 +85,10 @@ class CoolingTests(unittest.TestCase):
         self.assertIsNone(c.session.ready_at)
         c.set_temperature(90, at(5))
         self.assertIsNone(c.session.ready_at)
+        self.assertEqual(
+            [(mark.at, mark.ready) for mark in c.session.ready_history],
+            [(at(1), True), (at(4), False)],
+        )
 
     def test_actual_feedback_separate_from_demand_and_local_reset(self):
         c = controller()

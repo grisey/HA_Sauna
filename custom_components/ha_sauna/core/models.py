@@ -346,6 +346,19 @@ class TemperatureTargetMark:
 
 
 @dataclass(frozen=True)
+class ReadinessMark:
+    """Setzen (``ready``) oder Zurücknehmen von Bereit zum Zeitpunkt."""
+
+    at: datetime
+    ready: bool
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.ready, bool):
+            raise TypeError("Bereitmarke benötigt einen Wahrheitswert")
+        object.__setattr__(self, "at", utc(self.at))
+
+
+@dataclass(frozen=True)
 class Session:
     """Besitzt Gangmodell, Heizzeit und Fristen; Konfiguration bleibt außerhalb."""
 
@@ -378,10 +391,14 @@ class Session:
     active_gang_temperature_c: float | None = None
     active_gang_temperature_id: str | None = None
     target_history: tuple[TemperatureTargetMark, ...] = ()
+    # Jedes Setzen und Zurücknehmen von ``ready_at``, in beiden Betriebsarten.
+    ready_history: tuple[ReadinessMark, ...] = ()
 
     def __post_init__(self) -> None:
         if not isinstance(self.target_history, tuple):
             raise ValueError("Sollverlauf benötigt Sollwertmarken als Tupel")
+        if not isinstance(self.ready_history, tuple):
+            raise TypeError("Bereitverlauf benötigt Bereitmarken als Tupel")
         purposes = set()
         for deadline in self.deadlines:
             if deadline.session_id != self.session_id:
