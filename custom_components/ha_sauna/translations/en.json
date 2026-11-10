@@ -212,7 +212,6 @@
           "monitoring": "Überwachung",
           "recognition": "Präsenz und Erkennung",
           "technical": "Technik",
-          "field_standards": "Standards und Werkseinstellungen",
           "rename_entity": "Entität umbenennen",
           "cleanup_entities": "Entitäten bereinigen"
         }
@@ -690,30 +689,6 @@
           "recipients": "Registrierte Benachrichtigungsziele"
         },
         "submit": "Speichern und zurück"
-      },
-      "field_standards": {
-        "title": "Standards und Werkseinstellungen",
-        "description": "{context}\n\nÄnderungen werden als Vorschau angezeigt und erst nach Bestätigung übernommen.",
-        "data": {
-          "action": "Aktion"
-        },
-        "submit": "Weiter"
-      },
-      "field_standard_scope": {
-        "title": "Umfang auswählen",
-        "description": "{action}\n\nDie Vorschau enthält alle Einstellungen im gewählten Umfang.",
-        "data": {
-          "scope": "Umfang"
-        },
-        "submit": "Vorschau prüfen"
-      },
-      "field_standard_confirm": {
-        "title": "Änderung prüfen und bestätigen",
-        "description": "{action}\n\n| Einstellung | Werkseinstellung | Standard (sonst Werkseinstellung) | Standard nach Bestätigung | Aktueller Wert | Wert nach Bestätigung | Standard gespeichert vorher → nachher |\n| --- | --- | --- | --- | --- | --- | --- |\n{preview}\n\nStandard gespeichert: ✓ ja, — nein, es gilt die Werkseinstellung.\n\nBestätigen übernimmt die oben gezeigte Änderung.",
-        "data": {
-          "decision": "Entscheidung"
-        },
-        "submit": "Ausführen"
       }
     }
   },
@@ -733,22 +708,7 @@
     "settings_action": {
       "options": {
         "save": "Speichern und zurück",
-        "field_standards": "Standards und Werkseinstellungen…",
         "discard": "Entwurf verwerfen"
-      }
-    },
-    "field_standard_action": {
-      "options": {
-        "overwrite_standard": "Formularwert als Standard speichern",
-        "restore_standard": "Standard wiederherstellen",
-        "restore_factory": "Werkseinstellungen wiederherstellen",
-        "cancel": "Zurück ohne Änderung"
-      }
-    },
-    "field_standard_decision": {
-      "options": {
-        "confirm": "Bestätigen",
-        "cancel": "Abbrechen"
       }
     }
   }

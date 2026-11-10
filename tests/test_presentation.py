@@ -199,7 +199,8 @@ class PresentationTests(unittest.TestCase):
                 expected = catalog[definition.key]
                 self.assertEqual(definition.label, expected["label"])
                 self.assertEqual(definition.description, expected["description"])
-                self.assertTrue(definition.label and definition.description and definition.group)
+                self.assertTrue(definition.label and definition.description)
+                self.assertTrue(definition.settings_group)
 
     def test_integration_parameter_translations_follow_catalog_ownership_and_text(self):
         root = Path(__file__).resolve().parents[1] / "custom_components/ha_sauna"

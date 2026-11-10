@@ -493,14 +493,13 @@ class PackagingTests(unittest.TestCase):
             set(strings["options"]["step"]),
             {"init", "bindings", "binding_entities", "name", "rename_entity",
              "rename_entity_select", "rename_entity_edit", "cleanup_entities", "cleanup_empty",
-             "notification_user", "notification_targets", "field_standards",
-             "field_standard_scope", "field_standard_confirm",
+             "notification_user", "notification_targets",
              *areas, *(f"parameters_{key}" for key in subgroups)},
         )
         self.assertEqual(
             set(strings["options"]["step"]["init"]["menu_options"]),
             {"bindings", "name", "rename_entity", "cleanup_entities",
-             "notification_user", "field_standards", *areas},
+             "notification_user", *areas},
         )
         for scope, step in (("config", "entities"), ("options", "binding_entities")):
             form = strings[scope]["step"][step]

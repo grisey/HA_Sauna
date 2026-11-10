@@ -235,7 +235,6 @@ class DefaultsTests(unittest.TestCase):
             [d["key"] for d in sorted(section("parameters"), key=lambda d: d["order"])],
         )
         door = BY_KEY["door_open_drop_c"]
-        self.assertTrue(door.expert)
         self.assertEqual(door.settings_group, "recognition")
         self.assertEqual(door.step, "any")
         self.assertNotIn(

@@ -116,35 +116,10 @@ _LEGACY_PARAMETER_KEYS = frozenset(
         "vent_drop_lower",
         "vent_absolute_humidity_loss_percent",
         "vent_hold_seconds",
-        "curve_huber_delta",
-        "curve_max_candidates",
-        "curve_max_points",
-        "curve_min_side_samples",
-        "curve_original_background_residual",
-        "curve_original_background_slope",
-        "curve_original_continuation_contrast",
-        "curve_original_gap_humidity_lower_seconds",
-        "curve_original_gap_humidity_upper_seconds",
-        "curve_original_gap_temperature_lower_seconds",
-        "curve_original_gap_temperature_upper_seconds",
-        "curve_original_kink_factor",
-        "curve_original_kink_history_windows",
-        "curve_original_new_infusion_contrast",
-        "curve_original_noise_humidity_lower",
-        "curve_original_noise_humidity_upper",
-        "curve_original_noise_temperature_lower",
-        "curve_original_noise_temperature_upper",
-        "curve_original_open_contrast",
-        "curve_original_samples",
-        "curve_original_significance",
-        "curve_robust_iterations",
-        "curve_window_seconds",
         "door_humidity_seconds",
         "door_window_seconds",
         "grid_seconds",
-        "humidity_change_absolute_tolerance",
         "infusion_window_seconds",
-        "median_seconds",
         "person_step_seconds",
         "strong_hold_seconds",
         "strong_humidity_lower",
@@ -761,8 +736,6 @@ def validate_catalog(catalog):
         "minimum",
         "integer",
         "description",
-        "group",
-        "expert",
         "step",
         "number_step",
         "settings_group",
@@ -808,10 +781,10 @@ def validate_catalog(catalog):
             section_keys.add(key)
             if spec["configuration_surface"] not in {"catalog", "integration", "panel"}:
                 raise ValueError(f"defaults.json: invalid configuration surface for {key}")
-            for name in ("label", "unit", "description", "group"):
+            for name in ("label", "unit", "description"):
                 if not isinstance(spec[name], str) or not spec[name]:
                     raise ValueError(f"defaults.json: invalid {key}.{name}")
-            for name in ("allow_zero", "optional", "integer", "expert"):
+            for name in ("allow_zero", "optional", "integer"):
                 if not isinstance(spec[name], bool):
                     raise ValueError(f"defaults.json: invalid {key}.{name}")  # noqa: TRY004 - uniform invalid-catalog ValueError contract.
             if spec["optional"] and key not in _OPTIONAL_PARAMETER_KEYS:
@@ -908,8 +881,6 @@ def validate_catalog(catalog):
                 raise ValueError(f"defaults.json: invalid divisor references for {key}")
             if values[divisor] <= 0 or values[key] % values[divisor]:
                 raise ValueError(f"defaults.json: {key} must be a multiple of {divisor}")
-    if values["curve_original_samples"] * 2 > values["curve_max_points"]:
-        raise ValueError("defaults.json: curve_max_points must fit two original sample windows")
     if values["light_night_elevation_degrees"] >= values["light_day_elevation_degrees"]:
         raise ValueError("defaults.json: night elevation must be below day elevation")
     instance = catalog["instance"]

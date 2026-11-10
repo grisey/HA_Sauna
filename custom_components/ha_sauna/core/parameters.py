@@ -31,8 +31,6 @@ class ParameterDefinition:
     minimum: float | None
     integer: bool
     description: str
-    group: str
-    expert: bool
     step: float | str
     number_step: float
     settings_group: str
@@ -92,6 +90,32 @@ LEGACY_PARAMETER_KEYS = frozenset(
         "overtemperature_minutes",
         "person_wait_minutes",
         "safety_temperature_c",
+        # E2a (K1): Größen der früheren Kurvenerkennung ohne Verbraucher.
+        "curve_huber_delta",
+        "curve_max_candidates",
+        "curve_max_points",
+        "curve_min_side_samples",
+        "curve_original_background_residual",
+        "curve_original_background_slope",
+        "curve_original_continuation_contrast",
+        "curve_original_gap_humidity_lower_seconds",
+        "curve_original_gap_humidity_upper_seconds",
+        "curve_original_gap_temperature_lower_seconds",
+        "curve_original_gap_temperature_upper_seconds",
+        "curve_original_kink_factor",
+        "curve_original_kink_history_windows",
+        "curve_original_new_infusion_contrast",
+        "curve_original_noise_humidity_lower",
+        "curve_original_noise_humidity_upper",
+        "curve_original_noise_temperature_lower",
+        "curve_original_noise_temperature_upper",
+        "curve_original_open_contrast",
+        "curve_original_samples",
+        "curve_original_significance",
+        "curve_robust_iterations",
+        "curve_window_seconds",
+        "humidity_change_absolute_tolerance",
+        "median_seconds",
     }
 )
 # Current settings and read-compatibility metadata are deliberately separate.

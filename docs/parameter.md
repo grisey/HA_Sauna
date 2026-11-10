@@ -17,7 +17,7 @@ verwenden dieselben Bereiche in derselben Reihenfolge.
 | **Überwachung** | **Messwerte** (Höchstalter); **Schaltbestätigung und Schutzabschaltung**. | Integrationskonfiguration |
 | **Präsenz und Erkennung** | **Präsenzsensor** (Wartezeiten bei Ausfall und Rückkehr); **Gangbestätigung** beim Verfahren aus Temperatur und Feuchte. | Integrationskonfiguration |
 | **Benachrichtigungen** | Testnachricht, Anlässe ein und aus, Zeitschaltuhr und Übertemperatur der [Benachrichtigungen](benachrichtigungen.md#einstellungen). | Panel |
-| **Darstellung** | Instrumente, Farben, Anzeigeskalen, Seitengrößen in den Details, Zoom und Verschieben im Verlauf, Nachkommastellen. | Panel |
+| **Darstellung** | Instrumente, Farben, Anzeigeskalen, Seitengrößen in den Details, Nachkommastellen. | Panel |
 | **Persönlich** | Sauna als Startseite des aktuellen Home-Assistant-Profils. | Panel |
 | **Daten und Wartung** | Archiv, [Lernsitzungen](erkennung.md#gelernte-größen-und-nachlernen), Protokollierung, **Standards für alle Bereiche**. | Panel |
 | **Technik** | Aufheizschätzung, Archiv und Übertragung, Laufzeit, Toleranzen und weitere feste Werte; im Panel eingeklappt. | Integrationskonfiguration; feste Werte nur im Katalog |
@@ -27,8 +27,8 @@ Start** ohne Temperaturtasten, **Benachrichtigungen** ohne Änderungsmöglichkei
 sowie **Persönlich**.
 
 Die Integrationskonfiguration enthält außerdem **Saunaname**, **Geräte und
-Erkennungsverfahren**, **Benachrichtigungsempfänger**, **Standards und
-Werkseinstellungen**, **Entität umbenennen** und **Entitäten bereinigen**
+Erkennungsverfahren**, **Benachrichtigungsempfänger**, **Entität umbenennen**
+und **Entitäten bereinigen**
 ([Einrichtung](einrichtung.md)). In der Steuerungsansicht werden die aktuelle
 Temperaturwahl und die vorübergehende Ofen- oder Lichtwahl bedient. **Details**
 enthält für Administratoren außer dem [Kalibrierstart](kalibrierung.md#start-und-abbruch)
@@ -37,8 +37,9 @@ keine Einstellungen.
 Jeder veränderbare dauerhafte Wert hat genau eine Einstellungsstelle. Die
 Bereiche der Integrationskonfiguration erscheinen im Panel als Übersicht mit den
 aktiven Werten, ihren Erklärungen und dem Hinweis **Ändern unter Sauna
-konfigurieren**; Eingabefelder gibt es dort nicht. Bereichs- und Feldmenüs für
-Standards und Werkseinstellungen stehen an beiden Stellen zur Verfügung.
+konfigurieren**; Eingabefelder gibt es dort nicht. Standards und
+Werkseinstellungen werden für alle Bereiche im Panel verwaltet: je Feld über **⋯**,
+je Bereich und für alle Bereiche.
 
 Die Einstellungen für Temperatur, Licht, Anlage, Steuerung, Überwachung und
 Erkennung gelten unmittelbar und bleiben nach einem Neustart erhalten. Sie und
@@ -72,9 +73,9 @@ ihre Einstellungsstelle fest:
 
 | Einstellungsstelle | Vorgaben |
 | --- | --- |
-| `catalog` – fest im Katalog | Auswertungsraster und Laufzeittakt; Seiten-, Cache- und Übertragungsgrößen des Archivs; numerische Toleranzen und interne Aufheizschätzungsfaktoren; technische Anzeige-, Geometrie- und Gestaltungsvorgaben. Im Panel unter **Technik** als **Fest vorgegeben** aufgeführt. |
+| `catalog` – fest im Katalog | Auswertungsraster und Laufzeittakt; Seiten-, Cache- und Übertragungsgrößen des Archivs; numerische Toleranzen und interne Aufheizschätzungsfaktoren; Zoom und Verschieben im Verlauf; technische Anzeige-, Geometrie- und Gestaltungsvorgaben. Feste Parameter sind im Panel unter **Technik** als **Fest vorgegeben** aufgeführt. |
 | `integration` – Integrationskonfiguration | Temperatur-, Bedien-, Licht-, Anlagen-, Steuerungs-, Überwachungs- und Erkennungsvorgaben sowie Messkontext und Beobachtungszeit der Aufheizschätzung. |
-| `panel` – Einstellungsmenü | Programm- und Startvorgaben, Temperaturtasten, Verlauf-Aktualisierung, Seitengrößen der Detailansicht, Nachkommastellen, Zoomverhalten sowie ausgewählte Abstände, Höhen und Rundungen. |
+| `panel` – Einstellungsmenü | Programm- und Startvorgaben, Temperaturtasten, Verlauf-Aktualisierung, Seitengrößen der Detailansicht, Nachkommastellen sowie ausgewählte Abstände, Höhen und Rundungen. |
 
 Kataloggebundene Vorgaben werden beim Laden aus dem Katalog bezogen. Die
 gespeicherte Instanzkonfiguration enthält die veränderbaren Vorgaben. Eine
@@ -91,7 +92,9 @@ archivierten Sitzungen.
 ### Darstellung und Aktualisierung
 
 Unter **Darstellung** sind Instrumente, Farben, Anzeigeskalen, Seitengrößen in
-den Details, Zoom und Verschieben im Verlauf sowie Nachkommastellen gruppiert.
+den Details und Nachkommastellen gruppiert. Zoom und Verschieben im Verlauf
+folgen festen Werten aus dem Katalog; früher gespeicherte Werte werden beim
+Laden verworfen.
 Die Einstellungen gelten für die jeweilige Sauna. **Darstellung speichern**,
 **Änderungen verwerfen** und **Standards für diesen Bereich** verwenden denselben
 vollständigen Einstellungsstand.
@@ -169,7 +172,7 @@ HA-Aktualisierungszeit bleiben getrennt.
 | --- | --- |
 | Solltemperaturen | Gemeinsame Grenzen für direkte Wahl, Programme und Tastervorgabe. Eingaben und Zwischenstufen werden auf ganze Grad gerundet; ab einem halben Grad aufwärts. |
 | Helligkeitsskala | Muss dem konfigurierten Maximalwert des Lichtgeräts entsprechen, damit eigene Befehle und Geräterückmeldungen zusammenpassen. |
-| Erkennung | Ohne einstellbare Schwellen: Die Größen des Zustandsmodells stammen aus bewerteten Aufzeichnungen und werden auf Anforderung aus den Belegen freigegebener Sitzungen nachgelernt ([Erkennung](erkennung.md#gelernte-größen-und-nachlernen)). Gespeicherte Werte der früheren Kurvenerkennung bleiben lesbar, wirken aber nicht. |
+| Erkennung | Ohne einstellbare Schwellen: Die Größen des Zustandsmodells stammen aus bewerteten Aufzeichnungen und werden auf Anforderung aus den Belegen freigegebener Sitzungen nachgelernt ([Erkennung](erkennung.md#gelernte-größen-und-nachlernen)). Gespeicherte Schwellen der früheren Erkennung bleiben in archivierten Sitzungen lesbar, wirken aber nicht. Größen der früheren Kurvenerkennung werden beim Laden verworfen. |
 | Höchstalter der Messwerte | Muss die regulären Meldeabstände der jeweiligen Quelle abdecken. |
 | Sonnenstand für das Licht | Der Nachtgrenzwert muss unter dem Tagesgrenzwert liegen; dazwischen wird die Helligkeit überblendet. |
 | Aufheizschätzung | Mindestzahl und Zeitraum der Messpunkte, Rausch- und Abfallgrenzen sowie Glättungs- und Bestätigungszeiträume bestimmen, wann und wie eine verbleibende Aufheizzeit ausgewiesen wird. |
@@ -199,7 +202,8 @@ Jeder Bereich zeigt die drei Stufen gleich: Weicht der aktive Wert vom
 gespeicherten Standard ab, steht unter dem Feld **Abweichend vom Standard** mit
 dessen Wert; ohne gespeicherten Standard **Abweichend von der Werkseinstellung**.
 Den Vergleich liefert die Integration. Die Integrationskonfiguration nennt die
-abweichenden Felder eines Formulars unter **Abweichend**. Das Feldmenü **⋯** zeigt
+abweichenden Felder eines Formulars unter **Abweichend**; die Standards selbst
+werden im Panel verwaltet. Das Feldmenü **⋯** zeigt
 Werkseinstellung, gespeicherten Standard, aktiven Wert und Entwurf. Im Panel
 nennt **Nicht gespeichert** die Felder mit Entwurf.
 

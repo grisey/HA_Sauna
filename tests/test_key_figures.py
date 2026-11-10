@@ -823,6 +823,23 @@ class ArchiveInputTests(unittest.TestCase):
                 [(kind, at, json.dumps(data)) for kind, at, data in rows],
             )
 
+    def test_retired_curve_values_in_archived_configuration_keep_key_figures(self):
+        # E2a (K1): sessions archived with the former curve values stay readable.
+        from test_retired_settings import RETIRED
+
+        self.write()
+        expected = self.archive.key_figures(volume_m3=6.0, price_eur_per_kwh=0.3)
+        with closing(sqlite3.connect(self.path)) as db, db:
+            db.execute("DELETE FROM records")
+        payload = self.payload()
+        payload["configuration"]["parameters"] = {
+            **PARAMETERS, **dict.fromkeys(RETIRED, 3.0),
+        }
+        self.write(payload=payload, updated="u2")
+        figures = self.archive.key_figures(volume_m3=6.0, price_eur_per_kwh=0.3)
+        self.assertEqual(figures[0]["figures"], expected[0]["figures"])
+        self.assertEqual(figures[0]["figures"]["gang_count"], 1)
+
     def test_archived_session_inputs(self):
         self.write()
         entry = self.archive.key_figures(volume_m3=6.0, price_eur_per_kwh=0.3)[0]
