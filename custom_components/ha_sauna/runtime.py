@@ -946,6 +946,12 @@ class SaunaRuntime:
                 trace_at=trace_at,
                 door_close_evidence=detection.door_close_evidence,
             )
+            # L-B4-4: state, next best explanation and their ratio at the decision,
+            # read from the recognizer's decision log like for rejected candidates.
+            explained = (
+                recognition_archive.decision(detection, recognizer.detections, recognizer.decisions)
+                if self.archive and origin is None else None
+            ) or {}
             try:
                 self._process_event(event, defer_confirmation=True, recognition_at=trace_at)
             except ValueError as error:
@@ -958,6 +964,7 @@ class SaunaRuntime:
                 if self.archive:
                     self.archive.append("detection_rejected", received_at, {
                         "event": event, "reason": str(error), "probability": detection.probability,
+                        **explained,
                     }, session_id)
                 return
             if detection.kind == Kind.INFUSION:
@@ -974,6 +981,7 @@ class SaunaRuntime:
                     "channels": detection.channels,
                     "trace_at": trace_at,
                     "probability": detection.probability,
+                    **explained,
                     **({"origin": origin} if origin is not None else {}),
                 }, session_id)
 

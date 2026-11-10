@@ -9,9 +9,10 @@ Gangmodell und Archiv bleiben unverändert.
 K-E1: Gänge, Aufgüsse (in Gängen und außerhalb), Türvorgänge.
 K-E2: verworfene Kandidaten wie in den Kennzahlen (``key_figures.rejected_summary``).
 K-E3: je Ereignis Zeitpunkt, Entscheidungszeit (Zeitpunkt bis Entscheidung) und
-die gespeicherte Sicherheit. Für übernommene Ereignisse speichert das Archiv die
-Wahrscheinlichkeit bei der Entscheidung, nicht das Verhältnis zur nächstbesten
-Erklärung; für verworfene Kandidaten ist das Verhältnis gespeichert.
+die gespeicherte Sicherheit: für Tür auf, Tür zu und Aufguss wie für verworfene
+Kandidaten Zustand, nächstbeste Erklärung und deren Verhältnis (L-B4-4), dazu
+die Wahrscheinlichkeit bei der Entscheidung. Ältere Sitzungen speichern für
+übernommene Ereignisse nur die Wahrscheinlichkeit.
 """
 
 from __future__ import annotations
@@ -206,6 +207,10 @@ def recognition_control(
             "decided_at": _iso(event.get("detected_at")),
             "decision_seconds": _seconds(event.get("effective_at"), event.get("detected_at")),
             "probability": record.get("probability") if record else None,
+            "state": STATE_LABELS.get(record.get("state"), record.get("state")) if record else None,
+            "against": (STATE_LABELS.get(record.get("against"), record.get("against"))
+                        if record else None),
+            "ratio": record.get("ratio") if record else None,
             "meaning": meaning(event),
         })
     events.sort(key=lambda item: item["effective_at"] or "")

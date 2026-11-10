@@ -51,6 +51,13 @@ enthalten sie nicht.
 Daraus stammen die Außentemperatur (K-S20) und die verworfenen Kandidaten
 (K-E2) der [Kennzahlen](kennzahlen.md).
 
+Erkennungsmeldungen (`detection`, `detection_rejected`) zu Tür auf, Tür zu und
+Aufguss tragen neben der Wahrscheinlichkeit (`probability`) wie
+`recognition_rejected` den Zustand, die nächstbeste Erklärung und deren
+Verhältnis bei der Entscheidung (`state`, `against`, `ratio`), entnommen dem
+[Entscheidungsprotokoll](erkennung.md#entscheidung) der Erkennung. Ältere
+Sitzungen enthalten nur die Wahrscheinlichkeit.
+
 ## Sitzungen exportieren
 
 **Archiv als ZIP herunterladen** unter **Einstellungen → Daten und Wartung**

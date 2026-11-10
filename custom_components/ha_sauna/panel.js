@@ -16752,6 +16752,15 @@ class SaunaPanel extends HTMLElement {
         item.ratio == null
           ? "nicht gespeichert"
           : `${esc(item.state || "–")} ${this.num(item.ratio, this.preference("value_precision"))}-mal so wahrscheinlich wie ${esc(item.against || "–")}`,
+      // B4f (L-B4-4): übernommene Ereignisse wie verworfene Kandidaten mit dem
+      // Verhältnis zur nächstbesten Erklärung; ältere Sitzungen mit der
+      // gespeicherten Wahrscheinlichkeit.
+      safety = (item) =>
+        item.ratio != null
+          ? ratio(item)
+          : item.probability == null
+            ? "nicht gespeichert"
+            : `Wahrscheinlichkeit bei der Entscheidung ${percent(item.probability)}`,
       summary = control.summary || {},
       rejected = summary.rejected_candidates,
       events = (control.events || []).filter((event) => inWindow(event.effective_at)),
@@ -16763,12 +16772,12 @@ class SaunaPanel extends HTMLElement {
       : '<p class="muted" data-recognition-recorded="false">Für diese Sitzung ist kein Zustandsverlauf gespeichert. Die Ereignisse stehen ohne Zustandsspur; verworfene Kandidaten sind nicht gespeichert.</p>';
     const summaryMarkup = `<dl class="recognition-summary"><dt>Gänge</dt><dd>${count(summary.gangs)}</dd><dt>Aufgüsse</dt><dd>${count(summary.infusions)} <span class="muted">· ${count(summary.infusions_in_gangs)} in Gängen, ${count(summary.infusions_outside)} außerhalb</span></dd><dt>Türvorgänge</dt><dd>${count(summary.door_operations)}</dd><dt>Verworfene Kandidaten</dt><dd>${rejected ? `${count(rejected.rejected)} <span class="muted">· ${count(rejected.rejected_in_episodes)} in Episoden, ${count(rejected.rejected_single)} einzeln; ${count(rejected.taken_as_door)} als Türvorgang übernommen</span>` : "nicht gespeichert"}</dd><dt>Aufgehobene vorläufige Gänge</dt><dd>${count(summary.retracted_gangs)}</dd></dl>`;
     const selectedMarkup = selected
-      ? `<dl class="recognition-selected" data-recognition-selected="${esc(selected.event_id)}"><dt>Ereignis</dt><dd>${esc(selected.label)} · ${esc(this.when(selected.effective_at))}</dd><dt>Bedeutung</dt><dd>${esc(selected.meaning)}</dd><dt>Entscheidung</dt><dd>${seconds(selected.decision_seconds)} nach dem Zeitpunkt${selected.decided_at ? ` · ${esc(this.clockSeconds(selected.decided_at))}` : ""}</dd><dt>Sicherheit</dt><dd>${selected.probability == null ? "nicht gespeichert" : `Wahrscheinlichkeit bei der Entscheidung ${percent(selected.probability)}`}</dd><dt>Herkunft</dt><dd>${esc(selected.source)}</dd></dl>${selected.probability == null ? "" : '<p class="muted">Das Verhältnis zur nächstbesten Erklärung ist für übernommene Ereignisse nicht gespeichert.</p>'}`
+      ? `<dl class="recognition-selected" data-recognition-selected="${esc(selected.event_id)}"><dt>Ereignis</dt><dd>${esc(selected.label)} · ${esc(this.when(selected.effective_at))}</dd><dt>Bedeutung</dt><dd>${esc(selected.meaning)}</dd><dt>Entscheidung</dt><dd>${seconds(selected.decision_seconds)} nach dem Zeitpunkt${selected.decided_at ? ` · ${esc(this.clockSeconds(selected.decided_at))}` : ""}</dd><dt>Sicherheit</dt><dd>${safety(selected)}</dd>${selected.ratio != null && selected.probability != null ? `<dt>Wahrscheinlichkeit</dt><dd>${percent(selected.probability)} bei der Entscheidung</dd>` : ""}<dt>Herkunft</dt><dd>${esc(selected.source)}</dd></dl>`
       : '<p class="muted">Ein Ereignis in der Liste oder im Diagramm wählen.</p>';
     const eventRows = events
       .map(
         (event) =>
-          `<tr data-recognition-event="${esc(event.event_id)}"${event.event_id === this.recognitionSelected ? ' aria-selected="true"' : ""}><td><button type="button" class="recognition-pick" data-action="recognition-event:${esc(event.event_id)}">${esc(this.clockSeconds(event.effective_at))}</button></td><td>${esc(event.label)}</td><td>${esc(event.meaning)}</td><td>${seconds(event.decision_seconds)}</td><td>${event.probability == null ? "–" : percent(event.probability)}</td></tr>`,
+          `<tr data-recognition-event="${esc(event.event_id)}"${event.event_id === this.recognitionSelected ? ' aria-selected="true"' : ""}><td><button type="button" class="recognition-pick" data-action="recognition-event:${esc(event.event_id)}">${esc(this.clockSeconds(event.effective_at))}</button></td><td>${esc(event.label)}</td><td>${esc(event.meaning)}</td><td>${seconds(event.decision_seconds)}</td><td>${event.ratio != null ? ratio(event) : event.probability == null ? "–" : percent(event.probability)}</td></tr>`,
       )
       .join("");
     const candidateRows = (control.rejected || [])
@@ -16794,7 +16803,7 @@ class SaunaPanel extends HTMLElement {
       rows
         ? `<div class="scroll"><table class="recognition-table"><thead><tr>${head.map((label) => `<th>${label}</th>`).join("")}</tr></thead><tbody>${rows}</tbody></table></div>`
         : `<p class="muted">${empty}</p>`;
-    return `<div class="card recognition-overview"><h2>Erkennung</h2>${recordedNote}${summaryMarkup}</div><div class="card recognition-curves"><h3>Kurven oben und unten</h3>${this.recognitionCurveMarkup(control)}</div><div class="card"><h3>Gewähltes Ereignis</h3>${selectedMarkup}</div><div class="card"><h3>Ereignisse im Ausschnitt</h3>${table(["Zeitpunkt", "Ereignis", "Bedeutung", "Entscheidung nach", "Wahrscheinlichkeit"], eventRows, "Keine Ereignisse im Ausschnitt.")}</div>${control.recorded ? `<div class="card"><h3>Verworfene Kandidaten</h3>${table(["Zeitpunkt", "Grund", "Sicherheit des Kandidaten", "Entscheidung nach", "Ergebnis"], candidateRows, "Keine verworfenen Kandidaten im Ausschnitt.")}</div>` : ""}<div class="card"><h3>Aufgehobene vorläufige Gänge</h3>${table(["Beginn", "Erkennung", "Aufgehoben", "Grund"], retractedRows, "Keine aufgehobenen vorläufigen Gänge.")}</div>${notTakenRows ? `<div class="card"><h3>Erkannt, vom Gangmodell nicht übernommen</h3>${table(["Zeitpunkt", "Ereignis", "Grund"], notTakenRows, "")}</div>` : ""}<h2 class="recognition-analysis-heading">Erkennungswerte je Messschritt (Analyseprofil)</h2>`;
+    return `<div class="card recognition-overview"><h2>Erkennung</h2>${recordedNote}${summaryMarkup}</div><div class="card recognition-curves"><h3>Kurven oben und unten</h3>${this.recognitionCurveMarkup(control)}</div><div class="card"><h3>Gewähltes Ereignis</h3>${selectedMarkup}</div><div class="card"><h3>Ereignisse im Ausschnitt</h3>${table(["Zeitpunkt", "Ereignis", "Bedeutung", "Entscheidung nach", "Sicherheit"], eventRows, "Keine Ereignisse im Ausschnitt.")}</div>${control.recorded ? `<div class="card"><h3>Verworfene Kandidaten</h3>${table(["Zeitpunkt", "Grund", "Sicherheit des Kandidaten", "Entscheidung nach", "Ergebnis"], candidateRows, "Keine verworfenen Kandidaten im Ausschnitt.")}</div>` : ""}<div class="card"><h3>Aufgehobene vorläufige Gänge</h3>${table(["Beginn", "Erkennung", "Aufgehoben", "Grund"], retractedRows, "Keine aufgehobenen vorläufigen Gänge.")}</div>${notTakenRows ? `<div class="card"><h3>Erkannt, vom Gangmodell nicht übernommen</h3>${table(["Zeitpunkt", "Ereignis", "Grund"], notTakenRows, "")}</div>` : ""}<h2 class="recognition-analysis-heading">Erkennungswerte je Messschritt (Analyseprofil)</h2>`;
   }
   recognitionCurveMarkup(control) {
     const [start, end] = this.window || [];

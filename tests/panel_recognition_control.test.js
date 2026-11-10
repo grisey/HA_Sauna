@@ -157,10 +157,26 @@ test("the event list shows only the window; a selection explains the event", asy
   assert.match(html(), /data-recognition-event="e-open" aria-selected="true"/);
   assert.match(html(), /<dt>Bedeutung<\/dt><dd>Eintritt Gang 1<\/dd>/);
   assert.match(html(), /<dt>Entscheidung<\/dt><dd>12,5 s nach dem Zeitpunkt/);
-  assert.match(html(), /Wahrscheinlichkeit bei der Entscheidung 99,84 %/);
-  assert.match(html(), /Verhältnis zur nächstbesten Erklärung ist für übernommene Ereignisse nicht gespeichert/);
+  // A session without the stored ratio shows the probability, without a note.
+  assert.match(html(), /<dt>Sicherheit<\/dt><dd>Wahrscheinlichkeit bei der Entscheidung 99,84 %<\/dd>/);
+  assert.doesNotMatch(html(), /Verhältnis zur nächstbesten Erklärung/);
   await panel.action("recognition-event:e-open");
   assert.equal(panel.recognitionSelected, null, "a second press clears the selection");
+});
+
+test("B4f: a taken event shows the ratio to the next best explanation like a rejected candidate", async () => {
+  const data = control();
+  Object.assign(data.events[0], { state: "offen", against: "Ruhe", ratio: 24264.3 });
+  const { panel, html } = fixture({ data });
+  panel.recognitionControl = { key: "k", entry: "e", sessionId: "s1", result: data };
+  await panel.action("recognition-event:e-open");
+  assert.match(
+    html(),
+    /<dt>Sicherheit<\/dt><dd>offen 24\.264,3-mal so wahrscheinlich wie Ruhe<\/dd><dt>Wahrscheinlichkeit<\/dt><dd>99,84 % bei der Entscheidung<\/dd>/,
+  );
+  assert.match(html(), /<th>Sicherheit<\/th>/);
+  assert.match(html(), /<td>offen 24\.264,3-mal so wahrscheinlich wie Ruhe<\/td><\/tr>/);
+  assert.doesNotMatch(html(), /nicht gespeichert<\/p>/);
 });
 
 test("sessions before the state history are marked, without track and candidates", () => {

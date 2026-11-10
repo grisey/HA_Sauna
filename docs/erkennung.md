@@ -321,9 +321,12 @@ Kandidat und jede gemeldete Episode mit ihrem Ergebnis
   Heizwechsel.
 - Gewähltes Ereignis: Zeitpunkt, Bedeutung für das Gangmodell (etwa „Eintritt
   Gang 2“, „Aufguss außerhalb eines Gangs“), Zeit bis zur Entscheidung,
-  gespeicherte Wahrscheinlichkeit bei der Entscheidung und Herkunft. Für
-  verworfene Kandidaten steht das Verhältnis zur nächstbesten Erklärung, für
-  übernommene Ereignisse ist es nicht gespeichert.
+  Sicherheit und Herkunft. Sicherheit ist für Tür auf, Tür zu und Aufguss wie
+  für verworfene Kandidaten das Verhältnis des Zustands zur nächstbesten
+  Erklärung bei der Entscheidung, etwa „offen 512,3-mal so wahrscheinlich wie
+  Ruhe“, dazu die Wahrscheinlichkeit bei der Entscheidung. Sitzungen, deren
+  Erkennungsmeldungen das Verhältnis noch nicht enthalten, zeigen die
+  gespeicherte Wahrscheinlichkeit.
 - Listen der Ereignisse und verworfenen Kandidaten im Ausschnitt, der
   aufgehobenen vorläufigen Gänge mit Grund und der erkannten, vom Gangmodell
   nicht übernommenen Ereignisse.
