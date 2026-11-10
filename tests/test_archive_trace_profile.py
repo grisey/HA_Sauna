@@ -20,6 +20,19 @@ from climate_fixtures import measurement
 from test_foundation import T0, bindings, event, parameters
 
 
+def state_changes(traces):
+    """Changes of the most probable state in the step traces; a tie keeps the state (B2)."""
+    changes, state = [], None
+    for trace in traces:
+        probabilities = trace["state_probabilities"]
+        top = max(probabilities.values())
+        if state in probabilities and probabilities[state] >= top:
+            continue
+        state = next(name for name, value in probabilities.items() if value == top)
+        changes.append({"at": trace["at"], "state": state, "probability": top})
+    return changes
+
+
 class ArchiveTraceProfileTests(unittest.IsolatedAsyncioTestCase):
     def test_archive_profile_is_explicit_and_strict(self):
         path = Path("unused-profile.sqlite")
@@ -115,6 +128,10 @@ class ArchiveTraceProfileTests(unittest.IsolatedAsyncioTestCase):
                 records = stored["records"]
                 traces = [item["payload"] for item in records if item["kind"] == "detector_trace"]
                 self.assertEqual(traces, live if profile == "analysis" else [])
+                # both profiles keep the state changes of the same steps
+                states = [item["payload"] for item in records if item["kind"] == "recognition_state"]
+                self.assertTrue(states)
+                self.assertEqual(states, state_changes(live))
                 kinds = {item["kind"] for item in records}
                 self.assertTrue({"measurement", "detection", "consumer_event", "session",
                                  "phase", "decision", "diagnostic"} <= kinds)

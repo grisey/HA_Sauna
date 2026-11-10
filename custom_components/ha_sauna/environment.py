@@ -5,7 +5,9 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from math import isfinite
 
+from homeassistant.core import callback
 from homeassistant.helpers import entity_registry as er
+from homeassistant.helpers.event import async_track_state_change_event
 from homeassistant.util import dt as dt_util
 
 from .bindings import ROLE_BY_KEY, metadata_error
@@ -61,8 +63,13 @@ def _value(key, raw):
     return value
 
 
-def environment_snapshot(hass, bindings):
-    """Return only display data, without entity IDs or full HA attributes."""
+def environment_snapshot(hass, bindings, *, sources=False):
+    """Return display data without full HA attributes.
+
+    Entity IDs only with ``sources`` (archive record): every value then names
+    the entity that supplied it, ``entities`` the bound weather and time
+    entities.
+    """
     selected = {key: value for key, value in bindings.items()
                 if key.startswith("environment_")}
     result = {
@@ -117,6 +124,7 @@ def environment_snapshot(hass, bindings):
             "unit": unit,
             "available": value is not None,
             "last_updated": _timestamp(state.last_updated) if state else None,
+            **({"entity_id": selected.get(role_key) or weather.entity_id} if sources else {}),
         })
 
     for name in ("measurement_time", "forecast_time"):
@@ -169,7 +177,35 @@ def environment_snapshot(hass, bindings):
                 } else None,
                 "interpolated": interpolation if isinstance(interpolation, bool) else None,
             }
+    if sources:
+        result["entities"] = {
+            name: selected.get("environment_" + name)
+            for name in ("weather", "measurement_time", "forecast_time")
+        }
     return result
+
+
+def track_environment(hass, runtime):
+    """Archive the bound environment source with each session.
+
+    Every state change of a bound entity is offered to the runtime; it
+    archives the snapshot at the session start and then only for a new
+    measurement time of the source (without one, for a changed value). There
+    is no own interval. Returns the unsubscribe callback, or ``None`` without
+    an environment binding.
+    """
+    bindings = runtime.configuration.bindings.values
+    entities = sorted({entity_id for key, entity_id in bindings.items()
+                       if key.startswith("environment_")})
+    if not entities:
+        return None
+    runtime.environment = lambda: environment_snapshot(hass, bindings, sources=True)
+
+    @callback
+    def changed(_event):
+        runtime.environment_changed()
+
+    return async_track_state_change_event(hass, entities, changed)
 
 
 def outside_air(hass, bindings) -> dict | None:

@@ -241,12 +241,41 @@ class SessionFigureTests(unittest.TestCase):
                                                       (7000.0, 90.0))))
         self.assertEqual(figures["targets_c"], [85.0, 88.0])
 
-    def test_outside_temperature_is_the_last_value_at_most_one_hour_old(self):
-        self.assertIsNone(kf.session_figures(session())["outside_temperature_c"])
-        recent = kf.session_figures(session(outside_temperature=series([(-1800, 6.5)])))
-        self.assertEqual(recent["outside_temperature_c"], 6.5)
-        old = kf.session_figures(session(outside_temperature=series([(-3601, 6.5)])))
-        self.assertIsNone(old["outside_temperature_c"])
+    def test_outside_temperature_is_the_entry_at_the_start_with_its_measurement_time(self):
+        figures = kf.session_figures(session())
+        self.assertIsNone(figures["outside_temperature_c"])
+        self.assertIsNone(figures["outside_temperature_measured_at"])
+        # no age limit: measured 1.5 h before the start, current in HA at the start
+        readings = (kf.OutsideInput(0.0, 6.5, -5400.0), kf.OutsideInput(1800.0, 6.1, 0.0))
+        figures = kf.session_figures(session(outside=readings))
+        self.assertEqual(figures["outside_temperature_c"], 6.5)
+        self.assertEqual(figures["outside_temperature_measured_at"], -5400.0)
+        # within the session: the last entry before the time
+        self.assertEqual(kf.outside_at(session(outside=readings), 1799.0).value, 6.5)
+        self.assertEqual(kf.outside_at(session(outside=readings), 1800.0).value, 6.1)
+        # a source without measurement time, and one only after the start
+        figures = kf.session_figures(session(outside=(kf.OutsideInput(0.0, 6.5, None),)))
+        self.assertEqual((figures["outside_temperature_c"],
+                          figures["outside_temperature_measured_at"]), (6.5, None))
+        later = kf.session_figures(session(outside=(kf.OutsideInput(600.0, 6.5, 0.0),)))
+        self.assertIsNone(later["outside_temperature_c"])
+
+    def test_rejected_candidates_without_the_ones_taken_as_door(self):
+        # K-E2: an episode taken over by presence counts as door operation, not as rejected
+        self.assertIsNone(kf.session_figures(session())["rejected_candidates"])
+        episodes = (kf.EpisodeInput(100.0, 140.0, False, (100.0, 120.0)),
+                    kf.EpisodeInput(300.0, 340.0, True, (300.0, 305.0, 310.0)),
+                    kf.EpisodeInput(500.0, 520.0, False, (500.0,)))
+        figures = kf.session_figures(session(
+            rejected_candidates=(100.0, 120.0, 200.0, 300.0, 305.0, 310.0, 500.0),
+            rejected_episodes=episodes,
+        ))
+        self.assertEqual(figures["rejected_candidates"], {
+            "candidates": 7, "rejected": 4, "rejected_in_episodes": 3, "rejected_single": 1,
+            "rejected_episodes": 2, "taken_as_door": 3, "door_episodes": 1,
+        })
+        none = kf.session_figures(session(rejected_candidates=()))["rejected_candidates"]
+        self.assertEqual((none["candidates"], none["rejected"]), (0, 0))
 
     def test_parameters_missing_leave_dependent_figures_missing(self):
         figures = kf.session_figures(session(parameters={}, parameter_origin=None))
@@ -598,7 +627,74 @@ class ArchiveInputTests(unittest.TestCase):
         self.assertEqual(figures["oven_cooling"][0]["gang"], 1)
         self.assertEqual(figures["program"], {"kind": "constant"})
         self.assertEqual(figures["parameter_origin"], "session")
+        # recorded before B2: no environment and no recognition records
         self.assertIsNone(figures["outside_temperature_c"])
+        self.assertIsNone(figures["rejected_candidates"])
+
+    def insert(self, rows):
+        with closing(sqlite3.connect(self.path)) as db, db:
+            db.executemany(
+                "INSERT INTO records(entry_id,session_id,kind,received_at,payload) "
+                "VALUES('entry','s1',?,?,?)",
+                [(kind, self.at(at), json.dumps(data)) for kind, at, data in rows],
+            )
+
+    def environment(self, received, temperature, updated, measured=None, start=None):
+        return ("environment", received, {
+            "reason": "session_start" if (received < 1 if start is None else start)
+            else "source_changed",
+            "station": None, "condition": "cloudy",
+            "measurement_time": self.at(measured) if measured is not None else None,
+            "forecast_time": None, "source": {"mode": None, "interpolated": None},
+            "updated_at": self.at(updated),
+            "values": [
+                {"key": "temperature", "state": str(temperature), "value": temperature,
+                 "unit": "°C", "available": True, "last_updated": self.at(updated)},
+                {"key": "humidity", "state": "unavailable", "value": None, "unit": "%",
+                 "available": False, "last_updated": self.at(updated)},
+            ],
+        })
+
+    def test_outside_temperature_and_rejected_candidates_from_the_new_records(self):
+        self.write()
+        self.insert([
+            # the start entry is archived just after the session start
+            self.environment(0.4, 5.5, -1800, measured=-5400),
+            self.environment(1200, 4.0, 1200, measured=0),
+            ("recognition_state", 40, {"at": self.at(31), "state": "closed", "probability": 0.99}),
+            *(("recognition_rejected", at + 6, {
+                "kind": "door_open", "effective_at": self.at(at), "decided_at": self.at(at + 5),
+                "reason": "opening_form", "state": "open", "against": "recovery", "ratio": 200.0,
+            }) for at in (1600, 2290, 2295, 3000)),
+            ("recognition_episode", 1630, {
+                "opened_at": self.at(1600), "closed_at": self.at(1604), "close_candidate_at": self.at(1604),
+                "ended_at": self.at(1624), "decided_at": self.at(1625),
+                "candidates": [self.at(1600)], "result": "rejected"}),
+            ("recognition_episode", 2330, {
+                "opened_at": self.at(2290), "closed_at": self.at(2300), "close_candidate_at": self.at(2300),
+                "ended_at": self.at(2320), "decided_at": self.at(2321),
+                "candidates": [self.at(2290), self.at(2295)], "result": "door"}),
+        ])
+        figures = self.archive.key_figures()[0]["figures"]
+        self.assertEqual(figures["outside_temperature_c"], 5.5)
+        self.assertEqual(figures["outside_temperature_measured_at"], -5400.0)
+        self.assertEqual(figures["rejected_candidates"], {
+            "candidates": 4, "rejected": 2, "rejected_in_episodes": 1, "rejected_single": 1,
+            "rejected_episodes": 1, "taken_as_door": 2, "door_episodes": 1,
+        })
+        presented = self.archive.session_key_figures("s1")["figures"]
+        self.assertEqual(presented["rejected_candidates"]["rejected"],
+                         {"value": 2, "display": 2, "unit": "count"})
+        self.assertEqual(presented["outside_temperature_c"]["display"], 5.5)
+        self.assertEqual(presented["outside_temperature_measured_at"]["display"],
+                         self.at(-5400))
+
+    def test_without_an_entry_at_the_start_the_outside_temperature_is_missing(self):
+        self.write()
+        self.insert([self.environment(1200, 5.0, 1200, measured=0)])
+        figures = self.archive.key_figures()[0]["figures"]
+        self.assertIsNone(figures["outside_temperature_c"])
+        self.assertIsNone(figures["outside_temperature_measured_at"])
 
     def test_ready_from_the_stored_ready_history_else_from_phases(self):
         self.write()

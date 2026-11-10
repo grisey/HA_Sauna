@@ -1449,6 +1449,10 @@ class Archive:
                 "ORDER BY id", (self.entry_id, session_id, kind),
             )]
 
+        recorded = db.execute(
+            "SELECT 1 FROM records WHERE entry_id=? AND session_id=? "
+            "AND kind='recognition_state' LIMIT 1", (self.entry_id, session_id),
+        ).fetchone() is not None
         return session_input_from_archive(
             session,
             ended_at=entry["ended_at"],
@@ -1460,6 +1464,13 @@ class Archive:
             ).fetchall(),
             detections=records("detection"),
             infusion_updates=records("infusion_update"),
+            environment=[(received_at, json.loads(raw)) for received_at, raw in db.execute(
+                "SELECT received_at,payload FROM records WHERE entry_id=? AND session_id=? "
+                "AND kind='environment' ORDER BY id", (self.entry_id, session_id),
+            )],
+            # K-E2 only for sessions recorded with the recognition state history
+            rejected=records("recognition_rejected") if recorded else None,
+            episodes=records("recognition_episode"),
             configuration=settings.get("configuration"),
             parameter_origin=(
                 "session" if source == session_id else "next_session" if source else None

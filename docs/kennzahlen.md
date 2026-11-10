@@ -6,7 +6,7 @@ werden an einer Stelle im Fachkern berechnet
 Jede Kennzahl kommt als Rohwert und als gerundeter Anzeigewert
 ([`core/key_figure_display.py`](../custom_components/ha_sauna/core/key_figure_display.py));
 die Oberfläche setzt nur Einheit, Dezimalkomma und Zeitformat. Die Nummern
-(K-S, K-G, K-T) folgen dem Kennzahlenkatalog des Pakets B1.
+(K-S, K-G, K-T, K-E) folgen dem Kennzahlenkatalog des Pakets B1.
 
 ## Quellen
 
@@ -18,9 +18,16 @@ die Oberfläche setzt nur Einheit, Dezimalkomma und Zeitformat. Die Nummern
 | Parameter | Gespeicherte Konfiguration der Sitzung. Fehlt sie, gilt die der nächsten späteren Sitzung; die Herkunft steht als `parameter_origin` dabei. Die heutige Einstellung gilt nicht rückwirkend. |
 | Einstellungen | **Kabinenvolumen** und **Strompreis** aus der aktuellen Integrationskonfiguration ([Einstellungen](parameter.md)). |
 | Gelernte Größe | Nachlauf des Temperaturfühlers nach dem Türschließen (siehe unten). |
+| Umgebung | Archivierte [Umgebungseinträge](speicherung.md#umgebung-und-erkennungsverlauf) der Sitzung (`environment`). |
+| Erkennungsverlauf | Archivierte verworfene Kandidaten und ihre Episoden (`recognition_rejected`, `recognition_episode`). |
 
-Eine Außentemperatur ist im Archiv derzeit nicht enthalten; die
-Außentemperatur zum Sitzungsbeginn (K-S20) und der Kälterekord fehlen daher.
+Die Außentemperatur zum Sitzungsbeginn ist der Wert des Umgebungseintrags bei
+Sitzungsbeginn, also der Wert, der zu diesem Zeitpunkt in Home Assistant aktuell
+war, mit der Messzeit der Quelle (`outside_temperature_measured_at`; ohne
+Messzeit fehlt sie). Für einen Zeitpunkt in der Sitzung gilt der letzte
+Umgebungseintrag davor. Eine Altersgrenze gibt es nicht. Sitzungen ohne
+Umgebungseintrag (ältere Sitzungen oder ohne gebundene Quelle) haben keine
+Außentemperatur (K-S20) und zählen nicht für den Kälterekord.
 
 Wert zum Zeitpunkt ist der letzte Messwert zum Zeitpunkt oder davor; liegt der
 Zeitpunkt vor dem ersten Messwert, gilt dieser, wenn er höchstens 5 s später
@@ -34,6 +41,8 @@ kommt. Fehlende Daten ergeben einen fehlenden Wert, nicht 0.
 | Aufheizen (K-S9 bis K-S11, K-S15, K-S16, K-S22, K-S23) | Vom ersten Heizintervall bis zum ersten Bereit oder zum Öffnen der Eintrittstür des ersten Gangs, je nachdem was früher kommt; Art, Temperatur und Soll am Ende, Energie davor und danach, Türöffnungen, Anstieg je kWh. |
 | Anlage (K-S12 bis K-S14, K-S17 bis K-S19, K-S24, K-S25) | Heizzeit und Heizanteil, Energie mit Gegenprobe und Kosten, Heizen in den Gängen, Ofenkühlungen mit auslösendem Gang, Regelung im Bereit, Sollwerte und Programmart. |
 | Türvorgänge (K-S21) | Alle Paare Öffnen → Schließen der Sitzung mit Klasse Eintritt, Austritt, Schlusslüften oder sonstige; offen, Verlust und Wiedererreichen. |
+| Außentemperatur (K-S20) | Außentemperatur zum Sitzungsbeginn mit ihrer Messzeit. |
+| Verworfene Kandidaten (K-E2) | Öffnungskandidaten mit unpassender Kurvenform (`candidates`); davon endgültig verworfen (`rejected`), in Episoden ohne Übernahme (`rejected_in_episodes`, Episoden `rejected_episodes`) oder einzeln (`rejected_single`). Kandidaten einer über die Anwesenheit übernommenen Episode zählen als Türvorgang (`taken_as_door`, Episoden `door_episodes`), nicht als verworfen. |
 
 Bereit stammt aus dem Bereitverlauf des Sitzungsstands (`ready_history`), in
 Automatik und im manuellen Modus
@@ -49,7 +58,9 @@ des letzten Gangs. Fehlt einem Gang ein belegter Beginn oder ein belegtes Ende,
 fehlen seine Dauer und die davon abhängigen Summen, Mittel und Einordnungen;
 Türvorgänge, deren Klasse von dieser Grenze abhängt, bleiben ohne Klasse. Ein
 Aufguss ohne erkanntes Ende hat keinen Feuchteanstieg. Ohne Kabinenvolumen gibt
-es keine Wassermenge, ohne Strompreis keine Kosten.
+es keine Wassermenge, ohne Strompreis keine Kosten. Die verworfenen Kandidaten
+fehlen bei Sitzungen ohne archivierten Zustandsverlauf der Erkennung
+(`recognition_state`), also bei älteren Sitzungen.
 
 Der Türverlust ist die Temperatur beim Öffnen minus der kleinsten Temperatur
 vom Öffnen bis zum Schließen plus Nachlauf des Fühlers. Der Nachlauf ist der

@@ -102,7 +102,11 @@ SESSION = {
         "above": "share", "highest_c": "°C", "highest_at": "time", "lowest_c": "°C",
         "lowest_at": "time", "hysteresis_c": "°C", "offset_c": "°C",
     },
-    "outside_temperature_c": "°C",
+    "outside_temperature_c": "°C", "outside_temperature_measured_at": "time",
+    "rejected_candidates": {key: "count" for key in (
+        "candidates", "rejected", "rejected_in_episodes", "rejected_single",
+        "rejected_episodes", "taken_as_door", "door_episodes",
+    )},
     "doors": [{
         "opened": "time", "closed": "time", "open_seconds": "min",
         "temperature_at_open_c": "°C", "loss_c": "°C", "recovered_seconds": "min",

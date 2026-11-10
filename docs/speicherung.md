@@ -26,11 +26,30 @@ Endzeitpunkt wird nicht erfunden. Sie setzt den Ofenbetrieb nicht fort.
 
 Im normalen Betrieb bleiben Originalmessungen, erkannte Ereignisse und ihre
 Bestätigungs- und Zuordnungsbelege sowie Phasen, Kühlung, Schaltentscheidungen,
-Ausgaben und Fehlerzustände erhalten. Die vollständigen internen Prüfverläufe
-der Erkennung werden nur bei ausdrücklich gewählter Analyseaufzeichnung
-zusätzlich gespeichert. Die aktuelle Live-Diagnose bleibt in beiden Profilen
-verfügbar; Erkennung und Regelung verwenden dieselben Eingänge und Regeln.
-Bereits gespeicherte Prüfverläufe bleiben lesbar und im Export enthalten.
+Ausgaben und Fehlerzustände erhalten, ebenso
+[Umgebung und Erkennungsverlauf](#umgebung-und-erkennungsverlauf). Die
+vollständigen internen Prüfverläufe der Erkennung (`detector_trace`, die
+Zustandswahrscheinlichkeiten jedes Messschritts) werden nur bei ausdrücklich
+gewählter Analyseaufzeichnung zusätzlich gespeichert. Die aktuelle
+Live-Diagnose bleibt in beiden Profilen verfügbar; Erkennung und Regelung
+verwenden dieselben Eingänge und Regeln. Bereits gespeicherte Prüfverläufe
+bleiben lesbar und im Export enthalten.
+
+### Umgebung und Erkennungsverlauf
+
+Diese Einträge gehören zur Sitzung und werden in beiden Profilen gespeichert.
+Im Export stehen sie wie alle Datensätze in `records.jsonl`. Ältere Sitzungen
+enthalten sie nicht.
+
+| Eintragsart | Gespeichert | Inhalt |
+| --- | --- | --- |
+| `environment` | Bei Sitzungsbeginn, danach bei jeder neuen Messzeit der gebundenen [Umgebungsquelle](parameter.md#umgebungsdaten); liefert die Quelle keine Messzeit, bei jedem geänderten Wert | Anlass (`session_start`, `source_changed`), Wetterlage, Station, je Größe Zustand, Wert, Einheit, Verfügbarkeit, HA-Aktualisierung und liefernde Entität, Mess- und Vorhersagezeitpunkt, gebundene Wetter- und Zeitentitäten, Datenart der Quelle und letzte Aktualisierung. Es gibt keinen eigenen Takt; eine bloße Aktualisierung in Home Assistant oder interpolierte Zwischenwerte derselben Messung ergeben keinen Eintrag. Ohne gebundene Quelle entfällt er. |
+| `recognition_state` | Bei jedem Wechsel des wahrscheinlichsten [Erkennungszustands](erkennung.md#zustandsmodell-der-kabine) | Messschritt, neuer Zustand (`closed`, `open`, `infusion`, `decay`, `recovery`, `shift`) und seine Wahrscheinlichkeit. Bei gleicher Wahrscheinlichkeit bleibt der bisherige Zustand. |
+| `recognition_rejected` | Wenn die Öffnungsform einen Öffnungskandidaten verwirft | Art (`door_open`), Zeitpunkt, Entscheidungszeit, Grund (`opening_form`) sowie Zustand, nächstbeste Erklärung und deren Verhältnis bei der Bestätigung des Kandidaten. |
+| `recognition_episode` | Wenn die Erkennung eine Episode verworfener Öffnungskandidaten meldet | Öffnen, Schließen, Schlusskandidat, Ende `E` und Meldung der Episode, ihre Kandidaten und das Ergebnis: `rejected` oder `door`, wenn das [Gangmodell](gangmodell.md#verworfene-öffnung-mit-präsenz) sie über die Anwesenheit als Türvorgang übernimmt. Der Türvorgang selbst steht als Erkennungsmeldung mit Herkunft `presence` im Archiv. |
+
+Daraus stammen die Außentemperatur (K-S20) und die verworfenen Kandidaten
+(K-E2) der [Kennzahlen](kennzahlen.md).
 
 ## Sitzungen exportieren
 

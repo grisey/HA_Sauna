@@ -37,6 +37,7 @@ from .core.contracts import ConsumerEvent, PresenceReport
 from .core.controller import Controller, Result
 from .core.defaults import instance_default, preference_values
 from .core.recognition import ClimateRecognizer, Detection, recognition_event_id
+from .core import recognition_archive
 from .core.input_handoff import (
     ControlModeInput,
     HeaterOverrideInput,
@@ -555,6 +556,9 @@ class SaunaRuntime:
         self._recognition_parameters = None
         # outside air of the sauna for the recognition: () -> {"temperature", "absolute_humidity"} or None
         self.outside_air = None
+        # bound environment source: () -> ``environment.environment_snapshot`` (None: not bound)
+        self.environment = None
+        self._environment_saved = None      # (session id, what was new) of the last environment record
         self.recognition_finished = None
         self.recognition_learning = None
         self.recognition_feedback = None
@@ -669,6 +673,57 @@ class SaunaRuntime:
             self.log.error("outside_air", "Außenluft nicht lesbar: %s", error)
             return None
 
+    def environment_changed(self):
+        """The bound environment source reported a change (its state listener)."""
+        if not self.closed:
+            self._archive_environment("source_changed")
+
+    def _archive_environment(self, reason):
+        """Archive the bound environment source with the running session.
+
+        At the session start, then only when the measurement time of the
+        source changes; a source without a measurement time when one of its
+        values changes. A mere update of the HA timestamp is not archived; no
+        own interval. Without a binding nothing is archived.
+        """
+        session = self.session
+        if session is None or not self.archive or self.environment is None:
+            return
+        try:
+            snapshot = self.environment()
+            if not snapshot or not snapshot.get("configured"):
+                return
+            payload = plain({
+                **{key: value for key, value in snapshot.items() if key != "configured"},
+                # display labels are not archived
+                "values": [{key: value for key, value in item.items() if key != "label"}
+                           for item in snapshot.get("values") or ()],
+            })
+            measured = payload.get("measurement_time")
+            news = (session.session_id, ("measurement_time", measured) if measured is not None
+                    else ("values", [(item.get("key"), item.get("value"))
+                                     for item in payload["values"]]))
+            # the session start is always archived: K-S20 is its value
+            if reason != "session_start" and self._environment_saved == news:
+                return
+            self.archive.append("environment", self._clock(), {"reason": reason, **payload},
+                                session.session_id)
+        except Exception as error:  # noqa: BLE001 - a weather source must not disturb the regulation
+            self.log.error("environment", "Umgebung nicht gespeichert: %s", error)
+            return
+        self._environment_saved = news
+
+    def _archive_recognition(self, kind, payload, session_id):
+        """One recognition record of the normal profile (state change, rejected candidate, episode)."""
+        try:
+            self.archive.append(kind, self._clock(), payload, session_id)
+        except (ValueError, OverflowError) as error:
+            # A malformed diagnostic is not an actuator input.
+            self.log.error(
+                "recognition_record_invalid",
+                "Erkennungseintrag konnte nicht gespeichert werden: %s", error,
+            )
+
     def _sync_detector(self):
         session_id = self.session.session_id if self.session else None
         if session_id == self._detector_session:
@@ -699,6 +754,9 @@ class SaunaRuntime:
                 "entity_id": self.configuration.bindings.values.get("presence"),
                 "external_snapshot": self.presence.external,
             }, session_id)
+            self._archive_environment("session_start")
+        recorder = recognition_archive.RecognitionArchive()
+        observed_recognizer = []
 
         def observed(trace):
             self.log.debug("detection_check", "Erkennungsprüfung: %s", trace)
@@ -715,6 +773,15 @@ class SaunaRuntime:
                         "Erkennungsdiagnose konnte nicht gespeichert werden: %s",
                         error,
                     )
+            # Both profiles keep the state changes and the rejected candidates.
+            if self.archive and observed_recognizer:
+                change = recorder.state_change(trace)
+                if change is not None:
+                    self._archive_recognition(recognition_archive.STATE, change, session_id)
+                for candidate in recorder.rejected_candidates(observed_recognizer[0].decisions):
+                    self._archive_recognition(
+                        recognition_archive.REJECTED_CANDIDATE, candidate, session_id
+                    )
 
         self.detector = (
             ClimateRecognizer(
@@ -730,6 +797,8 @@ class SaunaRuntime:
             if self.session
             else None
         )
+        if self.detector:
+            observed_recognizer.append(self.detector)
         if self.detector and self.device:
             for measurement in sorted(
                 self.device.measurements.values(), key=lambda m: m.received_at
@@ -875,13 +944,20 @@ class SaunaRuntime:
         def rejected_opening(rejected):
             # G9, G9b: the gang model may take an episode of rejected openings as
             # one door operation; opening and closing are booked at its end.
-            if not current():
-                return
-            if self.controller._last_at is None or rejected.decided_at >= self.controller._last_at:
-                self.controller.advance(rejected.decided_at, inclusive_confirmation=False)
-            if not current() or not self.controller.rejected_opening_is_door(
+            door = False
+            if current():
+                if (self.controller._last_at is None
+                        or rejected.decided_at >= self.controller._last_at):
+                    self.controller.advance(rejected.decided_at, inclusive_confirmation=False)
+                door = current() and self.controller.rejected_opening_is_door(
                     rejected.opened_at, rejected.closed_at, rejected.close_candidate_at,
-                    rejected.ended_at, rejected.decided_at):
+                    rejected.ended_at, rejected.decided_at)
+            if self.archive:
+                self._archive_recognition(
+                    recognition_archive.EPISODE,
+                    recognition_archive.episode_record(rejected, door), session_id,
+                )
+            if not door:
                 return
             detected(Detection(Kind.DOOR_OPEN, rejected.opened_at, rejected.decided_at, rejected.channels,
                                trace_at=rejected.decided_at), origin="presence")

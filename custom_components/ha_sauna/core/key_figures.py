@@ -25,8 +25,6 @@ from .timeline import Kind, project_gang_intervals, utc
 # Zeitpunktregel des Katalogs: vor dem ersten Messwert gilt dieser, wenn er
 # höchstens so viel später kommt.
 FIRST_SAMPLE_GRACE_SECONDS = 5.0
-# Q-U: letzter Umgebungswert zum Zeitpunkt oder davor, höchstens so alt.
-OUTSIDE_MAXIMUM_AGE_SECONDS = 3600.0
 
 DOOR_CLASSES = ("entry", "exit", "final_ventilation", "other")
 PARAMETER_KEYS = (
@@ -85,6 +83,29 @@ class InfusionInput:
 
 
 @dataclass(frozen=True)
+class OutsideInput:
+    """Umgebungseintrag (Q-U): Außentemperatur, wie sie ab ``at`` in HA aktuell war.
+
+    ``at`` in Sekunden ab Sitzungsbeginn, der Eintrag bei Sitzungsbeginn bei 0;
+    ``measured_at`` ist die Messzeit der Quelle (``None``: ohne Messzeit).
+    """
+
+    at: float
+    value: float | None
+    measured_at: float | None
+
+
+@dataclass(frozen=True)
+class EpisodeInput:
+    """Episode verworfener Öffnungskandidaten; ``door``: über die Anwesenheit als Türvorgang übernommen."""
+
+    opened: float
+    ended: float
+    door: bool
+    candidates: tuple[float, ...]
+
+
+@dataclass(frozen=True)
 class SessionInput:
     started_at: datetime
     duration: float
@@ -103,7 +124,8 @@ class SessionInput:
     oven_cooling: tuple[tuple[float, float], ...]
     parameters: Mapping[str, float | None]
     parameter_origin: str | None
-    outside_temperature: Series | None = None
+    # Umgebungseinträge nach ``at``; None = keiner (ältere Sitzung oder keine Bindung)
+    outside: tuple[OutsideInput, ...] | None = None
     volume_m3: float | None = None
     price_eur_per_kwh: float | None = None
     session_id: str | None = None
@@ -112,6 +134,10 @@ class SessionInput:
     program: Mapping | None = None  # K-S25
     # Bereit-Verlauf (Zeit, gesetzt) aus ``ready_history``; None = nicht aufgezeichnet
     readiness: tuple[tuple[float, bool], ...] | None = None
+    # K-E2: Zeitpunkte der von der Öffnungsform verworfenen Kandidaten und ihre
+    # Episoden; None = nicht aufgezeichnet (Sitzung ohne Zustandsverlauf)
+    rejected_candidates: tuple[float, ...] | None = None
+    rejected_episodes: tuple[EpisodeInput, ...] = ()
     upper_absolute_humidity: Series = field(init=False)
     lower_absolute_humidity: Series = field(init=False)
 
@@ -532,14 +558,41 @@ def control_in_ready(session: SessionInput) -> dict | None:
     }
 
 
-def outside_at(series: Series | None, t: float) -> float | None:
-    """Q-U: letzter Wert zum Zeitpunkt oder davor, höchstens eine Stunde alt."""
-    if series is None:
+def outside_at(session: SessionInput, t: float) -> OutsideInput | None:
+    """Q-U zum Zeitpunkt: der letzte Umgebungseintrag zum Zeitpunkt oder davor.
+
+    Zum Sitzungsbeginn ist das der Eintrag bei Sitzungsbeginn. Es gibt keine
+    Altersgrenze; die Messzeit steht beim Wert.
+    """
+    readings = [reading for reading in session.outside or () if reading.at <= t]
+    return readings[-1] if readings else None
+
+
+def rejected_candidates(session: SessionInput) -> dict | None:
+    """K-E2: Öffnungskandidaten mit unpassender Kurvenform, davon endgültig verworfen.
+
+    Kandidaten einer über die Anwesenheit übernommenen Episode zählen als
+    Türvorgang, nicht als verworfen. Endgültig verworfen sind die übrigen: in
+    Episoden ohne Übernahme oder einzeln (ohne gemeldete Episode).
+    """
+    if session.rejected_candidates is None:
         return None
-    index = bisect.bisect_right(series.times, t) - 1
-    if index >= 0 and t - series.times[index] <= OUTSIDE_MAXIMUM_AGE_SECONDS:
-        return series.values[index]
-    return None
+    episodes = session.rejected_episodes
+    taken = {t for episode in episodes if episode.door for t in episode.candidates}
+    held = {t for episode in episodes if not episode.door for t in episode.candidates}
+    candidates = session.rejected_candidates
+    door = sum(1 for t in candidates if t in taken)
+    in_episodes = sum(1 for t in candidates if t in held and t not in taken)
+    rejected = len(candidates) - door
+    return {
+        "candidates": len(candidates),
+        "rejected": rejected,
+        "rejected_in_episodes": in_episodes,
+        "rejected_single": rejected - in_episodes,
+        "rejected_episodes": sum(1 for episode in episodes if not episode.door),
+        "taken_as_door": door,
+        "door_episodes": sum(1 for episode in episodes if episode.door),
+    }
 
 
 def warmup_end_of(session: SessionInput, ready: float | None):
@@ -562,7 +615,7 @@ def warmup_end_of(session: SessionInput, ready: float | None):
 
 
 def session_figures(session: SessionInput) -> dict:
-    """Kennzahlen K-S1 bis K-S24 mit den Gängen K-G1 bis K-G8 als Rohwerte."""
+    """Kennzahlen K-S1 bis K-S25 mit den Gängen K-G1 bis K-G9 und K-E2 als Rohwerte."""
     gangs = [gang_figures(session, gang, index + 1) for index, gang in enumerate(session.gangs)]
     temperature = session.upper_temperature
     parameters = session.parameters
@@ -603,6 +656,7 @@ def session_figures(session: SessionInput) -> dict:
     energy = session.energy_kwh
     start_temperature = temperature.at(heating_start) if heating_start is not None else None
     end_temperature = temperature.at(warmup_end) if warmup_end is not None else None
+    outside = outside_at(session, 0.0)
     return {
         "session_id": session.session_id,
         "started_at": session.started_at.isoformat(),
@@ -668,7 +722,9 @@ def session_figures(session: SessionInput) -> dict:
         ),
         "oven_cooling": oven,
         "control_in_ready": control_in_ready(session),
-        "outside_temperature_c": outside_at(session.outside_temperature, 0.0),
+        "outside_temperature_c": outside.value if outside is not None else None,
+        "outside_temperature_measured_at": outside.measured_at if outside is not None else None,
+        "rejected_candidates": rejected_candidates(session),
         "doors": doors,
         "door_classes": door_summary(doors),
         "door_openings_warmup": (
@@ -979,6 +1035,28 @@ def session_program(session: Mapping, configuration: Mapping | None, phases) -> 
     }
 
 
+def outside_readings(
+    start: datetime, environment: Iterable[tuple[str, Mapping]],
+) -> tuple[OutsideInput, ...] | None:
+    """Q-U aus den archivierten Umgebungseinträgen (Eintragszeit, Inhalt) der Sitzung.
+
+    Ohne Umgebungseintrag (ältere Sitzung oder keine gebundene Quelle) ``None``.
+    """
+    readings = []
+    for received_at, record in environment:
+        value = next((item.get("value") for item in record.get("values") or ()
+                      if item.get("key") == "temperature"), None)
+        if not isinstance(value, (int, float)) or isinstance(value, bool) or not isfinite(value):
+            value = None
+        measured_at = record.get("measurement_time")
+        readings.append(OutsideInput(
+            0.0 if record.get("reason") == "session_start" else _seconds(start, received_at),
+            None if value is None else float(value),
+            _seconds(start, measured_at) if isinstance(measured_at, str) else None,
+        ))
+    return tuple(sorted(readings, key=lambda reading: reading.at)) if readings else None
+
+
 def session_input_from_archive(
     session: Mapping,
     *,
@@ -991,7 +1069,9 @@ def session_input_from_archive(
     volume_m3: float | None,
     price_eur_per_kwh: float | None,
     door_sensor_lag: float | None,
-    outside_temperature: Iterable[tuple[str, float]] | None = None,
+    environment: Iterable[tuple[str, Mapping]] = (),
+    rejected: Iterable[Mapping] | None = None,
+    episodes: Iterable[Mapping] = (),
 ) -> SessionInput:
     """Eingang einer abgeschlossenen archivierten Sitzung.
 
@@ -999,6 +1079,9 @@ def session_input_from_archive(
     ``detections`` die archivierten Erkennungsereignisse, ``infusion_updates``
     die Aufgussenden. Gänge stammen aus der Zeitleiste, Steuerung und Energie
     aus dem letzten Sitzungsstand, Parameter aus ``configuration`` (Q-P).
+    ``environment`` sind die Umgebungseinträge (Eintragszeit, Inhalt),
+    ``rejected`` die verworfenen Kandidaten (``None``: nicht aufgezeichnet),
+    ``episodes`` ihre Episoden.
     """
     parameters = (configuration or {}).get("parameters")
     timeline = session["timeline"]
@@ -1080,10 +1163,7 @@ def session_input_from_archive(
         oven_cooling=cooling,
         parameters={key: (parameters or {}).get(key) for key in PARAMETER_KEYS},
         parameter_origin=parameter_origin if parameters is not None else None,
-        outside_temperature=(
-            _series((_seconds(start, at), value) for at, value in outside_temperature)
-            if outside_temperature is not None else None
-        ),
+        outside=outside_readings(start, environment),
         volume_m3=volume_m3,
         price_eur_per_kwh=price_eur_per_kwh,
         session_id=timeline.get("session_id"),
@@ -1093,5 +1173,18 @@ def session_input_from_archive(
             tuple((_seconds(start, mark["at"]), mark["ready"])
                   for mark in session["ready_history"])
             if session.get("ready_history") is not None else None
+        ),
+        rejected_candidates=(
+            tuple(sorted(_seconds(start, item["effective_at"]) for item in rejected))
+            if rejected is not None else None
+        ),
+        rejected_episodes=tuple(
+            EpisodeInput(
+                _seconds(start, episode["opened_at"]),
+                _seconds(start, episode["ended_at"]),
+                episode.get("result") == "door",
+                tuple(_seconds(start, at) for at in episode.get("candidates") or ()),
+            )
+            for episode in episodes
         ),
     )

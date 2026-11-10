@@ -122,7 +122,9 @@ Wind liefern. Gewählte Einzelquellen haben Vorrang, auch bei deren Ausfall.
 | Niederschlagsintensität | `precipitation_intensity`, mm/h |
 | Mess- / Vorhersagezeit | Je ein `timestamp`-Sensor |
 
-Umgebungsdaten beeinflussen weder Heizregelung noch Gangerkennung.
+Umgebungsdaten beeinflussen weder Heizregelung noch Gangerkennung. Während
+einer Sitzung werden sie bei jeder neuen Messung der Quelle
+[archiviert](speicherung.md#umgebung-und-erkennungsverlauf).
 Absolute Feuchte wird aus der Quelle übernommen; Mess-, Vorhersage- und
 HA-Aktualisierungszeit bleiben getrennt.
 

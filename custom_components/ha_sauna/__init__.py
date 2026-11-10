@@ -81,6 +81,12 @@ async def async_setup_entry(
         # learned recognition quantities apply from the first session on
         await async_setup_recognition_learning(hass, entry, runtime)
         register_recognition(hass)
+        from .environment import track_environment
+
+        # the bound environment source is archived with each session
+        unsubscribe_environment = track_environment(hass, runtime)
+        if unsubscribe_environment is not None:
+            runtime.on_close(unsubscribe_environment)
         from .api import register
 
         register(hass)

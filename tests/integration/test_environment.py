@@ -204,3 +204,81 @@ class EnvironmentTests(unittest.IsolatedAsyncioTestCase):
         ))
         self.assertEqual(self.values(self.snapshot(environment_weather=self.weather))[
             "temperature"]["value"], 16)
+
+    async def test_environment_is_archived_at_the_start_and_for_new_values(self):
+        # a weather entity without a measurement time: a changed value is new
+        entry = await create_sauna(self.hass, binding_overrides={
+            "environment_weather": self.weather,
+        })
+        runtime = entry.runtime_data
+        await runtime.set_operation(True)
+        retain_session(runtime)
+        await self.hass.async_block_till_done()
+        # another attribute only updates the HA timestamp: nothing new
+        self.hass.states.async_set(self.weather, "cloudy", {
+            **self.weather_attrs, "private_debug_note": "updated",
+        })
+        await self.hass.async_block_till_done()
+        self.hass.states.async_set(self.weather, "rainy", {
+            **self.weather_attrs, "temperature": 16,
+        })
+        await self.hass.async_block_till_done()
+        await runtime.archive.flush()
+        stored = runtime.archive.read(runtime.session.session_id)
+        records = [record["payload"] for record in stored["records"]
+                   if record["kind"] == "environment"]
+        self.assertEqual([
+            (record["reason"], record["condition"], self.values(record)["temperature"]["value"])
+            for record in records
+        ], [("session_start", "cloudy", 17.5), ("source_changed", "rainy", 16)])
+        weather = self.hass.states.get(self.weather)
+        temperature = self.values(records[-1])["temperature"]
+        self.assertEqual(temperature["last_updated"], weather.last_updated.isoformat())
+        # the record names the supplying entity
+        self.assertEqual(temperature["entity_id"], self.weather)
+        self.assertEqual(records[-1]["entities"]["weather"], self.weather)
+        self.assertNotIn("synthetic-private-marker", json.dumps(records))
+
+    async def test_with_measurement_time_only_a_new_measurement_is_archived(self):
+        self.hass.states.async_set(self.measured, "2026-01-01T10:00:00+00:00",
+                                   {"device_class": "timestamp"})
+        entry = await create_sauna(self.hass, binding_overrides={
+            "environment_weather": self.weather,
+            "environment_measurement_time": self.measured,
+        })
+        runtime = entry.runtime_data
+        await runtime.set_operation(True)
+        retain_session(runtime)
+        await self.hass.async_block_till_done()
+        self.hass.states.async_set(self.weather, "cloudy", {
+            **self.weather_attrs, "temperature": 17.2,       # interpolated within the measurement
+        })
+        await self.hass.async_block_till_done()
+        self.hass.states.async_set(self.measured, "2026-01-01T11:00:00+00:00",
+                                   {"device_class": "timestamp"})
+        await self.hass.async_block_till_done()
+        await runtime.archive.flush()
+        stored = runtime.archive.read(runtime.session.session_id)
+        records = [record["payload"] for record in stored["records"]
+                   if record["kind"] == "environment"]
+        self.assertEqual([
+            (record["reason"], record["measurement_time"],
+             self.values(record)["temperature"]["value"])
+            for record in records
+        ], [("session_start", "2026-01-01T10:00:00+00:00", 17.5),
+            ("source_changed", "2026-01-01T11:00:00+00:00", 17.2)])
+        self.assertEqual(records[0]["entities"]["measurement_time"], self.measured)
+
+    async def test_without_environment_binding_nothing_is_archived(self):
+        entry = await create_sauna(self.hass)
+        runtime = entry.runtime_data
+        self.assertIsNone(runtime.environment)
+        await runtime.set_operation(True)
+        retain_session(runtime)
+        self.hass.states.async_set(self.weather, "rainy", {
+            **self.weather_attrs, "temperature": 16,
+        })
+        await self.hass.async_block_till_done()
+        await runtime.archive.flush()
+        stored = runtime.archive.read(runtime.session.session_id)
+        self.assertFalse(any(record["kind"] == "environment" for record in stored["records"]))

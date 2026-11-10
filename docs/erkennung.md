@@ -303,4 +303,7 @@ Die Zustandswahrscheinlichkeiten des letzten Messschritts stehen als
 Erkennungsdiagnose zur Verfügung; im Archivprofil für Analysen wird jeder
 Schritt gespeichert. Jedes gebuchte Ereignis wird mit seiner
 Wahrscheinlichkeit archiviert, ein vom Gangmodell nicht übernommenes
-Ereignis mit dem Grund.
+Ereignis mit dem Grund. In beiden Profilen archiviert werden außerdem jeder
+Wechsel des wahrscheinlichsten Zustands, jeder von der Öffnungsform verworfene
+Kandidat und jede gemeldete Episode mit ihrem Ergebnis
+([Archiv](speicherung.md#umgebung-und-erkennungsverlauf)).
