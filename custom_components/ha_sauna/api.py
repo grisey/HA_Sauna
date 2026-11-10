@@ -7,6 +7,7 @@ from aiohttp import web
 from homeassistant.auth.permissions.const import POLICY_CONTROL, POLICY_READ
 from homeassistant.components.http import KEY_HASS, HomeAssistantView
 from homeassistant.helpers import entity_registry as er
+from homeassistant.util import dt as dt_util
 
 from .appearance import APPEARANCE_CATALOG, frontend_preferences
 from .archive import energy_interval_delta, plain
@@ -1007,6 +1008,66 @@ class ArchiveView(HomeAssistantView):
         return self.json(result)
 
 
+def key_figure_settings(runtime):
+    """User settings of the key figure catalogue (Q-N): cabin volume and price."""
+    values = runtime.configuration.parameters.values
+    return {
+        "volume_m3": values["cabin_volume_m3"],
+        "price_eur_per_kwh": values["electricity_price_eur_per_kwh"],
+    }
+
+
+class KeyFiguresView(HomeAssistantView):
+    """Key figures of one finished session (catalogue K-S and K-G)."""
+
+    url = "/api/ha_sauna/{entry_id}/key-figures"
+    name = "api:ha_sauna:key_figures"
+    requires_auth = True
+
+    async def get(self, request, entry_id):
+        require_read(request, entry_id)
+        session_id = request.query.get("session_id")
+        if not session_id:
+            raise web.HTTPBadRequest(text="session_id ist erforderlich.")
+        runtime = runtime_for(request.app[KEY_HASS], entry_id)
+        await runtime.archive.flush()
+        result = await asyncio.to_thread(
+            runtime.archive.session_key_figures, session_id, **key_figure_settings(runtime)
+        )
+        if result is None:
+            raise web.HTTPNotFound()
+        return self.json(result)
+
+
+class StatisticsView(HomeAssistantView):
+    """Statistics over finished sessions: whole archive, one year or one month (K-T)."""
+
+    url = "/api/ha_sauna/{entry_id}/statistics"
+    name = "api:ha_sauna:statistics"
+    requires_auth = True
+
+    async def get(self, request, entry_id):
+        require_read(request, entry_id)
+        try:
+            year = int(request.query["year"]) if "year" in request.query else None
+            month = int(request.query["month"]) if "month" in request.query else None
+        except ValueError as error:
+            raise web.HTTPBadRequest(text="Jahr und Monat müssen Zahlen sein.") from error
+        if (month is not None and (year is None or not 1 <= month <= 12)) or (
+            year is not None and not 1 <= year <= 9999
+        ):
+            raise web.HTTPBadRequest(text="Ungültiger Zeitraum.")
+        hass = request.app[KEY_HASS]
+        runtime = runtime_for(hass, entry_id)
+        await runtime.archive.flush()
+        result = await asyncio.to_thread(
+            runtime.archive.key_figure_statistics,
+            dt_util.get_time_zone(hass.config.time_zone),
+            year=year, month=month, **key_figure_settings(runtime),
+        )
+        return self.json(result)
+
+
 class EraseArchiveView(HomeAssistantView):
     url = "/api/ha_sauna/{entry_id}/archive/erase"
     name = "api:ha_sauna:archive:erase"
@@ -1188,6 +1249,8 @@ def register(hass):
     hass.http.register_view(ArchiveView)
     hass.http.register_view(EraseArchiveView)
     hass.http.register_view(ExportView)
+    hass.http.register_view(KeyFiguresView)
+    hass.http.register_view(StatisticsView)
     hass.http.register_view(InstancesView)
     hass.http.register_view(StateView)
     hass.http.register_view(ControlView)

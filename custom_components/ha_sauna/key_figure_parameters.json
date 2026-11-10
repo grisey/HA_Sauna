@@ -1,0 +1,46 @@
+{
+  "version": 1,
+  "door_sensor_lag": {
+    "value_seconds": 22.087,
+    "quartiles_seconds": [
+      15.778,
+      29.454
+    ],
+    "operations": 35,
+    "method": "core.key_figures.learn_door_sensor_lag",
+    "source": "Türvorgänge der Nachrechnung G9b, Messwerte des Archivs",
+    "sessions": [
+      {
+        "session_id": "1c2d4cc405d34126832525c198ba17c3",
+        "started_at": "2026-10-17T06:29:38.550215+00:00",
+        "operations": 5
+      },
+      {
+        "session_id": "a17e4490327d40238541d7b9005cc21a",
+        "started_at": "2026-10-17T15:42:28.746406+00:00",
+        "operations": 7
+      },
+      {
+        "session_id": "65f77d85c70541049dcc8088403f50b0",
+        "started_at": "2026-10-23T16:10:37.596230+00:00",
+        "operations": 5
+      },
+      {
+        "session_id": "0bc9df02802f4352b1948abb843eb5b9",
+        "started_at": "2026-10-26T17:54:02.681147+00:00",
+        "operations": 4
+      },
+      {
+        "session_id": "90505ef7a06c4e59b69ed16268152a17",
+        "started_at": "2026-10-29T16:49:34.732147+00:00",
+        "operations": 5
+      },
+      {
+        "session_id": "1b96840340704eb7b59c55364d417e41",
+        "started_at": "2026-11-02T16:13:38.787402+00:00",
+        "operations": 9
+      }
+    ],
+    "confirmed": "2026-11-10"
+  }
+}

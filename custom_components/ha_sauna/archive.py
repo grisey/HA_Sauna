@@ -22,10 +22,19 @@ from math import isfinite
 from pathlib import Path
 
 from .core.history import HISTORY_CONTEXT_SECONDS, measurement_window
+from .core.key_figure_display import present_session, present_statistics
+from .core.key_figures import (
+    earlier_warmup,
+    in_period,
+    session_figures,
+    session_input_from_archive,
+    statistics_figures,
+)
 from .core.models import Energy, Position, Quantity, TimedPhase
 from .core.parameters import BY_KEY, Parameters
 from .core.phases import project_archive, project_session
 from .history_humidity import project_absolute_humidity
+from .key_figure_parameters import door_sensor_lag
 
 _LOGGER = logging.getLogger(__name__)
 _CONFIGURATION_READ_CACHE_ENTRIES = 64
@@ -220,6 +229,9 @@ class Archive:
         self._projection_lock = threading.Lock()
         self._projection_generation = 0
         self._projection_cache_entries = self.parameters.values["archive_projection_cache_entries"]
+        # One evaluated revision per finished session; removed with the session.
+        self._figure_cache = {}
+        self._figure_lock = threading.Lock()
         self.revision = 0
         self._context_pruned_before = None
 
@@ -1217,6 +1229,156 @@ class Archive:
         ):
             return {"session_id": session_id, "measurements": ()}
         return {"session_id": session_id, "measurements": tuple(measurements)}
+
+    def _key_figure_sessions(self, db):
+        """Finished sessions with timeline and their revision identity, oldest first.
+
+        A new session revision changes ``updated_at`` or the last record ID; the
+        identity of a session without its own settings includes the session that
+        supplies them (Q-P of the key figure catalogue).
+        """
+        stored = "json_type(s.payload,'$.configuration') IS NOT NULL"
+        configuration, own = (
+            ("s.configuration_id", f"(s.configuration_id IS NOT NULL OR {stored})")
+            if self._configuration_column(db) else ("NULL", f"({stored})")
+        )
+        rows = db.execute(
+            f"SELECT s.session_id,s.started_at,s.ended_at,s.updated_at,{configuration},{own},"
+            "(SELECT MAX(id) FROM records r WHERE r.entry_id=s.entry_id "
+            "AND r.session_id=s.session_id) FROM sessions s WHERE s.entry_id=? "
+            "AND s.ended_at IS NOT NULL AND json_type(s.payload,'$.timeline')='object' "
+            "ORDER BY s.started_at",
+            (self.entry_id,),
+        ).fetchall()
+        result = []
+        for index, (identity, started, ended, updated, configuration, own, last) in enumerate(rows):
+            source = identity if own else next(
+                (later[0] for later in rows[index + 1:] if later[5]), None
+            )
+            revision = (updated, last, configuration)
+            if source is not None and source != identity:
+                later = next(row for row in rows if row[0] == source)
+                revision = (*revision, source, later[3], later[4])
+            result.append({
+                "session_id": identity, "started_at": started, "ended_at": ended,
+                "parameter_session": source, "revision": revision,
+            })
+        return result
+
+    def _key_figure_input(self, db, entry, *, volume_m3, price_eur_per_kwh):
+        column = self._configuration_column(db)
+
+        def payload(session_id):
+            row = db.execute(
+                "SELECT payload" + column + " FROM sessions WHERE entry_id=? AND session_id=?",
+                (self.entry_id, session_id),
+            ).fetchone()
+            return self._decode_payload(db, row[0], row[1] if column else None)
+
+        session_id = entry["session_id"]
+        session = payload(session_id)
+        source = entry["parameter_session"]
+        settings = session if source == session_id else (
+            payload(source) if source is not None else {}
+        )
+
+        def records(kind):
+            return [json.loads(raw) for (raw,) in db.execute(
+                "SELECT payload FROM records WHERE entry_id=? AND session_id=? AND kind=? "
+                "ORDER BY id", (self.entry_id, session_id, kind),
+            )]
+
+        return session_input_from_archive(
+            session,
+            ended_at=entry["ended_at"],
+            measurements=db.execute(
+                "SELECT received_at,json_extract(payload,'$.position'),"
+                "json_extract(payload,'$.quantity'),json_extract(payload,'$.value') "
+                "FROM records WHERE entry_id=? AND session_id=? AND kind='measurement' "
+                "ORDER BY id", (self.entry_id, session_id),
+            ).fetchall(),
+            detections=records("detection"),
+            infusion_updates=records("infusion_update"),
+            configuration=settings.get("configuration"),
+            parameter_origin=(
+                "session" if source == session_id else "next_session" if source else None
+            ),
+            volume_m3=volume_m3,
+            price_eur_per_kwh=price_eur_per_kwh,
+            door_sensor_lag=door_sensor_lag(),
+        )
+
+    def key_figures(self, *, volume_m3=None, price_eur_per_kwh=None):
+        """Raw key figures of all finished sessions, oldest first.
+
+        Each session's result is cached until its revision or the user settings
+        for volume and electricity price change. A session whose archived data
+        cannot be evaluated is returned with ``figures`` set to ``None``.
+        """
+        settings = (volume_m3, price_eur_per_kwh)
+        with closing(sqlite3.connect(self.path)) as db:
+            db.execute("BEGIN")
+            entries = self._key_figure_sessions(db)
+            result = []
+            for entry in entries:
+                identity = (entry["revision"], settings)
+                with self._figure_lock:
+                    cached = self._figure_cache.get(entry["session_id"])
+                if cached is not None and cached[0] == identity:
+                    figures = cached[1]
+                else:
+                    try:
+                        figures = session_figures(self._key_figure_input(
+                            db, entry, volume_m3=volume_m3,
+                            price_eur_per_kwh=price_eur_per_kwh,
+                        ))
+                    except (KeyError, TypeError, ValueError, AttributeError) as error:
+                        _LOGGER.debug("Kennzahlen für %s nicht auswertbar: %s",
+                                      entry["session_id"], error)
+                        figures = None
+                    with self._figure_lock:
+                        self._figure_cache[entry["session_id"]] = (identity, figures)
+                result.append({**entry, "figures": figures})
+        with self._figure_lock:
+            current = {entry["session_id"] for entry in entries}
+            for session_id in set(self._figure_cache) - current:
+                del self._figure_cache[session_id]
+        return result
+
+    def session_key_figures(self, session_id, *, volume_m3=None, price_eur_per_kwh=None):
+        """Key figures of one finished session with display values, else ``None``."""
+        sessions = self.key_figures(volume_m3=volume_m3, price_eur_per_kwh=price_eur_per_kwh)
+        index = next((i for i, entry in enumerate(sessions)
+                      if entry["session_id"] == session_id), None)
+        if index is None or sessions[index]["figures"] is None:
+            return None
+        earlier = [entry["figures"] for entry in sessions[:index]
+                   if entry["figures"] is not None]
+        return {
+            "session_id": session_id,
+            "revision": sessions[index]["revision"][0],
+            "settings": {"volume_m3": volume_m3, "electricity_price_eur_per_kwh": price_eur_per_kwh},
+            "figures": present_session(sessions[index]["figures"], earlier_warmup(earlier)),
+        }
+
+    def key_figure_statistics(self, zone, *, year=None, month=None, volume_m3=None,
+                              price_eur_per_kwh=None):
+        """Statistics over the finished sessions of the whole archive, a year or a month."""
+        sessions = [
+            entry for entry in self.key_figures(
+                volume_m3=volume_m3, price_eur_per_kwh=price_eur_per_kwh
+            )
+            if in_period(entry["started_at"], zone, year, month)
+        ]
+        evaluated = [entry["figures"] for entry in sessions if entry["figures"] is not None]
+        return {
+            "period": {"year": year, "month": month},
+            "session_ids": [figures["session_id"] for figures in evaluated],
+            "not_evaluated": [entry["session_id"] for entry in sessions
+                              if entry["figures"] is None],
+            "settings": {"volume_m3": volume_m3, "electricity_price_eur_per_kwh": price_eur_per_kwh},
+            "figures": present_statistics(statistics_figures(evaluated, zone, volume_m3)),
+        }
 
     def heating_response_history(self, source, position, heater_source, maximum_gap_seconds):
         """Read complete, uninterrupted OFF/ON/OFF observations for this hardware.

@@ -36,6 +36,8 @@ und den [Download](https://www.hacs.dev/docs/use/repositories/dashboard/).
   Licht, Timer und Schutzabschaltung.
 - [Sitzungen aufbewahren und exportieren](docs/speicherung.md): Archiv,
   Löschung und Backup.
+- [Kennzahlen und Statistik](docs/kennzahlen.md): Werte einer Sitzung und über
+  Sitzungen, Quellen und Rundung.
 - [Kalibrierung](docs/kalibrierung.md): Kalibrierlauf mit Anweisungen per
   Benachrichtigung, Protokoll und Auswertung.
 

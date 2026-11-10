@@ -23,6 +23,7 @@ _PARAMETER_KEYS = frozenset(
         "archive_projection_cache_entries",
         "archive_read_page_records",
         "button_hold_seconds",
+        "cabin_volume_m3",
         "climate_temperature_step_c",
         "confirmation_minutes",
         "cooling_brightness_percent",
@@ -79,7 +80,9 @@ _PARAMETER_KEYS = frozenset(
 )
 
 
-_OPTIONAL_PARAMETER_KEYS = frozenset({"electricity_price_eur_per_kwh"})
+_OPTIONAL_PARAMETER_KEYS = frozenset(
+    {"cabin_volume_m3", "electricity_price_eur_per_kwh"}
+)
 
 
 _LEGACY_PARAMETER_KEYS = frozenset(

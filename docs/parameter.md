@@ -56,7 +56,10 @@ gepflegt; die Programmbibliothek unter **Programme und Start**.
 
 Unter **Betrieb und Ofen → Heizzeit und Verbrauch** ist der **Strompreis**
 optional in €/kWh erfassbar. Der Werkwert ist leer; durch Löschen der Eingabe
-wird der gespeicherte Strompreis wieder entfernt.
+wird der gespeicherte Strompreis wieder entfernt. Ebenso optional ist das
+**Kabinenvolumen** in m³ für die Wassermenge je Aufguss; ohne Wert gibt es keine
+Wassermenge. Beide Werte gelten für die [Kennzahlen](kennzahlen.md) aller
+archivierten Sitzungen.
 
 ### Darstellung und Aktualisierung
 

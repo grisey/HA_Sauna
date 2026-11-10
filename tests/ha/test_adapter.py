@@ -593,10 +593,12 @@ class AdapterTests(unittest.IsolatedAsyncioTestCase):
             for value in (0, definition.number_step):
                 with self.subTest(value=value):
                     form = await step()
+                    # The native empty optional number input omits its key.
                     submitted = {
                         str(marker): self.entry.options["parameters"][str(marker)]
                         for marker in flat_fields(form["data_schema"])
                         if str(marker) not in {key, "settings_action"}
+                        and self.entry.options["parameters"][str(marker)] is not None
                     }
                     self.assertNotIn(key, form["data_schema"](submitted))
                     submitted[key] = value
@@ -623,6 +625,7 @@ class AdapterTests(unittest.IsolatedAsyncioTestCase):
                 str(marker): self.entry.options["parameters"][str(marker)]
                 for marker in flat_fields(form["data_schema"])
                 if str(marker) not in {key, "settings_action"}
+                and self.entry.options["parameters"][str(marker)] is not None
             })
             self.entry.options = {
                 **self.entry.options,

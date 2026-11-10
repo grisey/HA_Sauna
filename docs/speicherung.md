@@ -206,6 +206,8 @@ für die jeweilige Sauna (`entry_id`).
 | `GET /api/ha_sauna/{entry_id}/archive` | Leserechte; ohne `session_id` die Sitzungsliste, mit `session_id` Sitzungsstand und Datensätze. |
 | `GET /api/ha_sauna/{entry_id}/export` | Administrator; ZIP-Export. |
 | `POST /api/ha_sauna/{entry_id}/archive/erase` | Administrator; `{"session_id":"…"}` löscht eine Sitzung, `{"reset":true}` das gesamte Archiv. |
+| `GET /api/ha_sauna/{entry_id}/key-figures?session_id=…` | Leserechte; [Kennzahlen](kennzahlen.md) einer abgeschlossenen Sitzung, sonst 404. |
+| `GET /api/ha_sauna/{entry_id}/statistics` | Leserechte; Statistik über alle abgeschlossenen Sitzungen, mit `year` über ein Jahr, mit `year` und `month` über einen Monat. |
 
 Archivseiten werden mit `after` abgefragt. Maßgeblich ist der zurückgegebene
 Zeiger `next_after`, auch wenn eine Seite durch Rechtefilterung leer ist.

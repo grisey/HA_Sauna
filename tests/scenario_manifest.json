@@ -5,7 +5,7 @@
   "construction_file": "fixtures/scenarios/construction.json",
   "construction_sha256": "b19f25ea5dfb4220b4579d887c499ed4dc95b07530a98c597888b89ebfdc8271",
   "configuration_file": "fixtures/scenarios/configuration.json",
-  "configuration_sha256": "6667fec25c368009dccda89cfb80446c982306803cfaa60ea6ed018974376815",
+  "configuration_sha256": "7427be1b40f72fcd2e0aae3385df264ea6d62d5248176993024331fe50e49a56",
   "configuration_policy": "The canonical defaults catalog is consumed once through its bound source reference; effective parameter changes require explicit input review; presentation-only changes do not rematerialize curves. Explicit user programme selections and historical replay configurations are independent data.",
   "scenarios": [
     {

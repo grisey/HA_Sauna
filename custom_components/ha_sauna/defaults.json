@@ -227,6 +227,26 @@
       "configuration_surface": "integration"
     },
     {
+      "key": "cabin_volume_m3",
+      "label": "Kabinenvolumen",
+      "unit": "m³",
+      "allow_zero": false,
+      "optional": true,
+      "maximum": 1000000,
+      "default": null,
+      "minimum": null,
+      "integer": false,
+      "description": "Optionales Luftvolumen der Kabine für die Wassermenge je Aufguss in der Statistik.",
+      "group": "timer",
+      "expert": false,
+      "step": "any",
+      "number_step": 0.01,
+      "settings_group": "operation",
+      "order": 23,
+      "settings_subgroup": "heater_accounting",
+      "configuration_surface": "integration"
+    },
+    {
       "key": "power_heating_threshold_w",
       "label": "Mindestleistung für gezählte Heizzeit",
       "unit": "W",

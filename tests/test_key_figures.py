@@ -1,0 +1,644 @@
+"""Kennzahlen nach dem Kennzahlenkatalog mit synthetischen Sitzungen."""
+
+import json
+import sqlite3
+import tempfile
+import unittest
+from contextlib import closing
+from datetime import UTC, datetime, timedelta
+from pathlib import Path
+from unittest.mock import patch
+from zoneinfo import ZoneInfo
+
+from custom_components.ha_sauna import archive as archive_module
+from custom_components.ha_sauna.archive import Archive
+from custom_components.ha_sauna.core import key_figures as kf
+from custom_components.ha_sauna.core.key_figure_display import (
+    figure,
+    largest_remainder,
+    present_session,
+    present_statistics,
+    rounded,
+)
+from custom_components.ha_sauna.core.moisture import absolute_humidity
+from custom_components.ha_sauna.core.parameters import BY_KEY, ParameterError
+from custom_components.ha_sauna.key_figure_parameters import door_sensor_lag
+
+T0 = datetime(2026, 11, 2, 16, 0, tzinfo=UTC)
+BERLIN = ZoneInfo("Europe/Berlin")
+PARAMETERS = {"readiness_hysteresis_c": 1.0, "readiness_offset_c": 1.0, "nominal_power_kw": 4.5}
+
+
+def series(points):
+    points = list(points)
+    return kf.Series(tuple(t for t, _ in points), tuple(float(v) for _, v in points))
+
+
+def flat(value, end=7200, step=10):
+    return series((t, value) for t in range(0, end + 1, step))
+
+
+def session(**changes):
+    values = {
+        "started_at": T0,
+        "duration": 7200.0,
+        "upper_temperature": flat(80),
+        "lower_temperature": flat(70),
+        "upper_humidity": flat(10),
+        "lower_humidity": flat(12),
+        "gangs": (),
+        "infusions": (),
+        "doors": (),
+        "phases": ((0.0, "aufheizen"), (1000.0, "bereit"), (7000.0, "aus")),
+        "targets": ((0.0, 80.0),),
+        "heating": ((0.0, 1500.0),),
+        "energy_kwh": 2.0,
+        "measured_kwh": 0.0,
+        "oven_cooling": (),
+        "parameters": PARAMETERS,
+        "parameter_origin": "session",
+        "volume_m3": None,
+        "price_eur_per_kwh": None,
+        "session_id": "s1",
+        "door_sensor_lag": 20.0,
+    }
+    values.update(changes)
+    return kf.SessionInput(**values)
+
+
+class SeriesTests(unittest.TestCase):
+    def test_value_at_a_time_is_the_last_value_at_or_before_it(self):
+        reihe = series([(10, 1), (20, 2), (30, 3)])
+        self.assertEqual((reihe.at(20), reihe.at(29.9), reihe.at(100)), (2, 2, 3))
+
+    def test_time_before_the_first_value_uses_it_only_within_five_seconds(self):
+        reihe = series([(10, 1), (20, 2)])
+        self.assertEqual(reihe.at(5), 1)
+        self.assertIsNone(reihe.at(4.9))
+
+    def test_absolute_humidity_uses_the_temperature_of_the_same_position(self):
+        result = session(upper_temperature=series([(0, 80)]), upper_humidity=series([(0, 20)]),
+                         lower_temperature=series([(0, 60)]), lower_humidity=series([(0, 20)]))
+        self.assertAlmostEqual(result.upper_absolute_humidity.at(0), absolute_humidity(80, 20))
+        self.assertAlmostEqual(result.lower_absolute_humidity.at(0), absolute_humidity(60, 20))
+
+
+class SessionFigureTests(unittest.TestCase):
+    def test_session_without_gang(self):
+        figures = kf.session_figures(session())
+        self.assertEqual(figures["gang_count"], 0)
+        self.assertEqual(figures["sauna_time_seconds"], 0)
+        self.assertIsNone(figures["gang_duration_mean_seconds"])
+        self.assertEqual((figures["rests_seconds"], figures["rest_mean_seconds"]), ([], None))
+        self.assertIsNone(figures["heating_in_gangs"])
+        self.assertEqual(figures["maximum_temperature_position"],
+                         {"relation": "before", "gang": None})
+        self.assertEqual((figures["warmup_end_at"], figures["warmup_end_kind"]), (1000.0, "ready"))
+
+    def test_gangs_sauna_time_rest_and_infusions(self):
+        gangs = (kf.GangInput(1800.0, 2700.0, (2000.0,)), kf.GangInput(4500.0, 5400.0, ()))
+        figures = kf.session_figures(session(
+            gangs=gangs, infusions=(kf.InfusionInput(2000.0), kf.InfusionInput(6000.0)),
+        ))
+        self.assertEqual(figures["gang_count"], 2)
+        self.assertEqual(figures["sauna_time_seconds"], 1800.0)
+        self.assertEqual(figures["gang_duration_mean_seconds"], 900.0)
+        self.assertEqual(figures["rests_seconds"], [1800.0])
+        self.assertEqual((figures["infusions_in_gangs"], figures["infusions_total"]), (1, 2))
+
+    def test_gang_without_documented_end_leaves_sums_missing(self):
+        gangs = (kf.GangInput(1800.0, 2700.0), kf.GangInput(4500.0, None))
+        figures = kf.session_figures(session(gangs=gangs))
+        self.assertEqual(figures["gang_count"], 2)
+        self.assertIsNone(figures["gangs"][1]["duration_seconds"])
+        self.assertIsNone(figures["sauna_time_seconds"])
+        self.assertIsNone(figures["gang_duration_mean_seconds"])
+        self.assertIsNone(figures["control_in_ready"])
+        self.assertEqual(figures["rests_seconds"], [1800.0])
+
+    def test_maximum_temperature_with_position_and_target(self):
+        temperature = series([(0, 20), (1900, 85), (2000, 90), (2100, 80), (7200, 80)])
+        gangs = (kf.GangInput(1800.0, 2700.0),)
+        figures = kf.session_figures(session(upper_temperature=temperature, gangs=gangs,
+                                             targets=((0.0, 85.0),)))
+        self.assertEqual((figures["maximum_temperature_c"], figures["maximum_temperature_at"]),
+                         (90.0, 2000.0))
+        self.assertEqual(figures["maximum_temperature_position"], {"relation": "in", "gang": 1})
+        self.assertEqual(figures["maximum_temperature_target_c"], 85.0)
+        later = kf.session_figures(session(upper_temperature=temperature,
+                                           gangs=(kf.GangInput(100.0, 500.0),)))
+        self.assertEqual(later["maximum_temperature_position"], {"relation": "after", "gang": 1})
+
+    def test_warmup_ends_at_ready_or_entry_door_whichever_is_earlier(self):
+        gangs = (kf.GangInput(1800.0, 2700.0),)
+        doors = (("door_open", 900.0), ("door_close", 1800.0))
+        figures = kf.session_figures(session(gangs=gangs, doors=doors))
+        self.assertEqual((figures["warmup_end_at"], figures["warmup_end_kind"]), (900.0, "gang"))
+        self.assertEqual(figures["warmup_seconds"], 900.0)
+        tie = kf.session_figures(session(gangs=gangs, doors=(("door_open", 1000.0),
+                                                              ("door_close", 1800.0))))
+        self.assertEqual(tie["warmup_end_kind"], "ready")
+
+    def test_manual_session_without_ready_ends_warmup_at_the_first_entry(self):
+        temperature = series([(t, 20 + t / 60) for t in range(0, 7201, 10)])
+        figures = kf.session_figures(session(
+            phases=((0.0, "manuell"), (7000.0, "aus")), targets=(),
+            upper_temperature=temperature, gangs=(kf.GangInput(3000.0, 3600.0),),
+            doors=(("door_open", 2900.0), ("door_close", 3000.0)),
+            heating=((0.0, 1500.0), (2000.0, 2600.0), (3200.0, 3300.0)),
+        ))
+        self.assertTrue(figures["manual"])
+        self.assertTrue(figures["energy_upper_bound"])
+        self.assertIsNone(figures["ready_at"])
+        self.assertEqual((figures["warmup_end_at"], figures["warmup_end_kind"]), (2900.0, "gang"))
+        self.assertAlmostEqual(figures["energy_warmup_kwh"], 2100 / 3600 * 4.5)
+        self.assertAlmostEqual(figures["energy_after_warmup_kwh"], 2.0 - 2100 / 3600 * 4.5)
+        self.assertEqual(figures["heating_phases_after_warmup"], 1)
+        # Die Eintrittsöffnung beendet das Aufheizen und zählt nicht mehr dazu.
+        self.assertEqual(figures["door_openings_warmup"], 0)
+        self.assertAlmostEqual(figures["rise_per_kwh"],
+                               (temperature.at(2900) - 20) / figures["energy_warmup_kwh"])
+        self.assertIsNone(figures["control_in_ready"])
+        self.assertEqual(figures["targets_c"], [])
+        self.assertIsNone(figures["gangs"][0]["target_c"])
+        self.assertIsNone(figures["gangs"][0]["target_deviation"])
+
+    def test_warmup_stays_open_without_documented_first_gang_start(self):
+        figures = kf.session_figures(session(gangs=(kf.GangInput(None, 2700.0),)))
+        self.assertIsNone(figures["warmup_seconds"])
+        self.assertIsNone(figures["energy_warmup_kwh"])
+
+    def test_heating_energy_and_cost(self):
+        figures = kf.session_figures(session(heating=((0.0, 1500.0), (3000.0, 3600.0)),
+                                             price_eur_per_kwh=0.28))
+        self.assertEqual(figures["heating_time_seconds"], 2100.0)
+        self.assertAlmostEqual(figures["heating_share"], 2100 / 7200)
+        self.assertAlmostEqual(figures["energy_check_kwh"], 2100 / 3600 * 4.5)
+        self.assertAlmostEqual(figures["cost_eur"], 0.56)
+        self.assertAlmostEqual(figures["energy_warmup_kwh"], 1000 / 3600 * 4.5)
+        self.assertEqual(figures["heating_phases_after_warmup"], 1)
+        self.assertIsNone(kf.session_figures(session(price_eur_per_kwh=None))["cost_eur"])
+
+    def test_heating_share_in_gangs_and_oven_cooling_gang(self):
+        gangs = (kf.GangInput(1800.0, 2700.0), kf.GangInput(4500.0, 5400.0))
+        figures = kf.session_figures(session(
+            gangs=gangs, heating=((0.0, 2250.0),), oven_cooling=((2700.0, 3300.0),
+                                                                  (5400.0, 6000.0)),
+        ))
+        self.assertAlmostEqual(figures["heating_in_gangs"], 450 / 1800)
+        self.assertEqual([c["gang"] for c in figures["oven_cooling"]], [1, 2])
+        self.assertEqual(figures["oven_cooling"][0]["duration_seconds"], 600.0)
+
+    def test_control_in_ready_is_time_weighted_without_gangs_cooling_and_doors(self):
+        temperature = series([(1000, 78), (2000, 80), (3000, 82.5), (4000, 80)])
+        figures = kf.session_figures(session(
+            upper_temperature=temperature, phases=((0.0, "aufheizen"), (1000.0, "bereit"),
+                                                   (5000.0, "aus")),
+            gangs=(kf.GangInput(2500.0, 2800.0),), oven_cooling=((2800.0, 2900.0),),
+            doors=(("door_open", 3500.0), ("door_close", 3600.0)),
+        ))
+        control = figures["control_in_ready"]
+        self.assertEqual(control["window_seconds"], 4000 - 400 - 100)
+        self.assertAlmostEqual(control["below"], 1000 / 3500)
+        self.assertAlmostEqual(control["above"], 900 / 3500)
+        self.assertAlmostEqual(control["within"], 1600 / 3500)
+        self.assertEqual((control["lowest_c"], control["lowest_at"]), (-2.0, 1000))
+        self.assertEqual((control["highest_c"], control["highest_at"]), (2.5, 3000))
+
+    def test_targets_until_operation_off(self):
+        figures = kf.session_figures(session(targets=((0.0, 85.0), (3000.0, 88.0),
+                                                      (7000.0, 90.0))))
+        self.assertEqual(figures["targets_c"], [85.0, 88.0])
+
+    def test_outside_temperature_is_the_last_value_at_most_one_hour_old(self):
+        self.assertIsNone(kf.session_figures(session())["outside_temperature_c"])
+        recent = kf.session_figures(session(outside_temperature=series([(-1800, 6.5)])))
+        self.assertEqual(recent["outside_temperature_c"], 6.5)
+        old = kf.session_figures(session(outside_temperature=series([(-3601, 6.5)])))
+        self.assertIsNone(old["outside_temperature_c"])
+
+    def test_parameters_missing_leave_dependent_figures_missing(self):
+        figures = kf.session_figures(session(parameters={}, parameter_origin=None))
+        self.assertIsNone(figures["energy_warmup_kwh"])
+        self.assertIsNone(figures["energy_check_kwh"])
+        self.assertIsNone(figures["control_in_ready"])
+
+
+class GangFigureTests(unittest.TestCase):
+    def test_entry_and_exit_temperature_at_door_openings(self):
+        temperature = series([(0, 80), (1700, 85), (1750, 79), (2550, 83), (2600, 78)])
+        doors = (("door_open", 1700.0), ("door_close", 1800.0),
+                 ("door_open", 2550.0), ("door_close", 2600.0))
+        gang = kf.session_figures(session(upper_temperature=temperature, doors=doors,
+                                          gangs=(kf.GangInput(1800.0, 2700.0),)))["gangs"][0]
+        self.assertEqual((gang["entry_opening"], gang["entry_temperature_c"]), (1700.0, 85.0))
+        self.assertEqual((gang["exit_opening"], gang["exit_temperature_c"]), (2550.0, 83.0))
+        without = kf.session_figures(session(upper_temperature=temperature,
+                                             gangs=(kf.GangInput(1800.0, 2700.0),)))["gangs"][0]
+        self.assertEqual((without["entry_temperature_c"], without["exit_temperature_c"]),
+                         (79.0, 78.0))
+
+    def test_inner_door_openings_exclude_entry_and_exit(self):
+        doors = (("door_open", 1700.0), ("door_close", 1800.0), ("door_open", 2000.0),
+                 ("door_close", 2010.0), ("door_open", 2600.0), ("door_close", 2650.0))
+        gang = kf.session_figures(session(doors=doors,
+                                          gangs=(kf.GangInput(1800.0, 2700.0),)))["gangs"][0]
+        self.assertEqual((gang["inner_door_openings"], gang["exit_opening"]), (1, 2600.0))
+
+    def test_humidity_rise_until_the_detected_end_and_at_most_the_next_infusion(self):
+        humidity = series([(1990, 10), (2000, 10), (2010, 30), (2020, 40), (2030, 20),
+                           (2040, 60), (2100, 10)])
+        infusions = (kf.InfusionInput(2000.0, 2020.0), kf.InfusionInput(2030.0, 2090.0))
+        figures = kf.session_figures(session(
+            upper_humidity=humidity, infusions=infusions, volume_m3=6.0,
+            gangs=(kf.GangInput(1800.0, 2700.0, (2000.0, 2030.0)),),
+        ))
+        gang = figures["gangs"][0]
+        rise = absolute_humidity(80, 40) - absolute_humidity(80, 10)
+        second = absolute_humidity(80, 60) - absolute_humidity(80, 20)
+        self.assertAlmostEqual(gang["humidity_rises_gm3"][0], rise)
+        self.assertAlmostEqual(gang["humidity_rises_gm3"][1], second)
+        self.assertAlmostEqual(gang["humidity_rise_mean_gm3"], (rise + second) / 2)
+        self.assertAlmostEqual(gang["water_mean_l"], (rise + second) / 2 * 6 / 1000)
+        capped = kf.infusion_rise_window(
+            session(infusions=(kf.InfusionInput(2000.0, 2100.0), kf.InfusionInput(2030.0))),
+            2000.0,
+        )
+        self.assertEqual(capped, (2000.0, 2030.0))
+
+    def test_infusion_without_detected_end_has_no_rise(self):
+        figures = kf.session_figures(session(
+            infusions=(kf.InfusionInput(2000.0, None),), volume_m3=6.0,
+            gangs=(kf.GangInput(1800.0, 2700.0, (2000.0,)),),
+        ))
+        gang = figures["gangs"][0]
+        self.assertEqual(gang["humidity_rises_gm3"], [None])
+        self.assertIsNone(gang["humidity_rise_mean_gm3"])
+        self.assertIsNone(gang["water_mean_l"])
+
+    def test_water_requires_the_cabin_volume(self):
+        figures = kf.session_figures(session(
+            infusions=(kf.InfusionInput(2000.0, 2020.0),),
+            gangs=(kf.GangInput(1800.0, 2700.0, (2000.0,)),),
+        ))
+        self.assertIsNotNone(figures["gangs"][0]["humidity_rise_mean_gm3"])
+        self.assertIsNone(figures["gangs"][0]["water_mean_l"])
+
+    def test_highest_humidity_with_absolute_humidity_at_that_time(self):
+        humidity = series([(1800, 10), (2000, 25), (2100, 15)])
+        gang = kf.session_figures(session(upper_humidity=humidity,
+                                          gangs=(kf.GangInput(1800.0, 2700.0),)))["gangs"][0]
+        self.assertEqual((gang["highest_humidity_percent"], gang["highest_humidity_at"]),
+                         (25.0, 2000))
+        self.assertAlmostEqual(gang["absolute_humidity_at_highest_gm3"],
+                               absolute_humidity(80, 25))
+
+    def test_target_and_target_deviation_in_the_gang(self):
+        temperature = series([(1800, 80), (2100, 86), (2400, 83)])
+        gang = kf.session_figures(session(
+            upper_temperature=temperature, targets=((0.0, 85.0),),
+            gangs=(kf.GangInput(1800.0, 2700.0),),
+        ))["gangs"][0]
+        self.assertEqual(gang["target_c"], 85.0)
+        deviation = gang["target_deviation"]
+        self.assertAlmostEqual(deviation["mean_c"], (-5 * 300 + 1 * 300 - 2 * 300) / 900)
+        self.assertEqual((deviation["lowest_c"], deviation["highest_c"]), (-5.0, 1.0))
+
+
+class DoorTests(unittest.TestCase):
+    DOORS = (("door_open", 500.0), ("door_close", 520.0),     # sonstige
+             ("door_open", 1700.0), ("door_close", 1800.0),   # Eintritt
+             ("door_open", 2000.0), ("door_close", 2010.0),   # sonstige im Gang
+             ("door_open", 2600.0), ("door_close", 2650.0),   # Austritt
+             ("door_open", 3000.0), ("door_close", 3600.0))   # Schlusslüften
+
+    def test_door_classes(self):
+        figures = kf.session_figures(session(doors=self.DOORS,
+                                             gangs=(kf.GangInput(1800.0, 2700.0),)))
+        self.assertEqual([d["door_class"] for d in figures["doors"]],
+                         ["other", "entry", "other", "exit", "final_ventilation"])
+        counts = {name: figures["door_classes"][name]["count"] for name in figures["door_classes"]}
+        self.assertEqual(counts, {"entry": 1, "exit": 1, "final_ventilation": 1, "other": 2,
+                                  "all": 5})
+
+    def test_entry_requires_the_closing_at_the_gang_start(self):
+        figures = kf.session_figures(session(doors=self.DOORS,
+                                             gangs=(kf.GangInput(1801.0, 2700.0),)))
+        self.assertEqual(figures["doors"][1]["door_class"], "other")
+
+    def test_unresolved_class_when_the_gang_end_is_not_documented(self):
+        figures = kf.session_figures(session(doors=self.DOORS,
+                                             gangs=(kf.GangInput(1800.0, None),)))
+        self.assertEqual([d["door_class"] for d in figures["doors"]],
+                         ["other", "entry", None, None, None])
+
+    def test_loss_until_closing_plus_sensor_lag_and_recovery(self):
+        temperature = series([(0, 80), (1700, 80), (1750, 76), (1810, 74), (1830, 73),
+                              (1900, 79), (1950, 80.5), (7200, 80)])
+        doors = (("door_open", 1700.0), ("door_close", 1800.0))
+        door = kf.session_figures(session(upper_temperature=temperature, doors=doors,
+                                          door_sensor_lag=20.0))["doors"][0]
+        self.assertEqual(door["open_seconds"], 100.0)
+        self.assertAlmostEqual(door["loss_c"], 6.0)
+        self.assertEqual(door["recovered_seconds"], 150.0)
+        longer = kf.session_figures(session(upper_temperature=temperature, doors=doors,
+                                            door_sensor_lag=30.0))["doors"][0]
+        self.assertAlmostEqual(longer["loss_c"], 7.0)
+        missing = kf.session_figures(session(upper_temperature=temperature, doors=doors,
+                                             door_sensor_lag=None))["doors"][0]
+        self.assertIsNone(missing["loss_c"])
+
+    def test_recovery_counts_only_before_the_next_opening(self):
+        temperature = series([(0, 80), (1700, 80), (1750, 76), (1950, 80.5), (7200, 80)])
+        doors = (("door_open", 1700.0), ("door_close", 1800.0),
+                 ("door_open", 1900.0), ("door_close", 1910.0))
+        figures = kf.session_figures(session(upper_temperature=temperature, doors=doors))
+        self.assertIsNone(figures["doors"][0]["recovered_seconds"])
+
+    def test_learned_sensor_lag_is_the_median_of_recovered_operations(self):
+        def dip(opened, closed, low):
+            return [(opened, 80), (low, 74), (closed + 200, 80)]
+        temperature = series([(0, 80)] + dip(1000, 1050, 1060) + dip(2000, 2050, 2080)
+                             + dip(3000, 3050, 3070) + [(4000, 80), (4010, 70), (7200, 70)])
+        doors = (("door_open", 1000.0), ("door_close", 1050.0),
+                 ("door_open", 2000.0), ("door_close", 2050.0),
+                 ("door_open", 3000.0), ("door_close", 3050.0),
+                 ("door_open", 4000.0), ("door_close", 4050.0))
+        learned = kf.learn_door_sensor_lag([session(upper_temperature=temperature, doors=doors)])
+        self.assertEqual(learned["operations"], 3)
+        self.assertEqual(learned["value_seconds"], 20.0)
+        with_infusion = kf.learn_door_sensor_lag([session(
+            upper_temperature=temperature, doors=doors, infusions=(kf.InfusionInput(2100.0),),
+        )])
+        self.assertEqual(with_infusion["operations"], 2)
+        self.assertIsNone(kf.learn_door_sensor_lag([session()]))
+
+    def test_shipped_sensor_lag_has_its_learning_basis(self):
+        stored = json.loads(Path(archive_module.__file__).with_name(
+            "key_figure_parameters.json").read_text(encoding="utf-8"))["door_sensor_lag"]
+        self.assertEqual(door_sensor_lag(), stored["value_seconds"])
+        self.assertEqual(stored["operations"],
+                         sum(item["operations"] for item in stored["sessions"]))
+        self.assertEqual(stored["method"], "core.key_figures.learn_door_sensor_lag")
+
+
+class StatisticsTests(unittest.TestCase):
+    def figures(self, session_id, start, **changes):
+        return kf.session_figures(session(session_id=session_id, started_at=start, **changes))
+
+    def test_totals_means_and_session_counts(self):
+        first = self.figures("a", T0, gangs=(kf.GangInput(1800.0, 2700.0),
+                                             kf.GangInput(4500.0, 5400.0)), price_eur_per_kwh=0.3)
+        second = self.figures("b", T0 + timedelta(days=1), gangs=(kf.GangInput(1800.0, None),),
+                              energy_kwh=None)
+        result = kf.statistics_figures([first, second], BERLIN, 6.0)
+        self.assertEqual(result["sessions"], {"value": 2, "sessions": 2})
+        self.assertEqual(result["sauna_time_seconds"], {"value": 1800.0, "sessions": 1})
+        self.assertEqual(result["gangs"]["value"], 3)
+        self.assertEqual(result["gang_duration"]["gangs"], 2)
+        self.assertEqual(result["energy_kwh"], {"value": 2.0, "sessions": 1})
+        self.assertEqual(result["cost_eur"]["sessions"], 1)
+        self.assertEqual(result["energy_per_sauna_hour_kwh"]["value"], 2.0 / 0.5)
+        self.assertEqual(result["rest"]["rests"], 1)
+        self.assertEqual(result["habits"]["most_frequent_gang_count"], [1, 2])
+        self.assertEqual(result["habits"]["sessions"][0]["weekday"], 1)
+        self.assertEqual(result["habits"]["sessions"][0]["local_start"], "17:00:00")
+
+    def test_comparisons_are_separated_by_program_kind(self):
+        manual = self.figures("m", T0, phases=((0.0, "manuell"), (7000.0, "aus")),
+                              gangs=(kf.GangInput(3000.0, 3600.0),))
+        automatic = self.figures("p", T0, program={"kind": "program", "name": "P", "steps": [80]})
+        result = kf.statistics_figures([manual, automatic], BERLIN)
+        self.assertEqual(set(result["by_program"]), {"manual", "program"})
+        self.assertEqual(result["by_program"]["manual"]["warmup"]["median_seconds"], 3000.0)
+        self.assertEqual(result["by_program"]["program"]["warmup"]["median_seconds"], 1000.0)
+        self.assertEqual(result["warmup"]["sessions"], 2)
+
+    def test_earlier_warmup_names_kinds_and_operation(self):
+        earlier = [self.figures("a", T0), self.figures("b", T0, phases=(
+            (0.0, "manuell"), (7000.0, "aus")), gangs=(kf.GangInput(3000.0, 3600.0),))]
+        self.assertEqual(kf.earlier_warmup(earlier), {
+            "median_seconds": 2000.0, "kinds": ["gang", "ready"], "all_manual": False,
+            "sessions": 2,
+        })
+
+    def test_period_uses_the_local_start(self):
+        late = "2026-10-31T23:30:00+00:00"  # 01.11. in Berlin
+        self.assertTrue(kf.in_period(late, BERLIN, 2026, 11))
+        self.assertFalse(kf.in_period(late, BERLIN, 2026, 10))
+
+
+class DisplayTests(unittest.TestCase):
+    def test_commercial_rounding_at_the_boundary(self):
+        self.assertEqual((rounded(2.05, 1), rounded(-2.05, 1), rounded(4.945, 2)),
+                         (2.1, -2.1, 4.95))
+        self.assertEqual(figure(0.125, "€")["display"], 0.13)
+
+    def test_hours_and_minutes_round_to_the_nearest_minute(self):
+        self.assertEqual(figure(3570.0, "h:mm")["display"], 60)
+        self.assertEqual(figure(3569.0, "h:mm")["display"], 59)
+        self.assertEqual(figure(5367.0, "min")["display"], 89.5)
+
+    def test_shares_whole_percent_and_largest_remainder(self):
+        self.assertEqual(figure(0.755, "share")["display"], 76)
+        self.assertEqual(largest_remainder([1 / 3, 1 / 3, 1 / 3]), [34, 33, 33])
+        self.assertEqual(largest_remainder([0.0922, 0.5271, 0.3807]), [9, 53, 38])
+        self.assertIsNone(largest_remainder([0.5, None, 0.5]))
+
+    def test_missing_values_stay_missing(self):
+        self.assertEqual(figure(None, "°C"), {"value": None, "display": None, "unit": "°C"})
+        self.assertEqual(figure(None, "time")["display"], None)
+
+    def test_session_presentation(self):
+        raw = kf.session_figures(session(
+            gangs=(kf.GangInput(1800.0, 2700.0),),
+            phases=((0.0, "aufheizen"), (1000.0, "bereit"), (5000.0, "aus")),
+            upper_temperature=series([(0, 78), (3000, 80), (4000, 82.5)]),
+        ))
+        shown = present_session(raw, kf.earlier_warmup([]))
+        self.assertEqual(shown["warmup_end_at"]["value"], (T0 + timedelta(seconds=1000)).isoformat())
+        self.assertEqual(shown["gangs"][0]["duration_seconds"], {
+            "value": 900.0, "display": 15.0, "unit": "min"})
+        control = shown["control_in_ready"]
+        self.assertEqual(sum(control[key]["display"] for key in ("below", "within", "above")), 100)
+        self.assertEqual(shown["earlier_warmup"]["sessions"], 0)
+
+    def test_statistics_presentation_keeps_session_counts(self):
+        raw = kf.statistics_figures([kf.session_figures(session())], BERLIN)
+        shown = present_statistics(raw)
+        self.assertEqual(shown["energy_kwh"], {"value": 2.0, "display": 2.0, "unit": "kWh",
+                                               "sessions": 1})
+        self.assertEqual(shown["by_program"]["unknown"]["warmup"]["median_seconds"]["display"], 17)
+
+
+class ArchiveInputTests(unittest.TestCase):
+    """Eingang einer archivierten Sitzung mit Zwischenspeicher je Sitzungsrevision."""
+
+    def setUp(self):
+        self.directory = tempfile.TemporaryDirectory()
+        self.path = Path(self.directory.name) / "archive.sqlite"
+        self.archive = Archive(self.path, "entry")
+        self.archive._initialize(T0)
+
+    def tearDown(self):
+        self.directory.cleanup()
+
+    @staticmethod
+    def at(seconds):
+        return (T0 + timedelta(seconds=seconds)).isoformat()
+
+    def event(self, kind, seconds):
+        return {"event_id": f"{kind}:{seconds}", "session_id": "s1", "kind": kind,
+                "effective_at": self.at(seconds), "detected_at": self.at(seconds + 5)}
+
+    def payload(self, configuration=True):
+        close = self.event("door_close", 1800)
+        infusion = self.event("infusion", 2000)
+        gang = {
+            "gang_id": "g1", "session_id": "s1", "started_at": self.at(1800),
+            "detected_at": self.at(1810), "start_source_event_id": close["event_id"],
+            "recognition_event_id": close["event_id"], "recognition_kind": "presence_entry",
+            "start_basis": "door_close", "infusion_events": [infusion],
+            "ended_at": self.at(2640), "end_event_id": "ventilation_confirmed:2640",
+            "end_reason": "ventilation",
+        }
+        payload = {
+            "timeline": {
+                "session_id": "s1", "session_started_at": T0.isoformat(),
+                "completed": [gang], "active": None, "retracted": [],
+                "processed": [self.event("door_open", 1700), close, infusion,
+                              self.event("door_open", 2600),
+                              self.event("ventilation_confirmed", 2640),
+                              self.event("door_close", 2650)],
+            },
+            "ended_at": self.at(7200),
+            "base_phases": [{"at": self.at(0), "phase": "aufheizen"},
+                            {"at": self.at(1000), "phase": "bereit"},
+                            {"at": self.at(7000), "phase": "aus"}],
+            "target_history": [{"at": self.at(0), "target_c": 80}],
+            "heating": {"intervals": [{"started_at": self.at(0), "ended_at": self.at(1500)}]},
+            "energy": {"estimated_kwh": 1.5, "measured_kwh": 0.5},
+            "after_run_history": [{"started_at": self.at(2640), "ends_at": self.at(3300)}],
+        }
+        if configuration:
+            payload["configuration"] = {"parameters": PARAMETERS, "control_mode": "automatic",
+                                        "program_mode": "constant"}
+        return payload
+
+    def write(self, session_id="s1", payload=None, updated="u1", ended=True, started=None):
+        payload = payload or self.payload()
+        with closing(sqlite3.connect(self.path)) as db, db:
+            db.execute(
+                "INSERT OR REPLACE INTO sessions(session_id,entry_id,started_at,updated_at,"
+                "ended_at,payload) VALUES(?,?,?,?,?,?)",
+                (session_id, "entry", started or T0.isoformat(), updated,
+                 self.at(7200) if ended else None, json.dumps(payload)),
+            )
+            if session_id != "s1":
+                return
+            rows = [("measurement", self.at(t), {"position": p, "quantity": q, "value": v})
+                    for t in range(0, 7201, 10)
+                    for p, q, v in (("upper", "temperature", 80.0), ("lower", "temperature", 70.0),
+                                    ("upper", "humidity", 30.0 if 2010 <= t < 2030 else 10.0),
+                                    ("lower", "humidity", 12.0))]
+            rows += [("detection", self.at(e[1] + 5), {"event": self.event(*e)}) for e in (
+                ("door_open", 1700), ("door_close", 1800), ("infusion", 2000),
+                ("door_open", 2600), ("door_close", 2650))]
+            rows.append(("infusion_update", self.at(2040), {
+                "source_event_id": "infusion:2000", "end": {"effective_at": self.at(2030)}}))
+            db.executemany(
+                "INSERT INTO records(entry_id,session_id,kind,received_at,payload) "
+                "VALUES('entry','s1',?,?,?)",
+                [(kind, at, json.dumps(data)) for kind, at, data in rows],
+            )
+
+    def test_archived_session_inputs(self):
+        self.write()
+        entry = self.archive.key_figures(volume_m3=6.0, price_eur_per_kwh=0.3)[0]
+        figures = entry["figures"]
+        self.assertEqual(figures["gang_count"], 1)
+        self.assertEqual(figures["sauna_time_seconds"], 840.0)
+        self.assertEqual([d["door_class"] for d in figures["doors"]], ["entry", "exit"])
+        self.assertEqual(figures["gangs"][0]["entry_opening"], 1700.0)
+        self.assertAlmostEqual(figures["gangs"][0]["humidity_rise_mean_gm3"],
+                               absolute_humidity(80, 30) - absolute_humidity(80, 10))
+        self.assertEqual(figures["energy_kwh"], 2.0)
+        self.assertAlmostEqual(figures["cost_eur"], 0.6)
+        self.assertEqual(figures["oven_cooling"][0]["gang"], 1)
+        self.assertEqual(figures["program"], {"kind": "constant"})
+        self.assertEqual(figures["parameter_origin"], "session")
+        self.assertIsNone(figures["outside_temperature_c"])
+
+    def test_cache_until_a_new_session_revision(self):
+        self.write()
+        with patch.object(archive_module, "session_figures",
+                          wraps=archive_module.session_figures) as compute:
+            self.archive.key_figures()
+            self.archive.key_figures()
+            self.assertEqual(compute.call_count, 1)
+            self.write(updated="u2")
+            self.archive.key_figures()
+            self.assertEqual(compute.call_count, 2)
+            self.archive.key_figures(volume_m3=6.0)
+            self.assertEqual(compute.call_count, 3)
+
+    def test_running_session_is_not_evaluated_and_deleted_session_leaves_the_cache(self):
+        self.write(ended=False)
+        self.assertEqual(self.archive.key_figures(), [])
+        self.assertIsNone(self.archive.session_key_figures("s1"))
+        self.write()
+        self.archive.key_figures()
+        with closing(sqlite3.connect(self.path)) as db, db:
+            db.execute("DELETE FROM sessions WHERE session_id='s1'")
+        self.assertEqual(self.archive.key_figures(), [])
+        self.assertEqual(self.archive._figure_cache, {})
+
+    def test_missing_settings_use_the_next_stored_session_and_are_marked(self):
+        self.write(payload=self.payload(configuration=False))
+        later = self.payload()
+        later["timeline"] = {**later["timeline"], "session_id": "s2"}
+        self.write("s2", later, started=(T0 + timedelta(days=1)).isoformat())
+        entries = {e["session_id"]: e for e in self.archive.key_figures()}
+        self.assertEqual(entries["s1"]["parameter_session"], "s2")
+        self.assertEqual(entries["s1"]["figures"]["parameter_origin"], "next_session")
+
+    def test_session_and_statistics_results(self):
+        self.write()
+        result = self.archive.session_key_figures("s1", volume_m3=6.0)
+        self.assertEqual(result["figures"]["gang_count"]["display"], 1)
+        statistics = self.archive.key_figure_statistics(BERLIN, year=2026, month=11)
+        self.assertEqual(statistics["session_ids"], ["s1"])
+        self.assertEqual(statistics["figures"]["sessions"]["value"], 1)
+        self.assertEqual(self.archive.key_figure_statistics(BERLIN, year=2025)["session_ids"], [])
+
+
+class ProgramTests(unittest.TestCase):
+    def test_program_kind_from_session_state_and_settings(self):
+        programs = [{"id": "p", "name": "Höhe", "start_c": 85, "end_c": 95,
+                     "distribution_gangs": 5}]
+        self.assertEqual(kf.session_program({}, {"control_mode": "manual"}, ()),
+                         {"kind": "manual"})
+        self.assertEqual(kf.session_program({}, {}, ((0.0, "manuell"),)), {"kind": "manual"})
+        self.assertEqual(kf.session_program({"temperature_program_mode": "constant"},
+                                            {"program_mode": "progressive"}, ()),
+                         {"kind": "constant"})
+        self.assertEqual(kf.session_program({}, {
+            "program_mode": "progressive", "selected_program_id": "p",
+            "temperature_programs": programs}, ()), {
+            "kind": "program", "id": "p", "name": "Höhe", "steps": [85, 88, 90, 93, 95]})
+        self.assertIsNone(kf.session_program({}, {}, ()))
+
+
+class CabinVolumeSettingTests(unittest.TestCase):
+    def test_cabin_volume_is_optional_and_positive(self):
+        definition = BY_KEY["cabin_volume_m3"]
+        self.assertEqual((definition.default, definition.optional, definition.unit),
+                         (None, True, "m³"))
+        self.assertIsNone(definition.validate(None))
+        self.assertEqual(definition.validate(6), 6.0)
+        with self.assertRaises(ParameterError):
+            definition.validate(0)
+
+
+if __name__ == "__main__":
+    unittest.main()
