@@ -5892,10 +5892,21 @@ class SaunaPanel extends HTMLElement {
       #history[data-main="history"] .history-controls { display: flex; flex-wrap: wrap; align-items: center; margin: 0; }
       #history[data-main="history"] .history-selection-actions { margin-inline-start: auto; }
       .history-subviews button { white-space: nowrap; }
-      .history-figure-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(${this.preference("size_150_0_px")}px, 1fr)); gap: ${this.preference("layout_space_13_px")}px; }
+      .history-figure-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(${this.preference("size_180_0_px")}px, 1fr)); gap: ${this.preference("layout_space_18_px")}px; }
       .history-figure-grid[data-history-figures="plant"] { grid-template-columns: repeat(auto-fit, minmax(${this.preference("size_270_0_px")}px, 1fr)); }
       .history-test-row { display: flex; flex-wrap: wrap; align-items: center; gap: ${this.preference("layout_space_13_px")}px; margin-top: ${this.preference("layout_space_13_px")}px; }
       .history-test-row p { margin: 0; }
+      /* B3c: Sitzungsbild und Gänge wie das Brett: flache Karten, enge Abstände. */
+      #history[data-main="history"] :is(.history-figure-card, .history-gang-card) { margin: 0; padding: ${this.preference("layout_space_24_px")}px ${this.preference("surface_padding_px")}px; border-radius: var(--sauna-control-radius); box-shadow: none; gap: 0; }
+      #history[data-main="history"] :is(.history-figure-card, .history-gang-card) p { margin: 0; }
+      #history[data-main="history"] .history-figure-card .stat-value { margin: ${this.preference("layout_space_10_px")}px 0 ${this.preference("size_2_0_px")}px; }
+      #history[data-main="history"] .history-figure-card .stat-line { line-height: ${this.preference("line_height_1_4_ratio")}; }
+      #history[data-main="history"] .history-figure-card { display: flex; flex-direction: column; }
+      #history[data-main="history"] .history-figure-card .history-test-row { margin-top: auto; padding-top: ${this.preference("layout_space_13_px")}px; gap: ${this.preference("layout_space_12_px")}px; font-size: ${this.preference("font_size_small_px")}px; color: var(--sauna-card-muted-text); }
+      #history[data-main="history"] .history-figure-card .history-test-row strong { color: var(--sauna-card-text); }
+      #history[data-main="history"] .history-figure-card .history-test-row button { min-height: 0; padding: ${this.preference("size_2_0_px")}px ${this.preference("layout_space_13_px")}px; font-size: ${this.preference("font_size_small_px")}px; font-weight: ${this.preference("font_weight_500_0_ratio")}; box-shadow: none; }
+      #history[data-main="history"] .history-gang-card { gap: ${this.preference("layout_space_10_px")}px; }
+      #history[data-main="history"] .history-gang-card .stat-value { margin: 0; }
       .calibration-module h3 { margin: ${this.preference("layout_space_13_px")}px 0 ${this.preference("layout_space_07_px")}px; }
       .calibration-steps { display: grid; grid-template-columns: repeat(auto-fill, minmax(${this.preference("size_120_0_px")}px, 1fr)); gap: ${this.preference("layout_space_07_px")}px; list-style: none; margin: 0; padding: 0; }
       .calibration-step { display: grid; gap: 2px; padding: ${this.preference("layout_space_07_px")}px; border: 1px solid var(--sauna-color-border); border-radius: var(--sauna-control-radius); }
@@ -5934,7 +5945,7 @@ class SaunaPanel extends HTMLElement {
       .history-figure-card .stat-value small, .history-gang-card .stat-value small { color: var(--sauna-card-muted-text); }
       .history-figure-list { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: ${this.preference("layout_space_07_px")}px ${this.preference("layout_space_13_px")}px; margin: 0; font-size: ${this.preference("font_size_compact_px")}px; align-items: baseline; }
       .history-figure-list dt { display: flex; align-items: center; gap: ${this.preference("control_group_gap_px")}px; margin: 0; color: var(--sauna-card-muted-text); }
-      .history-figure-list dd { margin: 0; min-width: 0; overflow-wrap: anywhere; font-variant-numeric: tabular-nums; }
+      .history-figure-list dd { margin: 0; min-width: 0; overflow-wrap: break-word; font-variant-numeric: tabular-nums; }
       .history-milestones { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: ${this.preference("layout_space_07_px")}px; }
       .history-milestone { padding-block-start: ${this.preference("layout_space_07_px")}px; border-block-start: ${this.preference("size_4_0_px")}px solid var(--sauna-color-border); }
       .history-milestone[data-milestone="ready"] { border-block-start-color: var(--sauna-color-phase-ready); }
@@ -5952,7 +5963,7 @@ class SaunaPanel extends HTMLElement {
       .history-diamonds { display: flex; flex-wrap: wrap; gap: ${this.preference("layout_space_07_px")}px; min-height: ${this.preference("size_12_0_px")}px; margin: 0; }
       .history-gangs { display: grid; align-content: start; gap: ${this.preference("layout_space_09_px")}px; min-width: 0; }
       .history-gang-row { display: flex; flex-wrap: wrap; gap: ${this.preference("control_group_gap_px")}px; align-items: stretch; }
-      .history-gang-card { flex: 1 1 ${this.preference("size_120_0_px")}px; display: grid; align-content: start; gap: ${this.preference("layout_space_09_px")}px; }
+      .history-gang-card { flex: 1 1 ${this.preference("size_150_0_px")}px; display: grid; align-content: start; gap: ${this.preference("layout_space_09_px")}px; }
       .history-gang-card .stat-value { font-size: ${this.preference("font_size_display_emphasis_px")}px; }
       .history-gang-card[data-selected="true"] { border-color: var(--sauna-chart-focus, var(--accent)); }
       .history-gang-card[data-selected="true"] > .stat-line:first-child { color: var(--sauna-chart-focus, var(--accent)); }
@@ -5990,8 +6001,8 @@ class SaunaPanel extends HTMLElement {
       #history[data-main="history"] button.history-event-band-segment:hover:not(:disabled) { background: var(--history-event-color); }
       #history[data-main="history"] button.history-event-band-segment[data-history-event-kind="infusion"]:hover:not(:disabled) { background: transparent; }
       .history-below { display: flex; flex-wrap: wrap; gap: var(--sauna-surface-gap); align-items: stretch; }
-      .history-below > .history-gangs { flex: 2 1 ${this.preference("size_400_0_px")}px; }
-      #history[data-main="history"] .history-below > .history-inspection { flex: 1 1 ${this.preference("size_300_0_px")}px; align-self: stretch; align-content: start; max-inline-size: none; margin: 0; padding: ${this.preference("layout_space_18_px")}px ${this.preference("layout_space_20_px")}px; border-radius: var(--sauna-surface-radius); }
+      .history-below > .history-gangs { flex: 2 1 calc(${this.preference("size_280_0_px")}px * 2); }
+      #history[data-main="history"] .history-below > .history-inspection { flex: 1 1 ${this.preference("size_320_0_px")}px; align-self: stretch; align-content: start; max-inline-size: none; margin: 0; padding: ${this.preference("layout_space_18_px")}px ${this.preference("layout_space_20_px")}px; border-radius: var(--sauna-surface-radius); }
       #history[data-main="history"] .history-inspection:not([data-history-selection-kind="overview"]) { border-color: var(--sauna-chart-focus, var(--accent)); }
       #history[data-main="history"] .history-inspection:not(:has(.history-tooltip-time)) { display: none; }
       .history-inspection-key { margin: 0; font-size: ${this.preference("font_size_small_px")}px; letter-spacing: ${this.preference("tracking_0_08_em")}em; text-transform: uppercase; color: var(--sauna-card-muted-text); }
@@ -8497,11 +8508,11 @@ class SaunaPanel extends HTMLElement {
       ? items.join("")
       : `${items.slice(0, -1).join(", ")} und ${items.at(-1)}`;
   }
-  historyFigureCard(title, value, lines = [], extra = "") {
+  historyFigureCard(title, value, lines = [], extra = "", footer = "") {
     return `<section class="card stat-card history-figure-card" aria-label="${esc(title)}"><p class="stat-key">${esc(title)}</p><p class="stat-value">${value}</p>${extra}${lines
       .filter(Boolean)
       .map((line) => `<p class="stat-line">${line}</p>`)
-      .join("")}</section>`;
+      .join("")}${footer}</section>`;
   }
   historyFigureList(rows) {
     const shown = rows.filter(Boolean);
@@ -8532,11 +8543,12 @@ class SaunaPanel extends HTMLElement {
     return `${kind === "gang" ? "erster Gang" : "Bereit"} nach ${esc(this.statisticNumber(f.warmup_seconds))}`;
   }
   // Sitzungsbild (Brett „Verlauf · Sitzung“): Antwort in wenigen Zahlen.
-  historySessionFiguresMarkup(f, session) {
+  historySessionFiguresMarkup(f, session, result = null) {
     const gangs = f.gangs || [],
       count = f.gang_count?.display ?? gangs.length,
       hasTarget = this.historyHasTarget(f),
-      card = (title, value, lines) => this.historyFigureCard(title, value, lines),
+      card = (title, value, lines, footer = "") =>
+        this.historyFigureCard(title, value, lines, "", footer),
       text = (figure) => esc(this.statisticNumber(figure)),
       perGang = gangs.map((gang) =>
         esc(this.statisticNumber(gang.infusion_count, false)),
@@ -8598,7 +8610,7 @@ class SaunaPanel extends HTMLElement {
             .filter(Boolean)
             .join(", "),
           esc(this.historyProgramText(f)),
-        ]),
+        ], this.historyTestMarkup(result)),
       ];
     return `<div class="history-figure-grid" data-history-figures="session">${cards.join("")}</div>`;
   }
@@ -8907,7 +8919,7 @@ class SaunaPanel extends HTMLElement {
       const f = data.result.figures;
       figures = plant
         ? this.historyPlantFiguresMarkup(f, data.result.settings)
-        : this.historySessionFiguresMarkup(f, session) + this.historyTestMarkup(data.result);
+        : this.historySessionFiguresMarkup(f, session, data.result);
       gangs = plant ? "" : this.historyGangsMarkup(f);
     } else if (data?.error)
       figures = `<div class="notice" role="alert"><p>${esc(data.error)}</p></div>`;
