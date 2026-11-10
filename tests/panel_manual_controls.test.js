@@ -42,7 +42,8 @@ assert.doesNotMatch(source, /Raumlicht/);
 assert.doesNotMatch(source, /Zwangskühlung pausiert/);
 assert.ok(!source.includes("Übersteuerung: höchstens"));
 assert.doesNotMatch(source, /bis zum nächsten Phasenwechsel aktiv/);
-assert.match(source, /s\.configuration\.program_mode\s*===\s*"progressive"/);
+// B4c: Details · Zustand leitet kein eigenes Temperaturprogramm mehr her (BF-07 doppelt zu S-10).
+assert.doesNotMatch(source, /Konstante Temperaturregelung \(manuell\)/);
 assert.doesNotMatch(
   source,
   /Temperaturprogramm<\/dt><dd>\$\{p\.final_temperature_c!=null/,
@@ -1197,7 +1198,7 @@ const renderCurrent = (
       true,
       "#details",
     ),
-    /Ofen · Ein/,
+    /<dt>Ofen<\/dt><dd>Ein · /,
     "physical feedback remains visible in details",
   );
   assert.doesNotMatch(automaticHeater, /data-action="heater:true" class="primary"/);
@@ -1481,27 +1482,26 @@ const renderCurrent = (
   assert.doesNotMatch(details, /Zwangskühlung/);
   assert.match(details, /data-phase-timer="heating"/);
   assert.match(details, /Lichtnachlauf/);
-  assert.match(details, /Ofenleistung<\/dt><dd>4,5 kW · Nennleistung<\/dd>/);
-  assert.match(details, /Erkennung mit: oberer Messposition/);
-  assert.match(details, /Licht<\/h2>[\s\S]*Automatik/);
-  assert.match(details, /Wiedereinschaltschwelle<\/dt><dd>77 °C<\/dd>/);
+  // W5 (B4c): Leistung nur mit Leistungssensor; die Nennleistung steht in den Einstellungen.
+  assert.doesNotMatch(details, /Nennleistung|Ofenleistung/);
+  assert.match(details, /<dt>Licht<\/dt><dd>[^<]*Automatik/);
   assert.doesNotMatch(
     details,
-    /data-action=|<button|<input/,
+    /data-action="(?!detail-raw:)|<input/,
     "details present status without controls",
   );
-  // The backend owns the threshold, including fractional values and absence.
-  // Do not derive it from either the upper threshold or local parameters.
+  // The backend owns the threshold, including fractional values and absence;
+  // Details · Zustand shows it only in the raw regulation data.
+  detailPanel.detailRawOpen = new Set(["regulation"]);
   for (const [value, display] of [
     [76.5, "76,5"],
-    [null, "–"],
+    [null, "Nicht aufgezeichnet"],
   ]) {
     detailPanel.state.thermostat_restart_temperature = value;
     detailPanel.drawCurrent();
-    assert.ok(
-      detailNodes
-        .get("#details")
-        .innerHTML.includes(`Wiedereinschaltschwelle</dt><dd>${display} °C</dd>`),
+    assert.match(
+      detailNodes.get("#details").innerHTML,
+      new RegExp(`Wiedereinschaltschwelle</dt><dd>${display}`),
     );
   }
 

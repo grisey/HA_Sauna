@@ -540,17 +540,42 @@ test("environment line shows station, condition, temperature and humidity escape
   const values = open.match(
     /<div class="environment-values" id="environment-values">([\s\S]*)<\/div><\/div>$/,
   )[1];
-  assert.equal(
-    `<div class="card" id="detail-environment"><h2>Aktuelle Umgebung</h2>${values}</div>`,
-    p.renderEnvironmentDetails(),
-    "the same values as Details",
-  );
   assert.ok(
     values.includes(
       '<div data-weather-quantity="wind_speed"><dt>Wind</dt><dd>&lt;script&gt;bad()&lt;/script&gt; &quot;&lt;x&gt;</dd></div>',
     ),
   );
   assert.ok(values.includes("<dd>Nicht verfügbar</dd>"));
+  // B4c: Details · Zustand zeigt die Umgebung einmal und kompakt, mit denselben Werten.
+  const details = p.renderEnvironmentDetails();
+  assert.match(details, /^<section class="card" id="detail-environment" aria-label="Umgebung"><h2>Umgebung<\/h2>/);
+  assert.ok(
+    details.includes(
+      "<dt>Station</dt><dd>Private Wetterstation &lt;img src=x onerror=&quot;bad()&quot;&gt; · Leicht bewölkt</dd>",
+    ),
+  );
+  assert.ok(details.includes('<dt data-weather-quantity="temperature">Außen &lt;b&gt;</dt><dd>16,4 °C</dd>'));
+  assert.ok(details.includes('<dt data-weather-quantity="humidity">Feuchte</dt><dd>nicht verfügbar</dd>'));
+  assert.ok(
+    details.includes(
+      '<dt data-weather-quantity="wind_speed">Wind</dt><dd>&lt;script&gt;bad()&lt;/script&gt; &quot;&lt;x&gt;</dd>',
+    ),
+  );
+  assert.match(details, /<p class="muted">Messzeit [^<]+ · aktualisiert [^<]+<\/p><\/section>$/);
+  assert.ok(!details.includes("<script>"));
+  p.state.environment.values.push({
+    key: "wind_direction",
+    label: "Windrichtung",
+    value: "NO",
+    available: true,
+    unit: null,
+  });
+  p.state.environment.values[2] = { key: "wind_speed", label: "Wind", value: 6.4, available: true, unit: "km/h" };
+  assert.ok(
+    p.renderEnvironmentDetails().includes('<dt data-weather-quantity="wind_speed">Wind</dt><dd>6,4 km/h aus NO</dd>'),
+    "wind speed and direction share one row",
+  );
+  assert.doesNotMatch(p.renderEnvironmentDetails(), /Windrichtung/);
   assert.ok(!open.includes("<script>"));
   p.environmentOpen = false;
   p.state.environment = {

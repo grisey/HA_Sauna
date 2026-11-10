@@ -179,6 +179,7 @@ test("the measurement card shows values per position, validity and the backend d
           absolute_humidity: 41.2,
           temperature_state: "current",
           humidity_state: "stale",
+          temperature_spacing_seconds: 1.02,
         },
         {
           position: "lower",
@@ -190,30 +191,40 @@ test("the measurement card shows values per position, validity and the backend d
         },
       ],
       difference: { temperature: 25.04, absolute_humidity: null },
+      valid: false,
     },
   };
   const html = panel.renderPositionValues();
-  assert.match(html, /^<dl data-position-values>/);
-  assert.match(html, /<dt>Oben · Regelposition<\/dt><dd>85 °C · 12 % · 41,2 g\/m³ <span class="muted">gültig, veraltet<\/span>/);
-  assert.match(html, /<dt>Unten<\/dt><dd>60 °C · – · – <span class="muted">gültig, fehlt<\/span>/);
-  assert.match(html, /<dt>Oben − unten<\/dt><dd>\+25 °C · –<\/dd>/);
-  panel.state.position_values = { positions: [], difference: null };
-  assert.equal(panel.renderPositionValues(), "");
+  assert.match(html, /^<section class="card detail-positions" aria-label="Messpositionen" data-position-values>/);
+  assert.match(
+    html,
+    /data-position="upper"><p class="stat-key">Oben · Regelposition<\/p><p class="stat-value">85<small>°C<\/small><\/p><p class="stat-line">12 % · 41,2 g\/m³<\/p><p class="stat-line">gültig, veraltet · alle 1 s<\/p>/,
+  );
+  assert.match(
+    html,
+    /data-position="lower"><p class="stat-key">Unten<\/p><p class="stat-value">60<small>°C<\/small><\/p><p class="stat-line">– · –<\/p><p class="stat-line">gültig, fehlt<\/p>/,
+  );
+  assert.match(
+    html,
+    /data-position="difference"><p class="stat-key">Oben − unten<\/p><p class="stat-value">\+25<small>°C<\/small><\/p><p class="stat-line">–<\/p><\/div>/,
+  );
+  panel.state.position_values = { positions: [], difference: null, valid: false };
+  assert.match(panel.renderPositionValues(), /Keine Messwerte verfügbar/);
 });
 
-test("the measurement card shows the positions once, without the former per-position lines", () => {
+test("the state view shows the positions once, without the former per-position lines", () => {
   const panel = fixturePanel(Panel);
   panel.state = {
     position_values: {
       positions: [{ position: "upper", temperature: 80, humidity: 10, absolute_humidity: 30, temperature_state: "current", humidity_state: "current" }],
       difference: null,
+      valid: true,
     },
   };
   panel.renderEnvironmentDetails = () => "";
   panel.renderLiveEvidence = () => "";
-  const html = panel.renderDetailView({ measurements: "<h3>Obere Messposition</h3>", doorText: "Tür geschlossen", detectionText: "", stateLine: "", timers: "", presence: "" });
-  assert.match(html, /<h2>Messung<\/h2><p data-door-status>Tür geschlossen<\/p><dl data-position-values>/);
-  assert.doesNotMatch(html, /Obere Messposition|Messpositionen/);
-  panel.state.position_values = { positions: [], difference: null };
-  assert.match(panel.renderDetailView({ measurements: "<h3>Obere Messposition</h3>", doorText: "", detectionText: "", stateLine: "", timers: "", presence: "" }), /<h3>Obere Messposition<\/h3>/);
+  const html = panel.renderDetailView({});
+  assert.equal(html.match(/data-position-values/g).length, 1);
+  assert.doesNotMatch(html, /Obere Messposition|Untere Messposition|class="card hero"/);
+  assert.doesNotMatch(html, /data-position="difference"/, "one position has no difference");
 });

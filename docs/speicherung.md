@@ -228,11 +228,19 @@ Zeitfenster, Zoom, Markierungen und offene Abschnitte bleiben dabei erhalten.
 **Wird geladen** kennzeichnet den ersten Datenabruf. Bei einer fehlgeschlagenen
 Aktualisierung bleibt der vorhandene Stand mit einem Fehlerhinweis sichtbar.
 
-**Details** (Administratoren) hat vier Unteransichten. **Zustand** zeigt den
-aktuellen Betrieb, Ofen, Licht, Messung, die Werte je Messposition (Temperatur,
-relative und absolute Feuchte, Gültigkeit, Regelposition) mit der Differenz
-oben − unten, die Umgebung, die Präsenz und eingeklappt die aktuellen Daten im
-Detail. **Erkennung** ist die [Erkennungskontrolle](erkennung.md#erkennungskontrolle), **Steuerung** der Verlauf der
+**Details** (Administratoren) hat vier Unteransichten. **Zustand** zeigt in einer
+Statuszeile, ob alle Messwerte gültig sind, die Zahl aktueller Fehler und den
+Stand. Darunter stehen die Werte je Messposition (Temperatur, relative und
+absolute Feuchte, Gültigkeit und Abstand der letzten beiden Messungen,
+Regelposition) mit der Differenz oben − unten und ihrem zeitgewichteten Mittel
+über die laufende Sitzung und ab dem ersten Bereit; dann Geräte und
+Rückmeldungen (Ofen mit Rückmeldequelle, Heizzeit, gemessene Leistung nur mit
+Leistungssensor, Licht mit Modus, Präsenz, Tür, laufende Fristen), die Umgebung,
+Archiv und Start (Sitzungen und Datensätze im Archiv, Dateigröße, Startdauer des
+Archivs beim Laden der Integration) und die aktuellen Fehler. Die Rohdaten sind
+eingeklappt und werden erst beim Öffnen aufbereitet. Archivumfang und Mittelwerte
+liefert `GET …/archive/overview` (Administratoren) im Takt der
+Verlaufsaktualisierung. **Erkennung** ist die [Erkennungskontrolle](erkennung.md#erkennungskontrolle), **Steuerung** der Verlauf der
 Sitzung mit Regelentscheidungen, Fristen und Protokoll, **Kalibrierung** Start,
 Lauf und Raster der [Kalibrierung](kalibrierung.md#start-und-abbruch).
 

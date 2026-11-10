@@ -219,9 +219,12 @@ test("details render includes the reachable presence and rule card", () => {
     clampTemperature: (number) => number,
   });
   value.drawCurrent();
-  assert.match(nodes["#details"].innerHTML, /Präsenz und Regelursache/);
-  assert.match(nodes["#details"].innerHTML, /Temperatur und Feuchte/);
-  assert.match(nodes["#details"].innerHTML, /keine beobachtete Abwesenheit/);
+  // B4c: Präsenz steht unter Geräte und Rückmeldungen, die Regelursachen in den Rohdaten.
+  assert.match(
+    nodes["#details"].innerHTML,
+    /<dt>Präsenz<\/dt><dd>[^<]*keine beobachtete Abwesenheit · aus Temperatur und Feuchte/,
+  );
+  assert.match(nodes["#details"].innerHTML, /data-action="detail-raw:regulation"/);
   assert.doesNotMatch(nodes["#details"].innerHTML, /proxy_retraction/);
 
   state.configuration_model.measurement_positions = ["lower"];

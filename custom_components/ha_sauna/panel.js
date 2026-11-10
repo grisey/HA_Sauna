@@ -425,6 +425,23 @@ const events = {
   absence_exit: "Gangende · Türvorgang mit Abwesenheit",
   manual_gang_end: "Gangende · von Hand beendet",
 };
+const weatherConditions = {
+  "clear-night": "Klare Nacht",
+  cloudy: "Bewölkt",
+  exceptional: "Außergewöhnliches Wetter",
+  fog: "Nebel",
+  hail: "Hagel",
+  lightning: "Gewitter",
+  "lightning-rainy": "Gewitter mit Regen",
+  partlycloudy: "Leicht bewölkt",
+  pouring: "Starker Regen",
+  rainy: "Regen",
+  snowy: "Schnee",
+  "snowy-rainy": "Schneeregen",
+  sunny: "Sonnig",
+  windy: "Windig",
+  "windy-variant": "Windig und bewölkt",
+};
 const historyEventMarkerKinds = new Set(["door_open", "door_close", "infusion"]);
 const gangConfirmed = (g) =>
   g.recognition_kind === "presence_confirmed" || !!g.infusion_events?.length;
@@ -5727,6 +5744,31 @@ class SaunaPanel extends HTMLElement {
         .detail-data > div { grid-template-columns: minmax(${this.preference("size_7_0_em")}em, 1fr) minmax(0, 1.3fr); gap: ${this.preference("layout_space_13_px")}px; }
       }
       @media (max-width: ${this.preference("breakpoint_700_0_px")}px) { .control-history-inspection { grid-template-columns: 1fr; gap: ${this.preference("layout_space_18_px")}px; } }
+      /* B4c: Details · Zustand wie das Brett: Statuszeile, flache Karten, enge Abstände, Rohdaten zum Öffnen. */
+      #details:not([hidden]) { display: grid; gap: var(--sauna-surface-gap); }
+      #details .card { margin: 0; padding: ${this.preference("layout_space_24_px")}px ${this.preference("surface_padding_px")}px; border-radius: var(--sauna-control-radius); box-shadow: none; }
+      #details h2 { margin: 0 0 ${this.preference("layout_space_13_px")}px; font-size: ${this.preference("font_size_body_emphasis_px")}px; font-weight: ${this.preference("font_weight_500_0_ratio")}; }
+      .detail-status { display: flex; align-items: center; justify-content: flex-end; gap: ${this.preference("layout_space_09_px")}px; margin: 0; font-size: ${this.preference("font_size_compact_px")}px; }
+      .detail-status i { flex: none; width: ${this.preference("size_10_0_px")}px; height: ${this.preference("size_10_0_px")}px; border-radius: 50%; background: var(--sauna-color-status-success); }
+      .detail-status[data-detail-status="warning"] i { background: var(--sauna-color-status-warning); }
+      .detail-card-head { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: ${this.preference("layout_space_07_px")}px ${this.preference("layout_space_18_px")}px; margin-bottom: ${this.preference("layout_space_13_px")}px; }
+      .detail-card-head h2, .detail-card-head p { margin: 0; }
+      .detail-position-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(${this.preference("size_180_0_px")}px, 1fr)); gap: ${this.preference("layout_space_18_px")}px; }
+      .detail-position { display: grid; align-content: start; gap: ${this.preference("size_2_0_px")}px; padding-inline-start: ${this.preference("layout_space_13_px")}px; border-inline-start: ${this.preference("size_4_0_px")}px solid var(--sauna-color-border); }
+      .detail-position[data-position="upper"] { border-inline-start-color: var(--sauna-color-phase-ready); }
+      .detail-position[data-position="lower"] { border-inline-start-color: var(--sauna-color-series-temperature); }
+      .detail-position p { margin: 0; }
+      .detail-position .stat-value { margin-top: ${this.preference("size_2_0_px")}px; }
+      .detail-state-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(${this.preference("size_280_0_px")}px, 1fr)); gap: var(--sauna-surface-gap); }
+      .detail-list { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: ${this.preference("layout_space_07_px")}px ${this.preference("layout_space_13_px")}px; margin: 0; font-size: ${this.preference("font_size_compact_px")}px; }
+      .detail-list dt { margin: 0; font-size: inherit; color: var(--sauna-card-muted-text); }
+      .detail-list dd { margin: 0; min-width: 0; overflow-wrap: break-word; font-variant-numeric: tabular-nums; }
+      #details .detail-list + .muted { margin: ${this.preference("layout_space_13_px")}px 0 0; }
+      .detail-faults ul { margin: 0; padding-inline-start: ${this.preference("layout_space_18_px")}px; }
+      .detail-raw-row { display: flex; align-items: center; justify-content: space-between; gap: ${this.preference("layout_space_13_px")}px; padding: ${this.preference("layout_space_09_px")}px 0; border-top: ${this.preference("border_1_0_px")}px solid var(--sauna-color-border, var(--divider-color)); font-size: ${this.preference("font_size_compact_px")}px; }
+      .detail-raw-row button { min-height: 0; padding: ${this.preference("size_2_0_px")}px ${this.preference("layout_space_09_px")}px; border: 0; background: transparent; box-shadow: none; color: var(--accent); font-size: inherit; }
+      .detail-raw-body { padding-bottom: ${this.preference("layout_space_13_px")}px; }
+      #details .detail-raw > .muted { margin: ${this.preference("layout_space_13_px")}px 0 0; }
       .gauge-card { padding: ${this.preference("layout_space_32_px")}px ${this.preference("surface_padding_px")}px ${this.preference("surface_padding_px")}px; }
       .gauge-card h2 { font-size: ${this.preference("font_size_compact_px")}px; font-weight: ${this.preference("font_weight_500_0_ratio")}; letter-spacing: ${this.preference("tracking_0_035_em")}em; color: var(--sauna-card-muted-text); margin-bottom: ${this.preference("layout_space_16_px")}px; }
       .gauges { gap: ${this.preference("layout_space_16_px")}px; grid-template-columns: repeat(var(--round-count, 3), minmax(0, 1fr)); align-items: start; }
@@ -7181,11 +7223,6 @@ class SaunaPanel extends HTMLElement {
       active = session?.timeline.active;
     const remaining = (end) =>
       duration(end ? (stamp(end) - now) / 1000 : null, "remaining");
-    const latest = session || s.last_session;
-    const doorText = session
-      ? { open: "Tür offen", closed: "Tür geschlossen" }[session.timeline.door] ||
-        "Türstatus noch nicht ermittelt"
-      : "Türerkennung ruht";
     const count =
       session?.timeline.completed.filter(gangConfirmed).length ?? s.gang_count;
     const value = (position, quantity) =>
@@ -7193,35 +7230,11 @@ class SaunaPanel extends HTMLElement {
         ?.value;
     const quality = (position, quantity) =>
       s.measurement_status[`${position}_${quantity}`]?.state;
-    const qualityText = (position, quantity) =>
-      ({
-        current: "Aktueller Messwert",
-        stale: "Letzter Wert · veraltet",
-        unavailable: "Messwert fehlt",
-        validity_unconfigured: "Gültigkeit noch nicht eingestellt",
-      })[quality(position, quantity)] || "Messwert fehlt";
     const measurementPosition =
       s.regulation_temperature_position ||
       s.configuration_model?.measurement_positions?.[0] ||
       "upper";
     const measurementHeight = measurementPosition === "lower" ? "unten" : "oben";
-    const formatValue = (position, quantity, unit) =>
-      `${this.num(value(position, quantity), this.preference("value_precision"))} ${unit}`;
-    const energy = latest?.energy;
-    const energyText = `${this.num(session ? s.energy_kwh : energy ? energy.measured_kwh + energy.estimated_kwh : 0, this.preference("energy_precision"))} kWh`;
-    const heatCaption =
-      s.heating_feedback === true
-        ? "Ofen · Ein"
-        : s.heating_feedback === false
-          ? "Ofen · Aus"
-          : "Ofenzustand unbekannt";
-    const heatSource =
-      {
-        power: "Aus gemessener Leistung",
-        independent_feedback: "Unabhängige Heizrückmeldung",
-        contactor: "Schützrückmeldung",
-        unknown: "Rückmeldung fehlt",
-      }[s.heating_observation?.source] || "Rückmeldung fehlt";
     const permissions = s.permissions || {};
     const manualMode = s.configuration.control_mode === "manual";
     const modeLocked = !s.control_mode_change_allowed;
@@ -7324,7 +7337,6 @@ class SaunaPanel extends HTMLElement {
     // Die Steuerung nennt die Aufgüsse im laufenden Gang; Details bleibt wie bisher.
     const stateLineMarkup = (infusions) =>
       `<div class="state-line"><div class="phase-time"><strong class="phase" data-phase="${esc(s.phase)}">${phaseLabel}</strong>${availabilityHint ? `<span class="availability-line ${availability?.blocker ? "wait" : ""}">${esc(availabilityHint)}${phaseTimerText ? infusions : ""}</span>` : ""}</div>${session ? `<span class="badge">${count} ${count === 1 ? "Saunagang" : "Saunagänge"}</span>` : ""}</div>`;
-    const stateLine = stateLineMarkup("");
     const dial = (
       reading,
       unit,
@@ -7392,7 +7404,6 @@ class SaunaPanel extends HTMLElement {
         `<span data-phase-timer="${esc(s.phase_timer.kind)}">${duration(s.phase_timer.seconds, s.phase_timer.kind === "gang" ? "elapsed" : "remaining")}</span>`,
         true,
       ]);
-    const timers = `<dl class="compact-times">${timerRows.map(([label, value, html]) => `<dt>${esc(label)}</dt><dd>${html ? value : esc(value)}</dd>`).join("")}</dl>`;
     const temperatureColor = this.appearanceColor("series_temperature");
     const humidity = value(measurementPosition, "humidity"),
       humidityColor = this.appearanceColor("series_humidity");
@@ -7450,13 +7461,6 @@ class SaunaPanel extends HTMLElement {
       endsAt && stamp(endsAt) > now
         ? remaining(endsAt)
         : "Keine laufende Übersteuerung";
-    const lightMode = light.manual == null ? "auto" : light.manual <= 0 ? "off" : "on";
-    const lightStatus =
-      light.manual == null
-        ? manualMode
-          ? "Keine Lichtwahl"
-          : "Automatik"
-        : `Manuell · ${this.num(light.manual, this.preference("percentage_precision"))} %`;
     const manualControls = this.manualControlAvailability(),
       canManualHeater = manualControls.heater,
       canManualLight = manualControls.brightness;
@@ -7604,69 +7608,7 @@ class SaunaPanel extends HTMLElement {
       }),
     );
     this.fitInstrumentReadouts();
-    const temperatureProgram =
-      s.configuration.program_mode === "progressive"
-        ? Array.isArray(s.configuration.temperature_steps)
-          ? s.configuration.temperature_steps
-              .map((value) => this.num(value, this.preference("value_precision")))
-              .join(" → ") + " °C"
-          : p.final_temperature_c != null
-            ? `${this.num(p.target_temperature_c)} → ${this.num(p.final_temperature_c)} °C`
-            : "Konstant"
-        : "Konstant";
-    const power = s.heating_observation?.power_w;
-    const powerText =
-      power == null
-        ? `${this.num(p.nominal_power_kw, this.preference("detail_value_precision"))} kW · Nennleistung`
-        : `${this.num(power, 0)} W · gemessen`;
-    const detectionText = session
-      ? `Erkennung mit: ${(s.detection_channels || []).map((position) => (position === "upper" ? "oberer Messposition" : "unterer Messposition")).join(" und ") || "noch keiner Messposition"}.`
-      : "Außerhalb einer Saunasitzung werden keine Türbewegungen ausgewertet.";
-    this.updateMarkup(
-      "#details",
-      this.renderDetailView({
-        stateLine,
-        timers,
-        presence: this.presenceDetails(),
-        targetTemperature: this.num(
-          s.temperature_control?.current_target,
-          this.preference("value_precision"),
-        ),
-        nextGangTemperature: this.temperatureControlsNextGang()
-          ? this.num(
-              s.temperature_control?.next_target,
-              this.preference("value_precision"),
-            )
-          : null,
-        thermostatTarget: this.num(
-          s.thermostat_target,
-          this.preference("value_precision"),
-        ),
-        restartThreshold: this.num(
-          s.thermostat_restart_temperature,
-          this.preference("value_precision"),
-        ),
-        temperatureProgram,
-        heatCaption,
-        heatSource,
-        energyText,
-        powerText,
-        decisionText: esc(s.decision_text),
-        lightMode,
-        lightStatus,
-        lightAutomatic: light.automatic,
-        lightManual: light.manual,
-        lightOverrideRemaining: overrideRemaining(light.override_ends_at),
-        doorText,
-        measurements: (s.configuration_model?.measurement_positions || [])
-          .map(
-            (pos) =>
-              `<h3>${pos === "upper" ? "Obere" : "Untere"} Messposition</h3><p style="color:var(--sauna-color-series-temperature)">${formatValue(pos, "temperature", "°C")} · ${qualityText(pos, "temperature")}</p><p style="color:var(--sauna-color-series-humidity)">${formatValue(pos, "humidity", "% relative Luftfeuchte")} · ${qualityText(pos, "humidity")}</p>`,
-          )
-          .join(""),
-        detectionText: esc(detectionText),
-      }),
-    );
+    this.updateMarkup("#details", this.renderDetailView({ timerRows, manualMode }));
   }
   linearInstrument({ key, reading, unit, bounds, valid, control = "" }) {
     if (!bounds) return '<p class="muted">Anzeigeskala nicht verfügbar</p>';
@@ -7759,23 +7701,7 @@ class SaunaPanel extends HTMLElement {
     // Umgebung als eine Zeile unter den Instrumenten (S2); vollständig in Details.
     const environment = this.state.environment;
     if (!environment?.configured) return "";
-    const labels = {
-        "clear-night": "Klare Nacht",
-        cloudy: "Bewölkt",
-        exceptional: "Außergewöhnliches Wetter",
-        fog: "Nebel",
-        hail: "Hagel",
-        lightning: "Gewitter",
-        "lightning-rainy": "Gewitter mit Regen",
-        partlycloudy: "Leicht bewölkt",
-        pouring: "Starker Regen",
-        rainy: "Regen",
-        snowy: "Schnee",
-        "snowy-rainy": "Schneeregen",
-        sunny: "Sonnig",
-        windy: "Windig",
-        "windy-variant": "Windig und bewölkt",
-      },
+    const labels = weatherConditions,
       condition = environment.condition,
       label = labels[condition],
       rainy = ["rainy", "pouring", "lightning-rainy", "snowy-rainy"].includes(
@@ -7824,9 +7750,38 @@ class SaunaPanel extends HTMLElement {
         readout.setAttribute(name, value);
     }
   }
+  // Umgebung einmal und kompakt (B4c): Station mit Wetterlage, alle Werte, Wind mit Richtung.
   renderEnvironmentDetails() {
-    if (!this.state?.environment?.configured) return "";
-    return `<div class="card" id="detail-environment"><h2>Aktuelle Umgebung</h2>${this.environmentValuesMarkup()}</div>`;
+    const environment = this.state?.environment;
+    if (!environment?.configured) return "";
+    const values = environment.values || [],
+      shown = (metric) =>
+        metric.available
+          ? `${Number.isFinite(metric.value) ? this.num(metric.value, this.preference("value_precision")) : esc(metric.value)}${metric.unit ? ` ${esc(metric.unit)}` : ""}`
+          : "nicht verfügbar",
+      speed = values.find((metric) => metric.key === "wind_speed"),
+      direction = values.find((metric) => metric.key === "wind_direction"),
+      station = [
+        environment.station?.name ? esc(environment.station.name) : "",
+        weatherConditions[environment.condition] || "",
+      ].filter(Boolean),
+      rows = [
+        ...(station.length ? [["Station", station.join(" · ")]] : []),
+        ...values
+          .filter((metric) => !(metric === direction && speed))
+          .map((metric) => [
+            metric === speed ? "Wind" : esc(metric.label),
+            metric === speed && direction?.available && metric.available
+              ? `${shown(metric)} aus ${esc(direction.value)}`
+              : shown(metric),
+            metric.key,
+          ]),
+      ],
+      times = [
+        ["Messzeit", environment.measurement_time],
+        ["aktualisiert", environment.updated_at],
+      ].filter(([, at]) => at);
+    return `<section class="card" id="detail-environment" aria-label="Umgebung"><h2>Umgebung</h2><dl class="detail-list">${rows.map(([label, value, key]) => `<dt${key ? ` data-weather-quantity="${esc(key)}"` : ""}>${label}</dt><dd>${value}</dd>`).join("")}</dl>${times.length ? `<p class="muted">${times.map(([label, at]) => `${label} ${esc(this.when(at))}`).join(" · ")}</p>` : ""}</section>`;
   }
   // Alle Umgebungswerte mit Station, Mess- und Aktualisierungszeit (Details und Steuerung).
   environmentValuesMarkup() {
@@ -9053,71 +9008,266 @@ class SaunaPanel extends HTMLElement {
     }
     return "";
   }
-  renderDetailView(view) {
-    if (this.state?.configuration_model?.regulation_causes?.length === 0) {
-      view = {
-        ...view,
-        nextGangTemperature: null,
-        temperatureProgram: "Konstante Temperaturregelung (manuell)",
-      };
-    }
-    const {
-      stateLine,
-      timers,
-      presence,
-      targetTemperature,
-      nextGangTemperature,
-      thermostatTarget,
-      restartThreshold,
-      temperatureProgram,
-      heatCaption,
-      heatSource,
-      energyText,
-      powerText,
-      decisionText,
-      lightMode,
-      lightStatus,
-      lightAutomatic,
-      lightManual,
-      lightOverrideRemaining,
-      doorText,
-      measurements,
-      detectionText,
-    } = view;
-    return `<div class="card hero">${stateLine}${timers}</div><div class="detail-grid"><div class="card"><h2>Ofen</h2><dl><dt>Aktuelle Solltemperatur</dt><dd>${targetTemperature} °C</dd>${nextGangTemperature == null ? "" : `<dt>Solltemperatur des nächsten Gangs</dt><dd>${nextGangTemperature} °C</dd>`}<dt>Obere Regeltemperatur</dt><dd data-readiness>${thermostatTarget} °C</dd><dt>Wiedereinschaltschwelle</dt><dd>${restartThreshold} °C</dd><dt>Temperaturprogramm</dt><dd>${temperatureProgram}</dd><dt>Heizzustand</dt><dd>${heatCaption}</dd><dt>Ermittlung der Heizzeit</dt><dd>${heatSource}</dd><dt>Energieverbrauch</dt><dd>${energyText}</dd><dt>Ofenleistung</dt><dd>${powerText}</dd></dl><p>${decisionText}</p></div><div class="card"><h2>Licht</h2><p class="manual-status ${lightMode}" data-light-status="${lightMode}">${lightStatus}</p><dl><dt>Automatischer Wert</dt><dd>${this.num(lightAutomatic, this.preference("percentage_precision"))} %</dd><dt>Manuelle Vorgabe</dt><dd>${lightManual == null ? "Keine" : `${this.num(lightManual, this.preference("percentage_precision"))} %`}</dd><dt>Übersteuerung</dt><dd>${lightOverrideRemaining}</dd></dl></div><div class="card"><h2>Messung</h2><p data-door-status>${doorText}</p>${this.renderPositionValues() || measurements}<p class="muted">${detectionText}</p></div>${this.renderEnvironmentDetails()}</div>${presence}${this.renderLiveEvidence()}`;
+  // Details · Zustand (B4c, Brett „Details · Zustand“): Statuszeile, Messpositionen,
+  // Geräte und Rückmeldungen, Umgebung, Archiv und Start, Fehler, Rohdaten.
+  // Jede Zahl kommt aus dem Backend; das Panel formatiert nur (G19).
+  renderDetailView(view = {}) {
+    void this.loadDetailOverview();
+    return `${this.detailStatusMarkup()}${this.renderPositionValues()}<div class="detail-state-grid">${this.detailDevicesMarkup(view)}${this.renderEnvironmentDetails()}${this.detailArchiveMarkup()}</div>${this.detailFaultsMarkup()}${this.renderLiveEvidence()}`;
   }
-  // D5 (B4a): Werte je Messposition mit Differenz oben − unten; gerechnet im Backend.
-  // Ersetzt in der Karte „Messung“ die bisherigen Zeilen je Position (D1, nicht doppelt).
+  // Aktuelle Fehler: Störungen mit Text aus dem Backend und ein Archivfehler.
+  detailFaults() {
+    const state = this.state || {};
+    return [
+      ...(state.issues || []).map((issue) => issue.message).filter(Boolean),
+      ...(state.archive_error ? [`Archiv: ${state.archive_error}`] : []),
+    ];
+  }
+  detailStatusMarkup() {
+    const state = this.state || {},
+      data = state.position_values || {},
+      faults = this.detailFaults(),
+      ok = !!data.valid && !faults.length,
+      validity = data.valid
+        ? "Alles gültig"
+        : data.positions?.length
+          ? "Nicht alle Messwerte gültig"
+          : "Keine Messwerte";
+    return `<p class="detail-status" data-detail-status="${ok ? "ok" : "warning"}"><i aria-hidden="true"></i><span>${validity} · ${faults.length ? `${this.num(faults.length, 0)} Fehler` : "keine Fehler"} · Stand ${esc(this.when(state.now))}</span></p>`;
+  }
+  // D5 (B4a), K-Z1/K-Z2: Werte je Messposition und Differenz oben − unten; das
+  // Mittel der Sitzung und ab erstem Bereit liefert …/archive/overview.
   renderPositionValues() {
-    const data = this.state?.position_values,
-      positions = data?.positions || [];
-    if (!positions.length) return "";
-    const regulation = this.state.regulation_temperature_position,
-      validity = (state) =>
+    const state = this.state || {},
+      data = state.position_values || {},
+      positions = data.positions || [];
+    const regulation = state.regulation_temperature_position,
+      precision = this.preference("value_precision"),
+      validity = (value) =>
         ({
           current: "gültig",
           stale: "veraltet",
           unavailable: "fehlt",
           validity_unconfigured: "Gültigkeit nicht eingestellt",
-        })[state] || "fehlt",
-      value = (number, precision, unit) =>
-        number == null ? "–" : `${this.num(number, this.preference(precision))} ${unit}`,
-      signed = (number, precision, unit) =>
+        })[value] || "fehlt",
+      value = (number, unit) =>
+        number == null ? "–" : `${this.num(number, precision)} ${unit}`,
+      signed = (number, unit) =>
+        number == null ? "–" : `${number > 0 ? "+" : ""}${this.num(number, precision)} ${unit}`,
+      big = (number, unit, sign = false) =>
         number == null
           ? "–"
-          : `${number > 0 ? "+" : ""}${this.num(number, this.preference(precision))} ${unit}`,
-      rows = positions
-        .map((item) => {
-          const name = item.position === "lower" ? "Unten" : "Oben",
-            states = [...new Set([item.temperature_state, item.humidity_state])].map(validity);
-          return `<dt>${name}${item.position === regulation ? " · Regelposition" : ""}</dt><dd>${value(item.temperature, "value_precision", "°C")} · ${value(item.humidity, "value_precision", "%")} · ${value(item.absolute_humidity, "absolute_humidity_precision", "g/m³")} <span class="muted">${esc(states.join(", "))}</span></dd>`;
-        })
-        .join(""),
-      difference = data.difference
-        ? `<dt>Oben − unten</dt><dd>${signed(data.difference.temperature, "value_precision", "°C")} · ${signed(data.difference.absolute_humidity, "absolute_humidity_precision", "g/m³")}</dd>`
+          : `${sign && number > 0 ? "+" : ""}${this.num(number, precision)}<small>${unit}</small>`,
+      name = (position) => (position === "lower" ? "unten" : "oben"),
+      column = (key, title, number, lines, sign = false) =>
+        `<div class="detail-position" data-position="${key}"><p class="stat-key">${title}</p><p class="stat-value">${big(number, "°C", sign)}</p>${lines
+          .filter(Boolean)
+          .map((line) => `<p class="stat-line">${line}</p>`)
+          .join("")}</div>`;
+    const columns = positions.map((item) => {
+      const states = [
+          ...new Set(
+            ["temperature", "humidity"]
+              .filter((quantity) => Object.hasOwn(item, quantity))
+              .map((quantity) => validity(item[`${quantity}_state`])),
+          ),
+        ],
+        spacing = item.temperature_spacing_seconds ?? item.humidity_spacing_seconds;
+      return column(
+        item.position,
+        `${item.position === "lower" ? "Unten" : "Oben"}${item.position === regulation ? " · Regelposition" : ""}`,
+        item.temperature,
+        [
+          `${value(item.humidity, "%")} · ${value(item.absolute_humidity, "g/m³")}`,
+          `${esc(states.join(", "))}${spacing == null ? "" : ` · alle ${this.num(spacing, precision)} s`}`,
+        ],
+      );
+    });
+    const overview =
+        this.detailOverview && this.detailOverview.entry === this.entry
+          ? this.detailOverview.result?.position_difference
+          : null,
+      means =
+        overview && overview.session_id === state.session?.timeline?.session_id
+          ? [
+              overview.session_c == null
+                ? ""
+                : `im Mittel der Sitzung ${signed(overview.session_c, "°C")}`,
+              overview.ready_c == null ? "" : `ab Bereit ${signed(overview.ready_c, "°C")}`,
+            ]
+              .filter(Boolean)
+              .join(", ")
+          : "";
+    if (data.difference)
+      columns.push(
+        column(
+          "difference",
+          "Oben − unten",
+          data.difference.temperature,
+          [signed(data.difference.absolute_humidity, "g/m³"), means],
+          true,
+        ),
+      );
+    const channels = state.detection_channels || [],
+      usage = regulation
+        ? `Regelung und Verlauf nutzen ${name(regulation)}; ${
+            !state.session
+              ? "die Erkennung ruht außerhalb einer Sitzung"
+              : channels.length > 1
+                ? "die Erkennung beide"
+                : channels.length
+                  ? `die Erkennung ${name(channels[0])}`
+                  : "die Erkennung noch keine"
+          }`
         : "";
-    return `<dl data-position-values>${rows}${difference}</dl>`;
+    return `<section class="card detail-positions" aria-label="Messpositionen" data-position-values><div class="detail-card-head"><h2>Messpositionen</h2>${usage ? `<p class="muted">${usage}</p>` : ""}</div>${columns.length ? `<div class="detail-position-grid">${columns.join("")}</div>` : '<p class="muted">Keine Messwerte verfügbar.</p>'}</section>`;
   }
+  // Geräte und Rückmeldungen: Ofen mit Quelle, Heizzeit, Leistung nur mit Sensor (W5),
+  // Licht mit Modus, Präsenz, Tür und laufende Fristen.
+  detailDevicesMarkup({ timerRows = [], manualMode = false } = {}) {
+    const state = this.state || {},
+      session = state.session,
+      model = state.configuration_model || {},
+      light = state.manual_controls?.light || {},
+      heater = state.manual_controls?.heater || {},
+      percent = (value) =>
+        value == null ? "–" : `${this.num(value, this.preference("percentage_precision"))} %`,
+      source = state.heating_observation?.source,
+      sourceText = {
+        power: ["Leistungsmessung", "der Leistungsmessung"],
+        independent_feedback: ["unabhängiger Rückmeldung", "der unabhängigen Rückmeldung"],
+        contactor: ["Schaltausgang", "dem Schaltausgang"],
+      }[source],
+      feedback =
+        state.heating_feedback === true
+          ? "Ein"
+          : state.heating_feedback === false
+            ? "Aus"
+            : "unbekannt",
+      observed = light.observation?.available ? light.observation.brightness_percent : null,
+      lightMode =
+        light.manual == null
+          ? manualMode
+            ? "keine Lichtwahl"
+            : `Automatik, Phase ${phases[state.phase] || "unbekannt"}`
+          : `von Hand ${percent(light.manual)}${manualMode ? "" : `, Automatik ${percent(light.automatic)}`}`,
+      report = state.presence?.current,
+      occupancy = (item) =>
+        !item
+          ? "noch keine Meldung"
+          : item.assertion === "proxy_retraction"
+            ? "indirekter Hinweis zurückgenommen, keine beobachtete Abwesenheit"
+            : ({ present: "anwesend", absent: "abwesend" }[item.occupancy] || "unbekannt"),
+      reason = {
+        no_proxy_evidence: "noch kein Personenhinweis",
+        source_unavailable: "Messquelle nicht verfügbar",
+        unavailable: "Sensor nicht verfügbar",
+        unknown: "Sensorzustand unbekannt",
+        missing: "Sensor fehlt",
+        gang_retracted: "vorläufiger Gang aufgehoben",
+        gang_ended: "Gang beendet",
+      }[report?.reason],
+      presence = model.presence?.direct
+        ? [
+            "Präsenzsensor",
+            report
+              ? `${occupancy(report)} seit ${this.clockSeconds(report.effective_at)} · ${report.available ? "verfügbar" : "nicht verfügbar"}${reason && reason !== "Sensor nicht verfügbar" ? ` · ${reason}` : ""}`
+              : "noch keine Meldung",
+          ]
+        : [
+            "Präsenz",
+            `${occupancy(report)}${report ? ` · aus Temperatur und Feuchte${reason ? ` · ${reason}` : ""}` : ""}`,
+          ],
+      door = session
+        ? { open: "offen (erkannt)", closed: "geschlossen (erkannt)" }[session.timeline?.door] ||
+          "noch nicht ermittelt"
+        : "Erkennung ruht",
+      power = state.heating_observation?.power_w,
+      deadlines = timerRows
+        .filter(([label]) => label !== "Heizsumme (gezählt)")
+        .map(([label, value, html]) => [esc(label), html ? value : esc(value)]),
+      rows = [
+        [
+          "Ofen",
+          `${feedback} · ${sourceText ? `laut ${sourceText[0]}` : "Rückmeldung fehlt"}${heater.blocked_on_reason ? ` · Einschalten gesperrt: ${esc(heater.blocked_on_reason)}` : ""}`,
+        ],
+        [
+          "Heizzeit",
+          `${session ? `gezählt ${esc(duration(session.heating?.elapsed_seconds))}${Number.isFinite(state.energy_kwh) ? `, ${this.num(state.energy_kwh, this.preference("value_precision"))} kWh` : ""} · ` : ""}${sourceText ? `aus ${sourceText[1]}` : "Rückmeldung fehlt"}, ${model.power_sensor_configured ? "mit" : "ohne"} Leistungsmessung`,
+        ],
+        ...(model.power_sensor_configured
+          ? [["Leistung", power == null ? "keine Messung" : `${this.num(power, 0)} W gemessen`]]
+          : []),
+        ["Licht", `${observed == null ? "Rückmeldung fehlt" : percent(observed)} · ${esc(lightMode)}`],
+        [presence[0], esc(presence[1])],
+        ["Tür", door, " data-door-status"],
+        ...deadlines,
+      ];
+    return `<section class="card" aria-label="Geräte und Rückmeldungen" data-detail-devices><h2>Geräte und Rückmeldungen</h2><dl class="detail-list">${rows.map(([label, value, attributes = ""]) => `<dt>${label}</dt><dd${attributes}>${value}</dd>`).join("")}</dl></section>`;
+  }
+  // Archiv und Start (B4c): Umfang und Startdauer laut Backend, dazu aktuelle Fehler.
+  detailArchiveMarkup() {
+    const data =
+        this.detailOverview && this.detailOverview.entry === this.entry
+          ? this.detailOverview
+          : null,
+      result = data?.result,
+      faults = this.detailFaults(),
+      size = (bytes) =>
+        bytes == null
+          ? "–"
+          : bytes >= 1e9
+            ? `${this.num(bytes / 1e9, 1)} GB`
+            : `${this.num(bytes / 1e6, 1)} MB`,
+      rows = result
+        ? [
+            ["Sitzungen", `${this.num(result.sessions, 0)} im Archiv`],
+            ["Datensätze", `${this.num(result.records, 0)} · ${size(result.size_bytes)}`],
+            [
+              "Start des Archivs",
+              result.start_seconds == null
+                ? "nicht gemessen"
+                : result.start_seconds < 0.05
+                  ? "unter 0,1 s"
+                  : `${this.num(result.start_seconds, this.preference("value_precision"))} s`,
+            ],
+          ]
+        : [["Archiv", data?.error ? esc(data.error) : "wird geladen …"]];
+    rows.push(["Fehler", faults.length ? `${this.num(faults.length, 0)} aktuell` : "keine"]);
+    return `<section class="card" aria-label="Archiv und Start" data-detail-archive><h2>Archiv und Start</h2><dl class="detail-list">${rows.map(([label, value]) => `<dt>${label}</dt><dd>${value}</dd>`).join("")}</dl></section>`;
+  }
+  detailFaultsMarkup() {
+    const faults = this.detailFaults();
+    return faults.length
+      ? `<section class="card detail-faults" aria-label="Fehler" data-detail-faults><h2>Fehler</h2><ul>${faults.map((text) => `<li>${esc(text)}</li>`).join("")}</ul></section>`
+      : "";
+  }
+  // Lädt Archiv und Start sowie K-Z2 für Details · Zustand, höchstens im Takt
+  // laufender Sitzungen (history_live_poll_ms).
+  async loadDetailOverview() {
+    const entry = this.entry;
+    if (!entry || !this.state?.permissions?.admin || this.view !== "detail") return;
+    const tick = Math.floor(
+        (stamp(this.state.now) || 0) / this.preference("history_live_poll_ms"),
+      ),
+      key = `${entry}|${this.state.session?.timeline?.session_id ?? ""}|${this.state.archive_revision ?? ""}|${tick}`;
+    if (this.detailOverviewKey === key || this.detailOverviewRequest) return;
+    this.detailOverviewKey = key;
+    const request = {};
+    this.detailOverviewRequest = request;
+    let data;
+    try {
+      data = { entry, result: await this.api(`/${entry}/archive/overview`) };
+    } catch (error) {
+      data = { entry, error: errorText(error) };
+    }
+    if (this.detailOverviewRequest !== request) return;
+    this.detailOverviewRequest = null;
+    if (this.entry !== entry) return;
+    this.detailOverview = data;
+    this.drawCurrent();
+  }
+  // Rohdaten (B4c): eingeklappt, deutsch beschriftet, Inhalt erst nach dem Öffnen.
   renderLiveEvidence() {
     const state = this.state;
     if (!state?.permissions?.admin) return "";
@@ -9127,122 +9277,85 @@ class SaunaPanel extends HTMLElement {
       provisional_door_heat: "temporary_door_heat",
       cooling: "cooling",
     };
-    const rules = model
-      ? Object.fromEntries(
-          (model.regulation_causes || []).flatMap((cause) =>
-            ruleKeys[cause]
-              ? [[ruleKeys[cause], state.rule_inputs?.[ruleKeys[cause]]]]
-              : [],
-          ),
-        )
-      : state.rule_inputs;
-    const heatingObservation =
-      state.heating_observation &&
-      Object.fromEntries(
-        Object.entries(state.heating_observation).filter(
-          ([key]) => key !== "power_w" || !model || model.power_sensor_configured,
-        ),
-      );
-    const measurements = (state.measurements || []).filter(
-      (measurement) =>
-        !model || (model.measurement_positions || []).includes(measurement.position),
-    );
+    const rules = () =>
+      model
+        ? Object.fromEntries(
+            (model.regulation_causes || []).flatMap((cause) =>
+              ruleKeys[cause] ? [[ruleKeys[cause], state.rule_inputs?.[ruleKeys[cause]]]] : [],
+            ),
+          )
+        : state.rule_inputs;
     const groups = [
       [
         "regulation",
-        "Regelung und Schutz",
-        {
-          decision: state.decision,
-          ...(Object.keys(rules || {}).length ? { rule_inputs: rules } : {}),
-          protection: state.protection,
-          inhibits: state.inhibits,
-          faults: state.faults,
-          temperature_control: state.temperature_control,
-          thermostat: state.session?.thermostat,
+        "Entscheidung und Regelbedingungen",
+        () => {
+          const inputs = rules();
+          return {
+            decision: state.decision,
+            ...(Object.keys(inputs || {}).length ? { rule_inputs: inputs } : {}),
+            protection: state.protection,
+            inhibits: state.inhibits,
+            faults: state.faults,
+            temperature_control: state.temperature_control,
+            thermostat_target: state.thermostat_target,
+            thermostat_restart_temperature: state.thermostat_restart_temperature,
+            thermostat: state.session?.thermostat,
+          };
         },
       ],
       [
         "inputs",
-        "Messquellen und Eingaben",
-        {
-          measurements,
+        "Messwerte und Messstatus",
+        () => ({
+          measurements: (state.measurements || []).filter(
+            (measurement) =>
+              !model || (model.measurement_positions || []).includes(measurement.position),
+          ),
           measurement_status: state.measurement_status,
           regulation_temperature_position: state.regulation_temperature_position,
-          presence: state.presence,
-          environment: state.environment,
-        },
+        }),
       ],
+      ["presence", "Präsenz", () => ({ presence: state.presence })],
       [
         "outputs",
         "Geräteausgabe und Rückmeldungen",
-        {
+        () => ({
           heater: state.manual_controls?.heater,
           light: state.manual_controls?.light,
-          heating_observation: heatingObservation,
+          heating_observation:
+            state.heating_observation &&
+            Object.fromEntries(
+              Object.entries(state.heating_observation).filter(
+                ([key]) => key !== "power_w" || !model || model.power_sensor_configured,
+              ),
+            ),
           ...(state.light_after_run ? { light_after_run: state.light_after_run } : {}),
-        },
+        }),
       ],
       [
         "session",
-        "Sitzung, Energie und Fristen",
-        {
+        "Heizung, Energie und Ofenkühlung",
+        () => ({
           heating: state.session?.heating,
           energy: state.session?.energy,
           after_run: state.session?.after_run,
           after_run_history: state.session?.after_run_history,
           deadlines: state.session?.deadlines,
           start_availability: state.start_availability,
-        },
+        }),
       ],
+      ...(state.environment?.configured
+        ? [["environment", "Umgebung", () => ({ environment: state.environment })]]
+        : []),
     ];
-    return `<div class="card detail-evidence"><h2>Aktuelle Daten im Detail</h2>${groups.map(([key, label, fields]) => `<details id="detail-${key}"><summary>${label}</summary>${this.detailFields(fields, `live-${key}`)}</details>`).join("")}</div>`;
-  }
-  presenceDetails() {
-    const presence = this.state?.presence;
-    const rules = this.state?.rule_inputs;
-    const model = this.state?.configuration_model;
-    if (!presence && !rules) return "";
-    const report = (item) => {
-      if (!item) return "Noch keine Meldung";
-      const occupancy = item.available
-        ? { present: "Anwesend", absent: "Abwesend", unknown: "Unbekannt" }[
-            item.occupancy
-          ] || "Unbekannt"
-        : "Nicht verfügbar";
-      const assertion =
-        item.assertion === "provisional_proxy"
-          ? "Vorläufiger Hinweis aus Temperatur und Feuchte"
-          : item.assertion === "proxy_retraction"
-            ? "Indirekter Hinweis zurückgenommen; keine beobachtete Abwesenheit"
-            : "Direkte Präsenz";
-      const reason = {
-        no_proxy_evidence: "Noch kein Personenhinweis",
-        source_unavailable: "Messquelle nicht verfügbar",
-        unavailable: "Sensor nicht verfügbar",
-        unknown: "Sensorzustand unbekannt",
-        missing: "Sensor fehlt",
-        gang_retracted: "Vorläufiger Gang aufgehoben",
-        gang_ended: "Gang beendet",
-        ...events,
-      }[item.reason];
-      return `${occupancy} · ${assertion} · Ereignis ${this.when(item.effective_at)} · empfangen ${this.when(item.received_at)}${reason ? ` · ${reason}` : ""}`;
-    };
-    const causeLabels = {
-      gang_heat: ["Heizanforderung im Saunagang", rules?.gang_heat_demand],
-      provisional_door_heat: [
-        "Vorläufige Heizanforderung nach Türschluss",
-        rules?.temporary_door_heat,
-      ],
-      cooling: ["Ofenkühlung", rules?.cooling],
-    };
-    const causes = (model?.regulation_causes || [])
-      .filter((cause) => causeLabels[cause])
-      .map((cause) => {
-        const [label, active] = causeLabels[cause];
-        return `<dt>${label}</dt><dd>${active ? "Aktiv" : "Inaktiv"}</dd>`;
-      })
-      .join("");
-    return `<div class="card"><h2>${causes ? "Präsenz und Regelursache" : "Präsenz"}</h2><dl><dt>Personenerkennung</dt><dd>${model?.presence?.direct ? "Präsenzsensor mit Türereignis" : "Temperatur und Feuchte"}</dd><dt>Aktuelle Belegung</dt><dd>${esc(report(presence?.current))}</dd>${causes}</dl></div>`;
+    const open = this.detailRawOpen || new Set();
+    return `<section class="card detail-raw" aria-label="Rohdaten" data-detail-raw><h2>Rohdaten</h2>${groups
+      .map(
+        ([key, label, fields]) =>
+          `<div class="detail-raw-row"><span>${label}</span><button type="button" data-action="detail-raw:${key}" aria-expanded="${open.has(key)}" aria-controls="detail-${key}">${open.has(key) ? "schließen" : "öffnen"}</button></div>${open.has(key) ? `<div class="detail-raw-body" id="detail-${key}">${this.detailFields(fields(), `live-${key}`)}</div>` : ""}`,
+      )
+      .join("")}<p class="muted">Gespeicherte Konfiguration und Einzelbelege einer Sitzung stehen unter Details · Steuerung.</p></section>`;
   }
   async changeTarget(value) {
     if (!this.state?.permissions?.temperature) return;
@@ -10869,6 +10982,8 @@ class SaunaPanel extends HTMLElement {
         program_mode: "Programmart",
         scope: "Geltungsbereich",
         thermostat: "Thermostat",
+        thermostat_target: "Obere Regeltemperatur",
+        thermostat_restart_temperature: "Wiedereinschaltschwelle",
         measurements: "Messwerte",
         measurement_status: "Messstatus",
         regulation_temperature_position: "Messposition der Regeltemperatur",
@@ -18362,8 +18477,17 @@ class SaunaPanel extends HTMLElement {
       if (action === "statistics") return this.loadStatistics();
       if (["history", "detail-history", "diagnostics"].includes(action))
         return this.refresh(true);
-      if (action === "detail") this.drawHistory();
+      if (action === "detail") {
+        this.drawHistory();
+        void this.loadDetailOverview();
+      }
       return;
+    }
+    if (action.startsWith("detail-raw:")) {
+      const key = action.slice("detail-raw:".length);
+      this.detailRawOpen ??= new Set();
+      if (!this.detailRawOpen.delete(key)) this.detailRawOpen.add(key);
+      return this.drawCurrent();
     }
     if (action === "environment-toggle") {
       this.environmentOpen = !this.environmentOpen;

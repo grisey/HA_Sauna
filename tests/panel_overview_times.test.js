@@ -441,7 +441,7 @@ state.session.deadlines = [
 state.manual_controls.heater = { override_ends_at: "2026-09-20T10:00:59.900Z" };
 state.light_after_run = { ends_at: "2026-09-20T10:01:00Z" };
 let details = render(state, "#details");
-assert.match(details, /Heizsumme \(gezählt\)<\/dt><dd>1 Minute<\/dd>/);
+assert.match(details, /Heizzeit<\/dt><dd>gezählt 1 Minute ·/);
 assert.match(details, /data-phase-timer="minimum_heating">2 Minuten<\/span>/);
 assert.match(details, /Ofenkühlung<\/dt><dd>2 Minuten<\/dd>/);
 assert.match(details, /Aufgussbestätigung<\/dt><dd>2 Minuten<\/dd>/);
@@ -451,7 +451,7 @@ assert.doesNotMatch(details, /\d+:\d{2}\s+(?:min|Minuten)/);
 
 state.session.heating.elapsed_seconds = null;
 details = render(state, "#details");
-assert.match(details, /Heizsumme \(gezählt\)<\/dt><dd>–<\/dd>/);
+assert.match(details, /Heizzeit<\/dt><dd>gezählt – ·/);
 
 state = baseState();
 state.start_availability = {
@@ -467,8 +467,8 @@ state.heating_feedback = true;
 state.heating_observation = { source: "contactor", estimated: true };
 assert.match(
   render(state, "#details"),
-  /Ofen · Ein/,
-  "details use the same oven label for every feedback source",
+  /<dt>Ofen<\/dt><dd>Ein · laut Schaltausgang/,
+  "details name the oven state with its feedback source",
 );
 assert.doesNotMatch(
   render(state),
@@ -478,7 +478,7 @@ assert.doesNotMatch(
 state.heating_observation = { source: "power", estimated: false };
 assert.match(
   render(state, "#details"),
-  /Ofen · Ein/,
+  /<dt>Ofen<\/dt><dd>Ein · laut Leistungsmessung/,
   "measured power still describes actual heating",
 );
 assert.match(render(state), /class="badge"/);

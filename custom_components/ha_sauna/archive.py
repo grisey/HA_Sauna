@@ -10,6 +10,7 @@ import json
 import logging
 import sqlite3
 import threading
+import time
 import zipfile
 from collections import OrderedDict, deque
 from collections.abc import Mapping
@@ -389,9 +390,15 @@ class Archive:
         self._context_pruned_before = None
         # At most one export holds a read transaction; the backup stops it.
         self._running_export = None
+        self.start_seconds = None
+        # K-Z2 (B4c): Temperaturmessungen der laufenden Sitzung, fortgeschrieben.
+        self._difference_points = None
 
     async def start(self):
+        began = time.monotonic()
         await asyncio.to_thread(self._initialize)
+        # B4c: Startdauer des Archivs für Details · Zustand.
+        self.start_seconds = time.monotonic() - began
         self.worker = asyncio.create_task(
             self._run(), name=f"ha_sauna_archive_{self.entry_id}"
         )
@@ -1813,6 +1820,49 @@ class Archive:
                     # Incomplete legacy evidence cannot teach a heating delay.
                     continue
         return tuple(episodes)
+
+    def detail_overview(self, session_id=None):
+        """Details · Zustand (B4c): Umfang und Startdauer des Archivs, dazu die
+        Temperaturmessungen der Sitzung ``session_id`` für K-Z2.
+
+        Die Messungen werden je Sitzung zwischengespeichert und nur um neue Einträge
+        ergänzt; ``points`` sind (Empfangszeit, Position, Wert).
+        """
+        with closing(sqlite3.connect(self.path)) as db:
+            db.execute("BEGIN")
+            sessions = db.execute(
+                "SELECT COUNT(*) FROM sessions WHERE entry_id=?", (self.entry_id,)
+            ).fetchone()[0]
+            records = db.execute(
+                "SELECT COUNT(*) FROM records WHERE entry_id=?", (self.entry_id,)
+            ).fetchone()[0]
+            points = None
+            if session_id is not None:
+                cached = self._difference_points
+                last, points = (
+                    cached[1:] if cached is not None and cached[0] == session_id else (0, [])
+                )
+                rows = db.execute(
+                    "SELECT id,received_at,json_extract(payload,'$.position'),"
+                    "json_extract(payload,'$.value') FROM records WHERE entry_id=? "
+                    "AND session_id=? AND id>? AND kind='measurement' "
+                    "AND json_extract(payload,'$.quantity')='temperature' ORDER BY id",
+                    (self.entry_id, session_id, last),
+                ).fetchall()
+                points = points + [(at, position, value) for _, at, position, value in rows]
+                self._difference_points = (session_id, rows[-1][0] if rows else last, points)
+        size = sum(
+            path.stat().st_size
+            for path in (self.path, Path(f"{self.path}-wal"), Path(f"{self.path}-shm"))
+            if path.exists()
+        )
+        return {
+            "sessions": sessions,
+            "records": records,
+            "size_bytes": size,
+            "start_seconds": self.start_seconds,
+            "points": points,
+        }
 
     def export(self, chunk_bytes=None, *, check_only=False):
         """Prepare one streamed ZIP export; ``check_only`` stops at the fixed snapshot."""

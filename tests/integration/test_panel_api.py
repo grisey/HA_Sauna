@@ -152,6 +152,33 @@ class PanelAPITests(unittest.IsolatedAsyncioTestCase):
         self.assertIsInstance(body["recorded"], bool)
         self.assertIsInstance(body["events"], list)
 
+    async def test_detail_overview_permissions_and_running_session(self):
+        # B4c: Archiv und Start sowie K-Z2 (Details · Zustand) nur für Administratoren.
+        runtime = self.entry.runtime_data
+        url = self.base + "/" + self.entry.entry_id + "/archive/overview"
+        user = await self.hass.auth.async_create_user("Overview reader", group_ids=[GROUP_ID_USER])
+        token = await self.hass.auth.async_create_refresh_token(user, client_id="http://localhost/")
+        headers = {"Authorization": "Bearer " + self.hass.auth.async_create_access_token(token)}
+        async with ClientSession(headers=headers) as client, client.get(url) as response:
+            self.assertEqual(response.status, 403)
+        async with ClientSession(headers=self.headers) as client:
+            async with client.get(url) as response:
+                self.assertEqual(response.status, 200, await response.text())
+                idle = await response.json()
+            self.assertIsNone(idle["position_difference"])
+            self.assertIsInstance(idle["sessions"], int)
+            self.assertIsInstance(idle["records"], int)
+            self.assertGreater(idle["size_bytes"], 0)
+            self.assertIsNotNone(idle["start_seconds"])
+            await runtime.set_operation(True)
+            identity = runtime.session.session_id
+            async with client.get(url) as response:
+                self.assertEqual(response.status, 200, await response.text())
+                running = await response.json()
+            await runtime.set_operation(False)
+        self.assertEqual(running["position_difference"]["session_id"], identity)
+        self.assertIn("session_c", running["position_difference"])
+
     async def test_archive_erase_permissions_session_guard_and_memory_invalidation(self):
         from harness import retain_session
 

@@ -398,6 +398,7 @@ test("live detail applicability follows configuration model while archive values
     rule_inputs: { gang_heat_demand: false, temporary_door_heat: true, cooling: false },
     heating_observation: { source: "contactor", heating: false, power_w: null },
   };
+  p.detailRawOpen = new Set(["regulation", "inputs", "outputs"]);
   const direct = p.renderLiveEvidence();
   assert.doesNotMatch(
     direct,
@@ -417,18 +418,15 @@ test("live detail applicability follows configuration model while archive values
     "lower:temperature",
     "current one-height configuration cannot erase historical evidence",
   );
+  // B4c: Details · Zustand leitet kein eigenes Temperaturprogramm her; Soll und
+  // Regelband stehen unter Details · Steuerung, die Schwellen in den Rohdaten.
   p.state.configuration_model.regulation_causes = [];
-  const manual = p.renderDetailView({
-    targetTemperature: "75",
-    thermostatTarget: "77",
-    restartThreshold: "73",
-    temperatureProgram: "90 → 70 °C",
-    nextGangTemperature: "70",
-  });
-  assert.match(manual, /Konstante Temperaturregelung \(manuell\)/);
-  assert.match(manual, /Wiedereinschaltschwelle<\/dt><dd>73 °C/);
-  assert.match(manual, /Obere Regeltemperatur<\/dt><dd data-readiness>77 °C/);
-  assert.doesNotMatch(manual, /90 → 70|Solltemperatur des nächsten Gangs/);
+  p.state.thermostat_target = 77;
+  p.state.thermostat_restart_temperature = 73;
+  const manual = p.renderDetailView({});
+  assert.doesNotMatch(manual, /Konstante Temperaturregelung|Solltemperatur des nächsten Gangs/);
+  assert.match(manual, /Wiedereinschaltschwelle<\/dt><dd>73/);
+  assert.match(manual, /Obere Regeltemperatur<\/dt><dd>77/);
 });
 
 test("status-only counter updates patch evidence at the slower cadence without rebuilding plots", () => {

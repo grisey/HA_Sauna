@@ -112,7 +112,8 @@ function render(admin, target = "#details") {
 
 const admin = render(true);
 assert.match(admin, /Ofenkühlung wartet auf Schütz-Aus/);
-assert.doesNotMatch(admin, /data-action=|<button|<input/);
+// B4c: Details bedient nichts; nur die Rohdaten lassen sich öffnen.
+assert.doesNotMatch(admin, /data-action="(?!detail-raw:)|<input/);
 assert.doesNotMatch(admin, /noch 0 Minuten/);
 assert.match(
   render(true, "#current"),

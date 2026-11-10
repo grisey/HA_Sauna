@@ -17,7 +17,13 @@ from .core import calibration
 from .core.configuration_model import ConfigurationModel, temperature_control
 from .core.notification_recipients import ActorRef
 from .notification_options import CONF_NOTIFICATION_ASSIGNMENTS
-from .core.display import phase_timer, position_values, start_availability
+from .core.display import (
+    first_ready_at,
+    phase_timer,
+    position_difference_means,
+    position_values,
+    start_availability,
+)
 from .core.parameters import EDITABLE_DEFINITIONS, LIVE_TEMPERATURE_KEYS, ParameterError
 from .core.power import watts
 from .core.seasons import PARTS as SEASON_PARTS
@@ -289,7 +295,8 @@ class StateView(HomeAssistantView):
                         # D5: Werte je Messposition mit Differenz oben − unten.
                         "position_values": position_values(
                             device.measurements.values(), device.measurement_status(now),
-                        ) if device else {"positions": [], "difference": None},
+                            device.measurement_spacing,
+                        ) if device else {"positions": [], "difference": None, "valid": False},
                         "gang_count": session.timeline.gang_count if session else 0,
                         "gang_confirmation": active.confirmation if active else None,
                         "decision": controller.last_decision,
@@ -1163,6 +1170,39 @@ class RecognitionControlView(HomeAssistantView):
         return self.json(result)
 
 
+class DetailOverviewView(HomeAssistantView):
+    """Details · Zustand (B4c): Archiv und Start, K-Z2 der laufenden Sitzung; nur Administratoren."""
+
+    url = "/api/ha_sauna/{entry_id}/archive/overview"
+    name = "api:ha_sauna:archive:overview"
+    requires_auth = True
+
+    async def get(self, request, entry_id):
+        require_read(request, entry_id)
+        if not request["hass_user"].is_admin:
+            raise web.HTTPForbidden()
+        runtime = runtime_for(request.app[KEY_HASS], entry_id)
+        await runtime.archive.flush()
+        async with runtime._lock:
+            session, now = runtime.session, runtime._clock()
+            identity = session.session_id if session else None
+            started_at = session.timeline.session_started_at if session else None
+            ready_at = first_ready_at(session.ready_history) if session else None
+        overview = await asyncio.to_thread(runtime.archive.detail_overview, identity)
+        points = overview.pop("points")
+        overview["position_difference"] = (
+            {
+                "session_id": identity,
+                **(position_difference_means(
+                    points, started_at=started_at, ended_at=now, ready_at=ready_at,
+                ) or {"session_c": None, "ready_c": None, "ready_at": ready_at}),
+            }
+            if identity else None
+        )
+        overview["at"] = now
+        return self.json(plain(overview))
+
+
 class SessionLabelView(HomeAssistantView):
     """Testbetrieb (G25): abgeschlossene Sitzung kennzeichnen oder Kennzeichnung aufheben."""
 
@@ -1392,6 +1432,7 @@ def register(hass):
     hass.http.register_view(EndGangView)
     hass.http.register_view(SessionLabelView)
     hass.http.register_view(RecognitionControlView)
+    hass.http.register_view(DetailOverviewView)
     hass.http.register_view(FinishSessionView)
     hass.http.register_view(ParametersView)
     hass.http.register_view(TemperatureView)

@@ -57,7 +57,8 @@ class PositionValueTests(unittest.TestCase):
         result = position_values([measurement("upper", "temperature", 70.0)])
         self.assertEqual([p["position"] for p in result["positions"]], ["upper"])
         self.assertIsNone(result["difference"])
-        self.assertEqual(position_values([]), {"positions": [], "difference": None})
+        self.assertEqual(position_values([]),
+                         {"positions": [], "difference": None, "valid": False})
 
 
 class RetiredPreferenceTests(unittest.TestCase):

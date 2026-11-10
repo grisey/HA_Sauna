@@ -1,10 +1,11 @@
 """Phasenbezogene und nutzerorientierte Zeitanzeigen des Ablaufkerns."""
 
-from datetime import timedelta
+from datetime import datetime, timedelta
 from math import isfinite
 
+from .key_figures import _series, time_weighted
 from .moisture import absolute_humidity
-from .timeline import active_gang_duration_seconds
+from .timeline import active_gang_duration_seconds, utc
 
 
 def phase_timer(controller, now):
@@ -191,14 +192,16 @@ def start_availability(controller, now, estimated_ready_seconds=None):
     return result
 
 
-def position_values(measurements, status=None) -> dict:
+def position_values(measurements, status=None, spacing=None) -> dict:
     """D5 (Nutzer 04.11.): Werte je Messposition und Differenz oben − unten.
 
     ``measurements`` sind die aktuellen Messungen des Geräts, ``status`` deren
     Gültigkeit je Rolle (``measurement_status``). Die absolute Feuchte rechnet
     ``core.moisture``; die Differenz nur, wenn beide Positionen den Wert haben.
+    ``spacing`` ist der Abstand der letzten beiden Messungen je Rolle in Sekunden
+    (B4c, Messabstand); ``valid`` sagt, ob alle gelieferten Messwerte gültig sind.
     """
-    status = status or {}
+    status, spacing = status or {}, spacing or {}
     values = {}
     for measurement in measurements:
         position = getattr(measurement.position, "value", measurement.position)
@@ -206,6 +209,7 @@ def position_values(measurements, status=None) -> dict:
         entry = values.setdefault(position, {"position": position})
         entry[quantity] = measurement.value
         entry[f"{quantity}_state"] = (status.get(f"{position}_{quantity}") or {}).get("state")
+        entry[f"{quantity}_spacing_seconds"] = spacing.get(f"{position}_{quantity}")
     for entry in values.values():
         temperature, humidity = entry.get("temperature"), entry.get("humidity")
         entry["absolute_humidity"] = (
@@ -220,7 +224,59 @@ def position_values(measurements, status=None) -> dict:
             if upper.get(key) is not None and lower.get(key) is not None else None
             for key in ("temperature", "absolute_humidity")
         }
+    positions = [values[p] for p in ("upper", "lower") if p in values]
+    states = [entry.get(f"{q}_state") for entry in positions
+              for q in ("temperature", "humidity") if q in entry]
     return {
-        "positions": [values[p] for p in ("upper", "lower") if p in values],
+        "positions": positions,
         "difference": difference,
+        "valid": bool(states) and all(state == "current" for state in states),
+    }
+
+
+def first_ready_at(ready_history):
+    """Erstes Setzen von Bereit aus dem Bereit-Verlauf der Sitzung, sonst ``None``."""
+    for mark in ready_history or ():
+        ready = mark.get("ready") if isinstance(mark, dict) else mark.ready
+        if ready:
+            return mark.get("at") if isinstance(mark, dict) else mark.at
+    return None
+
+
+def position_difference_means(points, *, started_at, ended_at, ready_at=None) -> dict | None:
+    """K-Z2: Temperatur oben − unten im zeitgewichteten Mittel der Sitzung und ab erstem Bereit.
+
+    ``points`` sind (Empfangszeit, Position, Wert) der Temperaturmessungen der
+    Sitzung. Je Position wird zeitgewichtet gemittelt (``key_figures.time_weighted``,
+    Zeitpunktregel des Katalogs); die Differenz der Mittel ist das Mittel der
+    Differenz. ``None``, solange eine Position keinen Wert hat.
+    """
+    def seconds(value):
+        value = datetime.fromisoformat(value) if isinstance(value, str) else value
+        return (utc(value) - start).total_seconds()
+
+    start = utc(datetime.fromisoformat(started_at) if isinstance(started_at, str) else started_at)
+    end = seconds(ended_at)
+    series = {}
+    for at, position, value in points:
+        if value is None or isinstance(value, bool) or not isfinite(value):
+            continue
+        series.setdefault(position, []).append((seconds(at), float(value)))
+    if not series.get("upper") or not series.get("lower") or end <= 0:
+        return None
+
+    def mean(position, begin):
+        weighted = time_weighted(_series(series[position]), [(begin, end)])
+        total = sum(weight for _, _, weight in weighted)
+        return sum(value * weight for _, value, weight in weighted) / total if total else None
+
+    def difference(begin):
+        upper, lower = mean("upper", begin), mean("lower", begin)
+        return upper - lower if upper is not None and lower is not None else None
+
+    ready = seconds(ready_at) if ready_at is not None else None
+    return {
+        "session_c": difference(0.0),
+        "ready_c": difference(ready) if ready is not None and ready < end else None,
+        "ready_at": ready_at,
     }

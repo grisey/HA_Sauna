@@ -198,6 +198,9 @@ test("live and archived detail fields render labels instead of raw keys", () => 
       heating: { state_history: [{ at: iso(0), heating: true }] },
     },
   };
+  // B4c: Rohdaten erst nach dem Öffnen; geöffnet zeigen alle Gruppen deutsche Bezeichnungen.
+  assert.doesNotMatch(p.renderLiveEvidence(), /class="detail-data"/);
+  p.detailRawOpen = new Set(["regulation", "inputs", "presence", "outputs", "session"]);
   const live = p.renderLiveEvidence();
   assert.ok(detailLabels(live).length > 20);
   assert.deepEqual(rawLabels(live), []);

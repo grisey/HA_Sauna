@@ -81,37 +81,29 @@ const panel = Object.assign(fixturePanel(Panel), {
   },
   historyRecords: () => [],
 });
-const detail = panel.presenceDetails();
-assert.match(
-  detail,
-  /Indirekter Hinweis zurückgenommen; keine beobachtete Abwesenheit/,
-);
+// B4c: Präsenz steht unter Geräte und Rückmeldungen, Regelursachen in den Rohdaten.
+const detail = panel.detailDevicesMarkup();
+assert.match(detail, /indirekter Hinweis zurückgenommen, keine beobachtete Abwesenheit/);
 assert.doesNotMatch(detail, /Nicht verfügbar|Beobachtete Quelle|&lt;sensor&gt;/);
-assert.match(detail, /Temperatur und Feuchte/);
+assert.match(detail, /<dt>Präsenz<\/dt><dd>[^<]*aus Temperatur und Feuchte · vorläufiger Gang aufgehoben/);
 assert.doesNotMatch(detail, /Proxy/);
 assert.equal(panel.state.presence.external["<sensor>"].report_id, "sensor-unavailable");
+panel.state.permissions = { admin: true };
+panel.detailRawOpen = new Set(["regulation"]);
+assert.match(panel.renderLiveEvidence(), /Türhilfe/);
 panel.state.configuration.bindings = { presence: "<sensor>" };
 panel.state.configuration_model.presence = {
   source: "ha_presence",
   direct: true,
   observer: false,
 };
-panel.state.configuration_model.regulation_causes = [
-  "gang_heat",
-  "provisional_door_heat",
-  "cooling",
-];
 panel.state.presence.external["<sensor>"].reason = "unavailable";
 panel.state.presence.current = panel.state.presence.external["<sensor>"];
-const directDetail = panel.presenceDetails();
-assert.match(directDetail, /Präsenzsensor mit Türereignis/);
-assert.doesNotMatch(directDetail, /Beobachtete Quelle/);
-assert.match(directDetail, /Vorläufige Heizanforderung nach Türschluss[\s\S]*Aktiv/);
-assert.match(directDetail, /Sensor nicht verfügbar/);
-assert.doesNotMatch(directDetail, /unavailable/);
-assert.doesNotMatch(detail, /Aktivierungsregeln sind offen|keine Wiedergabe/);
-assert.match(detail, /Heizanforderung im Saunagang[\s\S]*Aktiv/);
-assert.match(detail, /Vorläufige Heizanforderung nach Türschluss[\s\S]*Aktiv/);
+const directDetail = panel.detailDevicesMarkup();
+assert.match(directDetail, /<dt>Präsenzsensor<\/dt><dd>unbekannt seit [^<]* · nicht verfügbar<\/dd>/);
+assert.doesNotMatch(directDetail, /Beobachtete Quelle|unavailable/);
+panel.state.configuration_model.regulation_causes = ["gang_heat", "cooling"];
+assert.doesNotMatch(panel.renderLiveEvidence(), /Türhilfe/);
 
 const session = {
   ended_at: end,

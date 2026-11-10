@@ -897,6 +897,11 @@ class Handler(BaseHTTPRequestHandler):
                 self.send_error(404)
                 return
             self.send(result)
+        elif path.endswith("/archive/overview"):
+            # B4c: Archiv und Start der synthetischen Vorschau (kein Archiv auf Platte).
+            self.send({"sessions": len(preview.sessions), "records": len(preview.records),
+                       "size_bytes": None, "start_seconds": None,
+                       "position_difference": None, "at": preview.now})
         elif path.endswith("/calibration"):
             self.send({"targets": preview.calibration_targets()})
         elif path.endswith("/standards"):

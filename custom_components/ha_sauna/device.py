@@ -70,6 +70,7 @@ class HADevice:
         self._button_event_types = None
         self.source_received_at = {}
         self.measurements = {}
+        self.measurement_spacing = {}
         self.packet_roles = set()
         self.last_valid_temperature = None
         self.last_valid_lower_temperature = None
@@ -241,6 +242,12 @@ class HADevice:
         if self.bindings.get(role) != m.source:
             raise ValueError("Measurement source differs from the bound role")
         self.source_received_at[role] = received_at
+        previous = self.measurements.get(role)
+        if previous is not None:
+            # B4c: Messabstand für Details · Zustand; ohne Wirkung auf Regelung und Erkennung.
+            self.measurement_spacing[role] = (
+                (m.measured_at or received_at) - (previous.measured_at or previous.received_at)
+            ).total_seconds()
         self.measurements[role] = m
         if (
             self._heating_progress_key is not None
