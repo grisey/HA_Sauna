@@ -102,6 +102,19 @@ werden dort nicht ausgegeben. Das Backup enthält die Versionstabelle mit allen
 Referenzen. Erst wenn nach einer Sitzungs- oder Archivlöschung keine erhaltene
 Revision mehr auf eine Version verweist, wird diese ebenfalls entfernt.
 
+### Archiv bereinigen
+
+Ältere Archive enthalten viele Sitzungsstände, die sich nur in Zählern
+unterscheiden (vor AL3 je Sekunde der Ofenkühlung), und das Erkennungsprotokoll
+des Analyseprofils. Das Werkzeug
+[`tools/archive_cleanup.py`](../tools/archive_cleanup.py) schreibt eine
+bereinigte Kopie: Es behält je Sitzung den ersten, den letzten und jeden
+inhaltlich geänderten Stand nach derselben Regel wie der laufende Betrieb, legt
+das Erkennungsprotokoll mit `--trace` in eine eigene Datei, erhöht die
+Archivrevision und verkleinert die Datei. Sitzungen, Messwerte und alle übrigen
+Einträge bleiben unverändert; die Quelle wird nicht verändert. Ausgetauscht wird
+die Datei bei angehaltenem Home Assistant Core.
+
 ## Sitzungen löschen
 
 Administratoren können einzelne abgeschlossene oder durch Neustart unterbrochene
