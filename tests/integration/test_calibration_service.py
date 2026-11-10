@@ -219,9 +219,26 @@ class CalibrationServiceTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(public, {"active": state["calibration"]["active"]})
             async with client.post(url + "/calibration/cancel", json={"x": 1}) as response:
                 self.assertEqual(response.status, 400)
+            # L-W2c-3: the panel names the run it shows; another run stays untouched.
+            self.assertEqual(state["calibration"]["active"]["run_id"], run.run_id)
+            for body in ({"run_id": ""}, {"run_id": 1}):
+                async with client.post(url + "/calibration/cancel", json=body) as response:
+                    self.assertEqual(response.status, 400, body)
+            async with client.post(url + "/calibration/cancel", json={"run_id": "other"}) as response:
+                self.assertEqual(response.status, 409)
+                self.assertIn("läuft nicht mehr", (await response.json())["error"])
+            self.assertTrue(run.active)
+            # The running run is not listed in the archive runs; its status shows it.
+            async with client.get(url + "/archive/calibration") as response:
+                self.assertEqual((await response.json())["runs"], [])
             async with client.post(url + "/calibration/cancel", json={}) as response:
                 self.assertEqual(await response.json(), {"run_id": run.run_id})
             await self.settle()
+            # B4e: the ended run comes from the archive with its reason.
+            async with client.get(url + "/archive/calibration") as response:
+                runs = (await response.json())["runs"]
+            self.assertEqual([(item["run_id"], item["valid"], item["reason_text"]) for item in runs],
+                             [(run.run_id, False, "abgebrochen")])
             async with client.post(url + "/calibration/cancel", json={}) as response:
                 self.assertEqual(response.status, 409)
         self.assertEqual((run.phase, run.end_reason), ("invalid", "cancelled"))

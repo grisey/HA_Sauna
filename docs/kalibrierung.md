@@ -52,18 +52,45 @@ Die Antwort auf den Start enthält `run_id`, `kind` (`session` oder `module`),
 
 **Kalibrierung abbrechen** im Panel oder `ha_sauna.cancel_calibration` beendet
 die laufende Kalibrierung; sie ist dann ungültig. Sitzung und Saunabetrieb
-laufen weiter.
+laufen weiter. Das Panel nennt dabei die Kennung (`run_id`) des angezeigten
+Laufs: Ist dieser inzwischen beendet und läuft ein anderer, bleibt der andere
+unberührt. Der Dienst beendet den zur Zeit des Aufrufs laufenden Lauf.
 
 Während eines Laufs zeigt die Karte **Kalibrierung** die Art, das Modul, den
 Schritt (n von m) und worauf der Lauf wartet: **Bereit**, **Gangende**,
 **Antwort** oder **Wartezeit**. Die Steuerungsansicht zeigt dazu einen kurzen
-Hinweis, etwa „Kalibrierung läuft: A1, Schritt 2 von 4“. Nach dem Ende zeigt die
-Karte das letzte Ergebnis: gültig oder ungültig mit Grund, bei einer gültigen
-Kalibrierung nach dem Sitzungsende die Summen der Auswertung. Das letzte
-Ergebnis gilt bis zum Neuladen der Integration; die Einzelheiten stehen im
-Archiv der Sitzung.
+Hinweis, etwa „Kalibrierung läuft: A1, Schritt 2 von 4“.
 
-Unter der Karte steht das Raster **Module und Schritte**: je angebotenem Modul
+Neben der Karte steht der **Letzte Lauf** aus dem Archiv; **Lauf wählen** zeigt
+jeden gespeicherten Lauf. Der laufende Lauf erscheint dort erst nach seinem
+Ende. Da Lauf und Ergebnis aus dem Archiv kommen, bleiben sie nach einem
+Neustart oder Neuladen der Integration sichtbar. Ein Lauf nennt Zeit, Art,
+Module und Gültigkeit, ein ungültiger seinen Grund. Nach der Auswertung stehen
+die Summen **Gänge gefunden**, **Türen und Aufgüsse im Fenster**, **Außerhalb des
+Fensters** und **Anwesend bei leerer Kabine** und je begonnenem Modul eine Zelle
+je Schritt:
+
+| Zelle | Bedeutung |
+| --- | --- |
+| im Fenster | Die zugeordnete Erkennung liegt im Fenster des Schritts. |
+| außerhalb | Zugeordnet mit Lage zum Fenster in Sekunden davor oder danach. |
+| fehlt | Keine Erkennung zugeordnet. |
+| zusätzlich | Nicht zugeordnete Erkennung, in Zeitfolge zwischen den Schritten. |
+
+Ein Schritt mit mehreren Erwartungen (Tür auf, Tür zu) nennt jede einzeln.
+Abweichende, bei der Unterbrechung offene und nicht erreichte Schritte sind
+gekennzeichnet, ebenso Schritte ohne erwartete Erkennung; bei leerer Kabine
+steht die gemessene Anwesenheit. Unter den Zellen stehen der Gang des Moduls
+mit Lage von Beginn und Ende zu den Fenstern, Aufgusszahl und Gangheizung nach
+dem Austritt, die Präsenzwerte und zusammengelegte Türvorgänge. Vor der
+Auswertung nennen die Zellen nur die erwarteten Erkennungen. Ein Klick auf eine
+Zelle zeigt die Sitzung des Laufs unter **Details → Erkennung** mit dem
+Ausschnitt um das Fenster des Schritts; eine zugeordnete Erkennung ist dort
+gewählt. Die Werte kommen aus `GET /api/ha_sauna/{entry_id}/archive/calibration`
+([Archiv](speicherung.md#technische-referenz-api-zugriff)).
+
+Ohne gespeicherten Lauf, während eines Laufs und unter **Lauf wählen → Module
+und Schritte** steht das Raster **Module und Schritte**: je angebotenem Modul
 seine Schritte mit Referenz und erwarteten Erkennungen (Tür auf, Tür zu,
 Aufguss). Während eines Laufs ist der laufende Schritt hervorgehoben.
 

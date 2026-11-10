@@ -241,7 +241,8 @@ Archivs beim Laden der Integration) und die aktuellen Fehler. Die Rohdaten sind
 eingeklappt und werden erst beim Öffnen aufbereitet. Archivumfang und Mittelwerte
 liefert `GET …/archive/overview` (Administratoren) im Takt der
 Verlaufsaktualisierung. **Erkennung** ist die [Erkennungskontrolle](erkennung.md#erkennungskontrolle), **Kalibrierung** Start,
-Lauf und Raster der [Kalibrierung](kalibrierung.md#start-und-abbruch).
+laufenden Lauf, gespeicherte Läufe mit Ergebnis je Schritt und Raster der
+[Kalibrierung](kalibrierung.md#start-und-abbruch).
 
 **Steuerung** zeigt die gewählte Sitzung aus dem Archiv. Der Betriebsverlauf hat
 eine Spur je Frage: Phase, Temperatur gegen Soll, Heizanforderung (gefärbt nach dem
@@ -325,6 +326,7 @@ für die jeweilige Sauna (`entry_id`).
 | `POST /api/ha_sauna/{entry_id}/archive/label` | Administrator; `{"session_id":"…","test":true}` kennzeichnet eine abgeschlossene Sitzung als [Testbetrieb](kennzahlen.md#testbetrieb), `false` hebt das auf. Unbekannte Sitzung 404, laufende 409. |
 | `GET /api/ha_sauna/{entry_id}/key-figures?session_id=…` | Leserechte; [Kennzahlen](kennzahlen.md) einer abgeschlossenen Sitzung, sonst 404. |
 | `GET /api/ha_sauna/{entry_id}/archive/recognition?session_id=…` | Administrator; [Erkennungskontrolle](erkennung.md#erkennungskontrolle) einer laufenden oder abgeschlossenen Sitzung: Zusammenfassung, Zustandsspur, Ereignisse mit Bedeutung und Entscheidungszeit, verworfene Kandidaten, aufgehobene vorläufige Gänge. Ohne `session_id` 400, unbekannte Sitzung 404. |
+| `GET /api/ha_sauna/{entry_id}/archive/calibration` | Administrator; gespeicherte [Kalibrierläufe](kalibrierung.md#start-und-abbruch) ohne den laufenden, der zuletzt begonnene zuerst (`runs`), und das Ergebnis je Schritt des gewählten (`run`, ohne `run_id` des ersten). Andere Abfrageparameter 400, unbekannte `run_id` 404. |
 | `GET /api/ha_sauna/{entry_id}/statistics` | Leserechte; [Statistik](kennzahlen.md#statistik) über alle abgeschlossenen Sitzungen, mit `season` (Anfangsjahr) über eine Saison, mit `season` und `part` (`autumn`, `winter`, `spring`) über eine Jahreszeit, mit `summer` über einen Sommer. `periods` nennt alle Saisons mit ihren Jahreszeiten und alle Sommer mit ausgewerteten Sitzungen. |
 
 Archivseiten werden mit `after` abgefragt. Maßgeblich ist der zurückgegebene

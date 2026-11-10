@@ -140,6 +140,14 @@ test("a running calibration shows module, step and what it waits for and can be 
   assert.deepEqual(sent(requests).slice(1), [
     { path: "/e/calibration/cancel", method: "POST", body: {} },
   ]);
+  // L-W2c-3: with its run_id the panel cancels only the run it shows.
+  p.state.calibration.active = { ...run, run_id: "r1" };
+  await p.action("calibration-cancel");
+  assert.deepEqual(sent(requests).at(-1), {
+    path: "/e/calibration/cancel",
+    method: "POST",
+    body: { run_id: "r1" },
+  });
   for (const [waiting, text] of [
     ["ready", "Bereit"],
     ["gang_end", "Gangende"],
@@ -151,45 +159,17 @@ test("a running calibration shows module, step and what it waits for and can be 
     );
 });
 
-test("the last result names validity, reason and the totals of the evaluation", async () => {
+test("the start card no longer repeats the last result; it comes from the archive (B4e)", async () => {
   const totals = {
     gangs: { reference: 1, found: 1, missing: 0, additional: 0 },
-    events: {
-      reference: 5,
-      found: 4,
-      outside: 1,
-      missing: 0,
-      additional: 2,
-      merged: 0,
-    },
+    events: { reference: 5, found: 4, outside: 1, missing: 0, additional: 2, merged: 0 },
     empty_cabin_reports: 0,
     excluded_steps: 0,
   };
-  const last = { kind: "module", modules: ["A1"], valid: true, reason: "finished" };
-  let { p, html } = fixture({ calibration: { last: { ...last, totals } } });
+  const last = { kind: "module", modules: ["A1"], valid: true, reason: "finished", totals };
+  const { p, html } = fixture({ calibration: { last } });
   p.drawCalibration();
-  assert.match(html(), /Letztes Ergebnis:<\/strong> gültig/);
-  assert.match(
-    html(),
-    /Gänge 1 von 1 gefunden, 0 zusätzlich\. Türen und Aufgüsse 4 von 5 im Fenster gefunden, 1 außerhalb des Fensters zugeordnet, 0 fehlen, 2 zusätzlich\./,
-  );
-  assert.match(html(), /Einzelheiten stehen im Verlauf der Sitzung unter Details · Steuerung/);
-  ({ p, html } = fixture({ calibration: { last: { ...last, totals: null } } }));
-  p.drawCalibration();
-  assert.match(html(), /folgt nach dem Sitzungsende/);
-  ({ p, html } = fixture({
-    calibration: {
-      last: {
-        ...last,
-        valid: false,
-        reason: "cancelled",
-        reason_text: "abgebrochen",
-        totals: null,
-      },
-    },
-  }));
-  p.drawCalibration();
-  assert.match(html(), /Letztes Ergebnis:<\/strong> ungültig, abgebrochen/);
+  assert.doesNotMatch(html(), /Letztes Ergebnis/);
   assert.doesNotMatch(html(), /Türen und Aufgüsse/);
 });
 

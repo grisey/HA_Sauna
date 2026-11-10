@@ -597,7 +597,8 @@ class SaunaRuntime:
     def calibration_status(self) -> dict:
         """Calibration state for the panel (W-2c).
 
-        ``active``: the running run, if any. ``last``: the last ended run with
+        ``active``: the running run, if any, with its ``run_id`` so that the
+        panel cancels only this run (L-W2c-3). ``last``: the last ended run with
         its validity and reason; after its session ended also the totals of
         the evaluation. ``modules``: the modules on offer, P only with a
         presence sensor. ``blocked``: the reason the start offered now is
@@ -611,7 +612,7 @@ class SaunaRuntime:
             presence_known=not presence or self._calibration_presence() is not None,
         )
         return {
-            "active": active.status() if active is not None else None,
+            "active": {**active.status(), "run_id": active.run_id} if active is not None else None,
             "last": {**ended[-1].status(), "totals": None} if ended else self._calibration_last,
             "modules": [
                 {"id": module.module_id, "label": module.label, "title": module.title,
@@ -2339,12 +2340,20 @@ class SaunaRuntime:
                 ],
             }
 
-    async def cancel_calibration(self, *, actor: ActorRef | None = None):
+    async def cancel_calibration(self, *, actor: ActorRef | None = None, run_id: str | None = None):
+        """Cancel the running calibration; with ``run_id`` only that run (L-W2c-3).
+
+        The service passes no ``run_id`` and cancels whatever runs at the time
+        of the request. The panel names the run it shows, so a late click after
+        that run ended never ends a run started meanwhile.
+        """
         async with self.serialized():
             self._require_open()
             run = next((item for item in self._calibration_runs if item.active), None)
             if run is None:
                 raise ValueError("Es läuft keine Kalibrierung")
+            if run_id is not None and run.run_id != run_id:
+                raise ValueError("Die angezeigte Kalibrierung läuft nicht mehr")
             self._send_calibration(run, run.interrupt(
                 self._clock(), "cancelled", user_id=actor.user_id if actor else None,
             ))

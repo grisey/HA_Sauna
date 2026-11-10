@@ -22,7 +22,7 @@ from hashlib import sha256
 from math import isfinite
 from pathlib import Path
 
-from .core import recognition_archive
+from .core import calibration_runs, recognition_archive
 from .core.history import HISTORY_CONTEXT_SECONDS, measurement_window
 from .core.key_figure_display import present_session, present_statistics
 from .core.key_figures import (
@@ -1637,6 +1637,34 @@ class Archive:
                 states=records(recognition_archive.STATE) if recorded else None,
                 rejected=records(recognition_archive.REJECTED_CANDIDATE) if recorded else None,
                 episodes=records(recognition_archive.EPISODE),
+            )
+
+    def calibration_runs(self, run_id=None, *, active_run_id=None):
+        """Kalibrierläufe aus dem Protokoll (B4e, Details · Kalibrierung).
+
+        Auswahl und Ergebnis wie ``calibration_runs.view``; der laufende Lauf
+        (``active_run_id``) steht im Zustand der Kalibrierung, nicht hier.
+        """
+        with closing(sqlite3.connect(self.path)) as db:
+            db.execute("BEGIN")
+            column = self._configuration_column(db)
+
+            def processed(session_id):
+                row = db.execute(
+                    "SELECT payload" + column + " FROM sessions WHERE entry_id=? AND session_id=?",
+                    (self.entry_id, session_id),
+                ).fetchone()
+                if row is None:
+                    return ()
+                session = self._decode_payload(db, row[0], row[1] if column else None)
+                return (session.get("timeline") or {}).get("processed") or ()
+
+            return calibration_runs.view(
+                [(session_id, json.loads(raw)) for session_id, raw in db.execute(
+                    "SELECT session_id,payload FROM records WHERE entry_id=? "
+                    "AND kind='calibration' ORDER BY id", (self.entry_id,),
+                )],
+                run_id=run_id, active_run_id=active_run_id, processed=processed,
             )
 
     def key_figure_statistics(self, zone, *, season=None, part=None, summer=None,

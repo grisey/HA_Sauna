@@ -127,7 +127,7 @@ test("calibration lives in Details only, not in the maintenance settings", () =>
   assert.equal(source.match(/<div id="calibration"><\/div>/g).length, 1);
   assert.match(
     source,
-    /<section id="detail-calibration"[^>]*hidden><div class="card"><h2>Kalibrierung<\/h2>[^]*?<div id="calibration"><\/div><\/div><div class="card" id="calibration-grid"><\/div><\/section>/,
+    /<section id="detail-calibration"[^>]*hidden><div class="card calibration-start"><h2>Kalibrierung<\/h2>[^]*?<div id="calibration"><\/div><\/div><div class="card calibration-result" id="calibration-grid"><\/div><\/section>/,
   );
 });
 

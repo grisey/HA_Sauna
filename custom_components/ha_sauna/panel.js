@@ -5993,6 +5993,49 @@ class SaunaPanel extends HTMLElement {
       .calibration-step { display: grid; gap: 2px; padding: ${this.preference("layout_space_07_px")}px; border: 1px solid var(--sauna-color-border); border-radius: var(--sauna-control-radius); }
       .calibration-step span { color: var(--sauna-card-muted-text); font-size: .9em; }
       .calibration-step[aria-current="step"] { border-color: var(--primary-color); }
+      /* B4e: Details · Kalibrierung wie das Brett: Start und Lauf nebeneinander, flache Karten, Ergebnis je Schritt. */
+      #detail-calibration.calibration-layout { display: flex; flex-wrap: wrap; gap: var(--sauna-surface-gap); align-items: flex-start; }
+      #detail-calibration > .card { margin: 0; min-width: 0; padding: ${this.preference("layout_space_24_px")}px ${this.preference("surface_padding_px")}px; border-radius: var(--sauna-control-radius); box-shadow: none; }
+      #detail-calibration > .calibration-start { flex: 1 1 ${this.preference("size_320_0_px")}px; }
+      #detail-calibration > .calibration-result { flex: 2 1 calc(${this.preference("size_280_0_px")}px * 2); container: calibration-result / inline-size; }
+      #detail-calibration h2 { margin-top: 0; }
+      .calibration-start [role="group"] { display: grid; gap: 0; }
+      .calibration-start [role="group"] label { display: flex; align-items: center; gap: ${this.preference("layout_space_10_px")}px; min-height: ${this.preference("size_40_0_px")}px; border-top: ${this.preference("border_1_0_px")}px solid var(--sauna-color-border); }
+      .calibration-result-head { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: flex-start; gap: ${this.preference("layout_space_10_px")}px; margin-bottom: ${this.preference("layout_space_13_px")}px; }
+      .calibration-result-head h2, .calibration-result-head p { margin: 0; }
+      .calibration-run-choice { display: flex; flex-wrap: wrap; align-items: center; gap: ${this.preference("layout_space_09_px")}px; min-width: 0; }
+      .calibration-run-choice label { font-size: ${this.preference("font_size_small_px")}px; color: var(--sauna-card-muted-text); }
+      .calibration-run-choice select { max-width: 100%; }
+      .calibration-run-state { margin: 0 0 ${this.preference("layout_space_13_px")}px; }
+      .calibration-totals { display: grid; grid-template-columns: repeat(auto-fit, minmax(${this.preference("size_150_0_px")}px, 1fr)); gap: ${this.preference("layout_space_13_px")}px; margin-bottom: ${this.preference("layout_space_13_px")}px; }
+      .calibration-total p { margin: 0; }
+      .calibration-total .stat-value { margin: ${this.preference("size_4_0_px")}px 0 ${this.preference("size_2_0_px")}px; }
+      .calibration-total .stat-value small { margin-left: ${this.preference("layout_space_07_px")}px; color: var(--sauna-card-muted-text); }
+      .calibration-result .calibration-module { display: grid; grid-template-columns: minmax(0, ${this.preference("size_120_0_px")}px) minmax(0, 1fr); gap: ${this.preference("layout_space_07_px")}px ${this.preference("layout_space_13_px")}px; padding: ${this.preference("layout_space_10_px")}px 0; border-top: ${this.preference("border_1_0_px")}px solid var(--sauna-color-border); }
+      .calibration-result .calibration-module h3 { margin: 0; font-size: ${this.preference("font_size_body_px")}px; font-weight: ${this.preference("font_weight_500_0_ratio")}; }
+      .calibration-result .calibration-module > :not(h3) { grid-column: 2; }
+      @container calibration-result (max-width: ${this.preference("breakpoint_540_0_px")}px) {
+        .calibration-result .calibration-module { grid-template-columns: minmax(0, 1fr); }
+        .calibration-result .calibration-module > :not(h3) { grid-column: 1; }
+      }
+      .calibration-step[data-calibration-status] { padding: 0; }
+      .calibration-step:not(:has(.calibration-cell)) { padding: ${this.preference("layout_space_07_px")}px; }
+      .calibration-cell { all: unset; box-sizing: border-box; display: grid; gap: 2px; width: 100%; height: 100%; padding: ${this.preference("layout_space_07_px")}px; cursor: pointer; border-radius: inherit; }
+      .calibration-cell:focus-visible { outline: 2px solid var(--primary-color); outline-offset: 2px; }
+      .calibration-cell:hover { background: color-mix(in srgb, var(--sauna-card-text, currentColor) ${this.preference("color_mix_10_0_percent")}%, transparent); }
+      .calibration-step :is(strong, span) { overflow-wrap: break-word; }
+      .calibration-step[data-calibration-status="found"] { border-color: var(--sauna-color-status-success); background: color-mix(in srgb, var(--sauna-color-status-success) ${this.preference("color_mix_13_0_percent")}%, transparent); }
+      .calibration-step[data-calibration-status="outside"] { border-color: var(--sauna-color-status-warning); background: color-mix(in srgb, var(--sauna-color-status-warning) ${this.preference("color_mix_13_0_percent")}%, transparent); }
+      .calibration-step[data-calibration-status="missing"] { border-color: var(--sauna-color-status-error); background: color-mix(in srgb, var(--sauna-color-status-error) ${this.preference("color_mix_13_0_percent")}%, transparent); }
+      .calibration-step[data-calibration-status="additional"] { border-style: dashed; border-color: var(--sauna-color-status-info); background: color-mix(in srgb, var(--sauna-color-status-info) ${this.preference("color_mix_10_0_percent")}%, transparent); }
+      .calibration-step[data-calibration-status="not_reached"] { opacity: .6; border-style: dashed; }
+      .calibration-mark::before, .calibration-legend span::before { content: ""; display: inline-block; width: ${this.preference("size_8_0_px")}px; height: ${this.preference("size_8_0_px")}px; margin-right: ${this.preference("layout_space_05_px")}px; border-radius: 50%; background: var(--sauna-color-border); vertical-align: middle; }
+      :is(.calibration-mark, .calibration-legend span)[data-calibration-status="found"]::before { background: var(--sauna-color-status-success); }
+      :is(.calibration-mark, .calibration-legend span)[data-calibration-status="outside"]::before { background: var(--sauna-color-status-warning); }
+      :is(.calibration-mark, .calibration-legend span)[data-calibration-status="missing"]::before { background: var(--sauna-color-status-error); }
+      :is(.calibration-mark, .calibration-legend span)[data-calibration-status="additional"]::before { background: var(--sauna-color-status-info); }
+      .calibration-facts { margin: 0; padding: 0; list-style: none; font-size: ${this.preference("font_size_compact_px")}px; color: var(--sauna-card-muted-text); }
+      .calibration-legend { display: flex; flex-wrap: wrap; gap: ${this.preference("layout_space_07_px")}px ${this.preference("layout_space_13_px")}px; margin: ${this.preference("layout_space_13_px")}px 0 0; font-size: ${this.preference("font_size_compact_px")}px; }
       .recognition-summary { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: ${this.preference("layout_space_07_px")}px ${this.preference("layout_space_13_px")}px; margin: 0; }
       .recognition-summary dt, .recognition-selected dt, .recognition-summary dd, .recognition-selected dd { margin: 0; align-self: baseline; }
       .recognition-selected { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: ${this.preference("layout_space_07_px")}px ${this.preference("layout_space_13_px")}px; margin: 0; }
@@ -6130,7 +6173,7 @@ class SaunaPanel extends HTMLElement {
     this.shadowRoot.innerHTML = `<style id="panel-appearance-style">${this.appearanceStyles()}</style><main>
       <header><div class="header-brand"><button class="header-icon" data-action="menu" aria-label="Home-Assistant-Seitenleiste umschalten" title="Home-Assistant-Seitenleiste umschalten" hidden><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h16M4 12h16M4 18h16"/></svg></button><h1 id="instance-title">Sauna</h1></div><nav class="tabs main-tabs" id="main-navigation" aria-label="Ansicht"><button data-action="overview" aria-current="page">Steuerung</button><button data-action="history">Verlauf</button><button data-action="statistics">Statistik</button><button data-action="details">Details</button><button data-action="settings">Einstellungen</button></nav><div class="header-context"><select id="instance" aria-label="Sauna auswählen"></select><button class="header-icon" data-action="fullscreen" aria-label="Vollbild" title="Vollbild" hidden><svg data-fullscreen-icon="enter" viewBox="0 0 24 24" aria-hidden="true"><path d="M8 3H3v5m13-5h5v5M3 16v5h5m13-5v5h-5"/></svg><svg data-fullscreen-icon="exit" viewBox="0 0 24 24" aria-hidden="true" hidden><path d="M3 8h5V3m8 0v5h5M8 21v-5H3m18 0h-5v5"/></svg></button></div></header>
       <nav class="tabs detail-tabs" aria-label="Detailansicht" hidden><button data-action="detail" aria-current="page">Zustand</button><button data-action="diagnostics">Erkennung</button><button data-action="detail-history">Steuerung</button><button data-action="detail-calibration">Kalibrierung</button></nav>
-      <div id="message" role="alert"></div><section id="current" aria-live="polite"><p>Lade Saunadaten …</p></section><section id="details" hidden></section><section id="detail-calibration" aria-label="Kalibrierung" hidden><div class="card"><h2>Kalibrierung</h2><p class="muted">Anweisungen kommen als Companion-Benachrichtigung an den startenden Benutzer; jede Antwort schließt das Zeitfenster ihres Vorgangs. Steuerung, Erkennung und Gangmodell bleiben unverändert.</p><div id="calibration"></div></div><div class="card" id="calibration-grid"></div></section>
+      <div id="message" role="alert"></div><section id="current" aria-live="polite"><p>Lade Saunadaten …</p></section><section id="details" hidden></section><section id="detail-calibration" class="calibration-layout" aria-label="Kalibrierung" hidden><div class="card calibration-start"><h2>Kalibrierung</h2><p class="muted">Anweisungen kommen als Companion-Benachrichtigung an den startenden Benutzer; jede Antwort schließt das Zeitfenster ihres Vorgangs. Steuerung, Erkennung und Gangmodell bleiben unverändert.</p><div id="calibration"></div></div><div class="card calibration-result" id="calibration-grid"></div></section>
       <section id="history" hidden><div class="plot-panel history-panel"><div class="history-controls"><div class="history-subviews segmented-mode" role="group" aria-label="Unteransicht"><button type="button" data-action="history-subview:session" aria-pressed="true">Sitzung</button><button type="button" data-action="history-subview:plant" aria-pressed="false">Anlage</button></div><div class="history-session-choice"><label for="session">Sitzung vom</label><select id="session" aria-label="Saunasitzung auswählen"><option value="live">Letzte Sitzung</option></select></div><div class="history-selection-actions"><button data-action="clear-history-selection" hidden disabled>Auswahl aufheben</button></div><span id="history-loading" role="status" hidden></span></div><div id="history-figures" class="history-figures" aria-live="polite"></div><div class="history-plot-frame"><div id="history-chart-head" class="history-chart-head"></div><div id="plots"></div><div id="history-legends">${this.historyLegendMarkup()}</div></div>
         <div class="history-below"><section id="history-gangs" class="history-gangs" aria-label="Gänge im Vergleich"></section><div class="history-inspection" id="history-inspection" aria-label="Auswahl"><p class="history-inspection-key">Auswahl</p><div class="history-inspection-heading"></div><div class="history-inspection-content"><div class="history-readout"><strong class="history-column-heading">Messwerte</strong><div id="tooltip" role="group" aria-label="Werte am markierten Zeitpunkt" hidden></div></div><div class="history-event-column"><strong class="history-column-heading">Ereignisse</strong><div class="history-event-readout"><div id="history-event-inspection" role="group" aria-label="Ereignisinspektion" aria-live="polite" hidden></div></div></div></div><div class="history-session-summary" data-history-session-summary hidden></div><div class="history-context-gangs" data-history-context-gangs></div></div></div></div><div id="control-history" hidden></div><div id="recognition-control" hidden></div><div id="detection-plots" hidden></div><div id="gangs"></div><div id="event-list"></div>
       </section><section id="statistics" aria-label="Statistik" hidden></section><section id="settings" hidden></section>
@@ -6245,25 +6288,7 @@ class SaunaPanel extends HTMLElement {
         this.syncNavigation();
         this.refresh(true);
       }
-      if (e.target.id === "session") {
-        this.clearHistorySelection();
-        this.cancelHistoryInput();
-        this.selected = e.target.value;
-        this.historySelectionGeneration = (this.historySelectionGeneration || 0) + 1;
-        this.historyLoad = null;
-        this.syncHistoryLoading();
-        this.message(null, "history");
-        this.shown = null;
-        this.clearHistoryDisplay();
-        this.highlightedEventId = null;
-        this.pendingEventFocus = null;
-        this.invalidateHistoryIndex();
-        this.zoom = 1;
-        this.window = null;
-        this.showHistoryCache();
-        this.drawHistory("archive");
-        this.startHistoryLoad(true);
-      }
+      if (e.target.id === "session") this.chooseHistorySession(e.target.value);
       if (e.target.id === "button-program")
         this.runPanelAction(() => this.action("button-program"));
       if (e.target.id === "button-session-gesture")
@@ -6323,6 +6348,7 @@ class SaunaPanel extends HTMLElement {
           e.target.checked,
         );
       if (e.target.id === "calibration-module") this.calibrationModule = e.target.value;
+      if (e.target.id === "calibration-run") this.selectCalibrationRun(e.target.value);
       if (e.target.matches("[data-appearance-instrument]"))
         this.updateAppearanceField(e.target);
       if (e.target.matches("[data-manual-light-value]"))
@@ -7053,6 +7079,38 @@ class SaunaPanel extends HTMLElement {
         }
       : null;
     this.trimHistoryCaches();
+    this.applyPendingHistoryWindow();
+  }
+  // B4e: Ausschnitt, der gilt, sobald die gewählte Sitzung angezeigt wird (Sprung
+  // aus einer Kalibrierzelle); erst dann kennt der Verlauf ihren Zeitraum.
+  applyPendingHistoryWindow() {
+    const pending = this.pendingHistoryWindow;
+    if (!pending || this.shown?.session?.timeline?.session_id !== pending.sessionId)
+      return;
+    this.pendingHistoryWindow = null;
+    this.setHistoryWindow(pending.from, pending.to);
+  }
+  // Sitzung des Verlaufs wählen, wie die Auswahl „Sitzung vom“ („live“: die
+  // laufende oder letzte Sitzung).
+  chooseHistorySession(value) {
+    this.pendingHistoryWindow = null;
+    this.clearHistorySelection();
+    this.cancelHistoryInput();
+    this.selected = value;
+    this.historySelectionGeneration = (this.historySelectionGeneration || 0) + 1;
+    this.historyLoad = null;
+    this.syncHistoryLoading();
+    this.message(null, "history");
+    this.shown = null;
+    this.clearHistoryDisplay();
+    this.highlightedEventId = null;
+    this.pendingEventFocus = null;
+    this.invalidateHistoryIndex();
+    this.zoom = 1;
+    this.window = null;
+    this.showHistoryCache();
+    this.drawHistory("archive");
+    this.startHistoryLoad(true);
   }
   syncHistorySessions() {
     const select = this.$("#session");
@@ -17340,7 +17398,6 @@ class SaunaPanel extends HTMLElement {
     const state = this.state,
       calibration = state.calibration || {},
       run = calibration.active,
-      last = calibration.last,
       offered = calibration.modules || [],
       blocked = calibration.blocked,
       busy = this.calibrationBusy,
@@ -17369,13 +17426,18 @@ class SaunaPanel extends HTMLElement {
       const chosen = this.calibrationSessionChoice(offered);
       start = `<div class="row" role="group" aria-label="Module der Kalibriersitzung">${offered.map((module) => `<label><input type="checkbox" data-calibration-module="${esc(module.id)}" ${chosen.includes(module.id) ? "checked" : ""} ${disabled}> ${esc(module.label)} – ${esc(module.title)}</label>`).join("")}</div><div class="row"><button class="confirm" data-action="calibration-start" ${disabled || (chosen.length ? "" : "disabled")}>Kalibriersitzung starten</button></div><p class="muted">Startet den Saunabetrieb im Automatikbetrieb. Die Module folgen nach Bereit.</p>`;
     }
+    // B4e: Das letzte Ergebnis steht mit Summen und Ergebnis je Schritt in der
+    // Karte daneben, gelesen aus dem Archiv (L-W2c-1).
     const status = run
       ? `<p><strong>${run.kind === "session" ? "Kalibriersitzung" : "Einzelnes Modul"} läuft:</strong> ${esc(this.calibrationProgress(run))}</p><div class="row"><button class="stop" data-action="calibration-cancel" ${state.permissions.control && !busy ? "" : "disabled"}>Kalibrierung abbrechen</button></div><p class="muted">Nach dem Abbruch ist der Lauf ungültig und wird nicht ausgewertet.</p>`
-      : last
-        ? `<p><strong>Letztes Ergebnis${last.ended_at ? ` vom ${esc(this.when(last.ended_at))}` : ""}:</strong> ${last.valid ? "gültig" : `ungültig, ${esc(last.reason_text || last.reason || "")}`}</p>${last.valid ? `<p>${esc(this.calibrationTotals(last.totals))}</p>` : ""}<p class="muted">Die Einzelheiten stehen im Verlauf der Sitzung unter Details · Steuerung.</p>`
-        : "";
-    if (this.$("#calibration-grid"))
-      this.updateMarkup("#calibration-grid", this.calibrationGridMarkup(offered, run));
+      : "";
+    if (this.$("#calibration-grid")) {
+      if (this.view === "detail-calibration") void this.loadCalibrationRuns();
+      this.updateMarkup(
+        "#calibration-grid",
+        this.calibrationResultMarkup(offered, run),
+      );
+    }
     this.updateMarkup(
       "#calibration",
       `${status}${run ? "" : start}${locked ? `<p class="muted">${esc(locked)}</p>` : ""}${!run && state.permissions.control && (targets === 0 || targets === null) ? `<div class="row"><button data-action="calibration-targets" ${this.calibrationTargetsLoading ? "disabled" : ""}>Companion-Ziele erneut prüfen</button></div>` : ""}<p role="status">${esc(this.calibrationMessage || "")}</p>`,
@@ -17385,6 +17447,9 @@ class SaunaPanel extends HTMLElement {
   // „Details · Kalibrierung“); der laufende Schritt ist hervorgehoben.
   calibrationGridMarkup(modules, run) {
     if (!modules.length) return "";
+    return `<h2>Module und Schritte</h2>${this.calibrationModuleRows(modules, run)}<p class="muted">Jede Zelle ist ein Schritt mit den erwarteten Erkennungen.</p>`;
+  }
+  calibrationModuleRows(modules, run) {
     const expected = (step) => {
       const set = new Set(step.expects || []),
         door = set.has("door_open") && set.has("door_close")
@@ -17399,7 +17464,7 @@ class SaunaPanel extends HTMLElement {
         "keine Erkennung erwartet"
       );
     };
-    const rows = modules
+    return modules
       .map((module) => {
         const current = run && run.module === module.label ? run.step : null,
           cells = (module.steps || [])
@@ -17411,7 +17476,278 @@ class SaunaPanel extends HTMLElement {
         return `<div class="calibration-module"><h3>${esc(module.label)} · ${esc(module.title || "")}</h3><ol class="calibration-steps">${cells}</ol></div>`;
       })
       .join("");
-    return `<h2>Module und Schritte</h2>${rows}<p class="muted">Jede Zelle ist ein Schritt mit den erwarteten Erkennungen.</p>`;
+  }
+  // ---------- B4e Details · Kalibrierung: Ergebnis je Schritt ----------
+  // Läufe und Ergebnisse aus dem Endpunkt archive/calibration (G19); das Panel
+  // formatiert nur. Der laufende Lauf zeigt das Raster mit dem laufenden
+  // Schritt; ohne Lauf im Archiv steht nur das Raster.
+  calibrationRunChoiceId() {
+    const choice = this.calibrationRunChoice;
+    return choice && choice !== "modules" ? choice : null;
+  }
+  calibrationRunsKey() {
+    const calibration = this.state?.calibration || {};
+    return [
+      this.entry,
+      this.calibrationRunChoiceId() || "",
+      calibration.active?.run_id || "",
+      calibration.last?.ended_at || "",
+      calibration.last?.totals ? "evaluated" : "",
+      this.state?.archive_revision ?? "",
+    ].join("|");
+  }
+  calibrationRunsData() {
+    const data = this.calibrationRuns;
+    return data && data.entry === this.entry ? data : null;
+  }
+  async loadCalibrationRuns() {
+    const entry = this.entry;
+    if (!entry || !this.state?.permissions?.admin) return;
+    const key = this.calibrationRunsKey(),
+      choice = this.calibrationRunChoiceId();
+    if (this.calibrationRuns?.key === key || this.calibrationRunsRequest?.key === key)
+      return;
+    const request = { key };
+    this.calibrationRunsRequest = request;
+    let data;
+    try {
+      const result = await this.api(
+        `/${entry}/archive/calibration${choice ? `?run_id=${encodeURIComponent(choice)}` : ""}`,
+      );
+      data = { key, entry, result };
+    } catch (error) {
+      data = {
+        key,
+        entry,
+        result: null,
+        error: errorText(error),
+        missing: error?.status_code === 404,
+      };
+    }
+    if (this.calibrationRunsRequest !== request) return;
+    this.calibrationRunsRequest = null;
+    // Ein gewählter Lauf, den das Archiv nicht mehr enthält: wieder der neueste.
+    if (data.missing && choice && this.calibrationRunChoice === choice) {
+      this.calibrationRunChoice = null;
+      data = this.calibrationRuns || null;
+    }
+    this.calibrationRuns = data;
+    if (this.view === "detail-calibration") this.drawCalibration();
+  }
+  selectCalibrationRun(value) {
+    this.calibrationRunChoice = value || null;
+    this.calibrationRunMessage = "";
+    this.drawCalibration();
+  }
+  calibrationRunLabel(run) {
+    return `${this.when(run.started_at)} · ${run.kind_text} ${(run.modules || []).join(", ")} · ${run.valid ? "gültig" : "ungültig"}`;
+  }
+  calibrationResultMarkup(offered, active) {
+    const data = this.calibrationRunsData(),
+      result = data?.result || null,
+      runs = result?.runs || [],
+      choice = this.calibrationRunChoice,
+      overview = choice === "modules" || (!choice && !!active),
+      shown = overview ? null : result?.run || null,
+      selected = shown ? shown.run_id : "modules",
+      choiceMarkup = runs.length
+        ? `<div class="calibration-run-choice"><label for="calibration-run">Lauf wählen</label><select id="calibration-run">${runs
+            .map(
+              (run) =>
+                `<option value="${esc(run.run_id)}"${run.run_id === selected ? " selected" : ""}>${esc(this.calibrationRunLabel(run))}</option>`,
+            )
+            .join(
+              "",
+            )}<option value="modules"${selected === "modules" ? " selected" : ""}>Module und Schritte</option></select></div>`
+        : "",
+      note =
+        '<p class="muted">Jede Zelle ist ein Schritt mit den erwarteten Erkennungen.</p>';
+    if (!shown) {
+      const status = !data
+        ? '<p class="muted" role="status">Läufe werden geladen …</p>'
+        : data.error
+          ? `<p class="muted">Läufe nicht verfügbar: ${esc(data.error)}</p>`
+          : "";
+      if (!offered.length && !status) return "";
+      return `<div class="calibration-result-head"><h2>Module und Schritte</h2>${choiceMarkup}</div>${overview ? "" : status}${this.calibrationModuleRows(offered, active)}${note}`;
+    }
+    const title = shown.run_id === runs[0]?.run_id ? "Letzter Lauf" : "Gewählter Lauf",
+      period = `${esc(this.when(shown.started_at))}${shown.ended_at ? ` – ${esc(this.clock(shown.ended_at))}` : ""} · ${esc(shown.kind_text)} ${esc((shown.modules || []).join(", "))}`,
+      state = !shown.valid
+        ? `<p class="calibration-run-state" data-valid="false"><strong>Ungültig:</strong> ${esc(shown.reason_text || "")}. Ungültige Läufe werden nicht ausgewertet.</p>`
+        : !shown.evaluated
+          ? '<p class="calibration-run-state">Gültig. Die Auswertung der Erkennung folgt nach dem Sitzungsende.</p>'
+          : "",
+      unplaced = (shown.additional || []).length
+        ? `<div class="calibration-module"><h3>Weitere zusätzliche Erkennungen</h3><ol class="calibration-steps">${shown.additional.map((cell, index) => this.calibrationCellMarkup(cell, "additional", index)).join("")}</ol></div>`
+        : "",
+      legend = shown.totals
+        ? '<p class="calibration-legend"><span data-calibration-status="found">im Fenster</span><span data-calibration-status="outside">außerhalb, mit Lage zum Fenster</span><span data-calibration-status="missing">fehlt</span><span data-calibration-status="additional">zusätzlich</span></p>'
+        : "";
+    return `<div class="calibration-result-head"><div><h2>${title}</h2><p class="muted">${period}</p></div>${choiceMarkup}</div>${state}${this.calibrationTotalsMarkup(shown)}${(
+      shown.executions || []
+    )
+      .map((execution, row) => this.calibrationExecutionMarkup(execution, row))
+      .join(
+        "",
+      )}${unplaced}${legend}<p class="muted">Jede Zelle ist ein Schritt mit den erwarteten Erkennungen. Ein Klick zeigt die Sitzung zur Zeit des Schritts unter Details · Erkennung.</p><p role="status" class="muted">${esc(this.calibrationRunMessage || "")}</p>`;
+  }
+  calibrationTotalsMarkup(run) {
+    const totals = run.totals;
+    if (!totals) return "";
+    const { gangs, events } = totals,
+      tile = (key, value, line = "") =>
+        `<div class="calibration-total"><p class="stat-key">${key}</p><p class="stat-value">${value}</p>${line ? `<p class="stat-line">${line}</p>` : ""}</div>`;
+    return `<div class="calibration-totals">${[
+      tile(
+        "Gänge gefunden",
+        `${gangs.found}<small>von ${gangs.reference}</small>`,
+        gangs.additional ? `${gangs.additional} zusätzlich` : "",
+      ),
+      tile(
+        "Türen und Aufgüsse im Fenster",
+        `${events.found}<small>von ${events.reference}</small>`,
+        `${events.missing} fehlen, ${events.additional} zusätzlich`,
+      ),
+      tile(
+        "Außerhalb des Fensters",
+        `${events.outside}`,
+        events.merged
+          ? `zugeordnet; ${events.merged} Türvorgänge zusammengelegt`
+          : "zugeordnet, mit Lage zum Fenster",
+      ),
+      run.presence_measured === false
+        ? tile("Anwesend bei leerer Kabine", "–", "ohne Präsenzmessung")
+        : tile(
+            "Anwesend bei leerer Kabine",
+            `${totals.empty_cabin_reports}<small>-mal</small>`,
+          ),
+    ].join("")}</div>`;
+  }
+  calibrationExecutionMarkup(execution, row) {
+    const cells = (execution.cells || [])
+      .map((cell, index) => this.calibrationCellMarkup(cell, row, index))
+      .join("");
+    return `<div class="calibration-module" data-calibration-execution="${esc(execution.module)}"><h3>${esc(execution.label)} · ${esc(execution.title || "")}${execution.repeat ? " · Wiederholung" : ""}</h3><ol class="calibration-steps">${cells}</ol>${this.calibrationFactsMarkup(execution)}</div>`;
+  }
+  calibrationOffset(value, window = "") {
+    const seconds = (number) =>
+        `${this.num(number, this.preference("value_precision"))} s`,
+      suffix = window ? ` ${window}` : "";
+    if (value == null) return "";
+    if (value === 0) return `im Fenster${suffix}`;
+    return value < 0
+      ? `${seconds(-value)} vor dem Fenster${suffix}`
+      : `${seconds(value)} nach dem Fenster${suffix}`;
+  }
+  calibrationCellMarkup(cell, row, index) {
+    const seconds = (number) =>
+      `${this.num(number, this.preference("value_precision"))} s`;
+    let title, lines;
+    if (cell.type === "additional") {
+      title = "zusätzlich";
+      lines = [`<span>${esc(cell.label)} · ${esc(this.clockSeconds(cell.at))}</span>`];
+    } else {
+      title = cell.reference;
+      lines = (cell.expected || []).length
+        ? cell.expected.map(
+            (item) =>
+              `<span class="calibration-mark" data-calibration-status="${esc(item.status)}">${esc(item.label)} · ${esc(item.status === "outside" ? this.calibrationOffset(item.offset_s) : item.status_text)}</span>`,
+          )
+        : [
+            `<span>${esc((cell.expects || []).join(", ") || "keine Erkennung erwartet")}</span>`,
+            ...(cell.status !== "none" && cell.status_text
+              ? [`<span>${esc(cell.status_text)}</span>`]
+              : []),
+          ];
+      if (cell.presence)
+        lines.push(
+          `<span>${esc(`${cell.presence.reports}-mal anwesend${cell.presence.reports ? `, ${seconds(cell.presence.present_s)}` : ""}`)}</span>`,
+        );
+    }
+    const content = `<strong>${esc(title)}</strong>${lines.join("")}`;
+    return `<li class="calibration-step" data-calibration-status="${esc(cell.status || "")}">${
+      cell.window
+        ? `<button type="button" class="calibration-cell" data-action="calibration-cell:${row}:${index}">${content}</button>`
+        : content
+    }</li>`;
+  }
+  calibrationFactsMarkup(execution) {
+    const seconds = (number) =>
+        `${this.num(number, this.preference("value_precision"))} s`,
+      gang = execution.gang,
+      presence = execution.presence,
+      facts = [];
+    if (gang)
+      facts.push(
+        gang.found
+          ? [
+              "Gang gefunden",
+              `Beginn ${this.calibrationOffset(gang.start_offset_s, "des Eintritts")}`,
+              gang.end_offset_s != null
+                ? `Ende ${this.calibrationOffset(gang.end_offset_s, "der Austrittsöffnung")}`
+                : "",
+              `${gang.infusions} von ${gang.reference_infusions} Aufgüssen`,
+              gang.gang_heat_after_exit_s != null
+                ? `Gangheizung nach dem Austritt ${seconds(gang.gang_heat_after_exit_s)}`
+                : "",
+              gang.additional ? `${gang.additional} weitere Gänge` : "",
+            ]
+              .filter(Boolean)
+              .join(", ")
+          : `Gang fehlt${gang.additional ? `, ${gang.additional} weitere Gänge` : ""}`,
+      );
+    if (presence) {
+      const parts = [];
+      if (presence.dropouts)
+        parts.push(
+          presence.dropouts.count
+            ? `${presence.dropouts.count} Aussetzer (${presence.dropouts.durations_s.map(seconds).join(", ")})`
+            : "keine Aussetzer",
+        );
+      if (presence.after_run_s != null)
+        parts.push(`Nachlauf ${seconds(presence.after_run_s)}`);
+      if (presence.door_watch)
+        parts.push(`vor der offenen Tür ${presence.door_watch.reports}-mal anwesend`);
+      if (parts.length) facts.push(`Präsenz: ${parts.join(", ")}`);
+    }
+    for (const item of execution.merged || [])
+      facts.push(
+        `Als ein Türvorgang erkannt: Tür auf „${item.opening.reference}“ bis Tür zu „${item.closing.reference}“${item.closing.module && item.closing.module !== execution.label ? ` (${item.closing.module})` : ""}`,
+      );
+    return facts.length
+      ? `<ul class="calibration-facts">${facts.map((fact) => `<li>${esc(fact)}</li>`).join("")}</ul>`
+      : "";
+  }
+  // Ein Klick auf eine Zelle zeigt die Sitzung des Laufs unter Details · Erkennung
+  // mit dem Ausschnitt um das Fenster des Schritts; eine zugeordnete Erkennung ist
+  // gewählt. Vorhandene Navigation: Sitzungsauswahl und Ausschnitt des Verlaufs.
+  openCalibrationCell(row, index) {
+    const run = this.calibrationRunsData()?.result?.run,
+      cell =
+        row === "additional"
+          ? run?.additional?.[index]
+          : run?.executions?.[Number(row)]?.cells?.[index];
+    if (!run || !cell?.window) return;
+    const live = this.state?.session?.timeline?.session_id === run.session_id,
+      value = live ? "live" : run.session_id,
+      from = stamp(cell.window[0]),
+      to = stamp(cell.window[1]),
+      span = Math.max(this.preference("history_marker_focus_span_ms"), to - from),
+      middle = (from + to) / 2;
+    if (this.selected !== value) this.chooseHistorySession(value);
+    this.pendingHistoryWindow = {
+      sessionId: run.session_id,
+      from: middle - span / 2,
+      to: middle + span / 2,
+    };
+    this.applyPendingHistoryWindow();
+    this.recognitionSelected =
+      cell.event_id ||
+      (cell.expected || []).find((item) => item.event_id)?.event_id ||
+      null;
+    this.setPanelView("diagnostics");
+    return this.refresh(true);
   }
   calibrationProgress(run, { waiting = true } = {}) {
     const reason = `wartet auf ${
@@ -17424,11 +17760,6 @@ class SaunaPanel extends HTMLElement {
     }`;
     if (run.step == null) return `${run.module}, ${reason}`;
     return `${run.module}, Schritt ${run.step} von ${run.steps}${waiting ? `, ${reason}` : ""}`;
-  }
-  calibrationTotals(totals) {
-    if (!totals) return "Die Auswertung der Erkennung folgt nach dem Sitzungsende.";
-    const { gangs, events } = totals;
-    return `Gänge ${gangs.found} von ${gangs.reference} gefunden, ${gangs.additional} zusätzlich. Türen und Aufgüsse ${events.found} von ${events.reference} im Fenster gefunden, ${events.outside} außerhalb des Fensters zugeordnet, ${events.missing} fehlen, ${events.additional} zusätzlich. Anwesenheit bei leerer Kabine: ${totals.empty_cabin_reports}-mal.`;
   }
   selectCalibrationModule(id, chosen) {
     const selection = new Set(
@@ -17500,7 +17831,9 @@ class SaunaPanel extends HTMLElement {
       !state.calibration?.active
     )
       return;
-    await this.calibrationRequest("/cancel", {});
+    // L-W2c-3: nur den angezeigten Lauf abbrechen.
+    const runId = state.calibration.active.run_id;
+    await this.calibrationRequest("/cancel", runId ? { run_id: runId } : {});
   }
   async calibrationRequest(path, body) {
     const entry = this.entry,
@@ -18576,6 +18909,11 @@ class SaunaPanel extends HTMLElement {
     if (action === "calibration-targets") return this.loadCalibrationTargets();
     if (action === "calibration-start") return this.startCalibration();
     if (action === "calibration-cancel") return this.cancelCalibration();
+    if (action.startsWith("calibration-cell:")) {
+      if (!this.state?.permissions?.admin) return;
+      const [, row, index] = action.split(":");
+      return this.openCalibrationCell(row, Number(index));
+    }
     if (!this.state) return;
     this.message(null);
     const permissions = this.state?.permissions || {},

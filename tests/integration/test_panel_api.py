@@ -179,6 +179,26 @@ class PanelAPITests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(running["position_difference"]["session_id"], identity)
         self.assertIn("session_c", running["position_difference"])
 
+    async def test_calibration_runs_permissions_query_and_unknown_run(self):
+        # B4e: Kalibrierläufe aus dem Archiv (Details · Kalibrierung) nur für Administratoren.
+        url = self.base + "/" + self.entry.entry_id + "/archive/calibration"
+        user = await self.hass.auth.async_create_user("Calibration reader", group_ids=[GROUP_ID_USER])
+        token = await self.hass.auth.async_create_refresh_token(user, client_id="http://localhost/")
+        headers = {"Authorization": "Bearer " + self.hass.auth.async_create_access_token(token)}
+        async with (
+            ClientSession(headers=headers) as client,
+            client.get(url) as response,
+        ):
+            self.assertEqual(response.status, 403)
+        async with ClientSession(headers=self.headers) as client:
+            async with client.get(url, params={"session_id": "x"}) as response:
+                self.assertEqual(response.status, 400)
+            async with client.get(url, params={"run_id": "missing"}) as response:
+                self.assertEqual(response.status, 404)
+            async with client.get(url) as response:
+                self.assertEqual(response.status, 200, await response.text())
+                self.assertEqual(await response.json(), {"runs": [], "run": None})
+
     async def test_archive_erase_permissions_session_guard_and_memory_invalidation(self):
         from harness import retain_session
 

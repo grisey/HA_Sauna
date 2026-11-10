@@ -28,7 +28,7 @@ from custom_components.ha_sauna.archive import (
     session_has_gangs,
 )
 from custom_components.ha_sauna.bindings import Bindings
-from custom_components.ha_sauna.core import calibration
+from custom_components.ha_sauna.core import calibration, calibration_runs
 from custom_components.ha_sauna.core.configuration_model import (
     ConfigurationModel,
     temperature_control,
@@ -128,6 +128,14 @@ PREVIEW_DEFAULTS = load_preview_defaults()
 
 class PreviewRuntime(SaunaRuntime):
     """Supply the simulated event entity's advertised Shelly RPC capabilities."""
+
+    calibration_sink = None
+
+    def _archive_calibration(self, run):
+        """The preview keeps the calibration protocol with its own records (B4e)."""
+        for record in run.take_records():
+            if self.calibration_sink is not None:
+                self.calibration_sink(record, run.session_id)
 
     @property
     def configuration_model(self):
@@ -247,6 +255,8 @@ class Preview:
                 frozenset((calibration_reference(),)),
             ),),
         ), clock=lambda: self.now)
+        self.runtime.calibration_sink = lambda record, session_id: self.record(
+            "calibration", record, session_id=session_id, received_at=record["at"])
         self.attach_notifications()
         self.entry = SimpleNamespace(
             runtime_data=self.runtime, options=self.runtime.configuration.as_options(),
@@ -391,6 +401,22 @@ class Preview:
             ]
         return {"session": session, "phase_projection": projection, "measurement_window": window,
                 "records": records, "next_after": None}
+
+    def calibration_runs(self, run_id=None):
+        """Kalibrierläufe aus dem Protokoll der Vorschau, wie ``archive/calibration`` (B4e)."""
+        active = self.runtime.calibration_status["active"]
+
+        def processed(session_id):
+            if self.c.session is not None and self.c.session.session_id == session_id:
+                return plain(self.c.session.timeline).get("processed") or ()
+            stored = self.sessions.get(session_id)
+            return ((stored or {}).get("session", {}).get("timeline") or {}).get("processed") or ()
+
+        return calibration_runs.view(
+            [(record["session_id"], record["payload"]) for record in self.records
+             if record["kind"] == "calibration"],
+            run_id=run_id, active_run_id=active["run_id"] if active else None, processed=processed,
+        )
 
     def sample(self):
         if self.follow_feedback:
@@ -722,10 +748,11 @@ class Preview:
             else:
                 raise ValueError("Unbekannter Simulationseingang")
         elif path.endswith("/calibration/cancel"):
-            if body != {}:
-                raise ValueError("Der Abbruch erwartet ein leeres Objekt.")
+            if not isinstance(body, dict) or not set(body) <= {"run_id"}:
+                raise ValueError("Der Abbruch erwartet ein leeres Objekt oder die run_id des Laufs.")
             result = self.run(self.runtime.cancel_calibration(
-                actor=ActorRef(PREVIEW_DEFAULTS["calibration"]["user_id"], "lokale Vorschau")))
+                actor=ActorRef(PREVIEW_DEFAULTS["calibration"]["user_id"], "lokale Vorschau"),
+                run_id=body.get("run_id")))
             self.sample()
             return result
         elif path.endswith("/calibration"):
@@ -902,6 +929,12 @@ class Handler(BaseHTTPRequestHandler):
             self.send({"sessions": len(preview.sessions), "records": len(preview.records),
                        "size_bytes": None, "start_seconds": None,
                        "position_difference": None, "at": preview.now})
+        elif path.endswith("/archive/calibration"):
+            result = preview.calibration_runs(parse_qs(parsed.query).get("run_id", [None])[0])
+            if result is None:
+                self.send_error(404)
+                return
+            self.send(result)
         elif path.endswith("/calibration"):
             self.send({"targets": preview.calibration_targets()})
         elif path.endswith("/standards"):

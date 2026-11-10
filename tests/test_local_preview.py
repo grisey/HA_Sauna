@@ -794,13 +794,22 @@ class LocalPreviewTests(unittest.TestCase):
         self.assertEqual(last["totals"]["gangs"]["reference"], 1)
         self.assertTrue(self.preview.transport.sent[-1].payload["message"]
                         .startswith("Kalibrierung ausgewertet."))
+        # B4e: the preview keeps the protocol like the archive and serves its runs.
+        runs = self.preview.calibration_runs()
+        self.assertEqual([(run["modules"], run["valid"], run["evaluated"]) for run in runs["runs"]],
+                         [(["A1"], True, True)])
+        self.assertEqual(runs["run"]["totals"], last["totals"])
+        self.assertEqual(len(runs["run"]["executions"][0]["cells"]), 4)
 
         self.preview.reset("bereit")
         self.preview.action("/preview/calibration", {"module": "A1"})
         self.preview.action("/simulate", {"action": "role", "value": "user"})
         self.assertEqual(set(self.preview.state()["calibration"]), {"active"})
         self.preview.action("/simulate", {"action": "role", "value": "admin"})
-        self.preview.action("/preview/calibration/cancel", {})
+        with self.assertRaisesRegex(ValueError, "läuft nicht mehr"):
+            self.preview.action("/preview/calibration/cancel", {"run_id": "other"})
+        active = self.preview.state()["calibration"]["active"]
+        self.preview.action("/preview/calibration/cancel", {"run_id": active["run_id"]})
         last = self.preview.state()["calibration"]["last"]
         self.assertEqual((last["valid"], last["reason_text"]), (False, "abgebrochen"))
         self.preview.action("/simulate", {"action": "companion"})

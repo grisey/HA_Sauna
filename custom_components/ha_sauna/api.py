@@ -1206,6 +1206,35 @@ class DetailOverviewView(HomeAssistantView):
         return self.json(plain(overview))
 
 
+class CalibrationRunsView(HomeAssistantView):
+    """Kalibrierläufe aus dem Archiv (B4e, Details · Kalibrierung), nur Administratoren.
+
+    Ohne ``run_id`` der zuletzt begonnene Lauf mit dem Ergebnis je Schritt; der
+    laufende Lauf steht im Zustand der Kalibrierung, nicht hier.
+    """
+
+    url = "/api/ha_sauna/{entry_id}/archive/calibration"
+    name = "api:ha_sauna:archive:calibration"
+    requires_auth = True
+
+    async def get(self, request, entry_id):
+        require_read(request, entry_id)
+        if not request["hass_user"].is_admin:
+            raise web.HTTPForbidden()
+        if set(request.query) - {"run_id"}:
+            raise web.HTTPBadRequest(text="Nur run_id ist zulässig.")
+        runtime = runtime_for(request.app[KEY_HASS], entry_id)
+        await runtime.archive.flush()
+        active = runtime.calibration_status["active"]
+        result = await asyncio.to_thread(
+            runtime.archive.calibration_runs, request.query.get("run_id"),
+            active_run_id=active["run_id"] if active else None,
+        )
+        if result is None:
+            raise web.HTTPNotFound()
+        return self.json(result)
+
+
 class SessionLabelView(HomeAssistantView):
     """Testbetrieb (G25): abgeschlossene Sitzung kennzeichnen oder Kennzeichnung aufheben."""
 
@@ -1401,7 +1430,10 @@ class CalibrationView(HomeAssistantView):
 
 
 class CalibrationCancelView(HomeAssistantView):
-    """Cancel the running calibration (W-2c); same path as ha_sauna.cancel_calibration."""
+    """Cancel the running calibration (W-2c); same path as ha_sauna.cancel_calibration.
+
+    ``{}`` cancels the run of the time of the request, ``{"run_id": …}`` only that run.
+    """
 
     url = "/api/ha_sauna/{entry_id}/calibration/cancel"
     name = "api:ha_sauna:calibration:cancel"
@@ -1409,11 +1441,18 @@ class CalibrationCancelView(HomeAssistantView):
 
     async def post(self, request, entry_id):
         require_control(request, entry_id)
-        if await json_body(request) != {}:
-            raise web.HTTPBadRequest(text="Der Abbruch erwartet ein leeres Objekt.")
+        body = await json_body(request)
+        # L-W2c-3: the panel names the run it shows; the service keeps cancelling
+        # whatever runs at the time of the request.
+        if not (isinstance(body, dict) and set(body) <= {"run_id"}
+                and isinstance(body.get("run_id", ""), str) and body.get("run_id") != ""):
+            raise web.HTTPBadRequest(
+                text="Der Abbruch erwartet ein leeres Objekt oder die run_id des Laufs.")
         runtime = runtime_for(request.app[KEY_HASS], entry_id)
         try:
-            result = await runtime.cancel_calibration(actor=request_actor(request))
+            result = await runtime.cancel_calibration(
+                actor=request_actor(request), run_id=body.get("run_id"),
+            )
         except ValueError as error:
             return self.json({"error": str(error)}, status_code=409)
         return self.json(result)
@@ -1436,6 +1475,7 @@ def register(hass):
     hass.http.register_view(SessionLabelView)
     hass.http.register_view(RecognitionControlView)
     hass.http.register_view(DetailOverviewView)
+    hass.http.register_view(CalibrationRunsView)
     hass.http.register_view(FinishSessionView)
     hass.http.register_view(ParametersView)
     hass.http.register_view(TemperatureView)
