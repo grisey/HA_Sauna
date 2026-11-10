@@ -241,6 +241,10 @@ class TemperatureControl:
     current_target: float | None
     next_target: float | None
     program_mode: str
+    # Laufendes Steigerungsprogramm: Stufen in Gangfolge und die Stufe des
+    # aktuellen Ziels (Index); sonst None.
+    stages: tuple[float, ...] | None = None
+    stage: int | None = None
 
     def as_dict(self):
         return asdict(self)
@@ -258,8 +262,11 @@ def temperature_control(controller):
     )
     current = controller.target_temperature
     upcoming = controller.next_gang_temperature
+    stages = controller.temperature_program_stages()
     return TemperatureControl(
         "next_gang" if next_gang else "current",
         upcoming if next_gang else current,
         current, upcoming, program_mode,
+        stages[0] if stages else None,
+        stages[1] if stages else None,
     )

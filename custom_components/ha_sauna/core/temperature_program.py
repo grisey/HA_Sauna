@@ -94,12 +94,16 @@ class TemperatureProgram:
             or completed < 0
         ):
             raise ValueError("completed must be a non-negative integer")
+        targets = self.targets()
+        return targets[min(completed, len(targets) - 1)]
+
+    def targets(self) -> tuple[float, ...]:
+        """Stufen in Gangfolge; die letzte gilt für alle weiteren Gänge."""
         if self.steps is not None:
-            return self.steps[min(completed, len(self.steps) - 1)]
+            return self.steps
         # A one-gang distribution still begins at its configured start.  When
         # start and end differ, the first actual gang must be able to reach
         # the end instead of leaving it unreachable forever.
         if self.gangs == 1 and self.start_c != self.end_c:
-            return self.start_c if completed == 0 else self.end_c
-        targets = evenly_distributed(self.start_c, self.end_c, self.gangs)
-        return targets[min(completed, self.gangs - 1)]
+            return (self.start_c, self.end_c)
+        return evenly_distributed(self.start_c, self.end_c, self.gangs)

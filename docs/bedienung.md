@@ -47,6 +47,10 @@ sofort. Gangzählung und laufende Zeiten bleiben erhalten.
 Programme können steigende oder fallende Temperaturstufen verwenden, auch
 gleichmäßig aus Start, Ende und Anzahl verteilt. Jeder beendete bestätigte
 Gang schaltet einmal weiter; nach der letzten Stufe bleibt deren Temperatur.
+Die Steuerung zeigt unter **Temperaturwahl** die Stufen je Gang des laufenden
+Programms; die Stufe des aktuellen Sollwerts ist unterstrichen, erledigte Stufen
+sind abgeblendet. Eine Temperatur für den nächsten Gang ändert den Sollwert,
+nicht die Stufenfolge. Die Zustandszeile nennt im laufenden Gang dessen Aufgüsse.
 
 Eine alleinige Änderung der Endtemperatur erhält das aktuelle Ziel und verteilt
 die verbleibenden Schritte neu. Ein neuer Startwert beginnt eine neue Verteilung.
@@ -78,6 +82,10 @@ bleiben erhalten.
 In Automatik endet eine manuelle Lichtwahl beim passenden Phasenwechsel oder spätestens
 mit ihrer Übersteuerungsfrist. Die Rückkehr verlängert weder Kühlung noch
 Lichtnachlauf. Eine spätere Raumlichtwahl startet keinen neuen Nachlauf.
+
+Solange eine Ofen- oder Lichtwahl die Automatik übersteuert, steht unter den
+Tasten des Geräts die Wahl und die Restzeit bis zur Rückkehr, etwa
+„Von Hand ein · Automatik wieder in 25 Minuten“.
 
 ## Dauerhaft manuell betreiben
 

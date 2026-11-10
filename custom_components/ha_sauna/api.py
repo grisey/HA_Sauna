@@ -20,6 +20,7 @@ from .notification_options import CONF_NOTIFICATION_ASSIGNMENTS
 from .core.display import phase_timer, start_availability
 from .core.parameters import EDITABLE_DEFINITIONS, LIVE_TEMPERATURE_KEYS, ParameterError
 from .core.power import watts
+from .core.seasons import PARTS as SEASON_PARTS
 from .core.timeline import active_gang_duration_seconds, project_door_cycles, project_gang_intervals
 from .environment import environment_snapshot
 from .log import LEVELS
@@ -1043,7 +1044,9 @@ class KeyFiguresView(HomeAssistantView):
 
 
 class StatisticsView(HomeAssistantView):
-    """Statistics over finished sessions: whole archive, one year or one month (K-T)."""
+    """Statistics over finished sessions: whole archive, a season (``season``,
+    starting year), one of its parts (``season`` and ``part``: autumn, winter,
+    spring) or a summer (``summer``) (K-T)."""
 
     url = "/api/ha_sauna/{entry_id}/statistics"
     name = "api:ha_sauna:statistics"
@@ -1051,13 +1054,18 @@ class StatisticsView(HomeAssistantView):
 
     async def get(self, request, entry_id):
         require_read(request, entry_id)
+        query = request.query
         try:
-            year = int(request.query["year"]) if "year" in request.query else None
-            month = int(request.query["month"]) if "month" in request.query else None
+            season = int(query["season"]) if "season" in query else None
+            summer = int(query["summer"]) if "summer" in query else None
         except ValueError as error:
-            raise web.HTTPBadRequest(text="Jahr und Monat müssen Zahlen sein.") from error
-        if (month is not None and (year is None or not 1 <= month <= 12)) or (
-            year is not None and not 1 <= year <= 9999
+            raise web.HTTPBadRequest(text="Saison und Sommer müssen Jahreszahlen sein.") from error
+        part = query.get("part")
+        if (
+            set(query) - {"season", "part", "summer"}
+            or (season is not None and summer is not None)
+            or (part is not None and (season is None or part not in SEASON_PARTS))
+            or any(year is not None and not 1000 <= year <= 2999 for year in (season, summer))
         ):
             raise web.HTTPBadRequest(text="Ungültiger Zeitraum.")
         hass = request.app[KEY_HASS]
@@ -1066,7 +1074,7 @@ class StatisticsView(HomeAssistantView):
         result = await asyncio.to_thread(
             runtime.archive.key_figure_statistics,
             dt_util.get_time_zone(hass.config.time_zone),
-            year=year, month=month, **key_figure_settings(runtime),
+            season=season, part=part, summer=summer, **key_figure_settings(runtime),
         )
         return self.json(result)
 

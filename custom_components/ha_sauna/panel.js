@@ -307,6 +307,9 @@ const timestampFormatOptions = Object.freeze({
     timeZoneName: "shortOffset",
   }),
   clock: Object.freeze({ hour: "2-digit", minute: "2-digit" }),
+  dateYear: Object.freeze({ day: "2-digit", month: "2-digit", year: "numeric" }),
+  weekdayDate: Object.freeze({ weekday: "short", day: "2-digit", month: "2-digit" }),
+  monthName: Object.freeze({ month: "long" }),
   clockSeconds: Object.freeze({
     hour: "2-digit",
     minute: "2-digit",
@@ -567,6 +570,116 @@ const appearanceTickValues = (bounds, target, maximum, tolerance, precision) => 
   }
   values.push(bounds.maximum);
   return values;
+};
+
+// Glatte Achsteilung (V17): Schritte 1, 2, 2,5 und 5 × 10ⁿ. Die Zahl der
+// Teilungen liegt zwischen minimum und maximum und gibt der Kurve die meiste Höhe.
+const smoothAxis = (low, high, minimum, maximum) => {
+  if (!Number.isFinite(low) || !Number.isFinite(high)) return null;
+  if (high <= low) high = low + Math.max(Math.abs(low), 1);
+  let best = null;
+  for (let intervals = Math.max(1, minimum); intervals <= maximum; intervals++) {
+    const rough = (high - low) / intervals,
+      power = 10 ** Math.floor(Math.log10(rough));
+    // Der kleinste passende Schritt; das Abrunden des Anfangs kann eine Dekade mehr verlangen.
+    for (const step of [1, 10, 100].flatMap((decade) =>
+      [1, 2, 2.5, 5].map((unit) => unit * decade * power),
+    )) {
+      const first = Math.floor(low / step) * step,
+        last = first + intervals * step;
+      if (last < high) continue;
+      const use = (high - low) / (last - first);
+      // Bei gleicher Höhenausnutzung die feinere Teilung.
+      if (!best || use >= best.use) best = { use, first, last, step, intervals };
+      break;
+    }
+  }
+  if (!best) return null;
+  const digits = 12;
+  return {
+    first: Number(best.first.toPrecision(digits)),
+    last: Number(best.last.toPrecision(digits)),
+    values: Array.from({ length: best.intervals + 1 }, (_, index) =>
+      Number((best.first + index * best.step).toPrecision(digits)),
+    ),
+  };
+};
+// Übliche Uhrteilungen in Sekunden für Dauerachsen ab 0.
+const clockDivisions = Object.freeze(
+  [1, 60]
+    .flatMap((unit) => [1, 2, 5, 10, 15, 20, 30].map((count) => count * unit))
+    .concat([1, 2, 3, 6, 12].map((count) => count * 3600)),
+);
+const clockAxis = (seconds, intervals) => {
+  if (!Number.isFinite(seconds) || seconds <= 0 || !(intervals >= 1)) return null;
+  const rough = seconds / intervals,
+    step =
+      clockDivisions.find((value) => value >= rough) ||
+      Math.ceil(rough / clockDivisions.at(-1)) * clockDivisions.at(-1),
+    last = Math.max(step, Math.ceil(seconds / step) * step);
+  return {
+    last,
+    step,
+    values: Array.from(
+      { length: Math.round(last / step) + 1 },
+      (_, index) => index * step,
+    ),
+  };
+};
+// Volle Stunden als „2 h“, sonst durchgehend h:mm.
+const clockLabel = (seconds, step) => {
+  const minutes = Math.round(seconds / 60);
+  return step % 3600
+    ? `${Math.floor(minutes / 60)}:${String(minutes % 60).padStart(2, "0")} h`
+    : minutes
+      ? `${minutes / 60} h`
+      : "0";
+};
+// Anzeige der Kennzahlen: Nachkommastellen und Einheit je geliefertem Einheitentyp.
+const statisticPlaces = Object.freeze({
+  "°C": 1,
+  "%": 1,
+  "g/m³": 1,
+  kWh: 1,
+  "€": 2,
+  l: 2,
+  "°C/kWh": 1,
+  "kWh/h": 1,
+  mean: 1,
+  min: 1,
+});
+const statisticUnits = Object.freeze({
+  "°C": "\u00a0°C",
+  "%": "\u00a0%",
+  "g/m³": "\u00a0g/m³",
+  kWh: "\u00a0kWh",
+  "€": "\u00a0€",
+  l: "\u00a0l",
+  "°C/kWh": "\u00a0°C/kWh",
+  "kWh/h": "\u00a0kWh",
+  min: "\u00a0min",
+  share: "\u00a0%",
+  "h:mm": "\u00a0h",
+  clock: "\u00a0Uhr",
+});
+const programKinds = Object.freeze(["manual", "constant", "program", "unknown"]);
+const programKindLabels = Object.freeze({
+  manual: "Handbetrieb",
+  constant: "Konstant",
+  program: "Programm",
+  unknown: "Ohne Angabe",
+});
+const fixedNumberFormats = new Map();
+const fixedNumber = (value, places) => {
+  if (!fixedNumberFormats.has(places))
+    fixedNumberFormats.set(
+      places,
+      new Intl.NumberFormat("de-DE", {
+        minimumFractionDigits: places,
+        maximumFractionDigits: places,
+      }),
+    );
+  return fixedNumberFormats.get(places).format(value);
 };
 
 // User-facing history joins available observations across reporting gaps.
@@ -5450,6 +5563,9 @@ class SaunaPanel extends HTMLElement {
         .main-tabs { min-width: 0; gap: ${this.preference("layout_space_07_px")}px; }
         .program-types button, .main-tabs button, .segmented-mode button { padding-inline: ${this.preference("layout_space_12_px")}px; font-size: ${this.preference("font_size_compact_px")}px; }
         .main-tabs button { flex: 0 1 auto; white-space: nowrap; }
+        /* Fünf Reiter: die Leiste nimmt die Breite und rollt, statt die Seite zu verbreitern. */
+        .main-tabs { width: auto; justify-self: stretch; justify-content: space-between; }
+        .main-tabs button { padding-inline: ${this.preference("layout_space_09_px")}px; }
         .control-main .control-section, .control-main .manual-controls { padding: ${this.preference("layout_space_18_px")}px; }
       }
       .manual-controls:not(.manual-entry) { container: output-controls / inline-size; display: grid; grid-template-columns: minmax(0, 1fr); gap: ${this.preference("layout_space_20_px")}px; }
@@ -5581,45 +5697,137 @@ class SaunaPanel extends HTMLElement {
       .linear-scale input.instrument-range::-moz-range-track { background: transparent; }
       input.instrument-range:disabled { opacity: ${this.preference("opacity_0_45_ratio")}; cursor: default; }
       .instrument-notice { display: block; margin-top: ${this.preference("layout_space_10_px")}px; color: var(--sauna-card-muted-text); font-size: ${this.preference("font_size_small_px")}px; }
-      .weather-instrument { display: grid; grid-template-columns: auto minmax(0, 1fr); grid-template-areas: "heading heading" "condition values"; gap: ${this.preference("layout_space_16_px")}px ${this.preference("surface_padding_px")}px; align-items: center; margin-top: ${this.preference("layout_space_22_px")}px; padding: ${this.preference("layout_space_18_px")}px ${this.preference("layout_space_20_px")}px; border-radius: var(--sauna-control-radius); background: var(--sauna-surface-section); box-shadow: var(--sauna-shadow-section); }
-      .weather-heading { grid-area: heading; display: flex; align-items: baseline; flex-wrap: wrap; gap: ${this.preference("layout_space_09_px")}px ${this.preference("layout_space_13_px")}px; }
-      .weather-heading > span { color: var(--sauna-card-muted-text); font-size: ${this.preference("font_size_fine_px")}px; letter-spacing: ${this.preference("tracking_0_08_em")}em; }
-      .weather-heading h2 { margin: 0; font-size: ${this.preference("font_size_body_px")}px; color: var(--sauna-card-text); letter-spacing: 0; }
-      .weather-condition { grid-area: condition; display: flex; flex-direction: column; align-items: center; gap: 0; margin: 0; color: var(--sauna-card-muted-text); font-size: ${this.preference("font_size_caption_px")}px; }
+      .gauge-card { display: flex; flex-direction: column; }
+      .environment { display: grid; justify-items: end; gap: ${this.preference("layout_space_13_px")}px; margin: auto 0 0; padding-top: ${this.preference("layout_space_22_px")}px; }
+      .gauge-card .environment-line { display: flex; align-items: center; gap: ${this.preference("layout_space_13_px")}px; min-height: 0; margin: 0; padding: ${this.preference("layout_space_09_px")}px ${this.preference("layout_space_13_px")}px; border: 0; border-radius: var(--sauna-control-radius); background: transparent; box-shadow: none; color: var(--sauna-card-muted-text); font: inherit; font-size: ${this.preference("font_size_compact_px")}px; font-weight: ${this.preference("font_weight_400_0_ratio")}; text-align: right; cursor: pointer; }
+      .gauge-card .environment-line:hover { background: var(--sauna-surface-section); color: var(--sauna-card-text); }
+      .environment-chevron { flex: 0 0 auto; width: ${this.preference("size_16_0_px")}px; height: ${this.preference("size_16_0_px")}px; fill: none; stroke: currentColor; stroke-width: ${this.preference("stroke_2_0_ratio")}; stroke-linecap: round; stroke-linejoin: round; transition: transform ${this.preference("transition_140_0_ms")}ms ease; }
+      .environment-line[aria-expanded="true"] .environment-chevron { transform: rotate(180deg); }
+      .environment-values { justify-self: stretch; padding: ${this.preference("layout_space_18_px")}px ${this.preference("layout_space_20_px")}px; border-radius: var(--sauna-control-radius); background: var(--sauna-surface-section); box-shadow: var(--sauna-shadow-section); font-size: ${this.preference("font_size_compact_px")}px; }
+      .environment-values p { margin: 0 0 ${this.preference("layout_space_09_px")}px; }
+      .environment-values dl { display: grid; grid-template-columns: repeat(auto-fit, minmax(${this.preference("size_150_0_px")}px, 1fr)); gap: ${this.preference("layout_space_13_px")}px ${this.preference("layout_space_22_px")}px; margin-top: ${this.preference("layout_space_13_px")}px; }
+      .environment-values dt { margin: 0; }
+      .environment-values dd { margin: ${this.preference("layout_space_07_px")}px 0 0; font-size: ${this.preference("font_size_body_px")}px; font-variant-numeric: tabular-nums; }
+      .environment-line .weather-picture { width: ${this.preference("size_32_0_px")}px; stroke-width: ${this.preference("stroke_6_0_ratio")}; }
+      .gang-infusions { white-space: nowrap; }
+      .program-stages { display: flex; flex-wrap: wrap; align-items: baseline; gap: ${this.preference("layout_space_13_px")}px ${this.preference("layout_space_20_px")}px; margin-top: ${this.preference("layout_space_16_px")}px; font-size: ${this.preference("font_size_body_emphasis_px")}px; font-variant-numeric: tabular-nums; }
+      .program-stages > span { color: var(--sauna-main-muted-text, var(--sauna-card-muted-text, inherit)); }
+      .program-stages-label { font-size: ${this.preference("font_size_small_px")}px; letter-spacing: ${this.preference("tracking_0_035_em")}em; }
+      .program-stages ol { display: flex; flex-wrap: wrap; gap: ${this.preference("layout_space_13_px")}px ${this.preference("layout_space_20_px")}px; margin: 0; padding: 0; list-style: none; }
+      .program-stages li { padding-bottom: ${this.preference("layout_space_07_px")}px; border-bottom: ${this.preference("border_2_0_px")}px solid transparent; }
+      .program-stages li[data-stage="done"] { color: var(--sauna-main-muted-text, var(--sauna-card-muted-text, inherit)); opacity: ${this.preference("opacity_0_65_ratio")}; }
+      .program-stages li[data-stage="current"] { font-weight: ${this.preference("font_weight_700_0_ratio")}; border-bottom-color: var(--accent); }
+      .override-remaining { grid-column: 1 / -1; margin: ${this.preference("layout_space_13_px")}px 0 0; text-align: right; font-size: ${this.preference("font_size_compact_px")}px; color: var(--sauna-main-muted-text, var(--sauna-card-muted-text, inherit)); }
+      #statistics { container: statistics / inline-size; }
+      .statistics { max-width: ${this.preference("size_1280_0_px")}px; margin-inline: auto; display: grid; gap: ${this.preference("layout_space_22_px")}px; }
+      .statistics .card { margin: 0; min-width: 0; }
+      .statistics h3 { margin: 0; font-size: ${this.preference("font_size_heading_px")}px; font-weight: ${this.preference("font_weight_500_0_ratio")}; }
+      .statistics .muted, .statistics p { margin: 0; }
+      .stat-toolbar { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: ${this.preference("layout_space_18_px")}px; }
+      .stat-toolbar .segmented-mode, .stat-kind { flex-wrap: wrap; }
+      .stat-toolbar .segmented-mode button, .stat-kind button { white-space: nowrap; }
+      .stat-section { margin: ${this.preference("layout_space_16_px")}px 0 0; padding-bottom: ${this.preference("layout_space_13_px")}px; border-bottom: ${this.preference("border_1_0_px")}px solid var(--sauna-color-border); font-size: ${this.preference("font_size_display_small_px")}px; font-weight: ${this.preference("font_weight_500_0_ratio")}; }
+      .stat-cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(${this.preference("size_150_0_px")}px, 1fr)); gap: ${this.preference("layout_space_18_px")}px; }
+      .stat-card { display: grid; align-content: start; gap: ${this.preference("layout_space_09_px")}px; }
+      .stat-key { font-size: ${this.preference("font_size_small_px")}px; letter-spacing: ${this.preference("tracking_0_08_em")}em; text-transform: uppercase; color: var(--sauna-card-muted-text); }
+      .stat-value { font-size: ${this.preference("font_size_instrument_px")}px; font-weight: ${this.preference("font_weight_500_0_ratio")}; line-height: ${this.preference("line_height_1_2_ratio")}; font-variant-numeric: tabular-nums; }
+      .stat-value small { margin-left: ${this.preference("layout_space_09_px")}px; font-size: ${this.preference("font_size_body_emphasis_px")}px; font-weight: ${this.preference("font_weight_400_0_ratio")}; }
+      .stat-value-small { font-size: ${this.preference("font_size_display_emphasis_px")}px; }
+      .stat-line { font-size: ${this.preference("font_size_compact_px")}px; line-height: ${this.preference("line_height_1_4_ratio")}; color: var(--sauna-card-muted-text); }
+      .stat-basis { display: block; }
+      .stat-panel { display: grid; align-content: start; gap: ${this.preference("layout_space_18_px")}px; }
+      .stat-panel-heading { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: baseline; gap: ${this.preference("layout_space_13_px")}px; }
+      .stat-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(${this.preference("size_300_0_px")}px, 1fr)); gap: ${this.preference("layout_space_22_px")}px; }
+      .stat-split { display: flex; flex-wrap: wrap; gap: ${this.preference("layout_space_22_px")}px; }
+      .stat-split > .stat-wide { flex: 3 1 ${this.preference("size_400_0_px")}px; }
+      .stat-split > :not(.stat-wide) { flex: 2 1 ${this.preference("size_300_0_px")}px; }
+      .stat-sessions { display: grid; gap: ${this.preference("layout_space_13_px")}px; }
+      .stat-session-row { display: grid; grid-template-columns: ${this.preference("size_120_0_px")}px minmax(0, 1fr) ${this.preference("size_120_0_px")}px; gap: ${this.preference("layout_space_18_px")}px; align-items: center; font-size: ${this.preference("font_size_compact_px")}px; font-variant-numeric: tabular-nums; }
+      .stat-session-value { text-align: right; }
+      .stat-axis-row { color: var(--sauna-card-muted-text); font-size: ${this.preference("font_size_small_px")}px; }
+      .stat-track { position: relative; height: ${this.preference("size_22_0_px")}px; border-radius: ${this.preference("radius_5_0_px")}px; background: var(--sauna-surface-recessed); }
+      .stat-session-line { position: absolute; left: 0; top: calc(50% - ${this.preference("size_2_0_px")}px); height: ${this.preference("size_4_0_px")}px; border-radius: ${this.preference("radius_2_0_px")}px; background: var(--sauna-color-border); }
+      .stat-gang { position: absolute; top: ${this.preference("size_2_0_px")}px; bottom: ${this.preference("size_2_0_px")}px; min-width: ${this.preference("size_12_0_px")}px; box-sizing: border-box; border-radius: ${this.preference("radius_3_0_px")}px; background: var(--sauna-color-phase-session); color: var(--sauna-color-text); font-size: ${this.preference("font_size_fine_px")}px; line-height: ${this.preference("size_18_0_px")}px; text-align: center; }
+      .stat-gang.open { background: transparent; border: ${this.preference("border_1_0_px")}px dashed var(--sauna-color-phase-session); padding-inline: ${this.preference("layout_space_09_px")}px; }
+      .stat-axis { position: relative; height: ${this.preference("size_18_0_px")}px; color: var(--sauna-card-muted-text); font-size: ${this.preference("font_size_small_px")}px; font-variant-numeric: tabular-nums; }
+      .stat-axis span { position: absolute; top: 0; transform: translateX(-50%); white-space: nowrap; }
+      .stat-axis span:first-child { transform: none; }
+      .stat-axis span:last-child { transform: translateX(-100%); }
+      .stat-pairs { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: ${this.preference("layout_space_20_px")}px; }
+      .stat-weekdays { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: ${this.preference("layout_space_09_px")}px; height: ${this.preference("size_88_0_px")}px; margin-top: ${this.preference("layout_space_13_px")}px; }
+      .stat-weekdays > div { display: grid; grid-template-rows: auto minmax(0, 1fr) auto; justify-items: center; align-items: end; gap: ${this.preference("layout_space_07_px")}px; height: 100%; font-size: ${this.preference("font_size_small_px")}px; font-variant-numeric: tabular-nums; }
+      .stat-weekdays i { display: block; width: 70%; border-radius: ${this.preference("radius_3_0_px")}px ${this.preference("radius_3_0_px")}px 0 0; background: var(--sauna-color-phase-ready); align-self: end; }
+      .stat-start { position: relative; height: ${this.preference("size_22_0_px")}px; margin-top: ${this.preference("layout_space_13_px")}px; border-radius: ${this.preference("radius_5_0_px")}px; background: var(--sauna-surface-recessed); }
+      .stat-habit-dot { position: absolute; top: 50%; width: ${this.preference("size_10_0_px")}px; height: ${this.preference("size_10_0_px")}px; margin: -${this.preference("size_5_0_px")}px 0 0 -${this.preference("size_5_0_px")}px; border-radius: 50%; background: var(--sauna-card-text); opacity: ${this.preference("opacity_0_8_ratio")}; }
+      .stat-group-bar { position: absolute; left: 0; top: ${this.preference("size_2_0_px")}px; bottom: ${this.preference("size_2_0_px")}px; border-radius: ${this.preference("radius_3_0_px")}px; background: var(--sauna-color-phase-session); }
+      .stat-group-text { position: absolute; left: ${this.preference("layout_space_13_px")}px; top: 0; bottom: 0; display: flex; align-items: center; color: var(--sauna-color-text); font-size: ${this.preference("font_size_small_px")}px; white-space: nowrap; }
+      .stat-records { display: grid; margin: 0; }
+      .stat-records > div { display: grid; align-items: baseline; grid-template-columns: minmax(0, 1fr) auto; gap: ${this.preference("layout_space_07_px")}px ${this.preference("layout_space_18_px")}px; padding: ${this.preference("layout_space_13_px")}px 0; border-top: ${this.preference("border_1_0_px")}px solid var(--sauna-color-border); font-size: ${this.preference("font_size_body_px")}px; }
+      .stat-records dt { margin: 0; font-size: inherit; color: inherit; }
+      .stat-records dd { display: contents; }
+      .stat-records dd strong { font-weight: ${this.preference("font_weight_500_0_ratio")}; text-align: right; white-space: nowrap; }
+      .stat-records dd span { grid-column: 1 / -1; color: var(--sauna-card-muted-text); font-size: ${this.preference("font_size_compact_px")}px; }
+      .stat-warmup { display: flex; flex-wrap: wrap; gap: ${this.preference("layout_space_22_px")}px; align-items: start; }
+      .stat-plot { flex: 3 1 ${this.preference("size_320_0_px")}px; display: grid; grid-template-columns: auto minmax(0, 1fr); gap: ${this.preference("layout_space_09_px")}px ${this.preference("layout_space_13_px")}px; min-width: 0; }
+      .stat-y-axis { position: relative; min-width: ${this.preference("size_40_0_px")}px; color: var(--sauna-card-muted-text); font-size: ${this.preference("font_size_small_px")}px; font-variant-numeric: tabular-nums; text-align: right; }
+      .stat-y-axis span { position: absolute; right: 0; transform: translateY(-50%); white-space: nowrap; }
+      .stat-plot-area { position: relative; height: ${this.preference("size_240_0_px")}px; }
+      .stat-plot-area svg { position: absolute; inset: 0; width: 100%; height: 100%; overflow: visible; }
+      .stat-plot-area .gridline { stroke: color-mix(in srgb, var(--sauna-color-chart-grid) ${this.preference("color_mix_10_0_percent")}%, transparent); stroke-width: ${this.preference("stroke_1_0_ratio")}; }
+      .stat-curve { fill: none; stroke: var(--sauna-color-chart-event); stroke-width: ${this.preference("detail_curve_width_px")}; stroke-linejoin: round; opacity: ${this.preference("opacity_0_8_ratio")}; }
+      .stat-curve.latest { stroke: var(--sauna-color-series-temperature); stroke-width: ${this.preference("chart_curve_width_px")}; opacity: 1; }
+      .stat-end { position: absolute; width: ${this.preference("size_8_0_px")}px; height: ${this.preference("size_8_0_px")}px; margin: -${this.preference("size_4_0_px")}px 0 0 -${this.preference("size_4_0_px")}px; border-radius: 50%; background: var(--sauna-color-chart-event); }
+      .stat-end.latest { background: var(--sauna-color-series-temperature); }
+      .stat-legend { flex: 2 1 ${this.preference("size_220_0_px")}px; display: grid; gap: ${this.preference("layout_space_09_px")}px; margin: 0; padding: 0; list-style: none; color: var(--sauna-card-muted-text); font-size: ${this.preference("font_size_compact_px")}px; font-variant-numeric: tabular-nums; }
+      .stat-legend li { display: flex; align-items: center; gap: ${this.preference("layout_space_13_px")}px; }
+      .stat-legend li.latest { color: var(--sauna-card-text); font-weight: ${this.preference("font_weight_600_0_ratio")}; }
+      .stat-swatch { flex: 0 0 auto; width: ${this.preference("size_12_0_px")}px; height: ${this.preference("size_4_0_px")}px; border-radius: ${this.preference("radius_2_0_px")}px; background: var(--sauna-color-chart-event); }
+      .stat-legend li.latest .stat-swatch { background: var(--sauna-color-series-temperature); }
+      .stat-bars { display: grid; grid-template-columns: auto minmax(0, 1fr) auto auto; gap: ${this.preference("layout_space_13_px")}px ${this.preference("layout_space_16_px")}px; align-items: center; font-size: ${this.preference("font_size_compact_px")}px; font-variant-numeric: tabular-nums; }
+      .stat-bars > span:nth-child(4n + 3), .stat-bars > span:nth-child(4n) { text-align: right; }
+      .stat-bar-track { height: ${this.preference("size_12_0_px")}px; }
+      .stat-bar { display: block; height: 100%; border-radius: ${this.preference("radius_3_0_px")}px; background: var(--sauna-color-ui-heater-on); }
+      .stat-door { display: flex; flex-wrap: wrap; gap: ${this.preference("layout_space_33_px")}px; align-items: center; }
+      .stat-door-summary { flex: 1 1 ${this.preference("size_280_0_px")}px; display: grid; gap: ${this.preference("layout_space_13_px")}px; }
+      .stat-door-table { display: grid; grid-template-columns: minmax(0, 1fr) repeat(3, max-content); gap: ${this.preference("layout_space_10_px")}px ${this.preference("layout_space_20_px")}px; font-size: ${this.preference("font_size_body_px")}px; font-variant-numeric: tabular-nums; }
+      .stat-door-table > span:not(:nth-child(4n + 1)) { text-align: right; }
+      .stat-columns { flex: 2 1 ${this.preference("size_400_0_px")}px; display: grid; grid-auto-flow: column; grid-auto-columns: minmax(${this.preference("size_40_0_px")}px, max-content); justify-content: center; gap: ${this.preference("layout_space_18_px")}px; align-items: end; height: ${this.preference("size_150_0_px")}px; overflow-x: auto; }
+      .stat-columns > div { display: grid; grid-template-rows: auto minmax(0, 1fr) auto; justify-items: center; align-items: end; gap: ${this.preference("layout_space_09_px")}px; height: 100%; font-size: ${this.preference("font_size_fine_px")}px; font-variant-numeric: tabular-nums; }
+      .stat-columns span { white-space: nowrap; }
+      .stat-columns i { display: block; width: 60%; min-height: ${this.preference("size_1_0_px")}px; border-radius: ${this.preference("radius_3_0_px")}px ${this.preference("radius_3_0_px")}px 0 0; background: var(--sauna-color-event-door); align-self: end; }
+      .stat-empty { padding: ${this.preference("layout_space_22_px")}px 0; }
+      @container statistics (max-width: ${this.preference("breakpoint_540_0_px")}px) {
+        .stat-session-row { grid-template-columns: minmax(0, 1fr) auto; gap: ${this.preference("layout_space_09_px")}px ${this.preference("layout_space_13_px")}px; }
+        .stat-session-row .stat-track, .stat-axis-row .stat-axis { grid-column: 1 / -1; grid-row: 2; }
+        .stat-axis-row > span:first-child { display: none; }
+        .stat-axis [data-tick="odd"] { display: none; }
+      }
       .weather-picture { width: ${this.preference("size_60_0_px")}px; flex: 0 0 auto; overflow: visible; fill: none; stroke: var(--sauna-card-muted-text); stroke-width: ${this.preference("stroke_3_0_ratio")}; stroke-linecap: round; stroke-linejoin: round; }
       .weather-sun, .weather-moon, .weather-lightning { color: var(--accent); stroke: currentColor; }
       .weather-sun circle, .weather-moon { fill: color-mix(in srgb, var(--accent) ${this.preference("color_mix_18_0_percent")}%, transparent); }
       .weather-cloud { fill: var(--sauna-surface-control); }
       .weather-rain, .weather-snow { stroke: var(--sauna-color-series-humidity); }
-      .weather-values { grid-area: values; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: ${this.preference("layout_space_13_px")}px ${this.preference("layout_space_22_px")}px; margin: 0; }
-      .weather-values dt { margin: 0; font-size: ${this.preference("font_size_caption_px")}px; color: var(--sauna-card-muted-text); overflow-wrap: anywhere; }
-      .weather-values dd { margin: ${this.preference("layout_space_07_px")}px 0 0; font-size: ${this.preference("font_size_subtitle_px")}px; font-variant-numeric: tabular-nums; white-space: nowrap; }
-      .weather-values dd span { font-size: ${this.preference("font_size_caption_px")}px; color: var(--sauna-card-muted-text); }
-      .weather-instrument time { margin-inline-start: auto; color: var(--sauna-card-muted-text); font-size: ${this.preference("font_size_caption_px")}px; white-space: nowrap; }
       .appearance-instruments { display: grid; grid-template-columns: repeat(auto-fit, minmax(${this.preference("size_180_0_px")}px, 1fr)); gap: ${this.preference("layout_space_20_px")}px; margin-bottom: ${this.preference("surface_gap_px")}px; }
       .appearance-instruments label { display: grid; gap: ${this.preference("layout_space_12_px")}px; font-size: ${this.preference("font_size_compact_px")}px; }
       .appearance-instruments :is(select, .sauna-select-trigger) { width: 100%; min-width: 0; }
       @container (max-width: ${this.preference("breakpoint_450_0_px")}px) {
         .gauges { grid-template-columns: minmax(0, 1fr); }
-        .weather-instrument { grid-template-columns: ${this.preference("size_70_0_px")}px minmax(0, 1fr); gap: ${this.preference("layout_space_13_px")}px ${this.preference("layout_space_18_px")}px; padding: ${this.preference("layout_space_18_px")}px; }
         .measurement-instrument[data-instrument-style="linear"] { padding: ${this.preference("layout_space_16_px")}px ${this.preference("layout_space_18_px")}px; }
         .linear-instrument { grid-template-columns: ${this.preference("size_88_0_px")}px minmax(0, 1fr) ${this.preference("size_18_0_px")}px; gap: ${this.preference("layout_space_18_px")}px; }
         .linear-reading { font-size: ${this.preference("font_size_display_emphasis_px")}px; }
         .linear-reading > span { font-size: ${this.preference("font_size_compact_px")}px; }
         .linear-symbol { width: ${this.preference("size_18_0_px")}px; height: ${this.preference("size_18_0_px")}px; }
-        .weather-values { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: ${this.preference("layout_space_13_px")}px; margin: 0; }
-        .weather-values dd { font-size: ${this.preference("font_size_large_px")}px; }
       }
     `;
   }
   shell() {
     this.shadowRoot.innerHTML = `<style id="panel-appearance-style">${this.appearanceStyles()}</style><main>
-      <header><div class="header-brand"><button class="header-icon" data-action="menu" aria-label="Home-Assistant-Seitenleiste umschalten" title="Home-Assistant-Seitenleiste umschalten" hidden><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h16M4 12h16M4 18h16"/></svg></button><h1 id="instance-title">Sauna</h1></div><nav class="tabs main-tabs" id="main-navigation" aria-label="Ansicht"><button data-action="overview" aria-current="page">Steuerung</button><button data-action="history">Verlauf</button><button data-action="details">Details</button><button data-action="settings">Einstellungen</button></nav><div class="header-context"><select id="instance" aria-label="Sauna auswählen"></select><button class="header-icon" data-action="fullscreen" aria-label="Vollbild" title="Vollbild" hidden><svg data-fullscreen-icon="enter" viewBox="0 0 24 24" aria-hidden="true"><path d="M8 3H3v5m13-5h5v5M3 16v5h5m13-5v5h-5"/></svg><svg data-fullscreen-icon="exit" viewBox="0 0 24 24" aria-hidden="true" hidden><path d="M3 8h5V3m8 0v5h5M8 21v-5H3m18 0h-5v5"/></svg></button></div></header>
+      <header><div class="header-brand"><button class="header-icon" data-action="menu" aria-label="Home-Assistant-Seitenleiste umschalten" title="Home-Assistant-Seitenleiste umschalten" hidden><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h16M4 12h16M4 18h16"/></svg></button><h1 id="instance-title">Sauna</h1></div><nav class="tabs main-tabs" id="main-navigation" aria-label="Ansicht"><button data-action="overview" aria-current="page">Steuerung</button><button data-action="history">Verlauf</button><button data-action="statistics">Statistik</button><button data-action="details">Details</button><button data-action="settings">Einstellungen</button></nav><div class="header-context"><select id="instance" aria-label="Sauna auswählen"></select><button class="header-icon" data-action="fullscreen" aria-label="Vollbild" title="Vollbild" hidden><svg data-fullscreen-icon="enter" viewBox="0 0 24 24" aria-hidden="true"><path d="M8 3H3v5m13-5h5v5M3 16v5h5m13-5v5h-5"/></svg><svg data-fullscreen-icon="exit" viewBox="0 0 24 24" aria-hidden="true" hidden><path d="M3 8h5V3m8 0v5h5M8 21v-5H3m18 0h-5v5"/></svg></button></div></header>
       <nav class="tabs detail-tabs" aria-label="Detailansicht" hidden><button data-action="detail" aria-current="page">Betrieb & Fristen</button><button data-action="detail-history">Detailverlauf</button><button data-action="diagnostics">Erkennungskontrolle</button></nav>
       <div id="message" role="alert"></div><section id="current" aria-live="polite"><p>Lade Saunadaten …</p></section><section id="details" hidden></section>
       <section id="history" hidden><div class="plot-panel history-panel"><div class="history-controls"><div class="history-session-choice"><label for="session">Sitzung vom</label><select id="session" aria-label="Saunasitzung auswählen"><option value="live">Letzte Sitzung</option></select></div><div class="history-selection-actions"><button data-action="clear-history-selection" hidden disabled>Auswahl aufheben</button></div><span id="history-loading" role="status" hidden></span></div><div class="history-plot-frame"><div id="plots"></div><div id="history-legends">${this.historyLegendMarkup()}</div></div>
         <div class="history-inspection" id="history-inspection"><div class="history-inspection-heading"></div><div class="history-inspection-content"><div class="history-readout"><strong class="history-column-heading">Messwerte</strong><div id="tooltip" role="group" aria-label="Werte am markierten Zeitpunkt" hidden></div></div><div class="history-event-column"><strong class="history-column-heading">Ereignisse</strong><div class="history-event-readout"><div id="history-event-inspection" role="group" aria-label="Ereignisinspektion" aria-live="polite" hidden></div></div></div></div><div class="history-session-summary" data-history-session-summary hidden></div><div class="history-context-gangs" data-history-context-gangs></div></div></div><div id="control-history" hidden></div><div id="detection-plots" hidden></div><div id="gangs"></div><div id="event-list"></div>
-      </section><section id="settings" hidden></section>
+      </section><section id="statistics" aria-label="Statistik" hidden></section><section id="settings" hidden></section>
     </main>`;
     this.shadowRoot.addEventListener("click", (e) => {
       const moment = e.target.closest("[data-control-time]");
@@ -5677,6 +5885,12 @@ class SaunaPanel extends HTMLElement {
         this.archiveDeletePending = null;
         this.recognitionSessions = null;
         this.recognitionSessionsMessage = "";
+        this.statisticsData = null;
+        this.statisticsRequest = null;
+        this.statisticsError = null;
+        this.statisticsPeriod = null;
+        this.statisticsPeriods = null;
+        this.statisticsKind = null;
         this.calibrationTargets = undefined;
         this.calibrationSelection = null;
         this.calibrationModule = null;
@@ -6284,6 +6498,7 @@ class SaunaPanel extends HTMLElement {
         this.drawCurrent();
         if (restoreTargetFocus) this.$('[data-target-arc][role="slider"]')?.focus?.();
       }
+      if (this.view === "statistics") void this.loadStatistics({ redraw: false });
       if (historyVisible) {
         this.syncHistorySessions();
         this.showHistoryCache();
@@ -6820,6 +7035,11 @@ class SaunaPanel extends HTMLElement {
       return `${this.num(Math.max(step, Math.round(minutes / step) * step))} Minuten`;
     };
     const timerLine = s.phase_timer;
+    const gangInfusions = active?.infusion_events?.length;
+    const infusionText =
+      timerLine?.kind === "gang" && Number.isInteger(gangInfusions)
+        ? ` <span class="gang-infusions">· ${gangInfusions ? `${this.num(gangInfusions, 0)} ${gangInfusions === 1 ? "Aufguss" : "Aufgüsse"}` : "noch kein Aufguss"}</span>`
+        : "";
     const phaseTimerText =
       s.operation_enabled && timerLine
         ? {
@@ -6868,7 +7088,10 @@ class SaunaPanel extends HTMLElement {
     const phaseLabel =
       s.phase === "aufheizen" ? "Heizen" : phases[s.phase] || "Unbekannt";
     const availabilityHint = availabilityLine;
-    const stateLine = `<div class="state-line"><div class="phase-time"><strong class="phase" data-phase="${esc(s.phase)}">${phaseLabel}</strong>${availabilityHint ? `<span class="availability-line ${availability?.blocker ? "wait" : ""}">${esc(availabilityHint)}</span>` : ""}</div>${session ? `<span class="badge">${count} ${count === 1 ? "Saunagang" : "Saunagänge"}</span>` : ""}</div>`;
+    // Die Steuerung nennt die Aufgüsse im laufenden Gang; Details bleibt wie bisher.
+    const stateLineMarkup = (infusions) =>
+      `<div class="state-line"><div class="phase-time"><strong class="phase" data-phase="${esc(s.phase)}">${phaseLabel}</strong>${availabilityHint ? `<span class="availability-line ${availability?.blocker ? "wait" : ""}">${esc(availabilityHint)}${phaseTimerText ? infusions : ""}</span>` : ""}</div>${session ? `<span class="badge">${count} ${count === 1 ? "Saunagang" : "Saunagänge"}</span>` : ""}</div>`;
+    const stateLine = stateLineMarkup("");
     const dial = (
       reading,
       unit,
@@ -7007,6 +7230,10 @@ class SaunaPanel extends HTMLElement {
     const modeControls = modeLocked
       ? ""
       : `<div class="segmented-mode control-mode" role="group" aria-label="Betriebsmodus"><button data-action="control-mode:automatic" aria-pressed="${!manualMode}"${this.controlCommandAttributes("control-mode", "automatic")} ${permissions.control && !modeLocked ? "" : "disabled"}>${this.controlCommandLabel("control-mode", "automatic", "Automatik")}</button><button data-action="control-mode:manual" aria-pressed="${manualMode}"${this.controlCommandAttributes("control-mode", "manual")} ${permissions.control && !modeLocked ? "" : "disabled"}>${this.controlCommandLabel("control-mode", "manual", "Manuell")}</button></div>`;
+    const overrideLine = (key, selected, endsAt) =>
+      !manualMode && selected != null && endsAt && stamp(endsAt) > now
+        ? `<p class="override-remaining" data-override="${key}">Von Hand ${(key === "light" ? selected > 0 : selected === true) ? "ein" : "aus"} · Automatik wieder in ${remaining(endsAt)}</p>`
+        : "";
     const outputControls = (
       key,
       title,
@@ -7014,6 +7241,7 @@ class SaunaPanel extends HTMLElement {
       observed,
       canControl,
       blockedOnReason = "",
+      overrideEndsAt = null,
     ) =>
       `<section class="manual-section manual-${key}"><div class="manual-heading"><h3>${title}</h3></div><div class="manual-selection">${manualMode ? "" : `<div class="control-auto"><button data-action="${key}:auto" aria-pressed="${selected == null}"${this.controlCommandAttributes(key, null)} ${canControl ? "" : "disabled"}>${this.controlCommandLabel(key, null, "Automatik")}</button></div>`}<div class="output-toggle" role="group" aria-label="${title}">${[
         [false, "Aus"],
@@ -7023,7 +7251,7 @@ class SaunaPanel extends HTMLElement {
           ([on, label]) =>
             `<button data-action="${key}:${on}" aria-pressed="${observed === on}"${this.controlCommandAttributes(key, on)}${manualMode && key === "heater" ? ` data-regulation-selected="${(selected === true) === on}" aria-label="Temperaturregelung ${label}${(selected === true) === on ? ", gewählt" : ""}; Ofen ${observed == null ? "unbekannt" : observed ? "Ein" : "Aus"}"` : ""}${on && blockedOnReason ? ` title="${esc(blockedOnReason)}"` : manualMode && key === "heater" ? ` title="Temperaturregelung ${label}${(selected === true) === on ? ", gewählt" : ""}"` : ""} ${canControl && !(on && blockedOnReason) ? "" : "disabled"}>${this.controlCommandLabel(key, on, label)}</button>`,
         )
-        .join("")}</div></div></section>`;
+        .join("")}</div></div>${overrideLine(key, selected, overrideEndsAt)}</section>`;
     const heaterControls = outputControls(
       "heater",
       "Ofen",
@@ -7031,6 +7259,7 @@ class SaunaPanel extends HTMLElement {
       this.outputState("heater"),
       canManualHeater,
       heater.blocked_on_reason,
+      heater.override_ends_at,
     );
     const lightControls = outputControls(
       "light",
@@ -7038,6 +7267,8 @@ class SaunaPanel extends HTMLElement {
       light.manual,
       this.outputState("light"),
       manualControls.light,
+      "",
+      light.override_ends_at,
     );
     const manualEntry =
       !session && !manualMode
@@ -7049,11 +7280,21 @@ class SaunaPanel extends HTMLElement {
         : "";
     const programBounds = this.programBounds();
     const activeProgram = programs.find((program) => program.id === activeChoice.id);
-    const activeProgramSteps = activeProgram
-      ? this.programSteps(activeProgram)
-      : Array.isArray(s.configuration.temperature_steps)
-        ? `${s.configuration.temperature_steps.map((value) => this.num(value, this.preference("value_precision"))).join(" → ")} °C`
-        : `${this.num(p.target_temperature_c, this.preference("value_precision"))} → ${this.num(p.final_temperature_c, this.preference("value_precision"))} °C`;
+    const stages = Array.isArray(s.temperature_control?.stages)
+        ? s.temperature_control.stages
+        : null,
+      stage = s.temperature_control?.stage;
+    const programStages =
+      stages && stages.length > 1
+        ? `<div class="program-stages"><span class="program-stages-label" aria-hidden="true">Stufen je Gang</span><ol aria-label="Stufen je Gang in °C">${stages.map((value, index) => `<li data-stage="${index < stage ? "done" : index === stage ? "current" : "next"}"${index === stage ? ' aria-current="step"' : ""}>${this.num(value, this.preference("value_precision"))}</li>`).join("")}</ol><span aria-hidden="true">°C</span></div>`
+        : "";
+    const activeProgramSteps = stages
+      ? `${this.num(stages[0], this.preference("value_precision"))}${stages.length > 1 ? ` → ${this.num(stages.at(-1), this.preference("value_precision"))}` : ""} °C`
+      : activeProgram
+        ? this.programSteps(activeProgram)
+        : Array.isArray(s.configuration.temperature_steps)
+          ? `${s.configuration.temperature_steps.map((value) => this.num(value, this.preference("value_precision"))).join(" → ")} °C`
+          : `${this.num(p.target_temperature_c, this.preference("value_precision"))} → ${this.num(p.final_temperature_c, this.preference("value_precision"))} °C`;
     // Temperaturautomatik stays the internal CSS/API term; the control uses the shorter label.
     const programEditorOpen =
       !session ||
@@ -7065,7 +7306,7 @@ class SaunaPanel extends HTMLElement {
       ? this.programDirty() || this.programSaveState
       : this.programDirty() && !this.programRequest;
     const temperatureAutomation = !manualMode
-      ? `<section class="control-section temperature-automation"><h3>Temperaturwahl</h3>${session ? `<div class="program-current"><div class="program-current-value"><strong class="program-active-label">${esc(activeProgramLabel)}</strong><small>${activeMode === "constant" ? `${this.num(s.target_temperature, this.preference("value_precision"))} °C` : esc(activeProgramSteps)}</small></div><button type="button" data-action="program-toggle" aria-expanded="${programEditorOpen}" aria-controls="program-choice-body" ${programEditorLocked ? "disabled" : ""}>${programEditorOpen ? "Schließen" : "Ändern"}</button></div>` : ""}<div id="program-choice-body" ${programEditorOpen ? "" : "hidden"}>${programTypes}${namedPrograms}${programMode === "individual" ? this.freeProgramForm(programBounds) : ""}${programMode === "constant" ? `<div class="temperature-presets" style="--preset-columns-wide:${equalPresetColumns(presets.length, this.preference("preset_columns_wide"))};--preset-columns-medium:${equalPresetColumns(presets.length, this.preference("preset_columns_medium"))};--preset-columns-narrow:${equalPresetColumns(presets.length, this.preference("preset_columns_narrow"))}">${presets.map((v) => `<button type="button" class="tile" data-action="preset:${v}" aria-pressed="${v === (programChoice.temperature ?? (this.programSelectionDraft?.mode === "constant" ? p.standard_temperature_c : s.target_temperature))}" ${permissions.temperature && (!session || permissions.program) && !programBusy ? "" : "disabled"}>${this.num(v, this.preference("value_precision"))} °C</button>`).join("")}</div>` : ""}${programActionsVisible ? `<div class="program-pending"${this.programDirty() ? "" : ' aria-hidden="true" inert'}><span>Noch nicht übernommen: ${esc(this.programChoiceLabel(programChoice, programs))}</span><button type="button" data-action="program-cancel-draft" ${programBusy ? "disabled" : ""}>Abbrechen</button></div>` : ""}${programActionsVisible ? `<div class="program-actions">${this.programApplyButton(permissions)}</div>` : ""}</div></section>`
+      ? `<section class="control-section temperature-automation"><h3>Temperaturwahl</h3>${session ? `<div class="program-current"><div class="program-current-value"><strong class="program-active-label">${esc(activeProgramLabel)}</strong><small>${activeMode === "constant" ? `${this.num(s.target_temperature, this.preference("value_precision"))} °C` : esc(activeProgramSteps)}</small></div><button type="button" data-action="program-toggle" aria-expanded="${programEditorOpen}" aria-controls="program-choice-body" ${programEditorLocked ? "disabled" : ""}>${programEditorOpen ? "Schließen" : "Ändern"}</button></div>${activeMode === "constant" ? "" : programStages}` : ""}<div id="program-choice-body" ${programEditorOpen ? "" : "hidden"}>${programTypes}${namedPrograms}${programMode === "individual" ? this.freeProgramForm(programBounds) : ""}${programMode === "constant" ? `<div class="temperature-presets" style="--preset-columns-wide:${equalPresetColumns(presets.length, this.preference("preset_columns_wide"))};--preset-columns-medium:${equalPresetColumns(presets.length, this.preference("preset_columns_medium"))};--preset-columns-narrow:${equalPresetColumns(presets.length, this.preference("preset_columns_narrow"))}">${presets.map((v) => `<button type="button" class="tile" data-action="preset:${v}" aria-pressed="${v === (programChoice.temperature ?? (this.programSelectionDraft?.mode === "constant" ? p.standard_temperature_c : s.target_temperature))}" ${permissions.temperature && (!session || permissions.program) && !programBusy ? "" : "disabled"}>${this.num(v, this.preference("value_precision"))} °C</button>`).join("")}</div>` : ""}${programActionsVisible ? `<div class="program-pending"${this.programDirty() ? "" : ' aria-hidden="true" inert'}><span>Noch nicht übernommen: ${esc(this.programChoiceLabel(programChoice, programs))}</span><button type="button" data-action="program-cancel-draft" ${programBusy ? "disabled" : ""}>Abbrechen</button></div>` : ""}${programActionsVisible ? `<div class="program-actions">${this.programApplyButton(permissions)}</div>` : ""}</div></section>`
       : "";
     this.updateMarkup(
       "#current",
@@ -7073,7 +7314,7 @@ class SaunaPanel extends HTMLElement {
         modeControls,
         stateLine: manualMode
           ? `<div class="state-line"><div class="phase-time"><strong class="phase" aria-label="Temperaturregelung ${heater.manual === true ? "Ein" : "Aus"}">${heater.manual === true ? "Ein" : "Aus"}</strong></div></div>`
-          : stateLine,
+          : stateLineMarkup(infusionText),
         calibrationHint,
         overviewLightTimer,
         operation,
@@ -7282,6 +7523,7 @@ class SaunaPanel extends HTMLElement {
     return `<section class="light-instrument measurement-instrument"${this.pendingControlCommand("light") ? ' aria-busy="true"' : ""} data-instrument="light" data-instrument-style="${style}"><h2>Licht${this.pendingControlCommand("light") ? '<span aria-hidden="true"> …</span><span class="sr-only" role="status"> – Rückmeldung ausstehend</span>' : ""}</h2>${graphic}${available ? "" : '<small class="instrument-notice">Rückmeldung fehlt</small>'}</section>`;
   }
   weatherMarkup() {
+    // Umgebung als eine Zeile unter den Instrumenten (S2); vollständig in Details.
     const environment = this.state.environment;
     if (!environment?.configured) return "";
     const labels = {
@@ -7302,7 +7544,7 @@ class SaunaPanel extends HTMLElement {
         "windy-variant": "Windig und bewölkt",
       },
       condition = environment.condition,
-      label = labels[condition] || "Wetterlage nicht verfügbar",
+      label = labels[condition],
       rainy = ["rainy", "pouring", "lightning-rainy", "snowy-rainy"].includes(
         condition,
       ),
@@ -7311,17 +7553,29 @@ class SaunaPanel extends HTMLElement {
         !["sunny", "clear-night", "fog", "windy"].includes(condition) &&
         !!labels[condition],
       sun = ["sunny", "partlycloudy"].includes(condition),
-      graphic = `<svg class="weather-picture" viewBox="0 0 120 88" role="img" aria-label="${esc(label)}">${sun ? '<g class="weather-sun"><circle cx="48" cy="33" r="17"/><path d="M48 6v-5m0 59v5M21 33h-6m60 0h6M29 14l-4-4m42 42 4 4M29 52l-4 4m42-42 4-4"/></g>' : ""}${condition === "clear-night" ? '<path class="weather-moon" d="M78 54A30 30 0 0 1 51 12a31 31 0 1 0 27 42Z"/>' : ""}${cloud ? '<path class="weather-cloud" d="M27 61a15 15 0 0 1-1-30 23 23 0 0 1 43-7 18 18 0 0 1 22 18 10 10 0 0 1-1 19Z"/>' : ""}${rainy ? '<path class="weather-rain" d="m38 69-3 8m21-8-3 8m21-8-3 8"/>' : ""}${snowy ? '<path class="weather-snow" d="M42 70v12m-6-6h12m20-6v12m-6-6h12"/>' : ""}${condition?.startsWith("lightning") ? '<path class="weather-lightning" d="m59 52-9 15h10l-8 15"/>' : ""}${condition === "fog" || condition?.startsWith("windy") ? '<path class="weather-wind" d="M18 38h68m-58 12h69M20 62h58"/>' : ""}${!labels[condition] ? '<path class="weather-unknown" d="M30 45h60"/>' : ""}</svg>`,
-      metrics = (environment.values || []).filter((metric) =>
-        ["temperature", "humidity", "wind_speed", "precipitation"].includes(metric.key),
-      ),
-      shown = (metric) =>
-        metric.available
-          ? Number.isFinite(metric.value)
-            ? this.num(metric.value, this.preference("value_precision"))
-            : esc(metric.state)
-          : "–";
-    return `<section class="weather-instrument" aria-label="Umgebungswetter"><div class="weather-heading"><span>Umgebungswetter</span><h2>${esc(environment.station?.name || "Umgebungswetter")}</h2>${environment.measurement_time ? `<time datetime="${esc(environment.measurement_time)}" title="Messzeit">${esc(new Date(environment.measurement_time).toLocaleString("de-DE", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" }))}</time>` : ""}</div><div class="weather-condition">${graphic}<span>${esc(label)}</span></div><dl class="weather-values">${metrics.map((metric) => `<div data-weather-quantity="${esc(metric.key)}"><dt>${esc(metric.label)}</dt><dd>${shown(metric)} <span>${esc(metric.unit || "")}</span></dd></div>`).join("")}</dl></section>`;
+      graphic = label
+        ? `<svg class="weather-picture" viewBox="0 0 120 88" aria-hidden="true">${sun ? '<g class="weather-sun"><circle cx="48" cy="33" r="17"/><path d="M48 6v-5m0 59v5M21 33h-6m60 0h6M29 14l-4-4m42 42 4 4M29 52l-4 4m42-42 4-4"/></g>' : ""}${condition === "clear-night" ? '<path class="weather-moon" d="M78 54A30 30 0 0 1 51 12a31 31 0 1 0 27 42Z"/>' : ""}${cloud ? '<path class="weather-cloud" d="M27 61a15 15 0 0 1-1-30 23 23 0 0 1 43-7 18 18 0 0 1 22 18 10 10 0 0 1-1 19Z"/>' : ""}${rainy ? '<path class="weather-rain" d="m38 69-3 8m21-8-3 8m21-8-3 8"/>' : ""}${snowy ? '<path class="weather-snow" d="M42 70v12m-6-6h12m20-6v12m-6-6h12"/>' : ""}${condition?.startsWith("lightning") ? '<path class="weather-lightning" d="m59 52-9 15h10l-8 15"/>' : ""}${condition === "fog" || condition?.startsWith("windy") ? '<path class="weather-wind" d="M18 38h68m-58 12h69M20 62h58"/>' : ""}</svg>`
+        : "",
+      metric = (key) => (environment.values || []).find((item) => item.key === key),
+      shown = (item) =>
+        item?.available
+          ? Number.isFinite(item.value)
+            ? `${this.num(item.value, this.preference("value_precision"))}${item.unit ? `\u00a0${esc(item.unit)}` : ""}`
+            : esc(item.state)
+          : "–",
+      parts = [
+        environment.station?.name ? esc(environment.station.name) : "",
+        label || "",
+        ...["temperature", "humidity"]
+          .filter((key) => metric(key))
+          .map((key) => shown(metric(key))),
+      ].filter(Boolean),
+      measured = environment.measurement_time
+        ? ` title="Messzeit ${esc(new Date(environment.measurement_time).toLocaleString("de-DE", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" }))}"`
+        : "";
+    // Aufklappbar für alle Benutzer: dann alle Umgebungswerte wie in Details.
+    const open = !!this.environmentOpen;
+    return `<div class="environment"><button type="button" class="environment-line" data-action="environment-toggle" aria-expanded="${open}" aria-controls="environment-values" aria-label="Umgebung: ${parts.join(" · ")}"${measured}>${graphic}<span>${parts.join(" · ")}</span><svg class="environment-chevron" viewBox="0 0 24 24" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg></button>${open ? `<div class="environment-values" id="environment-values">${this.environmentValuesMarkup()}</div>` : ""}</div>`;
   }
   fitInstrumentReadouts() {
     for (const dial of this.shadowRoot?.querySelectorAll?.("#current .dial") || []) {
@@ -7338,8 +7592,12 @@ class SaunaPanel extends HTMLElement {
     }
   }
   renderEnvironmentDetails() {
-    const environment = this.state?.environment;
-    if (!environment?.configured) return "";
+    if (!this.state?.environment?.configured) return "";
+    return `<div class="card" id="detail-environment"><h2>Aktuelle Umgebung</h2>${this.environmentValuesMarkup()}</div>`;
+  }
+  // Alle Umgebungswerte mit Station, Mess- und Aktualisierungszeit (Details und Steuerung).
+  environmentValuesMarkup() {
+    const environment = this.state.environment;
     const times = [
         ["Messzeit", environment.measurement_time],
         ["Aktualisiert", environment.updated_at],
@@ -7350,7 +7608,7 @@ class SaunaPanel extends HTMLElement {
             `<div data-weather-quantity="${esc(metric.key)}"><dt>${esc(metric.label)}</dt><dd>${metric.available ? `${Number.isFinite(metric.value) ? this.num(metric.value, this.preference("value_precision")) : esc(metric.value)} ${esc(metric.unit || "")}` : "Nicht verfügbar"}</dd></div>`,
         )
         .join("");
-    return `<div class="card" id="detail-environment"><h2>Aktuelle Umgebung</h2>${environment.station?.name ? `<p>${esc(environment.station.name)}</p>` : ""}<p class="muted">${times.length ? times.map(([label, at]) => `${label}: ${esc(this.when(at))}`).join(" · ") : "Mess- und Aktualisierungszeit nicht verfügbar"}</p><dl>${metrics}</dl></div>`;
+    return `${environment.station?.name ? `<p>${esc(environment.station.name)}</p>` : ""}<p class="muted">${times.length ? times.map(([label, at]) => `${label}: ${esc(this.when(at))}`).join(" · ") : "Mess- und Aktualisierungszeit nicht verfügbar"}</p><dl>${metrics}</dl>`;
   }
   renderControlView(view) {
     const {
@@ -7380,6 +7638,515 @@ class SaunaPanel extends HTMLElement {
       : stateLine;
     const actions = operation ? `<div class="tiles">${operation}</div>` : "";
     return `<div class="control-overview"><div class="dashboard"><div class="card control-main">${status}${calibrationHint || ""}${overviewLightTimer}${actions}${temperatureAutomation}${controls}${alert}</div><div class="card gauge-card"><div class="gauges" style="--round-count:${Math.max(1, roundCount)}"><div class="measurement-instrument" data-instrument="temperature" data-instrument-style="${this.instrumentStyle("temperature")}"><h2>Temperatur</h2>${temperatureGauge}</div><div class="measurement-instrument" data-instrument="humidity" data-instrument-style="${this.instrumentStyle("humidity")}"><h2>Luftfeuchte</h2>${humidityGauge}</div>${lightGauge}</div>${weather}</div></div></div>`;
+  }
+  // Zeitraum: gesamt, Saison (mit Jahreszeit) oder Sommer; Schlüssel für Wahl und Abruf.
+  statisticsPeriodKey(period = this.statisticsPeriod) {
+    return !period
+      ? "all"
+      : period.summer != null
+        ? `summer:${period.summer}`
+        : `season:${period.season}${period.part ? `:${period.part}` : ""}`;
+  }
+  // Lädt die Statistik des gewählten Zeitraums; neu nur bei geändertem Archiv.
+  async loadStatistics({ redraw = true } = {}) {
+    if (!this.entry) return;
+    const entry = this.entry,
+      period = this.statisticsPeriod || null,
+      key = `${entry}|${this.statisticsPeriodKey(period)}|${this.archiveRevision ?? ""}`;
+    if (this.statisticsData?.key === key || this.statisticsRequest?.key === key)
+      return redraw ? this.drawStatistics() : undefined;
+    const request = { key };
+    this.statisticsRequest = request;
+    this.statisticsError = null;
+    this.drawStatistics();
+    const query = !period
+      ? ""
+      : period.summer != null
+        ? `?summer=${period.summer}`
+        : `?season=${period.season}${period.part ? `&part=${encodeURIComponent(period.part)}` : ""}`;
+    try {
+      const result = await this.api(`/${entry}/statistics${query}`);
+      if (this.statisticsRequest !== request || entry !== this.entry) return;
+      this.statisticsData = { key, period: this.statisticsPeriodKey(period), result };
+      if (Array.isArray(result.periods)) this.statisticsPeriods = result.periods;
+    } catch (error) {
+      if (this.statisticsRequest !== request || entry !== this.entry) return;
+      this.statisticsError = errorText(error);
+    } finally {
+      if (this.statisticsRequest === request) this.statisticsRequest = null;
+    }
+    this.drawStatistics();
+  }
+  selectStatisticsPeriod(value) {
+    const [kind, year, part] = value.split(":");
+    this.statisticsPeriod =
+      kind === "summer"
+        ? { summer: Number(year) }
+        : kind === "season"
+          ? { season: Number(year), ...(part ? { part } : {}) }
+          : null;
+    this.statisticsKind = null;
+    return this.loadStatistics();
+  }
+  // Formatierung eines gelieferten Anzeigewerts; gerechnet wird im Backend.
+  statisticNumber(figure, unit = true) {
+    const display = figure?.display;
+    if (display == null) return "–";
+    const kind = figure.unit;
+    if (kind === "h:mm")
+      return `${Math.floor(display / 60)}:${String(display % 60).padStart(2, "0")}${unit ? statisticUnits[kind] : ""}`;
+    if (kind === "clock")
+      return `${String(Math.floor(display / 60) % 24).padStart(2, "0")}:${String(display % 60).padStart(2, "0")}${unit ? statisticUnits[kind] : ""}`;
+    const places = statisticPlaces[kind] ?? 0,
+      suffix = unit ? statisticUnits[kind] || "" : "";
+    return `${fixedNumber(display, places)}${suffix}`;
+  }
+  statisticSessionLabel(session, withTime = true) {
+    return this.statisticDay(session?.started_at, withTime);
+  }
+  statisticDay(at, withTime = false) {
+    if (!at) return "–";
+    const zone = localTimeZone(),
+      limit = this.preference("timestamp_formatter_cache_entries"),
+      parts = Object.fromEntries(
+        timestampFormatter("weekdayDate", zone, limit)
+          .formatToParts(new Date(at))
+          .map((part) => [part.type, part.value]),
+      );
+    return `${parts.weekday.replace(/\.$/, "")} ${parts.day}.${parts.month}.${withTime ? ` ${this.clock(at, zone)}` : ""}`;
+  }
+  statisticsMarkup(result) {
+    const f = result.figures,
+      sessions = f.per_session || [],
+      byId = new Map(sessions.map((item) => [item.session_id, item])),
+      // Uhrzeit nur dort, wo mehrere Sitzungen am selben Tag liegen.
+      days = sessions.map((item) => this.statisticSessionLabel(item, false)),
+      label = (id) => {
+        const item = byId.get(id);
+        if (!item) return "–";
+        const day = this.statisticSessionLabel(item, false);
+        return days.filter((value) => value === day).length < 2
+          ? day
+          : this.statisticSessionLabel(item);
+      },
+      total = f.sessions?.display ?? 0,
+      basis = (figure) =>
+        figure?.sessions != null && figure.sessions < total
+          ? `<span class="stat-basis">aus ${this.num(figure.sessions, 0)} von ${this.num(total, 0)} Sitzungen</span>`
+          : "",
+      card = (title, value, lines = [], extra = "") =>
+        `<section class="card stat-card" aria-label="${esc(title)}"><p class="stat-key">${esc(title)}</p><p class="stat-value">${value}</p>${lines
+          .filter(Boolean)
+          .map((line) => `<p class="stat-line">${line}</p>`)
+          .join("")}${extra}</section>`,
+      big = (figure) => {
+        const text = this.statisticNumber(figure, false),
+          suffix = figure?.display == null ? "" : statisticUnits[figure.unit] || "";
+        return `${esc(text)}${suffix ? `<small>${esc(suffix.trim())}</small>` : ""}`;
+      };
+    if (!total)
+      return `<p class="muted stat-empty">Keine abgeschlossene Sitzung in diesem Zeitraum.</p>`;
+    // Listen je Saison und Sommer (gesamt), je Jahreszeit (Saison) oder je Sitzung.
+    const groups = Array.isArray(f.groups) ? f.groups : null,
+      groupName = groups?.some((group) => group.part) ? "Jahreszeit" : "Saison";
+    const sums = `<div class="stat-cards">${[
+      card("Sitzungen", big(f.sessions), [
+        `${esc(this.statisticNumber(f.operating_time_seconds))} in Betrieb`,
+      ]),
+      card("Saunazeit", big(f.sauna_time_seconds), [
+        "Summe aller Gänge",
+        basis(f.sauna_time_seconds),
+      ]),
+      card("Gänge", big(f.gangs), [
+        `Ø ${esc(this.statisticNumber(f.gangs_per_session))} je Sitzung`,
+      ]),
+      card("Aufgüsse", big(f.infusions), [
+        `Ø ${esc(this.statisticNumber(f.infusions_per_gang))} je Gang, höchstens ${esc(this.statisticNumber(f.infusions_most))}`,
+      ]),
+    ].join("")}</div>`;
+    return `${this.statisticsHeading("Saunagänge")}${sums}${groups ? this.statisticsGroupsMarkup(groups, groupName) : this.statisticsSessionsMarkup(sessions, label)}<div class="stat-grid">${this.statisticsTypicalMarkup(f, label)}${this.statisticsHabitsMarkup(f, sessions)}${this.statisticsRecordsMarkup(f, label)}</div>${this.statisticsHeading("Anlage")}${this.statisticsPlantMarkup(result, card, big, basis, label, groups, groupName)}`;
+  }
+  statisticsHeading(title) {
+    return `<h2 class="stat-section">${esc(title)}</h2>`;
+  }
+  statisticsSessionsMarkup(sessions, label) {
+    const longest = Math.max(
+        0,
+        ...sessions.map((item) => item.duration_seconds?.value).filter(Number.isFinite),
+      ),
+      axis = clockAxis(longest, this.statisticsTimeIntervals());
+    if (!axis) return "";
+    const position = (from, to) =>
+        Math.max(
+          0,
+          Math.min(100, ((stamp(to) - stamp(from)) / 1000 / axis.last) * 100),
+        ),
+      rows = sessions
+        .map((item) => {
+          const gangs = (item.gangs || [])
+            .filter((gang) => gang.start?.value)
+            .map((gang) => {
+              const left = position(item.started_at, gang.start.value),
+                closed = !!gang.end?.value,
+                width = closed ? position(gang.start.value, gang.end.value) : 0,
+                count = gang.infusion_count?.display;
+              return `<span class="stat-gang${closed ? "" : " open"}" style="left:${left}%;${closed ? `width:${width}%` : ""}" title="${esc(`Gang ${gang.number}: ${closed ? this.statisticNumber(gang.duration_seconds) : "Ende nicht belegt"}, ${count ?? "–"} ${count === 1 ? "Aufguss" : "Aufgüsse"}`)}">${count ?? ""}</span>`;
+            })
+            .join("");
+          const sessionWidth = Number.isFinite(item.duration_seconds?.value)
+            ? (item.duration_seconds.value / axis.last) * 100
+            : 0;
+          return `<div class="stat-session-row"><span class="stat-session-label">${esc(this.statisticSessionLabel(item))}</span><div class="stat-track" role="img" aria-label="${esc(`${this.statisticSessionLabel(item)}: ${this.statisticNumber(item.gang_count)} Gänge`)}"><span class="stat-session-line" style="width:${sessionWidth}%"></span>${gangs}</div><span class="stat-session-value">${esc(this.statisticNumber(item.sauna_time_seconds))} · ${esc(this.statisticNumber(item.infusions_in_gangs))}</span></div>`;
+        })
+        .join("");
+    return `<section class="card stat-panel" aria-label="Sitzungen im Vergleich"><div class="stat-panel-heading"><h3>Sitzungen im Vergleich</h3><p class="muted">Gänge ab Sitzungsbeginn, Zahl im Balken: Aufgüsse</p></div><div class="stat-sessions">${rows}<div class="stat-session-row stat-axis-row" aria-hidden="true"><span></span><div class="stat-axis">${axis.values.map((value, index) => `<span${index % 2 ? ' data-tick="odd"' : ""} style="left:${(value / axis.last) * 100}%">${esc(clockLabel(value, axis.step))}</span>`).join("")}</div><span class="stat-session-value">Saunazeit · Aufgüsse</span></div></div><p class="muted">Graue Linie: Sitzung; Lücken zwischen den Gängen: Ruhezeiten.</p></section>`;
+  }
+  statisticsGroupsMarkup(groups, name) {
+    const highest = Math.max(
+        0,
+        ...groups
+          .map((group) => group.sauna_time_seconds?.value)
+          .filter(Number.isFinite),
+      ),
+      rows = groups
+        .map((group) => {
+          const sauna = group.sauna_time_seconds,
+            partial =
+              sauna?.sessions != null && sauna.sessions < group.sessions?.display
+                ? ` title="Saunazeit aus ${this.num(sauna.sessions, 0)} von ${this.num(group.sessions.display, 0)} Sitzungen"`
+                : "",
+            text = `${this.num(group.sessions?.display, 0)} ${group.sessions?.display === 1 ? "Sitzung" : "Sitzungen"} · ${this.num(group.gangs?.display, 0)} ${group.gangs?.display === 1 ? "Gang" : "Gänge"}`;
+          return `<div class="stat-session-row"><span class="stat-session-label">${esc(group.label)}</span><div class="stat-track" role="img" aria-label="${esc(`${group.label}: ${text}`)}"><span class="stat-group-bar" style="width:${highest && Number.isFinite(sauna?.value) ? (sauna.value / highest) * 100 : 0}%"></span><span class="stat-group-text">${esc(text)}</span></div><span class="stat-session-value"${partial}>${esc(this.statisticNumber(sauna))} · ${esc(this.statisticNumber(group.infusions))}</span></div>`;
+        })
+        .join("");
+    const title =
+      name === "Jahreszeit" ? "Jahreszeiten im Vergleich" : "Saisons im Vergleich";
+    return `<section class="card stat-panel" aria-label="${title}"><div class="stat-panel-heading"><h3>${title}</h3><p class="muted">Balken: Saunazeit</p></div><div class="stat-sessions">${rows}<div class="stat-session-row stat-axis-row" aria-hidden="true"><span></span><span></span><span class="stat-session-value">Saunazeit · Aufgüsse</span></div></div></section>`;
+  }
+  statisticsTimeIntervals() {
+    return Math.max(
+      1,
+      Math.floor(
+        this.preference("detail_plot_width_px") /
+          this.preference("history_time_tick_spacing_px"),
+      ),
+    );
+  }
+  statisticsTypicalMarkup(f, label) {
+    const range = (values) =>
+        Array.isArray(values) && values.length === 2
+          ? `${esc(this.statisticNumber(values[0], false))} bis ${esc(this.statisticNumber(values[1]))}`
+          : "–",
+      item = (title, value, line) =>
+        `<div><p class="stat-key">${esc(title)}</p><p class="stat-value stat-value-small">${value}</p><p class="stat-line">${line}</p></div>`,
+      unit = (figure) =>
+        figure?.display == null
+          ? ""
+          : `<small>${esc((statisticUnits[figure.unit] || "").trim())}</small>`,
+      rise = f.humidity_rise || {},
+      water = rise.water_mean_l;
+    return `<section class="card stat-panel" aria-label="Ein typischer Gang"><h3>Ein typischer Gang</h3><div class="stat-pairs">${[
+      item(
+        "Dauer",
+        `${esc(this.statisticNumber(f.gang_duration?.mean_seconds, false))}${unit(f.gang_duration?.mean_seconds)}`,
+        range(f.gang_duration?.range_seconds),
+      ),
+      item(
+        "Aufgüsse",
+        esc(this.statisticNumber(f.gang_infusions?.mean)),
+        `${Array.isArray(f.gang_infusions?.range) ? `${esc(this.statisticNumber(f.gang_infusions.range[0]))} bis ${esc(this.statisticNumber(f.gang_infusions.range[1]))}` : "–"} je Gang`,
+      ),
+      item(
+        "Feuchte je Aufguss",
+        `${rise.mean_gm3?.display == null ? "–" : `+${esc(this.statisticNumber(rise.mean_gm3, false))}`}${unit(rise.mean_gm3)}`,
+        `mittlerer Anstieg der absoluten Feuchte${water?.display == null ? "" : `, etwa ${esc(this.statisticNumber(water))} Wasser in der Kabinenluft`}`,
+      ),
+      item(
+        "Ruhe danach",
+        `${esc(this.statisticNumber(f.rest?.mean_seconds, false))}${unit(f.rest?.mean_seconds)}`,
+        `${range(f.rest?.range_seconds)}${f.rest?.longest ? `, längste am ${esc(label(f.rest.longest.session_id))}` : ""}`,
+      ),
+    ].join("")}</div></section>`;
+  }
+  statisticsHabitsMarkup(f, sessions) {
+    const habits = f.habits || {},
+      started = new Map(sessions.map((item) => [item.session_id, item])),
+      weekdays = ["Mo", "Di", "Mi", "Do", "Fr", "Sa", "So"],
+      counts = habits.weekday_sessions || [],
+      highest = Math.max(0, ...counts.map((count) => count?.value ?? 0)),
+      bars = weekdays
+        .map((day, index) => {
+          const count = counts[index];
+          return `<div><span>${count?.display ? esc(this.statisticNumber(count)) : ""}</span><i style="height:${highest && count?.value ? (count.value / highest) * 100 : 0}%"></i><span class="muted">${day}</span></div>`;
+        })
+        .join(""),
+      // Je Sitzung ein Punkt am Beginn (Ortszeit) aus dem Endpunkt.
+      dots = (habits.sessions || [])
+        .map((item) => {
+          const [hours, minutes] = String(item.local_start || "")
+            .split(":")
+            .map(Number);
+          if (!Number.isFinite(hours)) return "";
+          const label = this.statisticSessionLabel(started.get(item.session_id));
+          return `<span class="stat-habit-dot" style="left:${((hours + (minutes || 0) / 60) / 24) * 100}%" title="${esc(label)}"></span>`;
+        })
+        .join(""),
+      frequent = habits.most_frequent_gang_count || [],
+      quartiles = habits.start_quartiles_seconds,
+      text = [
+        frequent.length
+          ? `Meist ${frequent.map((value) => this.num(value, 0)).join(" oder ")} ${frequent.length === 1 && frequent[0] === 1 ? "Gang" : "Gänge"}${habits.most_frequent_gang_count_sessions?.display != null ? ` (${this.num(habits.most_frequent_gang_count_sessions.display, 0)} von ${this.num(f.sessions?.display, 0)} Sitzungen)` : ""}`
+          : "",
+        Array.isArray(quartiles) && quartiles.length === 2
+          ? `Beginn meist zwischen ${this.statisticNumber(quartiles[0], false)} und ${this.statisticNumber(quartiles[1])}`
+          : "",
+      ].filter(Boolean);
+    return `<section class="card stat-panel" aria-label="Gewohnheiten"><h3>Gewohnheiten</h3><div><p class="stat-key">Wochentag</p><div class="stat-weekdays" role="img" aria-label="${esc(`Sitzungen je Wochentag: ${weekdays.map((day, index) => `${day} ${counts[index]?.display ?? "–"}`).join(", ")}`)}">${bars}</div></div><div><p class="stat-key">Beginn</p><div class="stat-start" role="img" aria-label="Beginn der Sitzungen">${dots}</div><div class="stat-axis" aria-hidden="true">${[0, 6, 12, 18, 24].map((hour) => `<span style="left:${(hour / 24) * 100}%">${hour}${hour === 0 || hour === 24 ? " Uhr" : ""}</span>`).join("")}</div></div>${text.length ? `<p class="stat-line">${esc(text.join(", "))}.</p>` : ""}</section>`;
+  }
+  statisticsRecordsMarkup(f, label) {
+    const records = f.records || {},
+      gangText = (record) =>
+        record ? `${label(record.session_id)}, Gang ${this.num(record.gang, 0)}` : "",
+      most = f.infusions_most || {},
+      where = [];
+    for (const place of most.where || []) {
+      const entry = where.find((item) => item.id === place.session_id);
+      if (entry) entry.gangs.push(place.gang);
+      else where.push({ id: place.session_id, gangs: [place.gang] });
+    }
+    const rows = [
+      ["Längster Gang", records.longest_gang, gangText(records.longest_gang)],
+      ["Heißester Gang", records.hottest_gang, gangText(records.hottest_gang)],
+      [
+        "Meiste Aufgüsse in einem Gang",
+        records.most_infusions,
+        where
+          .map(
+            (item) =>
+              `${label(item.id)}, Gang ${item.gangs.map((gang) => this.num(gang, 0)).join(" und ")}`,
+          )
+          .join(" · "),
+      ],
+      [
+        "Längste Sitzung",
+        records.longest_session,
+        records.longest_session ? label(records.longest_session.session_id) : "",
+      ],
+      [
+        "Kältester Saunatag",
+        records.coldest_outside,
+        records.coldest_outside
+          ? `${label(records.coldest_outside.session_id)}, von ${this.num(records.coldest_outside_sessions, 0)} ${records.coldest_outside_sessions === 1 ? "Sitzung" : "Sitzungen"} mit Außentemperatur`
+          : "keine Sitzung mit Außentemperatur",
+      ],
+    ];
+    return `<section class="card stat-panel" aria-label="Rekorde"><h3>Rekorde</h3><dl class="stat-records">${rows.map(([title, record, line]) => `<div><dt>${esc(title)}</dt><dd><strong>${esc(this.statisticNumber(record))}</strong>${line ? `<span>${esc(line)}</span>` : ""}</dd></div>`).join("")}</dl></section>`;
+  }
+  statisticsPlantMarkup(result, card, big, basis, label, groups, groupName) {
+    const f = result.figures,
+      price = result.settings?.electricity_price_eur_per_kwh,
+      kinds = programKinds.filter((kind) => f.by_program?.[kind]?.warmup?.sessions),
+      cards = `<div class="stat-cards">${[
+        card("Energie", big(f.energy_kwh), [
+          f.cost_eur?.display == null
+            ? price == null
+              ? "Kosten erscheinen mit eingetragenem Strompreis"
+              : "Kosten –"
+            : `${esc(this.statisticNumber(f.cost_eur))} bei ${esc(fixedNumber(price, 2))} €/kWh`,
+        ]),
+        card("Je Saunastunde", big(f.energy_per_sauna_hour_kwh), [
+          "Energie geteilt durch die Saunazeit",
+          basis(f.energy_per_sauna_hour_kwh),
+        ]),
+        card("Heizanteil", big(f.heating_share), ["der Betriebszeit heizte der Ofen"]),
+        card(
+          "Aufheizen",
+          `${esc(this.statisticNumber(f.warmup?.median_seconds, false))}<small>h Median</small>`,
+          [
+            `${f.warmup?.range_seconds ? `${esc(this.statisticNumber(f.warmup.range_seconds[0], false))} bis ${esc(this.statisticNumber(f.warmup.range_seconds[1]))}` : "–"} bis Bereit oder zum ersten Gang`,
+            // Sitzungsbezogene Vergleiche nach Programmart (K-S25).
+            ...(kinds.length > 1
+              ? kinds.map(
+                  (kind) =>
+                    `${esc(programKindLabels[kind])} – ${esc(this.statisticNumber(f.by_program[kind].warmup.median_seconds))}`,
+                )
+              : kinds.map((kind) => esc(programKindLabels[kind]))),
+          ],
+        ),
+      ].join("")}</div>`;
+    return `${cards}<div class="stat-split">${this.statisticsWarmupMarkup(f)}${this.statisticsEnergyMarkup(f, label, groups, groupName)}</div>${this.statisticsDoorMarkup(f, label, groups, groupName)}`;
+  }
+  statisticsWarmupMarkup(f) {
+    const all = f.warmup?.per_session || [],
+      present = new Set(all.map((item) => item.program_kind || "unknown")),
+      kinds = programKinds.filter((value) => present.has(value)),
+      latest = all.at(-1),
+      kind =
+        kinds.length > 1 && kinds.includes(this.statisticsKind)
+          ? this.statisticsKind
+          : kinds.length > 1
+            ? latest.program_kind || "unknown"
+            : null,
+      shown = kind
+        ? all.filter((item) => (item.program_kind || "unknown") === kind)
+        : all,
+      curves = shown.filter((item) => item.curve?.display?.length);
+    if (!all.length) return "";
+    const group = f.by_program?.[kind || kinds[0]]?.warmup,
+      summary = group?.sessions
+        ? `<p class="stat-line">${esc(programKindLabels[kind || kinds[0]])} – Median ${esc(this.statisticNumber(group.median_seconds))}${group.range_seconds ? `, ${esc(this.statisticNumber(group.range_seconds[0], false))} bis ${esc(this.statisticNumber(group.range_seconds[1]))}` : ""}, ${this.num(group.sessions, 0)} ${group.sessions === 1 ? "Sitzung" : "Sitzungen"}</p>`
+        : "";
+    const choice =
+        kinds.length > 1
+          ? `<div class="segmented-mode stat-kind" role="group" aria-label="Programmart">${kinds.map((value) => `<button type="button" data-action="statistics-kind:${esc(value)}" aria-pressed="${value === kind}">${esc(programKindLabels[value] || programKindLabels.unknown)} (${this.num(all.filter((item) => (item.program_kind || "unknown") === value).length, 0)})</button>`).join("")}</div>`
+          : "",
+      longest = Math.max(0, ...curves.map((item) => item.curve.display.at(-1)[0] * 60)),
+      temperatures = curves.flatMap((item) =>
+        item.curve.display.map((point) => point[1]),
+      ),
+      x = clockAxis(longest, this.statisticsTimeIntervals()),
+      y = temperatures.length
+        ? smoothAxis(
+            Math.min(...temperatures),
+            Math.max(...temperatures),
+            this.preference("history_axis_min_ticks"),
+            Math.max(
+              1,
+              Math.floor(
+                this.preference("size_240_0_px") /
+                  this.preference("history_value_tick_spacing_px"),
+              ),
+            ),
+          )
+        : null;
+    let plot = '<p class="muted">Keine Aufheizkurve im Zeitraum.</p>';
+    if (x && y) {
+      const px = (minutes) => ((minutes * 60) / x.last) * 100,
+        py = (value) => (1 - (value - y.first) / (y.last - y.first)) * 100,
+        legend = [...curves].sort(
+          (left, right) =>
+            (right.end_temperature_c?.value ?? -Infinity) -
+            (left.end_temperature_c?.value ?? -Infinity),
+        ),
+        lines = curves
+          .map((item) => {
+            const highlight = item === latest;
+            return `<polyline class="stat-curve${highlight ? " latest" : ""}" vector-effect="non-scaling-stroke" points="${item.curve.display.map(([minutes, value]) => `${roundHistoryCoordinate(px(minutes) * 10, this.preference("chart_coordinate_precision"))},${roundHistoryCoordinate(py(value) * 10, this.preference("chart_coordinate_precision"))}`).join(" ")}"/>`;
+          })
+          .join(""),
+        ends = curves
+          .map((item) => {
+            const [minutes, value] = item.curve.display.at(-1);
+            return `<span class="stat-end${item === latest ? " latest" : ""}" style="left:${px(minutes)}%;top:${py(value)}%"></span>`;
+          })
+          .join(""),
+        entries = legend
+          .map(
+            (item) =>
+              `<li${item === latest ? ' class="latest"' : ""}><span class="stat-swatch" aria-hidden="true"></span>${esc(`${this.statisticSessionLabel(item)} · ${item.kind === "ready" ? "Bereit" : "Gang"} nach ${this.statisticNumber(item.seconds)}, ${this.statisticNumber(item.end_temperature_c)}`)}</li>`,
+          )
+          .join("");
+      plot = `<div class="stat-warmup"><div class="stat-plot"><div class="stat-y-axis" aria-hidden="true">${y.values.map((value) => `<span style="top:${py(value)}%">${esc(this.num(value))}${value === y.last ? " °C" : ""}</span>`).join("")}</div><div class="stat-plot-area" role="img" aria-label="Temperatur oben vom Heizbeginn bis zum Ende des Aufheizens je Sitzung"><svg viewBox="0 0 1000 1000" preserveAspectRatio="none" aria-hidden="true">${y.values.map((value) => `<line class="gridline" x1="0" x2="1000" y1="${py(value) * 10}" y2="${py(value) * 10}" vector-effect="non-scaling-stroke"/>`).join("")}${lines}</svg>${ends}</div><span></span><div class="stat-axis" aria-hidden="true">${x.values.map((value, index) => `<span${index % 2 ? ' data-tick="odd"' : ""} style="left:${(value / x.last) * 100}%">${esc(clockLabel(value, x.step))}</span>`).join("")}</div></div><ol class="stat-legend">${entries}</ol></div>`;
+    }
+    return `<section class="card stat-panel stat-wide" aria-label="Aufheizen im Vergleich"><div class="stat-panel-heading"><h3>Aufheizen im Vergleich</h3><p class="muted">Temperatur oben bis Bereit oder zum ersten Gang</p></div>${choice}${summary}${plot}<p class="muted">Das Aufheizen endet mit dem ersten Bereit (die Temperatur erreicht den Sollwert) oder mit dem Öffnen der Tür zum ersten Gang, je nachdem, was früher kommt.</p></section>`;
+  }
+  // Zeilen der sitzungsbezogenen Listen: je Gruppe oder je Sitzung, mit Bezeichnung.
+  statisticsRows(f, label, groups) {
+    return groups
+      ? groups.map((group) => ({ ...group, name: group.label, short: group.label }))
+      : (f.per_session || []).map((item) => ({
+          ...item,
+          name: label(item.session_id),
+          short: this.statisticSessionLabel(item, false).split(" ").at(-1),
+        }));
+  }
+  statisticsEnergyMarkup(f, label, groups, groupName) {
+    const rows = this.statisticsRows(f, label, groups).filter(
+        (item) => item.energy_kwh?.display != null,
+      ),
+      highest = Math.max(0, ...rows.map((item) => item.energy_kwh.value)),
+      title = `Energie je ${groups ? groupName : "Sitzung"}`;
+    if (!rows.length) return "";
+    return `<section class="card stat-panel" aria-label="${title}"><div class="stat-panel-heading"><h3>${title}</h3><p class="muted">Energie · Heizanteil</p></div><div class="stat-bars">${rows.map((item) => `<span class="muted">${esc(item.name)}</span><span class="stat-bar-track"><span class="stat-bar" style="width:${highest ? (item.energy_kwh.value / highest) * 100 : 0}%"></span></span><span>${esc(this.statisticNumber(item.energy_kwh))}</span><span class="muted">${esc(this.statisticNumber(item.heating_share))}</span>`).join("")}</div></section>`;
+  }
+  statisticsDoorMarkup(f, label, groups, groupName) {
+    const classes = f.door_classes || {},
+      entryExit = f.door_entry_exit || {},
+      largest = entryExit.largest,
+      rows = this.statisticsRows(f, label, groups).filter(
+        (item) => item.door_loss_entry_exit_mean_c?.display != null,
+      ),
+      highest = Math.max(
+        0,
+        ...rows.map((item) => item.door_loss_entry_exit_mean_c.value),
+      ),
+      table = [
+        ["entry", "Eintritt"],
+        ["exit", "Austritt"],
+        ["other", "Sonstige"],
+        ["final_ventilation", "Schlusslüften"],
+      ]
+        .filter(([key]) => classes[key])
+        .map(
+          ([key, title]) =>
+            `<span>${title}</span><span>${esc(this.statisticNumber(classes[key].count))}</span><span>${esc(this.statisticNumber(classes[key].loss_mean_c))}</span><span>${esc(this.statisticNumber(classes[key].open_mean_seconds))}</span>`,
+        )
+        .join(""),
+      largestText = largest
+        ? `${this.statisticNumber(largest.loss_c)} beim ${largest.door_class === "entry" ? "Eintritt" : "Austritt"} am ${this.statisticDay(largest.opened?.display)}, Tür ${this.statisticNumber(largest.open_seconds)} offen`
+        : "–",
+      per = groups ? groupName : "Sitzung";
+    if (!classes.all?.count?.display) return "";
+    return `<section class="card stat-panel stat-door" aria-label="Wärmeverlust durch die Tür"><div class="stat-door-summary"><h3>Wärmeverlust durch die Tür</h3><p class="stat-value">${esc(this.statisticNumber(entryExit.loss_mean_c, false))}<small>°C je Ein- oder Austritt im Mittel</small></p><div class="stat-door-table"><span class="muted">Art</span><span class="muted">Anzahl</span><span class="muted">Verlust</span><span class="muted">offen</span>${table}</div><dl class="stat-records"><div><dt>Größter Verlust</dt><dd><span>${esc(largestText)}</span></dd></div></dl></div><div class="stat-columns" role="img" aria-label="${esc(`Mittlerer Verlust je Ein- oder Austritt und ${per}: ${rows.map((item) => `${item.name} ${this.statisticNumber(item.door_loss_entry_exit_mean_c)}`).join("; ")}`)}">${rows.map((item) => `<div title="${esc(item.name)}"><span>${esc(this.statisticNumber(item.door_loss_entry_exit_mean_c, false))}</span><i style="height:${highest ? (item.door_loss_entry_exit_mean_c.value / highest) * 100 : 0}%"></i><span class="muted">${esc(item.short)}</span></div>`).join("")}</div></section>`;
+  }
+  drawStatistics() {
+    if (!this.$("#statistics")) return;
+    const data =
+        this.statisticsData?.period === this.statisticsPeriodKey()
+          ? this.statisticsData.result
+          : null,
+      periods = this.statisticsPeriods || [],
+      selected = this.statisticsPeriodKey(),
+      active = this.statisticsPeriod?.season,
+      zone = localTimeZone(),
+      limit = this.preference("timestamp_formatter_cache_entries"),
+      // Gesamt · Saisons und Sommer · Jahreszeiten der gewählten Saison.
+      choices = [
+        ["all", "Gesamt"],
+        ...periods.flatMap((item) =>
+          item.summer != null
+            ? [[`summer:${item.summer}`, item.label]]
+            : [
+                [`season:${item.season}`, item.label],
+                ...(item.season === active
+                  ? (item.parts || []).map((part) => [
+                      `season:${item.season}:${part.part}`,
+                      part.label,
+                    ])
+                  : []),
+              ],
+        ),
+      ],
+      sessions = data?.figures?.per_session || [],
+      range = sessions.length
+        ? `${timestampFormatter("date", zone, limit).format(new Date(sessions[0].started_at))} – ${timestampFormatter("dateYear", zone, limit).format(new Date(sessions.at(-1).started_at))}`
+        : "",
+      missing = data?.not_evaluated?.length
+        ? ` · ${this.num(data.not_evaluated.length, 0)} ${data.not_evaluated.length === 1 ? "Sitzung" : "Sitzungen"} ohne Auswertung`
+        : "",
+      loading = !!this.statisticsRequest;
+    const toolbar = `<div class="stat-toolbar"><div class="segmented-mode" role="group" aria-label="Zeitraum">${choices.map(([value, title]) => `<button type="button" data-action="statistics-period:${esc(value)}" aria-pressed="${value === selected}">${esc(title)}</button>`).join("")}</div><p class="muted">${esc(range)}${esc(missing)}${loading ? `<span role="status"> · Lade Statistik …</span>` : ""}</p></div>`;
+    const body = this.statisticsError
+      ? `<div class="notice" role="alert"><p>${esc(this.statisticsError)}</p></div>`
+      : data
+        ? this.statisticsMarkup(data)
+        : loading
+          ? ""
+          : '<p class="muted">Keine Statistik geladen.</p>';
+    this.updateMarkup(
+      "#statistics",
+      `<div class="statistics"${loading ? ' aria-busy="true"' : ""}>${toolbar}${body}</div>`,
+    );
   }
   renderDetailView(view) {
     if (this.state?.configuration_model?.regulation_causes?.length === 0) {
@@ -16117,6 +16884,7 @@ class SaunaPanel extends HTMLElement {
       ["#current", view !== "overview"],
       ["#details", view !== "detail"],
       ["#history", !["history", "diagnostics"].includes(view)],
+      ["#statistics", view !== "statistics"],
       ["#settings", view !== "settings"],
       ["#control-history", !(main === "details" && detail === "detail-history")],
       ["#history-inspection", main === "details"],
@@ -16671,6 +17439,7 @@ class SaunaPanel extends HTMLElement {
       [
         "overview",
         "history",
+        "statistics",
         "detail",
         "detail-history",
         "diagnostics",
@@ -16687,10 +17456,21 @@ class SaunaPanel extends HTMLElement {
       }
       this.setPanelView(action);
       if (action === "settings") return this.drawSettings();
+      if (action === "statistics") return this.loadStatistics();
       if (["history", "detail-history", "diagnostics"].includes(action))
         return this.refresh(true);
       if (action === "detail") this.drawHistory();
       return;
+    }
+    if (action === "environment-toggle") {
+      this.environmentOpen = !this.environmentOpen;
+      return this.drawCurrent();
+    }
+    if (action.startsWith("statistics-period:"))
+      return this.selectStatisticsPeriod(action.slice("statistics-period:".length));
+    if (action.startsWith("statistics-kind:")) {
+      this.statisticsKind = action.slice("statistics-kind:".length);
+      return this.drawStatistics();
     }
     if (action.startsWith("preset:")) {
       const temperature = this.roundTargetTemperature(Number(action.slice(7)));

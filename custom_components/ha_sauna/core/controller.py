@@ -394,17 +394,9 @@ class Controller:
 
     def _temperature_target(self, *, next_gang=False) -> float | None:
         start = self.parameters.values.get("target_temperature_c")
-        if self.control_mode == "manual":
+        if not self._progressive():
             return start
-        end = self.parameters.values.get("final_temperature_c")
         session = self._session
-        mode = (
-            session.temperature_program_mode
-            if session and session.temperature_program_mode
-            else self.program_mode
-        )
-        if mode != "progressive" or start is None or end is None:
-            return start
         if (not next_gang and session and session.timeline.active is not None
                 and session.timeline.active.gang_id == session.active_gang_temperature_id):
             return session.active_gang_temperature_c
@@ -412,6 +404,30 @@ class Controller:
             active = session.timeline.active
             if next_gang or active is None or active.gang_id != session.next_gang_temperature_blocked_by:
                 return session.next_gang_temperature_c
+        program, completed = self._program_position(next_gang=next_gang)
+        return program.target(completed)
+
+    def _progressive(self) -> bool:
+        """Automatik mit Steigerungsprogramm, Start- und Endtemperatur."""
+        if self.control_mode == "manual":
+            return False
+        session = self._session
+        mode = (
+            session.temperature_program_mode
+            if session and session.temperature_program_mode
+            else self.program_mode
+        )
+        return (
+            mode == "progressive"
+            and self.parameters.values.get("target_temperature_c") is not None
+            and self.parameters.values.get("final_temperature_c") is not None
+        )
+
+    def _program_position(self, *, next_gang=False) -> tuple[TemperatureProgram, int]:
+        """Laufendes Programm und die Zahl der seit seinem Anker gezählten Gänge."""
+        start = self.parameters.values.get("target_temperature_c")
+        end = self.parameters.values.get("final_temperature_c")
+        session = self._session
         completed = session.timeline.gang_count if session else 0
         if next_gang and session and session.timeline.active is not None:
             completed += 1
@@ -437,9 +453,23 @@ class Controller:
         if base_anchor > program_anchor:
             remaining = max(2, remaining)
         elapsed_after_base = max(0, completed - base_anchor)
-        return TemperatureProgram(start, end, remaining, steps).target(
-            elapsed_after_base
-        )
+        return TemperatureProgram(start, end, remaining, steps), elapsed_after_base
+
+    def temperature_program_stages(self) -> tuple[tuple[float, ...], int] | None:
+        """Stufen des laufenden Programms und die Stufe, aus der das aktuelle Ziel stammt.
+
+        Nur Ausgabe derselben Rechnung wie ``target_temperature``; ohne Sitzung
+        oder ohne Steigerungsprogramm ``None``. Eine Gangübersteuerung ändert
+        das Ziel, nicht die Stufe.
+        """
+        if self._session is None or not self._progressive():
+            return None
+        try:
+            program, completed = self._program_position()
+        except ValueError:
+            return None
+        stages = program.targets()
+        return stages, min(completed, len(stages) - 1)
 
     @property
     def next_gang_temperature(self) -> float | None:

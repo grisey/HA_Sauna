@@ -29,6 +29,7 @@ const navigationPanel = () => {
       "#current",
       "#details",
       "#history",
+      "#statistics",
       "#settings",
       "#plots",
       "#detection-plots",
@@ -43,15 +44,16 @@ const navigationPanel = () => {
       this[name] = value;
     },
   });
-  const main = ["overview", "history", "details", "settings"].map(button);
+  const main = ["overview", "history", "statistics", "details", "settings"].map(button);
   const detail = ["detail", "detail-history", "diagnostics"].map(button);
-  nodes['.main-tabs [data-action="details"]'] = main[2];
+  nodes['.main-tabs [data-action="details"]'] = main[3];
   const panel = Object.assign(fixturePanel(Panel), {
     state: { permissions: { admin: true } },
     message: () => {},
     refresh: async () => {},
     drawHistory: () => {},
     drawSettings: () => {},
+    loadStatistics: async () => {},
     cancelHistoryFrame: () => {},
     $: (selector) => nodes[selector] || null,
     shadowRoot: {
@@ -71,6 +73,7 @@ test("one main selection follows each view, including the shared detail history"
   for (const [action, selected, view] of [
     ["overview", "overview", "overview"],
     ["history", "history", "history"],
+    ["statistics", "statistics", "statistics"],
     ["details", "details", "detail"],
     ["detail-history", "details", "history"],
     ["diagnostics", "details", "diagnostics"],
@@ -86,6 +89,7 @@ test("one main selection follows each view, including the shared detail history"
     );
     assert.equal(nodes[".detail-tabs"].hidden, selected !== "details");
     assert.equal(nodes["#history"].hidden, !["history", "diagnostics"].includes(view));
+    assert.equal(nodes["#statistics"].hidden, view !== "statistics");
     panel.syncNavigation();
     assert.deepEqual(
       main

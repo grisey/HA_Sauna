@@ -371,7 +371,7 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
                         await page.wait_for_function("document.fullscreenElement === document.documentElement")
                         await page.wait_for_function("document.querySelector('home-assistant').hass.kioskMode === true")
                         await expect(menu).to_be_visible()
-                        actions = ["history", "settings"] + (["details"] if admin else [])
+                        actions = ["history", "statistics", "settings"] + (["details"] if admin else [])
                         for action in actions:
                             tab = tabs.locator(f'[data-action="{action}"]')
                             await tab.click()
@@ -415,10 +415,11 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
                         await context.close()
         self.assertEqual(self.errors, [])
 
-    async def test_four_main_tabs_detail_status_and_normal_user_permissions(self):
+    async def test_main_tabs_detail_status_and_normal_user_permissions(self):
         tabs = self.panel.locator(".main-tabs")
         for action, section in (("overview", "current"), ("history", "history"),
-                                ("details", "details"), ("settings", "settings")):
+                                ("statistics", "statistics"), ("details", "details"),
+                                ("settings", "settings")):
             await tabs.locator(f'[data-action="{action}"]').click()
             await expect(tabs.locator(f'[data-action="{action}"]')).to_have_attribute(
                 "aria-current", "page"
@@ -457,6 +458,11 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
             panel = page.locator("ha-sauna-panel")
             await expect(panel.locator('#current [data-action="operation"]')).to_be_visible(timeout=browser_timeout("bootstrap"))
             await expect(panel.locator('.main-tabs [data-action="details"]')).to_be_hidden()
+            await panel.locator('.main-tabs [data-action="statistics"]').click()
+            await expect(panel.locator('#statistics [role="group"][aria-label="Zeitraum"]')).to_be_visible(
+                timeout=browser_timeout("update"))
+            self.assertEqual(await panel.locator('#statistics [role="alert"]').count(), 0)
+            await panel.locator('.main-tabs [data-action="overview"]').click()
             await expect(panel.get_by_role("button", name="Manuell steuern", exact=True)).to_be_visible()
             await expect(panel.get_by_role('slider', name='Lichthelligkeit einstellen')).to_be_disabled()
             await panel.locator('.main-tabs [data-action="settings"]').click()

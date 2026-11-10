@@ -14,6 +14,7 @@ from custom_components.ha_sauna import archive as archive_module
 from custom_components.ha_sauna.archive import Archive
 from custom_components.ha_sauna.core import key_figures as kf
 from custom_components.ha_sauna.core.key_figure_display import (
+    curve,
     figure,
     largest_remainder,
     present_session,
@@ -162,6 +163,21 @@ class SessionFigureTests(unittest.TestCase):
         self.assertEqual(figures["targets_c"], [])
         self.assertIsNone(figures["gangs"][0]["target_c"])
         self.assertIsNone(figures["gangs"][0]["target_deviation"])
+
+    def test_warmup_curve_from_heating_start_to_the_end_of_warmup(self):
+        temperature = series([(0, 20), (300, 30), (600, 45), (1000, 60), (1500, 70)])
+        figures = kf.session_figures(session(upper_temperature=temperature))
+        self.assertEqual(figures["warmup_end_at"], 1000.0)
+        self.assertEqual(figures["warmup_curve"],
+                         [(0.0, 20.0), (300.0, 30.0), (600.0, 45.0), (1000.0, 60.0)])
+        late = kf.session_figures(session(upper_temperature=temperature,
+                                          heating=((150.0, 1500.0),)))
+        # Erster Punkt ist T beim Heizbeginn (K-S11), Zeiten ab Heizbeginn.
+        self.assertEqual(late["warmup_curve"][:2], [(0.0, 20.0), (150.0, 30.0)])
+        self.assertEqual(late["warmup_curve"][-1], (850.0, 60.0))
+        self.assertEqual(late["start_temperature_c"], late["warmup_curve"][0][1])
+        self.assertEqual(late["warmup_end_temperature_c"], late["warmup_curve"][-1][1])
+        self.assertIsNone(kf.session_figures(session(heating=()))["warmup_curve"])
 
     def test_warmup_stays_open_without_documented_first_gang_start(self):
         figures = kf.session_figures(session(gangs=(kf.GangInput(None, 2700.0),)))
@@ -381,6 +397,30 @@ class DoorTests(unittest.TestCase):
         self.assertEqual(counts, {"entry": 1, "exit": 1, "final_ventilation": 1, "other": 2,
                                   "all": 5})
 
+    def test_statistics_door_loss_over_entry_and_exit_with_the_largest_one(self):
+        temperature = series([(0, 80), (1700, 80), (1750, 74), (1830, 80), (2000, 79),
+                              (2600, 80), (2620, 70), (2700, 80), (3000, 80)])
+        figures = kf.session_figures(session(doors=self.DOORS, upper_temperature=temperature,
+                                             gangs=(kf.GangInput(1800.0, 2700.0),)))
+        expected = [d for d in figures["doors"] if d["door_class"] in ("entry", "exit")]
+        self.assertEqual([d["loss_c"] for d in expected], [6.0, 10.0])
+        result = kf.statistics_figures([figures], BERLIN)
+        door = result["door_entry_exit"]
+        self.assertEqual(door["count"], len(expected))
+        losses = [d["loss_c"] for d in expected]
+        self.assertAlmostEqual(door["loss_mean_c"], sum(losses) / len(losses))
+        largest = max(expected, key=lambda d: d["loss_c"])
+        self.assertEqual(door["largest"], {
+            "loss_c": largest["loss_c"], "door_class": largest["door_class"],
+            "session_id": "s1", "started_at": figures["started_at"],
+            "opened": largest["opened"], "open_seconds": largest["open_seconds"],
+        })
+        self.assertAlmostEqual(result["per_session"][0]["door_loss_entry_exit_mean_c"],
+                               door["loss_mean_c"])
+        shown = present_statistics(result)["door_entry_exit"]["largest"]
+        self.assertEqual(shown["opened"]["display"],
+                         (T0 + timedelta(seconds=largest["opened"])).isoformat())
+
     def test_entry_requires_the_closing_at_the_gang_start(self):
         figures = kf.session_figures(session(doors=self.DOORS,
                                              gangs=(kf.GangInput(1801.0, 2700.0),)))
@@ -461,6 +501,16 @@ class StatisticsTests(unittest.TestCase):
         self.assertEqual(result["energy_per_sauna_hour_kwh"]["value"], 2.0 / 0.5)
         self.assertEqual(result["rest"]["rests"], 1)
         self.assertEqual(result["habits"]["most_frequent_gang_count"], [1, 2])
+        self.assertEqual(result["habits"]["most_frequent_gang_count_sessions"], 1)
+        rows = result["per_session"]
+        self.assertEqual([row["duration_seconds"] for row in rows], [7200.0, 7200.0])
+        self.assertEqual([row["gang_count"] for row in rows], [2, 1])
+        self.assertEqual(rows[0]["gangs"][1], {"number": 2, "start": 4500.0, "end": 5400.0,
+                                               "duration_seconds": 900.0, "infusion_count": 0})
+        self.assertEqual(rows[1]["gangs"][0]["end"], None)
+        self.assertEqual([row["infusions_in_gangs"] for row in rows], [0, 0])
+        self.assertEqual(rows[0]["program_kind"], None)
+        self.assertEqual(result["warmup"]["per_session"][0]["curve"], first["warmup_curve"])
         self.assertEqual(result["habits"]["sessions"][0]["weekday"], 1)
         self.assertEqual(result["habits"]["sessions"][0]["local_start"], "17:00:00")
 
@@ -482,10 +532,69 @@ class StatisticsTests(unittest.TestCase):
             "sessions": 2,
         })
 
-    def test_period_uses_the_local_start(self):
-        late = "2026-10-31T23:30:00+00:00"  # 01.11. in Berlin
-        self.assertTrue(kf.in_period(late, BERLIN, 2026, 11))
-        self.assertFalse(kf.in_period(late, BERLIN, 2026, 10))
+    def test_period_is_the_season_part_or_summer_of_the_start(self):
+        autumn, summer = "2026-10-05T17:00:00+00:00", "2026-09-22T17:00:00+00:00"
+        self.assertTrue(kf.in_period(autumn, {"season": 2026}))
+        self.assertTrue(kf.in_period(autumn, {"season": 2026, "part": "autumn"}))
+        self.assertFalse(kf.in_period(autumn, {"season": 2026, "part": "winter"}))
+        self.assertTrue(kf.in_period(summer, {"summer": 2026}))
+        self.assertFalse(kf.in_period(summer, {"season": 2026}))
+        self.assertTrue(kf.in_period(summer, {}))
+
+    def test_periods_list_seasons_with_parts_and_summers_in_order(self):
+        started = ["2027-01-10T18:00:00+00:00", "2026-10-05T17:00:00+00:00",
+                   "2026-09-20T17:00:00+00:00", "2027-07-01T18:00:00+00:00"]
+        self.assertEqual(kf.periods(started), [
+            {"summer": 2026, "label": "Sommer 2026"},
+            {"season": 2026, "label": "2026/27", "parts": [
+                {"part": "autumn", "label": "Herbst"}, {"part": "winter", "label": "Winter"}]},
+            {"summer": 2027, "label": "Sommer 2027"},
+        ])
+        self.assertEqual(kf.periods([]), [])
+
+    def test_lists_are_grouped_by_season_and_summer_or_by_season_part(self):
+        sessions = [
+            self.figures("s", datetime(2026, 8, 1, 17, tzinfo=UTC),
+                         gangs=(kf.GangInput(1800.0, 2700.0),)),
+            self.figures("a", datetime(2026, 10, 5, 17, tzinfo=UTC),
+                         gangs=(kf.GangInput(1800.0, 2400.0),)),
+            self.figures("w", datetime(2027, 1, 5, 17, tzinfo=UTC), energy_kwh=None),
+        ]
+        groups = kf.statistics_figures(sessions, BERLIN, grouping="season")["groups"]
+        self.assertEqual([(g.get("summer"), g.get("season"), g["label"], g["sessions"])
+                          for g in groups],
+                         [(2026, None, "Sommer 2026", 1), (None, 2026, "2026/27", 2)])
+        season = groups[1]
+        self.assertEqual(season["sauna_time_seconds"], {"value": 600.0, "sessions": 2})
+        self.assertEqual(season["energy_kwh"], {"value": 2.0, "sessions": 1})
+        self.assertEqual((season["gangs"], season["infusions"]), (1, 0))
+        self.assertEqual(season["heating_share"], 3000.0 / 14400.0)
+        parts = kf.statistics_figures(sessions[1:], BERLIN, grouping="part")["groups"]
+        self.assertEqual([(g["part"], g["label"]) for g in parts],
+                         [("autumn", "Herbst"), ("winter", "Winter")])
+        self.assertIsNone(kf.statistics_figures(sessions, BERLIN)["groups"])
+
+    def test_habits_count_weekdays_and_give_the_middle_half_of_the_starts(self):
+        starts = [datetime(2026, 11, 2, 16, tzinfo=UTC), datetime(2026, 11, 3, 17, tzinfo=UTC),
+                  datetime(2026, 11, 9, 18, tzinfo=UTC), datetime(2026, 11, 9, 19, tzinfo=UTC),
+                  datetime(2026, 11, 10, 20, tzinfo=UTC)]
+        result = kf.statistics_figures(
+            [self.figures(f"s{i}", start) for i, start in enumerate(starts)], BERLIN)
+        habits = result["habits"]
+        self.assertEqual(habits["weekday_sessions"], [3, 2, 0, 0, 0, 0, 0])
+        # Ortszeit 17, 18, 19, 20, 21 Uhr: 1. Quartil 18 Uhr, 3. Quartil 20 Uhr.
+        self.assertEqual(habits["start_quartiles_seconds"], [18 * 3600.0, 20 * 3600.0])
+        single = kf.statistics_figures([self.figures("x", starts[0])], BERLIN)
+        self.assertEqual(single["habits"]["start_quartiles_seconds"], [17 * 3600.0] * 2)
+        self.assertIsNone(kf.statistics_figures([], BERLIN)["habits"]["start_quartiles_seconds"])
+
+    def test_longest_rest_names_its_session(self):
+        short = self.figures("a", T0, gangs=(kf.GangInput(100.0, 200.0),
+                                             kf.GangInput(500.0, 600.0)))
+        long = self.figures("b", T0, gangs=(kf.GangInput(100.0, 200.0),
+                                            kf.GangInput(2200.0, 2300.0)))
+        rest = kf.statistics_figures([short, long], BERLIN)["rest"]
+        self.assertEqual(rest["longest"], {"value": 2000.0, "session_id": "b"})
 
 
 class DisplayTests(unittest.TestCase):
@@ -504,6 +613,14 @@ class DisplayTests(unittest.TestCase):
         self.assertEqual(largest_remainder([1 / 3, 1 / 3, 1 / 3]), [34, 33, 33])
         self.assertEqual(largest_remainder([0.0922, 0.5271, 0.3807]), [9, 53, 38])
         self.assertIsNone(largest_remainder([0.5, None, 0.5]))
+
+    def test_curve_keeps_points_where_the_shown_temperature_changes(self):
+        points = [(0.0, 20.04), (10.0, 20.01), (20.0, 20.06), (31.0, 20.12), (40.0, 20.14),
+                  (95.0, 20.149)]
+        self.assertEqual(curve(points), [[0.0, 20.0], [0.3, 20.1], [1.6, 20.1]])
+        self.assertEqual(figure(points, "curve"), {"display": curve(points), "unit": "curve"})
+        self.assertEqual(figure(None, "curve"), {"display": None, "unit": "curve"})
+        self.assertEqual(curve([(0.0, 50.0)]), [[0.0, 50.0]])
 
     def test_missing_values_stay_missing(self):
         self.assertEqual(figure(None, "°C"), {"value": None, "display": None, "unit": "°C"})
@@ -528,6 +645,12 @@ class DisplayTests(unittest.TestCase):
         shown = present_statistics(raw)
         self.assertEqual(shown["energy_kwh"], {"value": 2.0, "display": 2.0, "unit": "kWh",
                                                "sessions": 1})
+        row = shown["per_session"][0]
+        self.assertEqual(row["duration_seconds"]["display"], 120)
+        self.assertEqual(row["infusions_in_gangs"]["display"], 0)
+        warmup = shown["warmup"]["per_session"][0]
+        self.assertEqual(warmup["curve"]["unit"], "curve")
+        self.assertEqual(warmup["curve"]["display"], [[0.0, 80.0], [16.7, 80.0]])
         self.assertEqual(shown["by_program"]["unknown"]["warmup"]["median_seconds"]["display"], 17)
 
 
@@ -741,10 +864,24 @@ class ArchiveInputTests(unittest.TestCase):
         self.write()
         result = self.archive.session_key_figures("s1", volume_m3=6.0)
         self.assertEqual(result["figures"]["gang_count"]["display"], 1)
-        statistics = self.archive.key_figure_statistics(BERLIN, year=2026, month=11)
+        statistics = self.archive.key_figure_statistics(BERLIN, season=2026, part="autumn")
         self.assertEqual(statistics["session_ids"], ["s1"])
+        self.assertEqual(statistics["period"], {"season": 2026, "part": "autumn"})
+        self.assertIsNone(statistics["figures"]["groups"])
+        periods = [{"season": 2026, "label": "2026/27",
+                    "parts": [{"part": "autumn", "label": "Herbst"}]}]
+        self.assertEqual(statistics["periods"], periods)
+        whole = self.archive.key_figure_statistics(BERLIN)
+        self.assertEqual([g["label"] for g in whole["figures"]["groups"]], ["2026/27"])
+        season = self.archive.key_figure_statistics(BERLIN, season=2026)
+        self.assertEqual([g["label"] for g in season["figures"]["groups"]], ["Herbst"])
+        gang = statistics["figures"]["per_session"][0]["gangs"][0]
+        self.assertEqual(gang["start"]["unit"], "time")
         self.assertEqual(statistics["figures"]["sessions"]["value"], 1)
-        self.assertEqual(self.archive.key_figure_statistics(BERLIN, year=2025)["session_ids"], [])
+        other = self.archive.key_figure_statistics(BERLIN, summer=2026)
+        self.assertEqual(other["session_ids"], [])
+        # Die angebotenen Zeiträume gelten unabhängig vom gewählten.
+        self.assertEqual(other["periods"], periods)
 
 
 class ProgramTests(unittest.TestCase):

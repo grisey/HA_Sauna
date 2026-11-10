@@ -479,7 +479,7 @@ test("linear target completion cannot clear newer drafts or another entry", asyn
   }
 });
 
-test("non-DWD weather keeps supplied metrics and escapes source strings", () => {
+test("environment line shows station, condition, temperature and humidity escaped", () => {
   const p = panel();
   assert.equal(p.weatherMarkup(), "");
   p.state.environment = { configured: false, values: [] };
@@ -490,6 +490,8 @@ test("non-DWD weather keeps supplied metrics and escapes source strings", () => 
     // A generic weather source has no provider field in the environment snapshot.
     station: { name: 'Private Wetterstation <img src=x onerror="bad()">' },
     source: { mode: null, interpolated: null },
+    measurement_time: "2026-11-02T19:00:00Z",
+    updated_at: "2026-11-02T19:40:00Z",
     values: [
       {
         key: "temperature",
@@ -503,6 +505,7 @@ test("non-DWD weather keeps supplied metrics and escapes source strings", () => 
         key: "wind_speed",
         label: "Wind",
         state: "<script>bad()</script>",
+        value: "<script>bad()</script>",
         available: true,
         unit: '"<x>',
       },
@@ -513,18 +516,64 @@ test("non-DWD weather keeps supplied metrics and escapes source strings", () => 
     "weather-evidence " +
       JSON.stringify({ scenario: "non-DWD", environment: p.state.environment, html }),
   );
-  assert.ok(html.includes('<div class="weather-heading"><span>Umgebungswetter</span>'));
-  assert.ok(!html.includes("DWD"));
-  assert.ok(html.includes('role="img"'));
-  assert.ok(html.includes("Leicht bewölkt"));
-  assert.ok(html.includes("16,4"));
+  const line =
+    "Private Wetterstation &lt;img src=x onerror=&quot;bad()&quot;&gt; · Leicht bewölkt · 16,4\u00a0°C · –";
   assert.ok(
-    html.includes("Private Wetterstation &lt;img src=x onerror=&quot;bad()&quot;&gt;"),
+    html.startsWith(
+      `<div class="environment"><button type="button" class="environment-line" data-action="environment-toggle" aria-expanded="false" aria-controls="environment-values" aria-label="Umgebung: ${line}" title="Messzeit `,
+    ),
   );
-  assert.ok(html.includes("Außen &lt;b&gt;"));
-  assert.ok(html.includes("&lt;script&gt;bad()&lt;/script&gt;"));
+  assert.ok(!html.includes("Umgebungswetter"), "no separate weather card (S2)");
+  assert.ok(!html.includes("DWD"));
+  assert.ok(html.includes('<svg class="weather-picture"'));
+  assert.ok(
+    html.includes(`<span>${line}</span>`),
+    "one line in the order station, condition, temperature, humidity; missing value as –",
+  );
   assert.ok(!html.includes("<script>"));
-  assert.ok(!html.includes('data-weather-quantity="precipitation"'));
-  assert.ok(!html.includes("<dd>88"));
-  assert.match(html, /<dd>– <span>%<\/span>/);
+  assert.ok(!html.includes('class="environment-values"'), "closed: only the line");
+  // Aufgeklappt für jeden Benutzer: alle Werte wie in Details, ebenso maskiert.
+  p.state.permissions = { admin: false };
+  p.environmentOpen = true;
+  const open = p.weatherMarkup();
+  assert.ok(open.includes('aria-expanded="true"'));
+  const values = open.match(
+    /<div class="environment-values" id="environment-values">([\s\S]*)<\/div><\/div>$/,
+  )[1];
+  assert.equal(
+    `<div class="card" id="detail-environment"><h2>Aktuelle Umgebung</h2>${values}</div>`,
+    p.renderEnvironmentDetails(),
+    "the same values as Details",
+  );
+  assert.ok(
+    values.includes(
+      '<div data-weather-quantity="wind_speed"><dt>Wind</dt><dd>&lt;script&gt;bad()&lt;/script&gt; &quot;&lt;x&gt;</dd></div>',
+    ),
+  );
+  assert.ok(values.includes("<dd>Nicht verfügbar</dd>"));
+  assert.ok(!open.includes("<script>"));
+  p.environmentOpen = false;
+  p.state.environment = {
+    configured: true,
+    condition: "unknown-condition",
+    values: [{ key: "temperature", value: 5.8, available: true, unit: "°C" }],
+  };
+  assert.equal(
+    p.weatherMarkup(),
+    '<div class="environment"><button type="button" class="environment-line" data-action="environment-toggle" aria-expanded="false" aria-controls="environment-values" aria-label="Umgebung: 5,8\u00a0°C"><span>5,8\u00a0°C</span><svg class="environment-chevron" viewBox="0 0 24 24" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg></button></div>',
+    "without station, condition or measurement time only the delivered values remain",
+  );
+});
+
+test("environment toggle opens the full values for every user", async () => {
+  const p = panel();
+  let drawn = 0;
+  p.state.permissions = { admin: false };
+  p.drawCurrent = () => drawn++;
+  p.message = () => {};
+  await p.action("environment-toggle");
+  assert.equal(p.environmentOpen, true);
+  await p.action("environment-toggle");
+  assert.equal(p.environmentOpen, false);
+  assert.equal(drawn, 2);
 });

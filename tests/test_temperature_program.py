@@ -35,6 +35,20 @@ class TemperatureProgramTests(unittest.TestCase):
         self.assertEqual(program.target(0), 80)
         self.assertEqual(program.target(1), 95)
 
+    def test_targets_list_every_stage_the_target_reads(self):
+        for program, stages in (
+            (TemperatureProgram(80, 95, 4), (80, 85, 90, 95)),
+            (TemperatureProgram(80, 95, 1), (80, 95)),
+            (TemperatureProgram(80, 80, 1), (80,)),
+            (TemperatureProgram(80, 95, 4, (82, 88)), (82, 88)),
+        ):
+            with self.subTest(program=program):
+                self.assertEqual(program.targets(), stages)
+                self.assertEqual(
+                    tuple(program.target(i) for i in range(len(stages) + 2)),
+                    stages + (stages[-1],) * 2,
+                )
+
     def test_invalid_values_are_rejected(self):
         maximum = BY_KEY["target_temperature_c"].maximum
         for args in (

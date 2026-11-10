@@ -19,6 +19,7 @@ from itertools import pairwise
 from math import inf, isfinite
 
 from .moisture import absolute_humidity
+from .seasons import PARTS, period_label, period_of, period_start
 from .temperature_program import evenly_distributed
 from .timeline import Kind, project_gang_intervals, utc
 
@@ -614,6 +615,23 @@ def warmup_end_of(session: SessionInput, ready: float | None):
     return min(candidates, key=lambda item: (item[0], item[1] != "ready"))
 
 
+def warmup_curve(
+    temperature: Series, start: float | None, end: float | None,
+) -> list[tuple[float, float]] | None:
+    """K-T9 Bild: T vom Heizbeginn bis zum Ende des Aufheizens, Zeit ab Heizbeginn.
+
+    Erster Punkt ist T beim Heizbeginn (K-S11), letzter T am Ende (K-S10),
+    dazwischen alle Messpunkte; ohne einen der beiden Werte fehlt die Kurve.
+    """
+    if start is None or end is None:
+        return None
+    first, last = temperature.at(start), temperature.at(end)
+    if first is None or last is None:
+        return None
+    inner = [(t - start, v) for t, v in temperature.window(start, end) if start < t < end]
+    return [(0.0, first), *inner, (end - start, last)]
+
+
 def session_figures(session: SessionInput) -> dict:
     """Kennzahlen K-S1 bis K-S25 mit den Gängen K-G1 bis K-G9 und K-E2 als Rohwerte."""
     gangs = [gang_figures(session, gang, index + 1) for index, gang in enumerate(session.gangs)]
@@ -695,6 +713,7 @@ def session_figures(session: SessionInput) -> dict:
         "warmup_end_target_c": (
             target_at(session, warmup_end) if warmup_end is not None else None
         ),
+        "warmup_curve": warmup_curve(temperature, heating_start, warmup_end),
         "targets_c": [target for at, target in session.targets
                       if at < operation_off_at(session)],
         "heating_time_seconds": heating_time,
@@ -802,10 +821,71 @@ def _record(items, key, choose=max):
     return choose(items, key=lambda item: item[key]) if items else None
 
 
+ENTRY_EXIT = ("entry", "exit")
+
+
+def _local(started_at: str, zone: tzinfo) -> datetime:
+    return datetime.fromisoformat(started_at).astimezone(zone)
+
+
+def _seconds_of_day(local: datetime) -> float:
+    return local.hour * 3600 + local.minute * 60 + local.second + local.microsecond / 1e6
+
+
+def _entry_exit_losses(sessions: list[dict]) -> list[float]:
+    return [d["loss_c"] for s in sessions for d in s["doors"]
+            if d["door_class"] in ENTRY_EXIT and d["loss_c"] is not None]
+
+
+def _group_figures(selected: list[dict]) -> dict:
+    """K-T12 und K-T11 je Gruppe; Türverlust als Mittel über Ein- und Austritt (K-T10)."""
+    sauna = [s["sauna_time_seconds"] for s in selected if s["sauna_time_seconds"] is not None]
+    energy = [s["energy_kwh"] for s in selected if s["energy_kwh"] is not None]
+    duration = sum(s["duration_seconds"] for s in selected)
+    return {
+        "sessions": len(selected),
+        "sauna_time_seconds": {"value": sum(sauna) if sauna else None, "sessions": len(sauna)},
+        "gangs": sum(s["gang_count"] for s in selected),
+        "infusions": sum(g["infusion_count"] for s in selected for g in s["gangs"]),
+        "energy_kwh": {"value": sum(energy) if energy else None, "sessions": len(energy)},
+        "heating_share": (
+            sum(s["heating_time_seconds"] for s in selected) / duration if duration else None
+        ),
+        "door_loss_entry_exit_mean_c": _mean(_entry_exit_losses(selected)),
+    }
+
+
+def _groups(sessions: list[dict], grouping: str | None) -> list[dict] | None:
+    """Sitzungsbezogene Listen zusammengefasst: je Saison und Sommer oder je Jahreszeit."""
+    if grouping is None:
+        return None
+    found = {}
+    for s in sessions:
+        period = period_of(datetime.fromisoformat(s["started_at"]))
+        if grouping == "season" and "season" in period:
+            period = {"season": period["season"]}
+        key = tuple(sorted(period.items()))
+        found.setdefault(key, (period, []))[1].append(s)
+    return [
+        {**period, "label": period_label(period), **_group_figures(selected)}
+        for period, selected in sorted(found.values(), key=lambda item: period_start(item[0]))
+    ]
+
+
 def statistics_figures(
     sessions: list[dict], zone: tzinfo, volume_m3: float | None = None,
+    grouping: str | None = None,
 ) -> dict:
-    """Kennzahlen K-T1 bis K-T11 über die Sitzungen; je Wert die Zahl seiner Sitzungen."""
+    """Kennzahlen K-T1 bis K-T12 über die Sitzungen; je Wert die Zahl seiner Sitzungen.
+
+    ``grouping`` fasst die sitzungsbezogenen Listen zusammen: ``season`` je
+    Saison und Sommer (Zeitraum gesamt), ``part`` je Jahreszeit (eine Saison),
+    ``None`` je Sitzung.
+    """
+    # Summen (K-T1 bis K-T4, K-T8) zählen alle Sitzungen. Mittel, Vergleiche und
+    # Rekorde verwenden ``compared``; ein Kennzeichen „Testbetrieb“ (Folgepaket)
+    # nimmt Sitzungen nur dort aus.
+    compared = sessions
 
     def basis(selected):
         return len({item["session_id"] for item in selected})
@@ -815,20 +895,31 @@ def statistics_figures(
         value = sum(s[key] for s in selected) if selected else None
         return {"value": value, "sessions": basis(selected)}
 
-    gangs = [{**g, "session_id": s["session_id"]} for s in sessions for g in s["gangs"]]
+    def gangs_of(selected):
+        return [{**g, "session_id": s["session_id"]} for s in selected for g in s["gangs"]]
+
+    all_gangs = gangs_of(sessions)
+    gangs = gangs_of(compared)
     timed = [g for g in gangs if g["duration_seconds"] is not None]
     rests = [{"value": r, "session_id": s["session_id"]}
-             for s in sessions for r in s["rests_seconds"] if r is not None]
+             for s in compared for r in s["rests_seconds"] if r is not None]
     rises = [{"value": r, "session_id": g["session_id"]}
              for g in gangs for r in g["humidity_rises_gm3"] if r is not None]
-    doors = [{**d, "session_id": s["session_id"]} for s in sessions for d in s["doors"]]
-    warmed = [s for s in sessions if s["warmup_seconds"] is not None]
-    outside = [s for s in sessions if s["outside_temperature_c"] is not None]
+    doors = [{**d, "session_id": s["session_id"], "started_at": s["started_at"]}
+             for s in compared for d in s["doors"]]
+    entry_exit = [d for d in doors if d["door_class"] in ENTRY_EXIT]
+    warmed = [s for s in compared if s["warmup_seconds"] is not None]
+    outside = [s for s in compared if s["outside_temperature_c"] is not None]
     energy_and_sauna = [s for s in sessions
                         if s["energy_kwh"] is not None and s["sauna_time_seconds"]]
     infusions_most = max((g["infusion_count"] for g in gangs), default=None)
-    gang_counts = Counter(s["gang_count"] for s in sessions)
+    gang_counts = Counter(s["gang_count"] for s in compared)
     most_frequent = max(gang_counts.values(), default=0)
+    locals_ = [(s, _local(s["started_at"], zone)) for s in compared]
+    weekdays = Counter(local.isoweekday() for _, local in locals_)
+    starts = sorted(_seconds_of_day(local) for _, local in locals_)
+    longest_rest = _record(rests, "value")
+    largest_loss = _record([d for d in entry_exit if d["loss_c"] is not None], "loss_c")
 
     def spread(values):
         values = list(values)
@@ -843,12 +934,12 @@ def statistics_figures(
         "sessions": {"value": len(sessions), "sessions": len(sessions)},
         "operating_time_seconds": total("duration_seconds"),
         "sauna_time_seconds": total("sauna_time_seconds"),
-        "gangs": {"value": len(gangs), "sessions": len(sessions)},
+        "gangs": {"value": len(all_gangs), "sessions": len(sessions)},
         "gangs_per_session": {
-            "value": len(gangs) / len(sessions) if sessions else None,
-            "sessions": len(sessions),
+            "value": len(gangs) / len(compared) if compared else None,
+            "sessions": len(compared),
         },
-        "infusions": {"value": sum(g["infusion_count"] for g in gangs),
+        "infusions": {"value": sum(g["infusion_count"] for g in all_gangs),
                       "sessions": len(sessions)},
         "infusions_per_gang": {
             "value": sum(g["infusion_count"] for g in gangs) / len(gangs) if gangs else None,
@@ -884,6 +975,7 @@ def statistics_figures(
         "rest": {
             "mean_seconds": _mean(r["value"] for r in rests),
             "range_seconds": spread(r["value"] for r in rests),
+            "longest": longest_rest,
             "rests": len(rests),
             "sessions": basis(rests),
         },
@@ -891,17 +983,25 @@ def statistics_figures(
             "sessions": [
                 {
                     "session_id": s["session_id"],
-                    "weekday": datetime.fromisoformat(s["started_at"]).astimezone(zone)
-                    .isoweekday(),
-                    "local_start": datetime.fromisoformat(s["started_at"]).astimezone(zone)
-                    .time().isoformat(),
+                    "weekday": local.isoweekday(),
+                    "local_start": local.time().isoformat(),
                     "gang_count": s["gang_count"],
                 }
-                for s in sessions
+                for s, local in locals_
             ],
+            "weekday_sessions": [weekdays.get(day, 0) for day in range(1, 8)],
+            # Mittlere Hälfte der Beginnzeiten (Ortszeit): 1. bis 3. Quartil,
+            # zwischen den Beginnzeiten interpoliert.
+            "start_quartiles_seconds": (
+                [starts[0], starts[0]] if len(starts) == 1
+                else [q for i, q in enumerate(statistics.quantiles(
+                    starts, n=4, method="inclusive")) if i != 1]
+                if starts else None
+            ),
             "most_frequent_gang_count": sorted(
                 count for count, n in gang_counts.items() if n == most_frequent
-            ) if sessions else None,
+            ) if compared else None,
+            "most_frequent_gang_count_sessions": most_frequent if compared else None,
         },
         "records": {
             "longest_gang": gang_ref(_record(timed, "duration_seconds"), "duration_seconds"),
@@ -909,8 +1009,8 @@ def statistics_figures(
                                      "highest_temperature_c"),
             "most_infusions": gang_ref(_record(gangs, "infusion_count"), "infusion_count"),
             "longest_session": (
-                {"session_id": (best := max(sessions, key=lambda s: s["duration_seconds"]))
-                 ["session_id"], "value": best["duration_seconds"]} if sessions else None
+                {"session_id": (best := max(compared, key=lambda s: s["duration_seconds"]))
+                 ["session_id"], "value": best["duration_seconds"]} if compared else None
             ),
             "coldest_outside": (
                 {"session_id": (cold := min(outside, key=lambda s: s["outside_temperature_c"]))
@@ -936,9 +1036,9 @@ def statistics_figures(
             ),
             "sessions": len(sessions),
         },
-        "by_program": _by_program(sessions),
+        "by_program": _by_program(compared),
         "warmup": {
-            **_warmup_summary(sessions),
+            **_warmup_summary(compared),
             "per_session": [
                 {
                     "session_id": s["session_id"],
@@ -951,30 +1051,84 @@ def statistics_figures(
                     "start_temperature_c": s["start_temperature_c"],
                     "end_temperature_c": s["warmup_end_temperature_c"],
                     "end_target_c": s["warmup_end_target_c"],
+                    "curve": s["warmup_curve"],
                 }
                 for s in warmed
             ],
         },
         "door_classes": {**door_summary(doors), "sessions": basis(doors)},
+        "door_entry_exit": {
+            "count": len(entry_exit),
+            "loss_mean_c": _mean(d["loss_c"] for d in entry_exit if d["loss_c"] is not None),
+            "open_mean_seconds": _mean(d["open_seconds"] for d in entry_exit),
+            "largest": None if largest_loss is None else {
+                "loss_c": largest_loss["loss_c"],
+                "door_class": largest_loss["door_class"],
+                "session_id": largest_loss["session_id"],
+                "started_at": largest_loss["started_at"],
+                "opened": largest_loss["opened"],
+                "open_seconds": largest_loss["open_seconds"],
+            },
+            "sessions": basis(entry_exit),
+        },
+        "groups": _groups(compared, grouping),
         "per_session": [
             {
                 "session_id": s["session_id"],
                 "started_at": s["started_at"],
+                "program_kind": program_kind(s),
+                "duration_seconds": s["duration_seconds"],
+                "gang_count": s["gang_count"],
+                "gangs": [
+                    {key: g[key] for key in (
+                        "number", "start", "end", "duration_seconds", "infusion_count",
+                    )}
+                    for g in s["gangs"]
+                ],
                 "sauna_time_seconds": s["sauna_time_seconds"],
+                "infusions_in_gangs": s["infusions_in_gangs"],
                 "energy_kwh": s["energy_kwh"],
                 "heating_share": s["heating_share"],
-                "door_loss_mean_c": s["door_classes"]["all"]["loss_mean_c"],
+                "door_loss_entry_exit_mean_c": _mean(_entry_exit_losses([s])),
             }
-            for s in sessions
+            for s in compared
         ],
     }
 
 
-def in_period(started_at: str, zone: tzinfo, year: int | None = None,
-              month: int | None = None) -> bool:
-    """Sitzungsbeginn in Ortszeit im gewählten Jahr bzw. Monat."""
-    local = datetime.fromisoformat(started_at).astimezone(zone)
-    return (year is None or local.year == year) and (month is None or local.month == month)
+def in_period(started_at: str, period: Mapping | None = None) -> bool:
+    """Sitzungsbeginn im gewählten Zeitraum: Saison, Jahreszeit einer Saison oder Sommer."""
+    if not period:
+        return True
+    found = period_of(datetime.fromisoformat(started_at))
+    return all(found.get(key) == value for key, value in period.items())
+
+
+def periods(started: Iterable[str]) -> list[dict]:
+    """Saisons (mit ihren Jahreszeiten) und Sommer, in denen Sitzungen liegen."""
+    found = {}
+    for value in started:
+        period = period_of(datetime.fromisoformat(value))
+        if "summer" in period:
+            found.setdefault(("summer", period["summer"]), {"summer": period["summer"]})
+        else:
+            entry = found.setdefault(("season", period["season"]),
+                                     {"season": period["season"], "parts": set()})
+            entry["parts"].add(period["part"])
+    result = []
+    for entry in sorted(found.values(), key=period_start):
+        if "summer" in entry:
+            result.append({**entry, "label": period_label(entry)})
+        else:
+            result.append({
+                "season": entry["season"],
+                "label": period_label({"season": entry["season"]}),
+                "parts": [
+                    {"part": part, "label": period_label({"season": entry["season"], "part": part})}
+                    for part in PARTS if part in entry["parts"]
+                ],
+            })
+    return result
 
 
 # ---------- Eingang aus dem Archiv ----------

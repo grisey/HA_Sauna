@@ -26,6 +26,7 @@ from .core.key_figure_display import present_session, present_statistics
 from .core.key_figures import (
     earlier_warmup,
     in_period,
+    periods,
     session_figures,
     session_input_from_archive,
     statistics_figures,
@@ -1533,23 +1534,37 @@ class Archive:
             "figures": present_session(sessions[index]["figures"], earlier_warmup(earlier)),
         }
 
-    def key_figure_statistics(self, zone, *, year=None, month=None, volume_m3=None,
-                              price_eur_per_kwh=None):
-        """Statistics over the finished sessions of the whole archive, a year or a month."""
-        sessions = [
-            entry for entry in self.key_figures(
-                volume_m3=volume_m3, price_eur_per_kwh=price_eur_per_kwh
-            )
-            if in_period(entry["started_at"], zone, year, month)
-        ]
+    def key_figure_statistics(self, zone, *, season=None, part=None, summer=None,
+                              volume_m3=None, price_eur_per_kwh=None):
+        """Statistics over the finished sessions of the whole archive, a season,
+        one season part (autumn, winter, spring) or a summer.
+
+        ``periods`` lists every season (with its parts) and summer with an
+        evaluated session, so a caller can offer exactly the periods that have
+        data. Session lists are grouped by season and summer for the whole
+        archive and by season part for one season (``groups``).
+        """
+        period = (
+            {"summer": summer} if summer is not None
+            else {"season": season, **({"part": part} if part is not None else {})}
+            if season is not None else {}
+        )
+        entries = self.key_figures(volume_m3=volume_m3, price_eur_per_kwh=price_eur_per_kwh)
+        sessions = [entry for entry in entries if in_period(entry["started_at"], period)]
         evaluated = [entry["figures"] for entry in sessions if entry["figures"] is not None]
+        grouping = "season" if not period else "part" if set(period) == {"season"} else None
         return {
-            "period": {"year": year, "month": month},
+            "period": period,
+            "periods": periods(
+                [entry["started_at"] for entry in entries if entry["figures"] is not None]
+            ),
             "session_ids": [figures["session_id"] for figures in evaluated],
             "not_evaluated": [entry["session_id"] for entry in sessions
                               if entry["figures"] is None],
             "settings": {"volume_m3": volume_m3, "electricity_price_eur_per_kwh": price_eur_per_kwh},
-            "figures": present_statistics(statistics_figures(evaluated, zone, volume_m3)),
+            "figures": present_statistics(
+                statistics_figures(evaluated, zone, volume_m3, grouping=grouping)
+            ),
         }
 
     def heating_response_history(self, source, position, heater_source, maximum_gap_seconds):

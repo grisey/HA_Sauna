@@ -72,19 +72,56 @@ neu geschätzt wird er nur auf ausdrückliche Bestätigung.
 
 ## Statistik
 
-Die Statistik umfasst alle abgeschlossenen Sitzungen des Archivs, eines Jahres
-oder eines Monats nach Ortszeit des Sitzungsbeginns. Jeder Wert nennt die Zahl
-der Sitzungen, auf denen er beruht (`sessions`). Summen (Sitzungen,
-Betriebszeit, Saunazeit, Gänge, Aufgüsse, Energie, Kosten) gelten über alle
-Sitzungen; Aufheizen, Regelung und Sollabweichung stehen zusätzlich getrennt
+Die Statistik umfasst alle abgeschlossenen Sitzungen des Archivs, eine Saison,
+eine Jahreszeit einer Saison oder einen Sommer. Die Jahreszeiten beginnen
+kalendarisch (astronomisch): Frühling mit der Tagundnachtgleiche im März,
+Sommer mit der Sonnenwende im Juni, Herbst mit der Tagundnachtgleiche im
+September, Winter mit der Sonnenwende im Dezember. Eine Saison umfasst Herbst,
+Winter und Frühling eines Jahrespaars („2026/27“); der Sommer dazwischen ist ein
+eigener Zeitraum („Sommer 2027“). Maßgeblich ist der Zeitpunkt des
+Sitzungsbeginns. Die Zeitpunkte der Tagundnachtgleichen und Sonnenwenden
+rechnet [`core/seasons.py`](../custom_components/ha_sauna/core/seasons.py) nach
+J. Meeus (Astronomical Algorithms, Kapitel 27) auf etwa eine Minute genau.
+`periods` nennt die Saisons mit ihren Jahreszeiten und die Sommer, in denen
+ausgewertete Sitzungen liegen.
+
+Jeder Wert nennt die Zahl der Sitzungen, auf denen er beruht (`sessions`).
+Summen (Sitzungen, Betriebszeit, Saunazeit, Gänge, Aufgüsse, Energie, Kosten,
+Energie je Saunastunde, Heizanteil) gelten über alle Sitzungen. Mittel,
+Vergleiche und Rekorde beruhen auf den verglichenen Sitzungen; das sind heute
+dieselben. Aufheizen, Regelung und Sollabweichung stehen zusätzlich getrennt
 nach Programmart (`by_program`: Handbetrieb, Konstant, Programm).
+
+| Bereich | Werte |
+| --- | --- |
+| Je Sitzung (`per_session`) | Beginn, Programmart, Dauer, Gänge mit Beginn, Ende, Dauer und Aufgüssen, Saunazeit, Aufgüsse in den Gängen, Energie, Heizanteil, mittlerer Türverlust über Ein- und Austritt |
+| Gruppen (`groups`) | Über alle Sitzungen je Saison und Sommer, in einer Saison je Jahreszeit, sonst keine: Sitzungen, Saunazeit, Gänge, Aufgüsse, Energie, Heizanteil, mittlerer Türverlust über Ein- und Austritt |
+| Ruhe (`rest`) | Mittel, Spanne und längste Ruhe mit ihrer Sitzung |
+| Gewohnheiten (`habits`) | Je Sitzung Wochentag und Beginn (Ortszeit), Sitzungen je Wochentag, die mittlere Hälfte der Beginnzeiten (1. bis 3. Quartil, zwischen den Beginnzeiten interpoliert), häufigste Gangzahl mit der Zahl ihrer Sitzungen |
+| Tür (`door_classes`, `door_entry_exit`) | Je Art Anzahl, Verlust, offen; Ein- und Austritt zusammen mit Mittel und größtem Verlust samt Art, Sitzung, Öffnungszeitpunkt und Öffnungsdauer |
+| Aufheizen (`warmup`) | Median, Spanne, je Sitzung Ende mit Art und die Kurve (`curve`) |
+
+Die Kurve des Aufheizens ist die Temperatur oben vom Heizbeginn bis zum Ende
+des Aufheizens. Sie kommt nur als Anzeigewerte: Minuten ab Heizbeginn und °C,
+je auf eine Nachkommastelle, mit einem Punkt dort, wo sich die angezeigte
+Temperatur ändert, und dem Endpunkt. Nach der Zeitpunktregel geht in
+Anzeigegenauigkeit dabei nichts verloren; die Messreihe selbst bleibt im Archiv.
+
+Die Seite **Statistik** im Panel steht allen Benutzern offen. Sie zeigt den
+gewählten Zeitraum (gesamt, Saison oder Sommer, Jahreszeit) in den Abschnitten
+**Saunagänge** (Summen, Vergleich der Saisons, Jahreszeiten oder Sitzungen,
+typischer Gang, Gewohnheiten, Rekorde) und **Anlage** (Energie und Kosten,
+Heizanteil, Aufheizen je Programmart, Energie, Wärmeverlust durch die Tür nach
+Art). Das Panel zeigt nur die gelieferten Anzeigewerte; fehlende Werte
+erscheinen als „–“.
 
 ## Anzeigewerte
 
 Jeder Anzeigewert wird für sich aus dem Rohwert kaufmännisch gerundet:
 Temperatur, Feuchte, Minuten und Energie auf eine Nachkommastelle, Kosten und
 Wasser auf zwei, Anteile auf ganze Prozent. Stunden werden als ganze Minuten für
-die Darstellung h:mm geliefert. Anteile, die zusammen 100 % ergeben (unter, im
+die Darstellung h:mm geliefert, Uhrzeiten (Beginnzeiten) als ganze Minuten seit
+Mitternacht. Anteile, die zusammen 100 % ergeben (unter, im
 und über dem Regelband), folgen der Methode der größten Reste. Summen
 angezeigter Teile können daher in der letzten Stelle vom angezeigten Gesamtwert
 abweichen.

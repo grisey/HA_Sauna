@@ -5,7 +5,9 @@ Der Anzeigewert ist für sich aus dem Rohwert kaufmännisch gerundet: Temperatur
 Feuchte, Minuten und Energie auf 0,1, Kosten und Wasser auf 0,01, Anteile auf
 ganze Prozent, Stunden als ganze Minuten für h:mm. Anteile, die zusammen 100 %
 ergeben, folgen der Methode der größten Reste. Zeitpunkte werden zu
-Zeitstempeln. Einheit, Dezimalkomma und Zeitformat setzt die Oberfläche.
+Zeitstempeln. Eine Kurve (Aufheizen) kommt nur als Anzeigewerte
+``{"display": [[min, °C], …], "unit": "curve"}``. Einheit, Dezimalkomma und
+Zeitformat setzt die Oberfläche.
 """
 
 from __future__ import annotations
@@ -43,8 +45,31 @@ def largest_remainder(shares: list[float | None]) -> list[int] | None:
     return whole
 
 
+def curve(points: list[tuple[float, float]] | None) -> list[list[float]] | None:
+    """Kurve in Anzeigewerten: Minuten (0,1) ab dem ersten Punkt und °C (0,1).
+
+    Ein Punkt steht nur dort, wo sich die angezeigte Temperatur ändert; der
+    letzte Punkt steht immer dabei. Nach der Zeitpunktregel (letzter Wert zum
+    Zeitpunkt oder davor) geht dabei in Anzeigegenauigkeit nichts verloren.
+    """
+    if not points:
+        return None
+    shown = []
+    for t, value in points:
+        temperature = rounded(value, PLACES["°C"])
+        if not shown or temperature != shown[-1][1]:
+            shown.append([rounded(t / 60, 1), temperature])
+    last = [rounded(points[-1][0] / 60, 1), rounded(points[-1][1], PLACES["°C"])]
+    if shown[-1] != last:
+        shown.append(last)
+    return shown
+
+
 def figure(value, unit: str, started_at: datetime | None = None) -> dict:
     """Eine Kennzahl als Rohwert und Anzeigewert."""
+    if unit == "curve":
+        # Die Messreihe selbst bleibt im Archiv; geliefert wird nur die Anzeige.
+        return {"display": curve(value), "unit": unit}
     if unit == "time":
         stamp = (
             None if value is None
@@ -53,7 +78,8 @@ def figure(value, unit: str, started_at: datetime | None = None) -> dict:
         return {"value": stamp, "display": stamp, "unit": unit}
     if unit == "min":
         shown = rounded(value / 60, 1) if value is not None else None
-    elif unit == "h:mm":
+    elif unit in ("h:mm", "clock"):
+        # clock: Uhrzeit als Sekunden seit Mitternacht (Ortszeit), ganze Minuten
         shown = rounded(value / 60, 0) if value is not None else None
     elif unit == "share":
         shown = rounded(value * 100, 0) if value is not None else None
@@ -91,7 +117,8 @@ SESSION = {
     "rests_seconds": ["min"], "rest_mean_seconds": "min",
     "heating_started_at": "time", "start_temperature_c": "°C", "ready_at": "time",
     "warmup_seconds": "h:mm", "warmup_end_at": "time", "warmup_end_temperature_c": "°C",
-    "warmup_end_target_c": "°C", "targets_c": ["°C"], "heating_time_seconds": "h:mm",
+    "warmup_end_target_c": "°C", "warmup_curve": "curve", "targets_c": ["°C"],
+    "heating_time_seconds": "h:mm",
     "heating_share": "share", "energy_kwh": "kWh", "energy_measured_kwh": "kWh",
     "energy_check_kwh": "kWh", "cost_eur": "€", "energy_warmup_kwh": "kWh",
     "energy_after_warmup_kwh": "kWh", "heating_phases_after_warmup": "count",
@@ -127,7 +154,11 @@ STATISTICS = {
     "gang_duration": {"mean_seconds": "min", "range_seconds": ["min"]},
     "gang_infusions": {"mean": "mean", "range": ["count"]},
     "humidity_rise": {"mean_gm3": "g/m³", "water_mean_l": "l"},
-    "rest": {"mean_seconds": "min", "range_seconds": ["min"]},
+    "rest": {"mean_seconds": "min", "range_seconds": ["min"], "longest": {"value": "min"}},
+    "habits": {
+        "weekday_sessions": ["count"], "start_quartiles_seconds": ["clock"],
+        "most_frequent_gang_count_sessions": "count",
+    },
     "records": {
         "longest_gang": {"value": "min"},
         "hottest_gang": {"value": "°C"},
@@ -145,12 +176,27 @@ STATISTICS = {
         "per_session": [{
             "heating_started_at": "time", "end_at": "time", "seconds": "h:mm",
             "start_temperature_c": "°C", "end_temperature_c": "°C", "end_target_c": "°C",
+            "curve": "curve",
         }],
     },
     "door_classes": DOOR_CLASSES,
+    "door_entry_exit": {
+        "count": "count", "loss_mean_c": "°C", "open_mean_seconds": "min",
+        "largest": {"loss_c": "°C", "opened": "time", "open_seconds": "min"},
+    },
+    "groups": [{
+        "sessions": "count", "sauna_time_seconds": {"value": "h:mm"}, "gangs": "count",
+        "infusions": "count", "energy_kwh": {"value": "kWh"}, "heating_share": "share",
+        "door_loss_entry_exit_mean_c": "°C",
+    }],
     "per_session": [{
-        "sauna_time_seconds": "min", "energy_kwh": "kWh", "heating_share": "share",
-        "door_loss_mean_c": "°C",
+        "duration_seconds": "h:mm", "gang_count": "count",
+        "gangs": [{
+            "start": "time", "end": "time", "duration_seconds": "min",
+            "infusion_count": "count",
+        }],
+        "sauna_time_seconds": "min", "infusions_in_gangs": "count", "energy_kwh": "kWh",
+        "heating_share": "share", "door_loss_entry_exit_mean_c": "°C",
     }],
 }
 

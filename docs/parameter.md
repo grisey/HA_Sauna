@@ -122,6 +122,10 @@ Wind liefern. Gewählte Einzelquellen haben Vorrang, auch bei deren Ausfall.
 | Niederschlagsintensität | `precipitation_intensity`, mm/h |
 | Mess- / Vorhersagezeit | Je ein `timestamp`-Sensor |
 
+Die Steuerung zeigt Station, Wetterlage, Temperatur und relative Feuchte in einer
+Zeile unter den Instrumenten. Aufgeklappt zeigt sie allen Benutzern alle Werte
+mit Mess- und Aktualisierungszeit, wie die Details.
+
 Umgebungsdaten beeinflussen weder Heizregelung noch Gangerkennung. Während
 einer Sitzung werden sie bei jeder neuen Messung der Quelle
 [archiviert](speicherung.md#umgebung-und-erkennungsverlauf).

@@ -2,6 +2,7 @@
 import unittest
 from datetime import timedelta
 
+from custom_components.ha_sauna.core.configuration_model import temperature_control
 from custom_components.ha_sauna.core.display import phase_timer
 from custom_components.ha_sauna.core.models import TemperatureTargetMark
 from custom_components.ha_sauna.core.parameters import Parameters
@@ -452,6 +453,61 @@ class LiveTemperatureTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             change(c, 20, after_run_minutes=c.parameters.values["after_run_minutes"] + 1)
         self.assertIs(c.session, before)
+
+
+class ProgramStageTests(unittest.TestCase):
+    """Stufen für die Steuerung (S6): dieselbe Rechnung wie das Ziel, nur ausgegeben."""
+
+    def controller(self):
+        c = controller(target_temperature_c=80, final_temperature_c=95, temperature_gangs=4)
+        c.program_mode = "progressive"
+        return c
+
+    def assert_stage_gives_target(self, c, stages, stage):
+        self.assertEqual(c.temperature_program_stages(), (stages, stage))
+        self.assertEqual(stages[stage], c.target_temperature)
+        shown = temperature_control(c).as_dict()
+        self.assertEqual((shown["stages"], shown["stage"]), (stages, stage))
+
+    def test_current_stage_follows_the_counted_gangs(self):
+        c = self.controller()
+        self.assert_stage_gives_target(c, (80, 85, 90, 95), 0)
+        for index, start in enumerate((10, 30, 50, 70, 90), start=1):
+            gang(c, index, start)
+            self.assert_stage_gives_target(c, (80, 85, 90, 95), min(index, 3))
+
+    def test_live_end_change_shows_the_stages_from_the_new_anchor(self):
+        c = self.controller()
+        gang(c, 1, 10)
+        change(c, 14, final_temperature_c=100, explicit_target=False)
+        self.assert_stage_gives_target(c, (85, 93, 100), 0)
+        gang(c, 2, 30)
+        self.assert_stage_gives_target(c, (85, 93, 100), 1)
+
+    def test_override_changes_the_target_not_the_stage(self):
+        c = self.controller()
+        c.set_next_gang_temperature(88, at(1))
+        self.assertEqual(c.target_temperature, 88)
+        self.assertEqual(c.temperature_program_stages(), ((80, 85, 90, 95), 0))
+
+    def test_named_steps_are_the_stages(self):
+        c = self.controller()
+        c.temperature_steps = (80, 87, 82, 95)
+        gang(c, 1, 10)
+        self.assert_stage_gives_target(c, (80, 87, 82, 95), 1)
+
+    def test_without_program_or_session_there_are_no_stages(self):
+        constant = controller(target_temperature_c=80, final_temperature_c=95)
+        self.assertIsNone(constant.temperature_program_stages())
+        self.assertIsNone(temperature_control(constant).as_dict()["stages"])
+        manual = self.controller()
+        manual.control_mode = "manual"
+        self.assertIsNone(manual.temperature_program_stages())
+        idle = self.controller()
+        idle.set_operation(False, at(5))
+        idle.finish_session(at(6))
+        self.assertIsNone(idle.session)
+        self.assertIsNone(idle.temperature_program_stages())
 
 
 class PhaseTimerTests(unittest.TestCase):
