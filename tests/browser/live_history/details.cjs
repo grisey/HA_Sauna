@@ -331,8 +331,11 @@ fs.mkdirSync(output, { recursive: true });
       f.panel.setPanelView("history");
       await f.refresh();
     });
-    const faultFree = await panel.locator("#event-list").innerText();
+    // B3b: Der Verlauf hat keine Ereignis- und Fehlerliste mehr; die Fehler im
+    // Sitzungsverlauf stehen in Details · Detailverlauf.
+    const faultFree = await panel.locator("#history").innerText();
     assert.doesNotMatch(faultFree, /Historische Fehler|Fehler[^\n]*\(1\)/);
+    assert.equal(await panel.locator("#event-list [data-fault-count]").count(), 0);
     const faultCount = panel.locator("[data-fault-count]");
     if (await faultCount.count())
       assert.equal(await faultCount.first().getAttribute("data-fault-count"), "0");
@@ -642,9 +645,17 @@ fs.mkdirSync(output, { recursive: true });
       f.panel.setPanelView("history");
       await f.refresh();
     });
+    assert.equal(await panel.locator("#event-list [data-fault-count]").count(), 0);
+    await page.evaluate(async () => {
+      f.panel.historyDetail = true;
+      f.panel.positions = new Set(["upper", "lower"]);
+      f.panel.setPanelView("detail-history");
+      await f.refresh();
+    });
     assert.equal(
       await panel
-        .locator("#event-list [data-fault-count]")
+        .locator("#control-history [data-fault-count]")
+        .first()
         .getAttribute("data-fault-count"),
       "1",
     );

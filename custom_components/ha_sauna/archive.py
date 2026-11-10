@@ -27,6 +27,7 @@ from .core.key_figures import (
     earlier_warmup,
     in_period,
     periods,
+    program_kind,
     session_figures,
     session_input_from_archive,
     statistics_figures,
@@ -1531,7 +1532,10 @@ class Archive:
             "session_id": session_id,
             "revision": sessions[index]["revision"][0],
             "settings": {"volume_m3": volume_m3, "electricity_price_eur_per_kwh": price_eur_per_kwh},
-            "figures": present_session(sessions[index]["figures"], earlier_warmup(earlier)),
+            "figures": present_session(
+                sessions[index]["figures"],
+                earlier_warmup(earlier, program_kind(sessions[index]["figures"])),
+            ),
         }
 
     def key_figure_statistics(self, zone, *, season=None, part=None, summer=None,

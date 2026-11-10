@@ -184,6 +184,14 @@ class SessionFigureTests(unittest.TestCase):
         self.assertIsNone(figures["warmup_seconds"])
         self.assertIsNone(figures["energy_warmup_kwh"])
 
+    def test_nominal_power_of_the_check_is_delivered(self):
+        figures = kf.session_figures(session())
+        self.assertEqual(figures["nominal_power_kw"], 4.5)
+        self.assertEqual(present_session(figures)["nominal_power_kw"],
+                         {"value": 4.5, "display": 4.5, "unit": "kW"})
+        missing = kf.session_figures(session(parameters={}))
+        self.assertIsNone(missing["nominal_power_kw"])
+
     def test_heating_energy_and_cost(self):
         figures = kf.session_figures(session(heating=((0.0, 1500.0), (3000.0, 3600.0)),
                                              price_eur_per_kwh=0.28))
@@ -396,6 +404,14 @@ class DoorTests(unittest.TestCase):
         counts = {name: figures["door_classes"][name]["count"] for name in figures["door_classes"]}
         self.assertEqual(counts, {"entry": 1, "exit": 1, "final_ventilation": 1, "other": 2,
                                   "all": 5})
+        # „Wieder erreicht bei x von y“: y sind die geprüften Vorgänge (ohne Schlusslüften).
+        self.assertEqual([d["recovery_checked"] for d in figures["doors"]],
+                         [True, True, True, True, False])
+        self.assertEqual(figures["door_classes"]["all"]["recovery_checked_count"], 4)
+        self.assertEqual(figures["door_classes"]["final_ventilation"]["recovery_checked_count"], 0)
+        self.assertEqual(
+            present_session(figures)["door_classes"]["all"]["recovery_checked_count"],
+            {"value": 4, "display": 4, "unit": "count"})
 
     def test_statistics_door_loss_over_entry_and_exit_with_the_largest_one(self):
         temperature = series([(0, 80), (1700, 80), (1750, 74), (1830, 80), (2000, 79),
@@ -417,6 +433,10 @@ class DoorTests(unittest.TestCase):
         })
         self.assertAlmostEqual(result["per_session"][0]["door_loss_entry_exit_mean_c"],
                                door["loss_mean_c"])
+        # Dieselbe Rechnung steht je Sitzung auch im Endpunkt key-figures (Verlauf · Anlage).
+        self.assertAlmostEqual(figures["door_loss_entry_exit_mean_c"], door["loss_mean_c"])
+        self.assertEqual(present_session(figures)["door_loss_entry_exit_mean_c"]["display"],
+                         8.0)
         shown = present_statistics(result)["door_entry_exit"]["largest"]
         self.assertEqual(shown["opened"]["display"],
                          (T0 + timedelta(seconds=largest["opened"])).isoformat())
@@ -528,9 +548,16 @@ class StatisticsTests(unittest.TestCase):
         earlier = [self.figures("a", T0), self.figures("b", T0, phases=(
             (0.0, "manuell"), (7000.0, "aus")), gangs=(kf.GangInput(3000.0, 3600.0),))]
         self.assertEqual(kf.earlier_warmup(earlier), {
-            "median_seconds": 2000.0, "kinds": ["gang", "ready"], "all_manual": False,
-            "sessions": 2,
+            "program_kind": None, "median_seconds": 1000.0, "kinds": ["ready"],
+            "all_manual": False, "sessions": 1,
         })
+        # Vergleiche nach Programmart getrennt: nur frühere Sitzungen derselben Art.
+        self.assertEqual(kf.earlier_warmup(earlier, "manual"), {
+            "program_kind": "manual", "median_seconds": 3000.0, "kinds": ["gang"],
+            "all_manual": True, "sessions": 1,
+        })
+        self.assertEqual(kf.earlier_warmup(earlier, "program")["sessions"], 0)
+        self.assertIsNone(kf.earlier_warmup(earlier, "program")["median_seconds"])
 
     def test_period_is_the_season_part_or_summer_of_the_start(self):
         autumn, summer = "2026-10-05T17:00:00+00:00", "2026-09-22T17:00:00+00:00"
@@ -587,6 +614,28 @@ class StatisticsTests(unittest.TestCase):
         single = kf.statistics_figures([self.figures("x", starts[0])], BERLIN)
         self.assertEqual(single["habits"]["start_quartiles_seconds"], [17 * 3600.0] * 2)
         self.assertIsNone(kf.statistics_figures([], BERLIN)["habits"]["start_quartiles_seconds"])
+
+    def test_start_quartiles_put_the_day_boundary_into_the_widest_gap(self):
+        # Beginn 21, 22, 23 Uhr, 0:30 und 1 Uhr (Ortszeit): die größte Lücke liegt
+        # zwischen 1 und 21 Uhr, Beginnzeiten nach Mitternacht gehören zum Abend.
+        hours = [21, 22, 23, 24.5, 25]
+        starts = [datetime(2026, 11, 2, 20, tzinfo=UTC) + timedelta(hours=h - 21)
+                  for h in hours]
+        result = kf.statistics_figures(
+            [self.figures(f"s{i}", start) for i, start in enumerate(starts)], BERLIN)
+        self.assertEqual(result["habits"]["start_quartiles_seconds"],
+                         [22 * 3600.0, 0.5 * 3600.0])
+        shown = present_statistics(result)["habits"]["start_quartiles_seconds"]
+        self.assertEqual([item["display"] for item in shown], [22 * 60, 30])
+        # Liegt die größte Lücke um Mitternacht, gilt die Reihenfolge des Tages.
+        self.assertEqual(kf.start_quartiles([17 * 3600.0, 18 * 3600.0, 20 * 3600.0]),
+                         [17.5 * 3600.0, 19 * 3600.0])
+        # Die Grenze folgt allein den Daten: Liegt die größte Lücke zwischen 8 und
+        # 17 Uhr, beginnt der Tag um 17 Uhr; 0:30 und 8 Uhr zählen zu seinem Ende.
+        self.assertEqual(kf.start_quartiles([8 * 3600.0, 17 * 3600.0, 18 * 3600.0,
+                                             19 * 3600.0, 23 * 3600.0, 0.5 * 3600.0]),
+                         [18.25 * 3600.0, 0.125 * 3600.0])
+        self.assertIsNone(kf.start_quartiles([]))
 
     def test_longest_rest_names_its_session(self):
         short = self.figures("a", T0, gangs=(kf.GangInput(100.0, 200.0),

@@ -374,7 +374,8 @@ def door_operations(session: SessionInput) -> list[dict]:
             if loss_end is not None else []
         )
         recovered = None
-        if door_class not in (None, "final_ventilation") and at_open is not None:
+        checked = door_class not in (None, "final_ventilation") and at_open is not None
+        if checked:
             following = min([x for x in openings if x > a] + [off])
             recovered = temperature.first_from(
                 b, lambda value, reference=at_open: value >= reference, until=following,
@@ -387,6 +388,8 @@ def door_operations(session: SessionInput) -> list[dict]:
             "temperature_at_open_c": at_open,
             "loss_c": at_open - min(during) if during and at_open is not None else None,
             "recovered_seconds": None if recovered is None else recovered - b,
+            # Wiedererreichen geprüft (nicht Schlusslüften, Klasse und T beim Öffnen bekannt)
+            "recovery_checked": checked,
         })
     return result
 
@@ -406,6 +409,7 @@ def door_summary(operations: list[dict]) -> dict:
             "open_mean_seconds": _mean(x["open_seconds"] for x in selected),
             "open_max_seconds": max((x["open_seconds"] for x in selected), default=None),
             "recovered_count": len(recovered),
+            "recovery_checked_count": sum(1 for x in selected if x["recovery_checked"]),
             "recovered_mean_seconds": _mean(recovered),
         }
     return summary
@@ -722,6 +726,8 @@ def session_figures(session: SessionInput) -> dict:
         "energy_measured_kwh": session.measured_kwh,
         "energy_upper_bound": manual,
         "energy_check_kwh": heating_time / 3600 * power if power is not None else None,
+        # Q-P: Nennleistung der Gegenprobe, wie gespeichert (reine Ausgabe)
+        "nominal_power_kw": power,
         "cost_eur": (
             energy * session.price_eur_per_kwh
             if energy is not None and session.price_eur_per_kwh is not None else None
@@ -746,6 +752,8 @@ def session_figures(session: SessionInput) -> dict:
         "rejected_candidates": rejected_candidates(session),
         "doors": doors,
         "door_classes": door_summary(doors),
+        # K-T10 je Sitzung: Mittel des Verlusts über Ein- und Austritt
+        "door_loss_entry_exit_mean_c": _mean(_entry_exit_losses([{"doors": doors}])),
         "door_openings_warmup": (
             sum(1 for t in openings if heating_start <= t < warmup_end)
             if heating_start is not None and warmup_end is not None else None
@@ -758,10 +766,16 @@ def session_figures(session: SessionInput) -> dict:
     }
 
 
-def earlier_warmup(earlier: Iterable[dict]) -> dict:
-    """K-S10 „frühere Sitzungen“: Median von K-S9 mit Art und Betriebsart der Sitzungen."""
-    selected = [s for s in earlier if s["warmup_seconds"] is not None]
+def earlier_warmup(earlier: Iterable[dict], kind: str | None = None) -> dict:
+    """K-S10 „frühere Sitzungen“: Median von K-S9 mit Art und Betriebsart der Sitzungen.
+
+    Vergleiche nach Programmart getrennt (Katalog): es zählen nur frühere
+    Sitzungen derselben Programmart ``kind`` (K-S25; ohne Angabe ``None``).
+    """
+    selected = [s for s in earlier
+                if s["warmup_seconds"] is not None and program_kind(s) == kind]
     return {
+        "program_kind": kind,
         "median_seconds": (
             statistics.median(s["warmup_seconds"] for s in selected) if selected else None
         ),
@@ -822,6 +836,7 @@ def _record(items, key, choose=max):
 
 
 ENTRY_EXIT = ("entry", "exit")
+DAY_SECONDS = 24 * 3600.0
 
 
 def _local(started_at: str, zone: tzinfo) -> datetime:
@@ -835,6 +850,29 @@ def _seconds_of_day(local: datetime) -> float:
 def _entry_exit_losses(sessions: list[dict]) -> list[float]:
     return [d["loss_c"] for s in sessions for d in s["doors"]
             if d["door_class"] in ENTRY_EXIT and d["loss_c"] is not None]
+
+
+def start_quartiles(starts: Iterable[float]) -> list[float] | None:
+    """K-T6 „meist zwischen“: 1. und 3. Quartil der Beginnzeiten auf dem Tageskreis.
+
+    ``starts`` sind Sekunden seit Mitternacht (Ortszeit). Die Tagesgrenze liegt
+    in der größten Lücke zwischen zwei aufeinanderfolgenden Beginnzeiten, die
+    Lücke über Mitternacht eingeschlossen; bei gleich großen Lücken in der
+    ersten. Liegt sie nicht um Mitternacht, zählen die Beginnzeiten bis zu ihr
+    zum Vortag. Die Quartile werden zwischen den Beginnzeiten interpoliert und
+    als Sekunden seit Mitternacht geliefert.
+    """
+    ordered = sorted(starts)
+    if not ordered:
+        return None
+    if len(ordered) == 1:
+        return [ordered[0], ordered[0]]
+    gaps = [later - earlier for earlier, later in pairwise(ordered)]
+    gaps.append(ordered[0] + DAY_SECONDS - ordered[-1])
+    first = (gaps.index(max(gaps)) + 1) % len(ordered)
+    unrolled = ordered[first:] + [t + DAY_SECONDS for t in ordered[:first]]
+    quartiles = statistics.quantiles(unrolled, n=4, method="inclusive")
+    return [quartiles[0] % DAY_SECONDS, quartiles[2] % DAY_SECONDS]
 
 
 def _group_figures(selected: list[dict]) -> dict:
@@ -917,7 +955,7 @@ def statistics_figures(
     most_frequent = max(gang_counts.values(), default=0)
     locals_ = [(s, _local(s["started_at"], zone)) for s in compared]
     weekdays = Counter(local.isoweekday() for _, local in locals_)
-    starts = sorted(_seconds_of_day(local) for _, local in locals_)
+    starts = [_seconds_of_day(local) for _, local in locals_]
     longest_rest = _record(rests, "value")
     largest_loss = _record([d for d in entry_exit if d["loss_c"] is not None], "loss_c")
 
@@ -990,14 +1028,8 @@ def statistics_figures(
                 for s, local in locals_
             ],
             "weekday_sessions": [weekdays.get(day, 0) for day in range(1, 8)],
-            # Mittlere Hälfte der Beginnzeiten (Ortszeit): 1. bis 3. Quartil,
-            # zwischen den Beginnzeiten interpoliert.
-            "start_quartiles_seconds": (
-                [starts[0], starts[0]] if len(starts) == 1
-                else [q for i, q in enumerate(statistics.quantiles(
-                    starts, n=4, method="inclusive")) if i != 1]
-                if starts else None
-            ),
+            # Mittlere Hälfte der Beginnzeiten (Ortszeit) auf dem Tageskreis.
+            "start_quartiles_seconds": start_quartiles(starts),
             "most_frequent_gang_count": sorted(
                 count for count, n in gang_counts.items() if n == most_frequent
             ) if compared else None,
@@ -1089,7 +1121,7 @@ def statistics_figures(
                 "infusions_in_gangs": s["infusions_in_gangs"],
                 "energy_kwh": s["energy_kwh"],
                 "heating_share": s["heating_share"],
-                "door_loss_entry_exit_mean_c": _mean(_entry_exit_losses([s])),
+                "door_loss_entry_exit_mean_c": s["door_loss_entry_exit_mean_c"],
             }
             for s in compared
         ],

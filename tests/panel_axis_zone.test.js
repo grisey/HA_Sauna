@@ -307,8 +307,17 @@ test("tables, diagnostics, annotations and session labels use each fixed local z
     panel.historyIndex(records);
     panel.renderHistory(new Set(["status"]));
     panel.syncHistorySessions();
-    for (const selector of ["#gangs", "#event-list", "#session"])
-      assert.match(node(selector).innerHTML, new RegExp(clock));
+    assert.match(node("#session").innerHTML, new RegExp(clock));
+    // Gangtabelle und Ereignisliste entfallen (B3b); Gänge im Vergleich und die
+    // Auswahl zeigen die gelieferten Zeitpunkte in derselben Zone.
+    for (const selector of ["#gangs", "#event-list"])
+      assert.equal(node(selector).innerHTML, "");
+    assert.match(
+      panel.historyGangsMarkup({
+        gangs: [{ number: 1, start: { display: at, unit: "time" } }],
+      }),
+      new RegExp(`Gang 1 · ${clock}`),
+    );
     const model = {
       start: Date.parse(at),
       end: Date.parse(later),

@@ -604,6 +604,39 @@ const smoothAxis = (low, high, minimum, maximum) => {
     ),
   };
 };
+// Glatte Achse mit fester Zahl von Teilungen (V17): der kleinste Schritt aus
+// 1, 2, 2,5 und 5 × 10ⁿ (n ≥ 0, wie im Entwurf), der die Daten mit so vielen
+// Teilungen fasst; Schritte mit mehr Nachkommastellen als die Anzeigegenauigkeit
+// entfallen. Oben bündig (Temperatur) oder unten bündig (Feuchte), damit sich die
+// Kurven trennen.
+const fixedSmoothAxis = (low, high, intervals, alignTop, precision) => {
+  if (!Number.isFinite(low) || !Number.isFinite(high) || !(intervals >= 1)) return null;
+  if (high < low) [low, high] = [high, low];
+  const epsilon = 1e-9,
+    round = (value) => Number(value.toPrecision(12));
+  for (let exponent = 0; exponent <= 6; exponent++)
+    for (const unit of [1, 2, 2.5, 5]) {
+      const digits = Math.max(0, (unit === 2.5 ? 1 : 0) - exponent);
+      if (digits > precision) continue;
+      const step = unit * 10 ** exponent,
+        lower = Math.floor(low / step + epsilon),
+        upper = Math.ceil(high / step - epsilon);
+      if (upper - lower > intervals) continue;
+      const first = (alignTop ? upper - intervals : lower) * step,
+        last = first + intervals * step;
+      return {
+        first: round(first),
+        last: round(last),
+        step: round(step),
+        digits,
+        use: (high - low) / (last - first),
+        values: Array.from({ length: intervals + 1 }, (_, index) =>
+          round(first + index * step),
+        ),
+      };
+    }
+  return null;
+};
 // Übliche Uhrteilungen in Sekunden für Dauerachsen ab 0.
 const clockDivisions = Object.freeze(
   [1, 60]
@@ -647,6 +680,7 @@ const statisticPlaces = Object.freeze({
   "kWh/h": 1,
   mean: 1,
   min: 1,
+  kW: 1,
 });
 const statisticUnits = Object.freeze({
   "°C": "\u00a0°C",
@@ -657,6 +691,7 @@ const statisticUnits = Object.freeze({
   l: "\u00a0l",
   "°C/kWh": "\u00a0°C/kWh",
   "kWh/h": "\u00a0kWh",
+  kW: "\u00a0kW",
   min: "\u00a0min",
   share: "\u00a0%",
   "h:mm": "\u00a0h",
@@ -1245,6 +1280,14 @@ function HistoryInteraction(panel, surface, wrap, tooltip, cursor) {
           valueNumber.textContent = "–";
           value.append(valueNumber, valueUnit);
           row.append(label, value);
+          // Dieselbe Feuchte in der anderen Einheit (am Zeitpunkt).
+          const alternate =
+            quantity === "humidity" ? document.createElement("span") : null;
+          if (alternate) {
+            alternate.className = "history-tooltip-alternate";
+            alternate.hidden = true;
+            row.append(alternate);
+          }
           row.hidden = !new Set(panel.positions || ["upper"]).has(position);
           container.append(row);
           series.set(`${position}:${quantity}`, {
@@ -1253,6 +1296,7 @@ function HistoryInteraction(panel, surface, wrap, tooltip, cursor) {
             value,
             number: valueNumber,
             unit: valueUnit,
+            alternate,
           });
         }
       return series;
@@ -1412,6 +1456,13 @@ function HistoryInteraction(panel, surface, wrap, tooltip, cursor) {
       if (value)
         row.value.setAttribute("title", panel.tooltipWhen(value.time, timeZone));
       else row.value.removeAttribute("title");
+      if (row.alternate) {
+        const alternate = boundary === "value" ? measurement.alternate : null,
+          unit = panel.historyHumidityDisplay?.()?.mode === "absolute" ? "%" : "g/m³",
+          text = alternate ? `${number(alternate.value)} ${unit}` : "";
+        setText(row.alternate, text);
+        row.alternate.hidden = !text;
+      }
       if (row.row.hidden) row.row.hidden = false;
       visible.add(key);
     }
@@ -1606,6 +1657,26 @@ function HistoryInteraction(panel, surface, wrap, tooltip, cursor) {
       nodes = tooltipNodes(),
       timeZone = localTimeZone();
     if (!Number.isFinite(start) || !Number.isFinite(end)) return false;
+    if (completed) {
+      // Beendete Sitzung ohne Auswahl: die Kennzahlen stehen im Sitzungsbild;
+      // die Auswahl zeigt nur, wie man Werte im Diagramm erhält.
+      setText(
+        nodes.heading,
+        panel.historyInformationHeading(null, null, timeZone, information),
+      );
+      nodes.heading.hidden = false;
+      nodes.heading.removeAttribute("title");
+      tooltip.hidden = true;
+      tooltip.setAttribute("data-phase", "");
+      tooltip.setAttribute("data-selection", "overview");
+      tooltip.setAttribute("data-session-ended", "true");
+      showEvents([], timeZone);
+      showSnap([], timeZone);
+      state.tooltipVisible = false;
+      hideCursor();
+      panel.syncHistoryInformation(null, null, true, information);
+      return true;
+    }
     setText(
       nodes.heading,
       panel.historyInformationHeading(null, null, timeZone, information),
@@ -1858,7 +1929,9 @@ class HistoryChart {
     this.chromeKey = chromeKey;
     this.surface.setAttribute(
       "aria-label",
-      `Sitzungsverlauf: Temperatur und ${model.humidityMode === "absolute" ? "absolute" : "relative"} Luftfeuchte`,
+      model.plant
+        ? "Sitzungsverlauf: Temperatur gegen Soll"
+        : `Sitzungsverlauf: Temperatur und ${model.humidityMode === "absolute" ? "absolute" : "relative"} Luftfeuchte`,
     );
     const timeZone = localTimeZone(),
       valueScaleKey = JSON.stringify(model.valueScale);
@@ -1882,7 +1955,7 @@ class HistoryChart {
         });
     }
     const eventVisibilityKey = panel.historyEventVisibilityKey(),
-      annotationKey = `${model.width}:${model.height}:${model.left}:${model.right}:${model.top}:${model.bottom}:${valueScaleKey}:${model.start}:${model.end}:${panel.historyTimelineRevision}:${panel.historyRecords("phase").length}:${session.ended_at || panel.state.now}:${JSON.stringify(panel.shown.phase_projection || null)}:${timeZone}:${eventVisibilityKey}`,
+      annotationKey = `${model.plant}:${model.width}:${model.height}:${model.left}:${model.right}:${model.top}:${model.bottom}:${valueScaleKey}:${model.start}:${model.end}:${panel.historyTimelineRevision}:${panel.historyRecords("phase").length}:${session.ended_at || panel.state.now}:${JSON.stringify(panel.shown.phase_projection || null)}:${timeZone}:${eventVisibilityKey}`,
       phaseKey = `${annotationKey}:${geometry.canvas.cssWidth}:${geometry.canvas.cssHeight}`;
     if (annotationKey !== this.annotationKey) {
       panel.$("[data-history-annotations]").innerHTML = panel.historyAnnotations(
@@ -1900,6 +1973,7 @@ class HistoryChart {
       panel.updateMarkup("[data-history-band-names]", panel.historyBandNames(model));
       this.phaseKey = phaseKey;
     }
+    panel.syncHistoryChartHead(model);
     const legend = panel.$("#history-legends");
     const legendMarkup = panel.historyLegendMarkup();
     if (legend && legendMarkup !== this.legendMarkup) {
@@ -4563,7 +4637,7 @@ class SaunaPanel extends HTMLElement {
       .history-context-gangs:empty { display: none; }
       .history-context-gang { display: flex; flex-wrap: wrap; align-items: baseline; gap: ${this.preference("control_group_gap_px")}px ${this.preference("layout_space_13_px")}px; font-variant-numeric: tabular-nums; }
       .history-inspection { --history-heading-height: calc(${this.preference("font_size_small_px")}px * ${this.preference("body_line_height")}); --history-label-width: calc(${this.preference("font_size_compact_px")}px * ${this.preference("size_8_0_em")}); --history-value-width: calc(${this.preference("font_size_small_px")}px * ${this.preference("size_7_0_em")}); --history-value-columns: minmax(0, var(--history-label-width)) repeat(2, minmax(0, var(--history-value-width))); --history-readout-width: calc(var(--history-label-width) + var(--history-value-width) * 2 + ${this.preference("layout_space_13_px")}px * 2); box-sizing: border-box; display: grid; grid-template-columns: minmax(0, 1fr); align-items: start; inline-size: 100%; max-inline-size: calc(var(--history-readout-width) + ${this.preference("font_size_compact_px")}px * ${this.preference("size_20_0_em")} + ${this.preference("layout_space_13_px")}px * 3); gap: ${this.preference("layout_space_13_px")}px; margin-top: ${this.preference("layout_space_18_px")}px; padding: ${this.preference("layout_space_13_px")}px; border: ${this.preference("border_1_0_px")}px solid var(--sauna-color-border); border-radius: var(--sauna-control-radius); background: var(--sauna-surface-section); box-shadow: var(--sauna-shadow-section); }
-      .history-inspection:has(#tooltip[hidden]):has(#history-event-inspection[hidden]) { display: none; }
+      #history:not([data-main="history"]) .history-inspection:has(#tooltip[hidden]):has(#history-event-inspection[hidden]) { display: none; }
       .history-inspection:has(#tooltip[data-selection="overview"][data-session-ended="true"]) { --history-value-columns: minmax(0, var(--history-label-width)) minmax(0, var(--history-value-width)); --history-readout-width: calc(var(--history-label-width) + var(--history-value-width) + ${this.preference("layout_space_13_px")}px); }
       ${Object.entries(phaseAppearance)
         .map(
@@ -5802,6 +5876,99 @@ class SaunaPanel extends HTMLElement {
         .stat-axis-row > span:first-child { display: none; }
         .stat-axis [data-tick="odd"] { display: none; }
       }
+      /* Verlauf nach Entwurf B (B3b): Unteransichten, Kennzahlkarten, Diagrammkopf, Gänge, Auswahl. */
+      #history[data-main="history"] > .history-panel { display: grid; gap: var(--sauna-surface-gap); padding: 0; background: none; border: 0; box-shadow: none; }
+      #history[data-main="history"] .history-controls { display: flex; flex-wrap: wrap; align-items: center; margin: 0; }
+      #history[data-main="history"] .history-selection-actions { margin-inline-start: auto; }
+      .history-subviews button { white-space: nowrap; }
+      .history-figure-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(${this.preference("size_150_0_px")}px, 1fr)); gap: ${this.preference("layout_space_13_px")}px; }
+      .history-figure-grid[data-history-figures="plant"] { grid-template-columns: repeat(auto-fit, minmax(${this.preference("size_270_0_px")}px, 1fr)); }
+      .history-figure-grid > .card, .history-gang-row > .card { margin: 0; }
+      .history-figure-card .stat-value small, .history-gang-card .stat-value small { color: var(--sauna-card-muted-text); }
+      .history-figure-list { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: ${this.preference("layout_space_07_px")}px ${this.preference("layout_space_13_px")}px; margin: 0; font-size: ${this.preference("font_size_compact_px")}px; align-items: baseline; }
+      .history-figure-list dt { display: flex; align-items: center; gap: ${this.preference("control_group_gap_px")}px; margin: 0; color: var(--sauna-card-muted-text); }
+      .history-figure-list dd { margin: 0; min-width: 0; overflow-wrap: anywhere; font-variant-numeric: tabular-nums; }
+      .history-milestones { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: ${this.preference("layout_space_07_px")}px; }
+      .history-milestone { padding-block-start: ${this.preference("layout_space_07_px")}px; border-block-start: ${this.preference("size_4_0_px")}px solid var(--sauna-color-border); }
+      .history-milestone[data-milestone="ready"] { border-block-start-color: var(--sauna-color-phase-ready); }
+      .history-milestone[data-milestone="gang"] { border-block-start-color: var(--sauna-color-phase-session); }
+      .history-milestone p { margin: 0; }
+      .history-share-bar { display: flex; gap: ${this.preference("size_2_0_px")}px; height: ${this.preference("size_16_0_px")}px; border-radius: ${this.preference("radius_3_0_px")}px; overflow: hidden; }
+      .history-share-bar [data-share="below"] { background: var(--sauna-color-series-humidity); }
+      .history-share-bar [data-share="within"] { background: var(--sauna-color-phase-ready); }
+      .history-share-bar [data-share="above"] { background: var(--sauna-color-ui-heater-on); }
+      .history-share-labels { display: flex; justify-content: space-between; gap: ${this.preference("control_group_gap_px")}px; margin-block-start: ${this.preference("layout_space_07_px")}px; color: var(--sauna-card-muted-text); font-size: ${this.preference("font_size_small_px")}px; }
+      .history-door-table { font-size: ${this.preference("font_size_compact_px")}px; }
+      .history-diamond { display: inline-block; flex: 0 0 auto; width: ${this.preference("size_10_0_px")}px; height: ${this.preference("size_12_0_px")}px; fill: var(--sauna-color-event-infusion); }
+      .history-symbol { display: inline-block; flex: 0 0 auto; width: ${this.preference("size_16_0_px")}px; height: ${this.preference("size_8_0_px")}px; border-radius: ${this.preference("radius_2_0_px")}px; background: var(--sauna-color-event-door); }
+      .history-symbol[data-symbol="heater"] { background: var(--sauna-color-ui-heater-on); }
+      .history-diamonds { display: flex; flex-wrap: wrap; gap: ${this.preference("layout_space_07_px")}px; min-height: ${this.preference("size_12_0_px")}px; margin: 0; }
+      .history-gangs { display: grid; align-content: start; gap: ${this.preference("layout_space_09_px")}px; min-width: 0; }
+      .history-gang-row { display: flex; flex-wrap: wrap; gap: ${this.preference("control_group_gap_px")}px; align-items: stretch; }
+      .history-gang-card { flex: 1 1 ${this.preference("size_120_0_px")}px; display: grid; align-content: start; gap: ${this.preference("layout_space_09_px")}px; }
+      .history-gang-card .stat-value { font-size: ${this.preference("font_size_display_emphasis_px")}px; }
+      .history-gang-card[data-selected="true"] { border-color: var(--sauna-chart-focus, var(--accent)); }
+      .history-gang-card[data-selected="true"] > .stat-line:first-child { color: var(--sauna-chart-focus, var(--accent)); }
+      .history-rest { align-self: center; display: grid; justify-items: center; min-width: ${this.preference("size_48_0_px")}px; color: var(--sauna-card-muted-text); font-size: ${this.preference("font_size_small_px")}px; text-align: center; }
+      .history-rest strong { color: var(--sauna-card-text); font-size: ${this.preference("font_size_body_px")}px; font-weight: ${this.preference("font_weight_500_0_ratio")}; white-space: nowrap; }
+      #history[data-main="history"] .history-plot-frame { padding: ${this.preference("layout_space_09_px")}px ${this.preference("layout_space_13_px")}px; }
+      .history-chart-head { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: ${this.preference("control_group_gap_px")}px; padding-block-end: ${this.preference("layout_space_09_px")}px; }
+      .history-head-legend, .history-head-events { display: flex; flex-wrap: wrap; align-items: center; gap: ${this.preference("control_group_gap_px")}px; }
+      button.history-chip, .history-chip { display: inline-flex; align-items: center; gap: ${this.preference("layout_space_07_px")}px; min-height: ${this.preference("size_32_0_px")}px; padding: ${this.preference("layout_space_07_px")}px ${this.preference("layout_space_12_px")}px; border: ${this.preference("border_1_0_px")}px solid var(--sauna-color-border); border-radius: ${this.preference("radius_20_0_px")}px; background: transparent; color: var(--sauna-card-text); font: inherit; font-size: ${this.preference("font_size_compact_px")}px; font-weight: inherit; box-shadow: none; }
+      .history-chip-static { border-color: transparent; }
+      button.history-chip[aria-pressed="true"] { background: var(--sauna-surface-control); border-color: var(--sauna-color-border); }
+      button.history-chip[aria-pressed="false"] { color: var(--sauna-card-muted-text); }
+      .history-swatch { display: inline-block; flex: 0 0 auto; width: ${this.preference("size_16_0_px")}px; height: ${this.preference("size_3_0_px")}px; background: var(--sauna-color-series-temperature); }
+      .history-swatch[data-swatch="humidity"] { background: var(--sauna-color-series-humidity); }
+      .history-swatch[data-swatch="target"] { background: repeating-linear-gradient(90deg, var(--sauna-color-chart-threshold) 0 ${this.preference("threshold_dash_length_px")}px, transparent ${this.preference("threshold_dash_length_px")}px calc(${this.preference("threshold_dash_length_px")}px + ${this.preference("threshold_dash_gap_px")}px)); }
+      .history-swatch[data-swatch="door"] { height: ${this.preference("size_8_0_px")}px; border-radius: ${this.preference("radius_2_0_px")}px; background: var(--sauna-color-event-door); }
+      .history-swatch[data-swatch="heater"] { height: ${this.preference("size_8_0_px")}px; border-radius: ${this.preference("radius_2_0_px")}px; background: var(--sauna-color-ui-heater-on); }
+      .history-swatch[data-swatch="infusion"] { width: ${this.preference("size_10_0_px")}px; height: ${this.preference("size_12_0_px")}px; background: var(--sauna-color-event-infusion); clip-path: polygon(50% 0, 100% 50%, 50% 100%, 0 50%); }
+      #history[data-main="history"] [data-history-annotations] > rect:not(.door) { display: none; }
+      #history[data-main="history"] .history-phase-band-segment, #history[data-main="history"] button.history-phase-band-segment:hover:not(:disabled), #history[data-main="history"] button.history-phase-band-segment[aria-pressed="true"] { background: var(--history-phase-color); border-radius: ${this.preference("radius_3_0_px")}px; border-inline-end: ${this.preference("stroke_2_0_ratio")}px solid var(--sauna-color-chart-background); color: var(--sauna-color-text); font-weight: ${this.preference("font_weight_500_0_ratio")}; }
+      #history[data-subview="plant"] .history-inspection[data-history-selection-kind="overview"] { display: none; }
+      #history[data-main="history"] .chart .door { stroke: none; fill: color-mix(in srgb, var(--sauna-color-event-door) ${this.preference("color_mix_22_0_percent")}%, transparent); }
+      #history[data-main="history"] .chart .infusion { stroke-width: ${this.preference("stroke_1_0_ratio")}; stroke-opacity: ${this.preference("opacity_0_45_ratio")}; }
+      .history-target-line { fill: none; stroke: var(--sauna-color-chart-threshold); stroke-width: ${this.preference("stroke_2_0_ratio")}; stroke-dasharray: ${this.preference("threshold_dash_length_px")} ${this.preference("threshold_dash_gap_px")}; vector-effect: non-scaling-stroke; }
+      #history[data-main="history"] .history-lower-band { gap: ${this.preference("control_group_gap_px")}px; }
+      #history[data-main="history"] .history-lower-band .history-event-band-row { block-size: ${this.preference("event_marker_size_px")}px; pointer-events: auto; }
+      .history-event-band-row[data-history-lane="heater"] { background: linear-gradient(color-mix(in srgb, var(--sauna-color-ui-heater-off) ${this.preference("color_mix_24_0_percent")}%, transparent), color-mix(in srgb, var(--sauna-color-ui-heater-off) ${this.preference("color_mix_24_0_percent")}%, transparent)) center / 100% ${this.preference("history_compact_band_height_px")}px no-repeat; }
+      .history-lane-symbol { position: absolute; inset-block: 0; inset-inline-end: calc(100% + ${this.preference("control_group_gap_px")}px); width: ${this.preference("size_16_0_px")}px; margin: auto 0; height: ${this.preference("history_compact_band_height_px")}px; border-radius: ${this.preference("radius_2_0_px")}px; background: var(--history-event-color); }
+      .history-event-band-row[data-history-lane="infusion"] .history-lane-symbol { width: ${this.preference("size_10_0_px")}px; height: ${this.preference("size_12_0_px")}px; border-radius: 0; clip-path: polygon(50% 0, 100% 50%, 50% 100%, 0 50%); }
+      #history[data-main="history"] button.history-event-band-segment { inset-block: calc((${this.preference("event_marker_size_px")}px - ${this.preference("history_compact_band_height_px")}px) / 2); background: var(--history-event-color); border: 0; border-radius: ${this.preference("radius_2_0_px")}px; min-inline-size: ${this.preference("size_2_0_px")}px; }
+      #history[data-main="history"] button.history-event-band-segment > span { display: none; }
+      #history[data-main="history"] button.history-event-band-segment[data-history-event-kind="infusion"] { inset-block: 0; min-inline-size: ${this.preference("size_10_0_px")}px; translate: -50% 0; background: transparent; overflow: visible; }
+      #history[data-main="history"] button.history-event-band-segment[data-history-event-kind="infusion"]::after { content: ""; position: absolute; inset: 0; height: ${this.preference("size_12_0_px")}px; margin: auto 0; background: var(--history-event-color); clip-path: polygon(50% 0, 100% 50%, 50% 100%, 0 50%); }
+      #history[data-main="history"] button.history-event-band-segment[aria-pressed="true"], #history[data-main="history"] button.history-event-band-segment[data-snap-target="true"] { outline: ${this.preference("stroke_2_0_ratio")}px solid var(--sauna-chart-focus, var(--accent)); outline-offset: ${this.preference("stroke_1_0_ratio")}px; box-shadow: none; }
+      #history[data-main="history"] button.history-event-band-segment:hover:not(:disabled) { background: var(--history-event-color); }
+      #history[data-main="history"] button.history-event-band-segment[data-history-event-kind="infusion"]:hover:not(:disabled) { background: transparent; }
+      .history-below { display: flex; flex-wrap: wrap; gap: var(--sauna-surface-gap); align-items: stretch; }
+      .history-below > .history-gangs { flex: 2 1 ${this.preference("size_400_0_px")}px; }
+      #history[data-main="history"] .history-below > .history-inspection { flex: 1 1 ${this.preference("size_300_0_px")}px; align-self: stretch; align-content: start; max-inline-size: none; margin: 0; padding: ${this.preference("layout_space_18_px")}px ${this.preference("layout_space_20_px")}px; border-radius: var(--sauna-surface-radius); }
+      #history[data-main="history"] .history-inspection:not([data-history-selection-kind="overview"]) { border-color: var(--sauna-chart-focus, var(--accent)); }
+      #history[data-main="history"] .history-inspection:not(:has(.history-tooltip-time)) { display: none; }
+      .history-inspection-key { margin: 0; font-size: ${this.preference("font_size_small_px")}px; letter-spacing: ${this.preference("tracking_0_08_em")}em; text-transform: uppercase; color: var(--sauna-card-muted-text); }
+      #history[data-main="history"] .history-inspection:not([data-history-selection-kind="overview"]) .history-inspection-key { color: var(--sauna-chart-focus, var(--accent)); }
+      #history[data-main="history"] .history-inspection-heading { block-size: auto; }
+      #history[data-main="history"] .history-inspection-heading > .history-tooltip-time { white-space: normal; color: var(--sauna-card-text); font-size: ${this.preference("font_size_body_emphasis_px")}px; }
+      #history[data-main="history"] .history-inspection-content { grid-template-columns: minmax(0, 1fr); }
+      #history[data-main="history"] .history-event-column { padding-inline-start: 0; border-inline-start: 0; padding-block-start: ${this.preference("layout_space_09_px")}px; border-block-start: ${this.preference("border_1_0_px")}px solid var(--sauna-color-border); }
+      #history[data-main="history"] .history-event-column:not(:has(.history-tooltip-events:not([hidden]))):has(#history-event-inspection[hidden]) { display: none; }
+      #history[data-main="history"] #history-inspection:is([data-history-selection-kind="gang"], [data-history-selection-kind="overview"]) :is(.history-readout, .history-event-column) { display: none; }
+      #history[data-subview="plant"] .history-tooltip-values > div:has(> [data-quantity="humidity"]) { display: none; }
+      .history-tooltip-alternate { grid-column: 3; color: var(--sauna-card-muted-text); font-size: ${this.preference("font_size_compact_px")}px; text-align: right; white-space: nowrap; font-variant-numeric: tabular-nums; }
+      #tooltip[data-selection="range"] .history-tooltip-alternate { display: none; }
+      .history-selection-line { display: flex; align-items: center; gap: ${this.preference("control_group_gap_px")}px; margin: 0; color: var(--sauna-card-muted-text); font-size: ${this.preference("font_size_compact_px")}px; }
+      #history[data-main="history"] .history-session-summary { color: var(--sauna-card-text); }
+      #history-event-inspection [data-action^="event-row:"] { min-height: 0; padding: ${this.preference("layout_space_07_px")}px ${this.preference("layout_space_12_px")}px; font-size: ${this.preference("font_size_small_px")}px; }
+      @container (max-width: ${this.preference("breakpoint_700_0_px")}px) {
+        .history-below { flex-direction: column; }
+        #history[data-main="history"] .history-below > .history-inspection { order: -1; flex-basis: auto; }
+        .history-below > .history-gangs { flex-basis: auto; }
+        .history-rest { flex: 1 1 100%; grid-auto-flow: column; justify-content: center; gap: ${this.preference("control_group_gap_px")}px; }
+        .history-figure-grid[data-history-figures="session"] > .history-figure-card { padding: ${this.preference("layout_space_13_px")}px; }
+        .history-figure-grid[data-history-figures="session"] .stat-key { letter-spacing: 0; }
+      }
       .weather-picture { width: ${this.preference("size_60_0_px")}px; flex: 0 0 auto; overflow: visible; fill: none; stroke: var(--sauna-card-muted-text); stroke-width: ${this.preference("stroke_3_0_ratio")}; stroke-linecap: round; stroke-linejoin: round; }
       .weather-sun, .weather-moon, .weather-lightning { color: var(--accent); stroke: currentColor; }
       .weather-sun circle, .weather-moon { fill: color-mix(in srgb, var(--accent) ${this.preference("color_mix_18_0_percent")}%, transparent); }
@@ -5825,8 +5992,8 @@ class SaunaPanel extends HTMLElement {
       <header><div class="header-brand"><button class="header-icon" data-action="menu" aria-label="Home-Assistant-Seitenleiste umschalten" title="Home-Assistant-Seitenleiste umschalten" hidden><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h16M4 12h16M4 18h16"/></svg></button><h1 id="instance-title">Sauna</h1></div><nav class="tabs main-tabs" id="main-navigation" aria-label="Ansicht"><button data-action="overview" aria-current="page">Steuerung</button><button data-action="history">Verlauf</button><button data-action="statistics">Statistik</button><button data-action="details">Details</button><button data-action="settings">Einstellungen</button></nav><div class="header-context"><select id="instance" aria-label="Sauna auswählen"></select><button class="header-icon" data-action="fullscreen" aria-label="Vollbild" title="Vollbild" hidden><svg data-fullscreen-icon="enter" viewBox="0 0 24 24" aria-hidden="true"><path d="M8 3H3v5m13-5h5v5M3 16v5h5m13-5v5h-5"/></svg><svg data-fullscreen-icon="exit" viewBox="0 0 24 24" aria-hidden="true" hidden><path d="M3 8h5V3m8 0v5h5M8 21v-5H3m18 0h-5v5"/></svg></button></div></header>
       <nav class="tabs detail-tabs" aria-label="Detailansicht" hidden><button data-action="detail" aria-current="page">Betrieb & Fristen</button><button data-action="detail-history">Detailverlauf</button><button data-action="diagnostics">Erkennungskontrolle</button></nav>
       <div id="message" role="alert"></div><section id="current" aria-live="polite"><p>Lade Saunadaten …</p></section><section id="details" hidden></section>
-      <section id="history" hidden><div class="plot-panel history-panel"><div class="history-controls"><div class="history-session-choice"><label for="session">Sitzung vom</label><select id="session" aria-label="Saunasitzung auswählen"><option value="live">Letzte Sitzung</option></select></div><div class="history-selection-actions"><button data-action="clear-history-selection" hidden disabled>Auswahl aufheben</button></div><span id="history-loading" role="status" hidden></span></div><div class="history-plot-frame"><div id="plots"></div><div id="history-legends">${this.historyLegendMarkup()}</div></div>
-        <div class="history-inspection" id="history-inspection"><div class="history-inspection-heading"></div><div class="history-inspection-content"><div class="history-readout"><strong class="history-column-heading">Messwerte</strong><div id="tooltip" role="group" aria-label="Werte am markierten Zeitpunkt" hidden></div></div><div class="history-event-column"><strong class="history-column-heading">Ereignisse</strong><div class="history-event-readout"><div id="history-event-inspection" role="group" aria-label="Ereignisinspektion" aria-live="polite" hidden></div></div></div></div><div class="history-session-summary" data-history-session-summary hidden></div><div class="history-context-gangs" data-history-context-gangs></div></div></div><div id="control-history" hidden></div><div id="detection-plots" hidden></div><div id="gangs"></div><div id="event-list"></div>
+      <section id="history" hidden><div class="plot-panel history-panel"><div class="history-controls"><div class="history-subviews segmented-mode" role="group" aria-label="Unteransicht"><button type="button" data-action="history-subview:session" aria-pressed="true">Sitzung</button><button type="button" data-action="history-subview:plant" aria-pressed="false">Anlage</button></div><div class="history-session-choice"><label for="session">Sitzung vom</label><select id="session" aria-label="Saunasitzung auswählen"><option value="live">Letzte Sitzung</option></select></div><div class="history-selection-actions"><button data-action="clear-history-selection" hidden disabled>Auswahl aufheben</button></div><span id="history-loading" role="status" hidden></span></div><div id="history-figures" class="history-figures" aria-live="polite"></div><div class="history-plot-frame"><div id="history-chart-head" class="history-chart-head"></div><div id="plots"></div><div id="history-legends">${this.historyLegendMarkup()}</div></div>
+        <div class="history-below"><section id="history-gangs" class="history-gangs" aria-label="Gänge im Vergleich"></section><div class="history-inspection" id="history-inspection" aria-label="Auswahl"><p class="history-inspection-key">Auswahl</p><div class="history-inspection-heading"></div><div class="history-inspection-content"><div class="history-readout"><strong class="history-column-heading">Messwerte</strong><div id="tooltip" role="group" aria-label="Werte am markierten Zeitpunkt" hidden></div></div><div class="history-event-column"><strong class="history-column-heading">Ereignisse</strong><div class="history-event-readout"><div id="history-event-inspection" role="group" aria-label="Ereignisinspektion" aria-live="polite" hidden></div></div></div></div><div class="history-session-summary" data-history-session-summary hidden></div><div class="history-context-gangs" data-history-context-gangs></div></div></div></div><div id="control-history" hidden></div><div id="detection-plots" hidden></div><div id="gangs"></div><div id="event-list"></div>
       </section><section id="statistics" aria-label="Statistik" hidden></section><section id="settings" hidden></section>
     </main>`;
     this.shadowRoot.addEventListener("click", (e) => {
@@ -8147,6 +8314,662 @@ class SaunaPanel extends HTMLElement {
       "#statistics",
       `<div class="statistics"${loading ? ' aria-busy="true"' : ""}>${toolbar}${body}</div>`,
     );
+  }
+  // ---------- Verlauf nach Entwurf B (B3b): Kennzahlen aus dem Endpunkt key-figures ----------
+  // Das Panel formatiert nur gelieferte Anzeigewerte (G19); fehlende Werte als „–“.
+  historyKeyFigureId() {
+    const session = this.shown?.session;
+    return session?.ended_at ? session.timeline?.session_id || null : null;
+  }
+  historyKeyFigures() {
+    const id = this.historyKeyFigureId(),
+      data = this.keyFigureData;
+    return id && data?.sessionId === id && data.entry === this.entry ? data : null;
+  }
+  async loadHistoryKeyFigures() {
+    const id = this.historyKeyFigureId(),
+      entry = this.entry;
+    if (!id || !entry || this.navigation?.main !== "history") return;
+    const key = `${entry}|${id}|${this.shown.session.ended_at}|${this.historyTimelineRevision ?? ""}`;
+    if (this.keyFigureData?.key === key || this.keyFigureRequest?.key === key) return;
+    const request = { key };
+    this.keyFigureRequest = request;
+    this.historyFiguresKey = null;
+    let data;
+    try {
+      const result = await this.api(
+        `/${entry}/key-figures?session_id=${encodeURIComponent(id)}`,
+      );
+      data = { key, entry, sessionId: id, result };
+    } catch (error) {
+      data = {
+        key,
+        entry,
+        sessionId: id,
+        result: null,
+        error: error?.status_code === 404 ? null : errorText(error),
+      };
+    }
+    if (this.keyFigureRequest !== request) return;
+    this.keyFigureRequest = null;
+    this.keyFigureData = data;
+    this.historyFiguresKey = null;
+    this.scheduleHistoryRender("figures");
+  }
+  historyKeyFigureGangIds() {
+    // Reihenfolge wie im Backend: bestätigte, nicht aufgehobene Gänge der Zeitleiste.
+    const timeline = this.shown?.session?.timeline;
+    if (!timeline) return [];
+    const retracted = new Set((timeline.retracted || []).map((gang) => gang.gang_id));
+    return [
+      ...(timeline.completed || []),
+      ...(timeline.active ? [timeline.active] : []),
+    ]
+      .filter(
+        (gang) => gang.gang_id && !retracted.has(gang.gang_id) && gangConfirmed(gang),
+      )
+      .map((gang) => gang.gang_id);
+  }
+  historyGangNumber(gangId) {
+    const index = this.historyKeyFigureGangIds().indexOf(gangId);
+    return index < 0 ? null : index + 1;
+  }
+  historyKeyFigureGang(gangId) {
+    const number = this.historyGangNumber(gangId),
+      gangs = this.historyKeyFigures()?.result?.figures?.gangs || [];
+    return number ? gangs.find((gang) => gang.number === number) || null : null;
+  }
+  historySelectedGangNumber() {
+    const selection = this.historyValueSelection;
+    if (!selection?.phaseKey || selection.identity !== this.historyValueIdentity())
+      return null;
+    const phase = (this.shown?.phase_projection?.intervals || []).find(
+      (item) => this.historyPhaseKey(item) === selection.phaseKey,
+    );
+    return phase?.phase === "saunagang"
+      ? this.historyGangNumber(phase.source_id)
+      : null;
+  }
+  historyPhaseLabel(phase) {
+    if (!phase) return "";
+    if (phase.phase !== "saunagang") return phases[phase.phase] || phase.phase || "";
+    const number = this.historyGangNumber(phase.source_id);
+    return number ? `Saunagang ${number}` : phases.saunagang;
+  }
+  // Uhrzeit mit Sekunden; die Sekunden hängen von keiner Zeitzone ab.
+  historyClockSeconds(at, timeZone = localTimeZone()) {
+    const date = new Date(at);
+    return Number.isFinite(date.getTime())
+      ? `${this.clock(at, timeZone)}:${String(date.getUTCSeconds()).padStart(2, "0")}`
+      : "–";
+  }
+  // Uhrzeit eines gelieferten Zeitpunkts.
+  figureClock(figure, seconds = false, timeZone = localTimeZone()) {
+    const at = figure?.display;
+    if (!at) return "–";
+    return seconds ? this.historyClockSeconds(at, timeZone) : this.clock(at, timeZone);
+  }
+  // Sollwerte ohne „,0“ (Brett: „Soll 85 °C“), gemessene Werte mit ihrer Stelle.
+  setpointText(figure, unit = true) {
+    const display = figure?.display;
+    if (display == null) return "–";
+    return `${fixedNumber(display, Number.isInteger(display) ? 0 : (statisticPlaces[figure.unit] ?? 1))}${unit ? statisticUnits[figure.unit] || "" : ""}`;
+  }
+  // Abweichung vom Soll als Betrag mit „über“ oder „unter“ (nur Vorzeichen der Anzeige).
+  deviationText(figure) {
+    const display = figure?.display;
+    if (display == null) return "–";
+    return `${fixedNumber(Math.abs(display), statisticPlaces[figure.unit] ?? 1)} °C ${display < 0 ? "unter" : display > 0 ? "über" : "am"} Soll`;
+  }
+  // Wert mit Vorzeichen (+, −), etwa eine Abweichung vom Soll.
+  signedText(figure) {
+    const display = figure?.display;
+    if (display == null) return "–";
+    return `${display < 0 ? "−" : display > 0 ? "+" : "±"}${fixedNumber(Math.abs(display), statisticPlaces[figure.unit] ?? 1)}${statisticUnits[figure.unit] || ""}`;
+  }
+  figureBig(figure, suffix) {
+    const text = this.statisticNumber(figure, false),
+      unit =
+        suffix ??
+        (figure?.display == null ? "" : (statisticUnits[figure.unit] || "").trim());
+    return `${esc(text)}${figure?.display != null && unit ? `<small>${esc(unit)}</small>` : ""}`;
+  }
+  historyListText(items) {
+    return items.length < 2
+      ? items.join("")
+      : `${items.slice(0, -1).join(", ")} und ${items.at(-1)}`;
+  }
+  historyFigureCard(title, value, lines = [], extra = "") {
+    return `<section class="card stat-card history-figure-card" aria-label="${esc(title)}"><p class="stat-key">${esc(title)}</p><p class="stat-value">${value}</p>${extra}${lines
+      .filter(Boolean)
+      .map((line) => `<p class="stat-line">${line}</p>`)
+      .join("")}</section>`;
+  }
+  historyFigureList(rows) {
+    const shown = rows.filter(Boolean);
+    return shown.length
+      ? `<dl class="history-figure-list">${shown.map(([label, value]) => `<dt>${label}</dt><dd>${value}</dd>`).join("")}</dl>`
+      : "";
+  }
+  historySymbol(kind) {
+    return kind === "infusion"
+      ? '<svg class="history-diamond" viewBox="0 0 10 12" aria-hidden="true"><path d="M5 0 L10 6 L5 12 L0 6 Z"/></svg>'
+      : `<span class="history-symbol" data-symbol="${esc(kind)}" aria-hidden="true"></span>`;
+  }
+  // K-S25: Sollbezogene Werte nur, wenn die Sitzung einen Sollwert hat.
+  historyHasTarget(f) {
+    return (f?.targets_c || []).some((target) => target?.display != null);
+  }
+  historyProgramText(f) {
+    const program = f?.program;
+    if (program?.kind === "manual") return "Handbetrieb";
+    if (program?.kind === "constant") return "Konstant";
+    if (program?.kind === "program")
+      return program.name ? `Programm ${program.name}` : "Programm";
+    return "";
+  }
+  historyWarmupText(f) {
+    const kind = f.warmup_end_kind;
+    if (f.warmup_seconds?.display == null) return "";
+    return `${kind === "gang" ? "erster Gang" : "Bereit"} nach ${esc(this.statisticNumber(f.warmup_seconds))}`;
+  }
+  // Sitzungsbild (Brett „Verlauf · Sitzung“): Antwort in wenigen Zahlen.
+  historySessionFiguresMarkup(f, session) {
+    const gangs = f.gangs || [],
+      count = f.gang_count?.display ?? gangs.length,
+      hasTarget = this.historyHasTarget(f),
+      card = (title, value, lines) => this.historyFigureCard(title, value, lines),
+      text = (figure) => esc(this.statisticNumber(figure)),
+      perGang = gangs.map((gang) =>
+        esc(this.statisticNumber(gang.infusion_count, false)),
+      ),
+      position = f.maximum_temperature_position,
+      relation = position?.gang
+        ? `${{ in: "in", after: "nach", before: "vor" }[position.relation] || ""} Gang ${position.gang}`
+        : "",
+      rests = f.rests_seconds || [],
+      start = f.started_at || session.timeline?.session_started_at,
+      cards = [
+        card("Saunazeit", this.figureBig(f.sauna_time_seconds), [
+          count
+            ? `${esc(this.num(count, 0))} ${count === 1 ? "Gang" : "Gänge"}${f.gang_duration_mean_seconds?.display != null && count > 1 ? `, je ${text(f.gang_duration_mean_seconds)} im Mittel` : ""}`
+            : "Kein Saunagang",
+        ]),
+        card("Aufgüsse", this.figureBig(f.infusions_in_gangs), [
+          count === 1
+            ? `${perGang[0]} in Gang 1`
+            : count > 1
+              ? `${this.historyListText(perGang)} in den Gängen 1 ${count === 2 ? "und" : "bis"} ${count}`
+              : "",
+          f.infusions_total?.display != null &&
+          f.infusions_total.display !== f.infusions_in_gangs?.display
+            ? `${text(f.infusions_total)} in der ganzen Sitzung`
+            : "",
+        ]),
+        card("Höchsttemperatur", this.figureBig(f.maximum_temperature_c), [
+          [
+            f.maximum_temperature_at?.display
+              ? `um ${esc(this.figureClock(f.maximum_temperature_at))}`
+              : "",
+            esc(relation),
+            hasTarget && f.maximum_temperature_target_c?.display != null
+              ? `Soll ${esc(this.setpointText(f.maximum_temperature_target_c))}`
+              : "",
+          ]
+            .filter(Boolean)
+            .join(", "),
+        ]),
+        count > 1
+          ? card(
+              "Ruhe zwischen den Gängen",
+              this.figureBig(f.rest_mean_seconds, "min im Mittel"),
+              [
+                rests
+                  .map((rest, index) => `${text(rest)} nach Gang ${index + 1}`)
+                  .join(", "),
+              ],
+            )
+          : "",
+        card("Sitzung", this.figureBig(f.duration_seconds), [
+          [
+            start
+              ? `${esc(this.clock(start))} – ${session.ended_at ? esc(this.clock(session.ended_at)) : "–"}`
+              : "",
+            this.historyWarmupText(f),
+          ]
+            .filter(Boolean)
+            .join(", "),
+          esc(this.historyProgramText(f)),
+        ]),
+      ];
+    return `<div class="history-figure-grid" data-history-figures="session">${cards.join("")}</div>`;
+  }
+  // Gänge im Vergleich: je Gang Dauer, Aufgüsse, Soll, Eintritt, Austritt, Höchste,
+  // Feuchteanstieg und Wasser je Aufguss; dazwischen die Ruhe.
+  historyGangsMarkup(f) {
+    const gangs = f.gangs || [],
+      selected = this.historySelectedGangNumber(),
+      hasTarget = this.historyHasTarget(f),
+      rests = f.rests_seconds || [],
+      text = (figure) => esc(this.statisticNumber(figure)),
+      heading = '<p class="stat-key">Gänge im Vergleich</p>';
+    if (!gangs.length)
+      return `${heading}<p class="muted">Keine Saunagänge erkannt.</p>`;
+    const cards = gangs.map((gang, index) => {
+      const number = gang.number ?? index + 1,
+        chosen = number === selected,
+        infusions = gang.infusion_count?.display ?? 0,
+        rise =
+          gang.humidity_rise_mean_gm3?.display != null
+            ? `+${text(gang.humidity_rise_mean_gm3)} Feuchte${gang.water_mean_l?.display != null ? `, etwa ${text(gang.water_mean_l)} Wasser` : ""}`
+            : "–";
+      return `<article class="card history-gang-card" data-gang="${number}" data-selected="${chosen}" aria-label="Gang ${number}${chosen ? ", gewählt" : ""}"><p class="stat-line">Gang ${number} · ${esc(this.figureClock(gang.start))}${chosen ? " · gewählt" : ""}</p><p class="stat-value">${this.figureBig(gang.duration_seconds)}</p><p class="history-diamonds" role="img" aria-label="${esc(this.num(infusions, 0))} ${infusions === 1 ? "Aufguss" : "Aufgüsse"}">${Array.from({ length: infusions }, () => this.historySymbol("infusion")).join("")}</p>${this.historyFigureList(
+        [
+          hasTarget ? ["Soll", esc(this.setpointText(gang.target_c))] : null,
+          // K-G9: zeitgewichtetes Mittel von T − Soll im Gang (nur mit Sollwert).
+          hasTarget
+            ? [
+                "Abweichung",
+                gang.target_deviation?.mean_c?.display != null
+                  ? `${esc(this.signedText(gang.target_deviation.mean_c))} im Mittel`
+                  : "–",
+              ]
+            : null,
+          ["Eintritt", text(gang.entry_temperature_c)],
+          ["Austritt", text(gang.exit_temperature_c)],
+          ["Höchste", text(gang.highest_temperature_c)],
+          ["Je Aufguss", rise],
+        ],
+      )}</article>${index < gangs.length - 1 ? `<div class="history-rest"><span>Ruhe</span><strong>${text(rests[index])}</strong></div>` : ""}`;
+    });
+    return `${heading}<div class="history-gang-row">${cards.join("")}</div><p class="stat-line">Eintritt und Austritt: Temperatur beim Öffnen der Tür. „Je Aufguss“: mittlerer Anstieg der absoluten Feuchte oben bis zum Ende des Aufgusses und das Wasser, das dieser Anstieg in der Kabinenluft bedeutet.</p>`;
+  }
+  // Anlagenbild (Brett „Verlauf · Anlage“): Aufheizen, Regelung im Bereit, Heizen
+  // und Energie, Wärmeverlust durch die Tür.
+  historyPlantFiguresMarkup(f, settings = {}) {
+    const hasTarget = this.historyHasTarget(f),
+      kind = f.warmup_end_kind,
+      text = (figure) => esc(this.statisticNumber(figure)),
+      list = (rows) => this.historyFigureList(rows),
+      endLabel = kind === "gang" ? "Erster Gang" : "Bereit",
+      earlier = f.earlier_warmup || {},
+      kinds = earlier.kinds || [],
+      milestone = (at, label, value, color) =>
+        `<div class="history-milestone" data-milestone="${color}"><p class="stat-line">${esc(this.figureClock(at))} · ${esc(label)}</p><p>${value}</p></div>`,
+      warmup = this.historyFigureCard(
+        "Aufheizen",
+        this.figureBig(
+          f.warmup_seconds,
+          kind === "gang"
+            ? "h bis zum ersten Gang"
+            : kind === "ready"
+              ? "h bis Bereit"
+              : "h",
+        ),
+        [],
+        `<div class="history-milestones" role="group" aria-label="Verlauf des Aufheizens">${milestone(f.heating_started_at, "Beginn", text(f.start_temperature_c), "start")}${milestone(
+          f.warmup_end_at,
+          endLabel,
+          `${text(f.warmup_end_temperature_c)}${hasTarget && f.warmup_end_target_c?.display != null ? `, Soll ${esc(this.setpointText(f.warmup_end_target_c))}${kind === "ready" ? " erreicht" : ""}` : ""}`,
+          kind === "gang" ? "gang" : "ready",
+        )}</div>${list([
+          ["Außentemperatur", text(f.outside_temperature_c)],
+          // Nur frühere Sitzungen derselben Programmart; ohne solche entfällt die Zeile.
+          earlier.median_seconds?.display != null
+            ? [
+                "Frühere Sitzungen",
+                `${esc(this.statisticNumber(earlier.median_seconds))} ${kinds.length === 1 && kinds[0] === "gang" ? "bis zum ersten Gang" : kinds.length === 1 ? "bis Bereit" : "bis Bereit oder zum ersten Gang"} (Median aus ${esc(this.num(earlier.sessions, 0))} ${earlier.sessions === 1 ? "Sitzung" : "Sitzungen"}${programKindLabels[earlier.program_kind] ? `, ${esc(programKindLabels[earlier.program_kind])}` : ""})`,
+              ]
+            : null,
+          [
+            "Anstieg je kWh",
+            f.rise_per_kwh?.display != null
+              ? `${esc(fixedNumber(f.rise_per_kwh.display, statisticPlaces["°C/kWh"]))} °C`
+              : "–",
+          ],
+          [
+            "Türöffnungen",
+            f.door_openings_warmup?.display != null
+              ? `${text(f.door_openings_warmup)} während des Aufheizens`
+              : "–",
+          ],
+        ])}`,
+      ),
+      control = f.control_in_ready,
+      shares = ["below", "within", "above"].map((key) => control?.[key]?.display),
+      band =
+        control &&
+        control.hysteresis_c?.display != null &&
+        control.offset_c?.display != null
+          ? control.hysteresis_c.display === control.offset_c.display
+            ? `Soll ± ${esc(this.setpointText(control.offset_c))}`
+            : `Soll − ${esc(this.setpointText(control.hysteresis_c, false))} bis + ${esc(this.setpointText(control.offset_c))}`
+          : "–",
+      targets = (f.targets_c || []).filter((target) => target?.display != null),
+      regulation = !hasTarget
+        ? ""
+        : this.historyFigureCard(
+            "Regelung im Bereit",
+            control?.mean_c?.display != null
+              ? `${esc(fixedNumber(Math.abs(control.mean_c.display), 1))}<small>°C ${control.mean_c.display < 0 ? "unter" : control.mean_c.display > 0 ? "über" : "am"} Soll im Mittel</small>`
+              : "–",
+            [],
+            `${shares.every((share) => share != null) ? `<div class="history-band-shares"><div class="history-share-bar" role="img" aria-label="${esc(`${shares[0]} Prozent unter, ${shares[1]} Prozent im Regelband, ${shares[2]} Prozent über dem Regelband`)}">${shares.map((share, index) => `<span data-share="${["below", "within", "above"][index]}" style="width: ${share}%"></span>`).join("")}</div><div class="history-share-labels"><span>${esc(this.num(shares[0], 0))} % darunter</span><span>${esc(this.num(shares[1], 0))} % im Regelband</span><span>${esc(this.num(shares[2], 0))} % darüber</span></div></div>` : ""}${list(
+              [
+                [
+                  "Sollwerte",
+                  `${targets.map((target) => esc(this.setpointText(target, false))).join(", ")} °C${f.program?.name ? ` (${esc(f.program.name)})` : ""}`,
+                ],
+                ["Regelband", band],
+                [
+                  "Höchster Wert",
+                  control?.highest_c?.display != null
+                    ? `${esc(this.deviationText(control.highest_c))}, ${esc(this.figureClock(control.highest_at))}`
+                    : "–",
+                ],
+                [
+                  "Tiefster Wert",
+                  control?.lowest_c?.display != null
+                    ? `${esc(this.deviationText(control.lowest_c))}, ${esc(this.figureClock(control.lowest_at))}`
+                    : "–",
+                ],
+                [
+                  "Ausgewertet",
+                  control?.window_seconds?.display != null
+                    ? `${text(control.window_seconds)} Bereit, ohne Gänge, Ofenkühlung und offene Tür`
+                    : "–",
+                ],
+              ],
+            )}`,
+          ),
+      measured = (f.energy_measured_kwh?.display ?? 0) > 0,
+      cooling = f.oven_cooling || [],
+      inGangs = f.heating_in_gangs?.display,
+      price = settings?.electricity_price_eur_per_kwh,
+      energy = this.historyFigureCard(
+        "Heizen und Energie",
+        this.figureBig(f.energy_kwh, measured ? "kWh" : "kWh geschätzt"),
+        [
+          measured
+            ? `davon ${text(f.energy_measured_kwh)} gemessen`
+            : f.nominal_power_kw?.display != null
+              ? `Schätzung aus Heizzeit × ${esc(fixedNumber(f.nominal_power_kw.display, statisticPlaces.kW))} kW Nennleistung`
+              : "Schätzung aus der Heizzeit",
+          f.energy_upper_bound
+            ? "Im Handbetrieb eine obere Grenze, weil der Ofen selbst regeln kann."
+            : "",
+        ],
+        list([
+          [
+            "Heizzeit",
+            f.heating_time_seconds?.display != null
+              ? `${text(f.heating_time_seconds)}, ${text(f.heating_share)} der Sitzung`
+              : "–",
+          ],
+          [
+            "Aufheizen",
+            f.energy_warmup_kwh?.display != null
+              ? `${text(f.energy_warmup_kwh)} in ${text(f.warmup_seconds)}`
+              : "–",
+          ],
+          [
+            "Danach",
+            f.energy_after_warmup_kwh?.display != null
+              ? `${text(f.energy_after_warmup_kwh)}${f.heating_phases_after_warmup?.display != null ? `, ${text(f.heating_phases_after_warmup)} weitere ${f.heating_phases_after_warmup.display === 1 ? "Heizphase" : "Heizphasen"}` : ""}`
+              : "–",
+          ],
+          [
+            "In den Gängen",
+            inGangs == null
+              ? "–"
+              : inGangs === 100
+                ? "Ofen durchgehend an"
+                : inGangs === 0
+                  ? "Ofen aus"
+                  : `Ofen ${text(f.heating_in_gangs)} der Gangzeit an`,
+          ],
+          [
+            "Ofenkühlung",
+            cooling.length
+              ? `${cooling.length === 1 ? "einmal" : `${esc(this.num(cooling.length, 0))}-mal`}, ${cooling.map((item) => `${text(item.duration_seconds)}${item.gang ? ` nach Gang ${esc(this.num(item.gang, 0))}` : ""}`).join("; ")}`
+              : "keine",
+          ],
+          [
+            "Kosten",
+            f.cost_eur?.display != null
+              ? `${text(f.cost_eur)}${Number.isFinite(price) ? ` bei ${esc(fixedNumber(price, statisticPlaces["€"]))} €/kWh` : ""}`
+              : "ohne Strompreis",
+          ],
+        ]),
+      ),
+      classes = f.door_classes || {},
+      unclassified = (f.doors || []).filter((door) => door.door_class == null).length,
+      doorRows = [
+        ["Eintritt", classes.entry],
+        ["Austritt", classes.exit],
+        ["Sonstige", classes.other],
+        ["Schlusslüften", classes.final_ventilation],
+      ],
+      all = classes.all || {},
+      door = this.historyFigureCard(
+        "Wärmeverlust durch die Tür",
+        this.figureBig(
+          f.door_loss_entry_exit_mean_c,
+          "°C je Ein- oder Austritt im Mittel",
+        ),
+        [
+          "Verlust: Temperatur beim Öffnen minus tiefste bis kurz nach dem Schließen, solange der Fühler nachläuft. Wieder erreicht: Ausgangstemperatur vor der nächsten Öffnung; Schlusslüften zählt nicht.",
+        ],
+        `<div class="stat-door-table history-door-table"><span class="muted">Art</span><span class="muted">Anzahl</span><span class="muted">Verlust</span><span class="muted">offen</span>${doorRows
+          .map(
+            ([label, item]) =>
+              `<span>${label}</span><span>${text(item?.count)}</span><span>${text(item?.loss_mean_c)}</span><span>${text(item?.open_mean_seconds)}</span>`,
+          )
+          .join(
+            "",
+          )}${unclassified ? `<span>Ohne Art</span><span>${esc(this.num(unclassified, 0))}</span><span>–</span><span>–</span>` : ""}</div>${list(
+          [
+            [
+              "Türvorgänge",
+              all.count?.display != null
+                ? `${text(all.count)} in der ganzen Sitzung`
+                : "–",
+            ],
+            [
+              "Wieder erreicht",
+              all.recovery_checked_count?.display
+                ? `bei ${text(all.recovered_count)} von ${text(all.recovery_checked_count)}${all.recovered_count?.display ? `, nach ${text(all.recovered_mean_seconds)} im Mittel` : ""}`
+                : "–",
+            ],
+          ],
+        )}`,
+      );
+    return `<div class="history-figure-grid" data-history-figures="plant">${warmup}${regulation}${energy}${door}</div>`;
+  }
+  // Laufende oder unterbrochene Sitzung: Kennzahlen gibt es erst nach dem Ende.
+  historyOpenFiguresMarkup(session, plant) {
+    const timeline = session.timeline || {},
+      running =
+        this.state?.operation_enabled &&
+        timeline.session_id === this.state?.session?.timeline?.session_id,
+      gangs = (timeline.completed || []).filter(gangConfirmed).length,
+      start = timeline.session_started_at;
+    return `<div class="history-figure-grid" data-history-figures="${plant ? "plant" : "session"}">${this.historyFigureCard(
+      plant ? "Anlage" : "Sitzung",
+      running
+        ? `läuft<small>seit ${esc(start ? this.clock(start) : "–")}</small>`
+        : "unterbrochen",
+      [
+        plant
+          ? ""
+          : `${esc(this.num(gangs, 0))} ${gangs === 1 ? "Gang" : "Gänge"} abgeschlossen`,
+        running
+          ? "Die Kennzahlen stehen hier nach dem Ende der Sitzung."
+          : "Kennzahlen gibt es nur für beendete Sitzungen.",
+      ],
+    )}</div>`;
+  }
+  renderHistoryFigures() {
+    if (this.navigation?.main !== "history") return;
+    const session = this.shown?.session,
+      data = this.historyKeyFigures(),
+      plant = this.historySubview === "plant",
+      key = JSON.stringify([
+        plant,
+        this.entry,
+        session?.timeline?.session_id,
+        session?.ended_at,
+        (session?.timeline?.completed || []).length,
+        data?.key,
+        !!data?.result,
+        data?.error,
+        !!this.keyFigureRequest,
+        this.historySelectedGangNumber(),
+        localTimeZone(),
+      ]);
+    if (key === this.historyFiguresKey) return;
+    this.historyFiguresKey = key;
+    let figures = "",
+      gangs = "";
+    if (!session) figures = "";
+    else if (!session.ended_at) figures = this.historyOpenFiguresMarkup(session, plant);
+    else if (data?.result?.figures) {
+      const f = data.result.figures;
+      figures = plant
+        ? this.historyPlantFiguresMarkup(f, data.result.settings)
+        : this.historySessionFiguresMarkup(f, session);
+      gangs = plant ? "" : this.historyGangsMarkup(f);
+    } else if (data?.error)
+      figures = `<div class="notice" role="alert"><p>${esc(data.error)}</p></div>`;
+    else if (data)
+      figures = '<p class="muted">Für diese Sitzung liegen keine Kennzahlen vor.</p>';
+    else figures = '<p class="muted" role="status">Kennzahlen werden geladen …</p>';
+    this.updateMarkup("#history-figures", figures);
+    this.updateMarkup("#history-gangs", gangs);
+  }
+  // Diagrammkopf: Legende, Feuchteumschalter und Ereignisschalter (Sitzung) bzw.
+  // Legende Temperatur, Soll, Ofen, Tür (Anlage). Bedienung wie bisher (G6).
+  historyChartHeadMarkup(model) {
+    const item = (swatch, label) =>
+      `<span class="history-chip history-chip-static"><span class="history-swatch" data-swatch="${swatch}" aria-hidden="true"></span>${esc(label)}</span>`;
+    if (model.plant)
+      return `<div class="history-head-legend" aria-label="Legende">${item("temperature", "Temperatur")}${(this.shown?.session?.target_history || []).length ? item("target", "Soll") : ""}${item("heater", "Ofen heizt")}${item("door", "Tür offen")}</div>`;
+    const absolute = model.humidityMode === "absolute",
+      catalog = this.appearanceCatalog().history_events || {},
+      chips = ["infusion", "door", "heater"]
+        .filter((kind) => catalog[kind])
+        .map(
+          (kind) =>
+            `<button type="button" class="history-chip" data-action="history-event-category:${kind}" aria-pressed="${this.historyEventCategoryVisible(kind)}"><span class="history-swatch" data-swatch="${kind}" aria-hidden="true"></span>${esc(catalog[kind].label)}</button>`,
+        )
+        .join("");
+    return `<div class="history-head-legend">${item("temperature", "Temperatur °C")}<button type="button" class="history-chip" data-action="history-humidity" aria-pressed="${absolute}" title="${absolute ? "Auf relative Feuchte umschalten" : "Auf absolute Feuchte umschalten"}"><span class="history-swatch" data-swatch="humidity" aria-hidden="true"></span>${absolute ? "Absolute Feuchte g/m³ ⇄ %" : "Relative Feuchte % ⇄ g/m³"}</button></div><div class="history-head-events" role="group" aria-label="Ereignisse einblenden">${chips}</div>`;
+  }
+  syncHistoryChartHead(model) {
+    if (this.navigation?.main !== "history") return;
+    const key = JSON.stringify([
+      model.plant,
+      model.humidityMode,
+      this.historyEventVisibilityKey(),
+      !!(this.shown?.session?.target_history || []).length,
+    ]);
+    if (key === this.historyChartHeadKey && this.$("#history-chart-head")?.innerHTML)
+      return;
+    this.historyChartHeadKey = key;
+    this.updateMarkup("#history-chart-head", this.historyChartHeadMarkup(model));
+  }
+  // Auswahlkarte: bei einem Gang nur, was seine Karte nicht hat (Aufgusszeiten,
+  // Tür, Feuchte); am Punkt die Aufgüsse bis hier (K-Z3); im Zeitraum Anfang,
+  // Ende und Ereignisse. Werte stammen aus key-figures oder den Messreihen.
+  historySelectionKind(selection, phase, overview, content) {
+    if (overview) return content?.completed ? "overview" : "current";
+    if (!selection) return "overview";
+    if (selection.eventIds?.length) return "event";
+    if (
+      selection.kind === "range" &&
+      selection.phaseKey &&
+      phase?.phase === "saunagang" &&
+      this.historyKeyFigureGang(phase.source_id)
+    )
+      return "gang";
+    return selection.kind === "range" ? "range" : "point";
+  }
+  historySelectedGangOwner(phase) {
+    const timeline = this.shown?.session?.timeline;
+    return [...(timeline?.completed || []), timeline?.active].find(
+      (gang) => gang?.gang_id && gang.gang_id === phase?.source_id,
+    );
+  }
+  historySelectedGangBounds(phase) {
+    const owner = this.historySelectedGangOwner(phase);
+    return owner ? this.historyGangBounds(this.shown.session, owner) : null;
+  }
+  historySelectionFiguresMarkup(kind, selection, phase) {
+    if (kind === "overview")
+      return '<p class="muted">Zeigen oder Tippen ins Diagramm zeigt die Werte zu einem Zeitpunkt; eine Phase, ein Ereignis oder ein gezogener Zeitraum zeigt die Werte darin.</p>';
+    if (kind === "gang") {
+      const gang = this.historyKeyFigureGang(phase.source_id),
+        inner = gang.inner_door_openings?.display,
+        door = [
+          gang.entry_opening?.display
+            ? `Eintritt ${esc(this.figureClock(gang.entry_opening))}`
+            : "",
+          inner ? `${esc(this.num(inner, 0))} × kurz offen` : "",
+          gang.exit_opening?.display
+            ? `Austritt ${esc(this.figureClock(gang.exit_opening))}`
+            : "",
+        ].filter(Boolean),
+        humidity = gang.highest_humidity_percent?.display;
+      return this.historyFigureList([
+        [
+          `${this.historySymbol("infusion")}Aufgüsse`,
+          (gang.infusions || []).length
+            ? gang.infusions.map((at) => esc(this.figureClock(at))).join(" · ")
+            : "keine",
+        ],
+        [`${this.historySymbol("door")}Tür`, door.length ? door.join(", ") : "–"],
+        [
+          "Feuchte",
+          humidity != null
+            ? `bis ${esc(this.statisticNumber(gang.highest_humidity_percent))}${gang.absolute_humidity_at_highest_gm3?.display != null ? ` (${esc(this.statisticNumber(gang.absolute_humidity_at_highest_gm3))})` : ""}`
+            : "–",
+        ],
+      ]);
+    }
+    if (
+      kind === "range" &&
+      selection?.phaseKey &&
+      phase?.phase === "saunagang" &&
+      !this.shown?.session?.ended_at
+    ) {
+      // Laufende Sitzung (noch ohne key-figures): Bestätigung und Beginn des Gangs.
+      const owner = this.historySelectedGangOwner(phase),
+        bounds = owner ? this.historyGangBounds(this.shown.session, owner) : null;
+      if (owner && bounds)
+        return `<p class="history-selection-line" data-history-selected-gang data-gang-id="${esc(owner.gang_id)}" data-start="${esc(bounds.startedAt || "")}">${gangConfirmed(owner) ? "Bestätigt" : "Vorläufig"} · Beginn ${bounds.startedAt ? `<time datetime="${esc(bounds.startedAt)}" title="${esc(this.tooltipWhen(bounds.start))}">${esc(this.clock(bounds.start))}</time>` : "nicht belegt"}</p>`;
+    }
+    if (kind === "point" && phase?.phase === "saunagang") {
+      // K-Z3: Aufgüsse des Gangs bis zum Zeitpunkt aus der gelieferten Liste.
+      const gang = this.historyKeyFigureGang(phase.source_id),
+        owner = [
+          ...(this.shown?.session?.timeline?.completed || []),
+          this.shown?.session?.timeline?.active,
+        ].find((item) => item?.gang_id === phase.source_id),
+        times = (
+          gang
+            ? (gang.infusions || []).map((at) => at.display)
+            : (owner?.infusion_events || []).map((event) => event.effective_at)
+        )
+          .map(stamp)
+          .filter((at) => Number.isFinite(at) && at <= selection.start)
+          .sort((a, b) => a - b);
+      return `<p class="history-selection-line">${this.historySymbol("infusion")}${
+        times.length
+          ? `${esc(this.num(times.length, 0))} ${times.length === 1 ? "Aufguss" : "Aufgüsse"} bis hier · zuletzt ${esc(this.historyClockSeconds(times.at(-1)))}`
+          : "Noch kein Aufguss in diesem Gang"
+      }</p>`;
+    }
+    return "";
   }
   renderDetailView(view) {
     if (this.state?.configuration_model?.regulation_causes?.length === 0) {
@@ -10646,7 +11469,7 @@ class SaunaPanel extends HTMLElement {
     return `<section id="detail-heating-cycles"><h3>Heizzyklen · ${selection ? "Ausgewählter Zeitraum" : "Sitzung"}</h3><p>${complete.length} vollständig belegte Ein-/Aus-Intervalle · Mittlere Länge: ${mean === null ? "Kein vollständig belegtes Intervall" : `${this.num(mean, this.preference("detail_value_precision"))} min`}</p><p class="muted">${this.clock(start)} – ${this.clock(end)} · Nicht im Mittel: ${open} offen, ${clipped} angeschnitten, ${unknown} ohne bestätigtes Aus beendet.</p></section>`;
   }
   renderSessionEvidenceContents(session) {
-    const measuredPower = this.historyInformationContent()?.measuredPower;
+    const measuredPower = this.historyMeasuredPower();
     const groups = [
       [
         "energy",
@@ -11222,299 +12045,39 @@ class SaunaPanel extends HTMLElement {
       ];
     });
   }
-  historySectionStatistics(start, end, position) {
-    const records = this.shown?.records || [];
-    if (
-      this.chartDataIndex?.records !== records ||
-      this.chartDataIndex.indexedCount !== records.length
-    )
-      this.historyIndex(records);
-    const session = this.shown?.session,
-      index = this.chartDataIndex,
-      hasMeasurementContext = !!session && "measurement_context" in session,
-      ttlSeconds = hasMeasurementContext
-        ? session.measurement_context?.sensor_timeout_seconds
-        : session?.configuration?.parameters?.sensor_timeout_seconds,
-      ttl =
-        typeof ttlSeconds === "number" && Number.isFinite(ttlSeconds) && ttlSeconds >= 0
-          ? ttlSeconds * 1000
-          : null,
-      targets = session?.target_history || [],
-      key = JSON.stringify([
-        this.historyValueIdentity(),
-        start,
-        end,
-        position,
-        ttl,
-        !!this.historyLoad,
-        [...index.seriesState].map(([name, state]) => [name, state.revision]),
-        targets,
-        session?.configuration?.bindings,
-        hasMeasurementContext,
-        session?.measurement_context,
-      ]);
-    if (this.historySectionStatisticsCache?.key === key)
-      return this.historySectionStatisticsCache.value;
-    const unavailable = (reason) => ({ reason }),
-      empty = {
-        temperature: unavailable("Kein belegter Zeitraum"),
-        difference: unavailable("Kein belegter Zeitraum"),
-        target: unavailable("Kein belegter Zeitraum"),
-        humidityLoss: unavailable("Kein belegter Zeitraum"),
-      };
-    if (hasMeasurementContext && session.measurement_context === null)
-      return Object.fromEntries(
-        Object.keys(empty).map((name) => [
-          name,
-          unavailable("Historischer Messkontext nicht belegt"),
-        ]),
-      );
-    if (!(Number.isFinite(start) && Number.isFinite(end) && end > start)) return empty;
-    if (this.historyLoad)
-      return Object.fromEntries(
-        Object.keys(empty).map((name) => [
-          name,
-          unavailable("Aufzeichnung wird geladen"),
-        ]),
-      );
-    // These are read projections of original observations. Curve indexes omit
-    // nulls and cannot prove coverage, source continuity or causal boundaries.
-    const original = (role, quantity) => {
-      const values = this.series(role, quantity),
-        absolute = quantity === "absolute_humidity",
-        first = this.historyMeasurementAt(role, quantity, start, true, true),
-        last = this.historyMeasurementAt(role, quantity, end, true, true),
-        valid = (point) =>
-          point?.value != null &&
-          Number.isFinite(point.value) &&
-          point.source?.available !== false,
-        identity = first?.source?.source,
-        sourceRole = `${role}_${quantity}`,
-        expectedSource = session?.configuration?.bindings?.[sourceRole],
-        publicProof = session?.measurement_context?.roles?.includes(sourceRole),
-        sourceMatches = (point) =>
-          (!hasMeasurementContext || publicProof) &&
-          (typeof expectedSource === "string" && expectedSource
-            ? point?.source?.source === expectedSource
-            : publicProof && point?.source?.source_matches_binding === true);
-      if (!absolute && ttl === null)
-        return unavailable("Historische Gültigkeitsfrist fehlt");
-      if (!valid(first)) return unavailable("Gültiger Originalwert am Beginn fehlt");
-      if (!absolute && !sourceMatches(first))
-        return unavailable("Messquelle entspricht nicht der archivierten Zuordnung");
-      const spans = [];
-      let current = first,
-        from = start,
-        offset = upperBoundHistory(values, start);
-      const append = (to) => {
-        if (!valid(current)) return unavailable("Messlücke im Zeitraum");
-        if (
-          !absolute &&
-          (!sourceMatches(current) || (identity && current.source?.source !== identity))
-        )
-          return unavailable("Messquelle wechselt im Zeitraum");
-        const until = absolute ? current.validUntil : current.time + ttl;
-        if (!Number.isFinite(until) || until < to)
-          return unavailable("Gültigkeitslücke im Zeitraum");
-        if (to > from) spans.push({ start: from, end: to, value: current.value });
-        from = to;
-        return null;
-      };
-      while (offset < values.length && values[offset].time < end) {
-        const time = values[offset].time;
-        const failure = append(time);
-        if (failure) return failure;
-        let next = values[offset++];
-        while (offset < values.length && values[offset].time === time) {
-          if (values[offset].serial > next.serial) next = values[offset];
-          offset++;
-        }
-        current = next;
-      }
-      const failure = append(end);
-      if (failure) return failure;
-      const endpointReason = !valid(last)
-        ? "Gültiger Originalwert am Ende fehlt"
-        : !absolute &&
-            (!sourceMatches(last) || (identity && last.source?.source !== identity))
-          ? "Messquelle wechselt am Ende"
-          : null;
-      return { first, last, spans, endpointReason };
-    };
-    const combine = (left, right) => {
-      if (left.reason || right.reason) return unavailable(left.reason || right.reason);
-      let a = 0,
-        b = 0,
-        total = 0,
-        signed = 0,
-        absolute = 0,
-        minimum = Infinity,
-        maximum = -Infinity;
-      while (a < left.spans.length && b < right.spans.length) {
-        const x = left.spans[a],
-          y = right.spans[b],
-          from = Math.max(x.start, y.start),
-          to = Math.min(x.end, y.end),
-          delta = x.value - y.value;
-        if (to > from) {
-          total += to - from;
-          signed += delta * (to - from);
-          absolute += Math.abs(delta) * (to - from);
-          minimum = Math.min(minimum, delta);
-          maximum = Math.max(maximum, delta);
-        }
-        if (x.end <= y.end) a++;
-        if (y.end <= x.end) b++;
-      }
-      return total === end - start
-        ? { mean: signed / total, meanAbsolute: absolute / total, minimum, maximum }
-        : unavailable("Gemeinsamer Zeitraum nicht vollständig belegt");
-    };
-    const temperature = original(position, "temperature"),
-      upper = position === "upper" ? temperature : original("upper", "temperature"),
-      lower = position === "lower" ? temperature : original("lower", "temperature"),
-      humidity = original(position, "humidity"),
-      absolute = original(position, "absolute_humidity"),
-      endpointFailure = (...runs) =>
-        runs.find((run) => run.reason || run.endpointReason),
-      temperatureFailure = endpointFailure(temperature),
-      humidityFailure = endpointFailure(temperature, humidity, absolute),
-      result = { ...empty, difference: combine(upper, lower) };
-    result.temperature = temperatureFailure
-      ? unavailable(temperatureFailure.reason || temperatureFailure.endpointReason)
-      : {
-          change: temperature.last.value - temperature.first.value,
-          perMinute:
-            (temperature.last.value - temperature.first.value) /
-            ((end - start) / 60000),
-          first: temperature.first,
-          last: temperature.last,
-        };
-    if (humidityFailure)
-      result.humidityLoss = unavailable(
-        humidityFailure.reason || humidityFailure.endpointReason,
-      );
-    else {
-      const loss = temperature.first.value - temperature.last.value,
-        humidityLoss = absolute.first.value - absolute.last.value;
-      result.humidityLoss =
-        loss > 0 && humidityLoss > 0
-          ? {
-              value: humidityLoss / loss,
-              temperatureLoss: loss,
-              absoluteLoss: humidityLoss,
-            }
-          : unavailable(
-              "Keine gemeinsame Nettoabnahme von Temperatur und absoluter Feuchte",
-            );
-    }
-    const bindings = session?.configuration?.bindings,
-      regulationRole = hasMeasurementContext
-        ? session.measurement_context?.regulation_position
-        : bindings?.upper_temperature
-          ? "upper"
-          : bindings?.lower_temperature
-            ? "lower"
-            : null,
-      regulation =
-        regulationRole === "upper" ? upper : regulationRole === "lower" ? lower : null;
-    if (!regulation || regulation.reason) {
-      result.target = unavailable(
-        "Historische Regeltemperaturquelle nicht durchgehend belegt",
-      );
-    } else {
-      const marks = targets
-          .map((mark, serial) => ({
-            time: stamp(mark.at),
-            value: mark.target_c,
-            serial,
-          }))
-          .filter((mark) => Number.isFinite(mark.time))
-          .sort((a, b) => a.time - b.time || a.serial - b.serial),
-        spans = [];
-      let at = upperBoundHistory(marks, start),
-        mark = marks[at - 1],
-        from = start,
-        reason = null;
-      const append = (to) => {
-        if (typeof mark?.value !== "number" || !Number.isFinite(mark.value))
-          reason = "Gebuchter Sollwert im Zeitraum nicht belegt";
-        else if (to > from) spans.push({ start: from, end: to, value: mark.value });
-        from = to;
-      };
-      while (at < marks.length && marks[at].time < end) {
-        append(marks[at].time);
-        const time = marks[at].time;
-        do {
-          mark = marks[at++];
-        } while (at < marks.length && marks[at].time === time);
-      }
-      append(end);
-      result.target = reason ? unavailable(reason) : combine(regulation, { spans });
-    }
-    this.historySectionStatisticsCache = { key, value: result };
-    return result;
-  }
+  // Inhalt der Auswahlkarte. Kennzahlen (Energie, Maximum, Sollabweichung,
+  // Temperaturänderung) rechnet das Panel nicht mehr (B1, R-02 bis R-10); es zeigt
+  // Messwerte am Zeitpunkt oder an den Grenzen des Zeitraums.
   historyInformationContent(selection = null, phase = null) {
     const session = this.shown?.session;
     if (!session) return null;
-    const rows = this.historyGangRows(selection),
-      range = selection?.kind === "range",
-      selectedGang =
-        range &&
-        phase?.phase === "saunagang" &&
-        typeof phase.source_id === "string" &&
-        phase.source_id
-          ? rows.find((row) => row.gang.gang_id === phase.source_id)
-          : null,
-      singleGang = !!selectedGang,
-      start = selection ? selection.start : stamp(session.timeline.session_started_at),
-      end = selection ? selection.end : stamp(session.ended_at || this.state.now),
-      label = !selection
-        ? "Sitzung"
-        : singleGang
-          ? selectedGang.label
-          : range
-            ? phases[phase?.phase] || "Ausgewählter Zeitraum"
-            : phases[phase?.phase] || "Punkt",
-      energy = !selection
-        ? session.energy
-        : range && selection.identity === this.historyValueIdentity()
-          ? energyForHistoryRange(session.energy, start, end, selection.identity)
-          : null,
-      measuredEnergy = !selection
-        ? energyForHistoryRange(
-            session.energy,
-            session.timeline.session_started_at,
-            session.energy?.accounted_at,
-            this.historyValueIdentity(),
-          )
-        : energy;
+    const start = selection
+        ? selection.start
+        : stamp(session.timeline.session_started_at),
+      end = selection ? selection.end : stamp(session.ended_at || this.state.now);
     return {
       session,
       selection,
-      rows,
-      singleGang,
-      selectedGang,
       start,
       end,
-      label,
       completed: !!session.ended_at,
       durationSeconds: (end - start) / 1000,
-      gangCount: session.timeline.completed.filter(gangConfirmed).length,
       measurements: this.historyMeasurementContent(selection, true),
-      energy,
-      measuredPower: measuredEnergy?.measured_power || null,
-      sectionStatistics:
-        !selection || range
-          ? this.historySectionStatistics(
-              start,
-              end,
-              this.historyPrimaryPosition(session),
-            )
-          : null,
       sectionPhase: phase?.phase || null,
     };
+  }
+  // Gemessene Leistung der Sitzung für Details · Sitzungsdaten (R-02, Paket B4).
+  historyMeasuredPower() {
+    const session = this.shown?.session;
+    if (!session) return null;
+    return (
+      energyForHistoryRange(
+        session.energy,
+        session.timeline.session_started_at,
+        session.energy?.accounted_at,
+        this.historyValueIdentity(),
+      )?.measured_power || null
+    );
   }
   historyInformationHeading(
     selection,
@@ -11523,16 +12086,24 @@ class SaunaPanel extends HTMLElement {
     content = this.historyInformationContent(selection, phase),
   ) {
     if (!content) return "";
-    const times =
-        selection?.kind === "point"
-          ? this.clock(content.start, timeZone)
-          : `${this.clock(content.start, timeZone)} – ${this.clock(content.end, timeZone)}`,
-      durationText = !selection
-        ? duration(content.durationSeconds)
-        : content.singleGang
-          ? content.selectedGang.durationText
-          : "";
-    return `${content.label} · ${times}${durationText ? ` · ${durationText}` : ""}`;
+    if (!selection)
+      return content.completed
+        ? "Keine Auswahl"
+        : `Sitzung · seit ${this.clock(content.start, timeZone)}`;
+    const label = this.historyPhaseLabel(phase),
+      seconds = (at) => this.historyClockSeconds(at, timeZone);
+    if (selection.kind === "point")
+      return `${seconds(content.start)}${label ? ` · ${label}` : ""}`;
+    if (selection.phaseKey && phase?.phase === "saunagang") {
+      // Gewählter Gang: seine Grenzen aus key-figures, sonst aus der Gangprojektion.
+      const gang = this.historyKeyFigureGang(phase.source_id);
+      if (gang)
+        return `${label} · ${this.figureClock(gang.start, true, timeZone)} – ${gang.end?.display ? this.figureClock(gang.end, true, timeZone) : "Ende nicht belegt"}`;
+      const bounds = this.historySelectedGangBounds(phase);
+      if (bounds)
+        return `${label} · ${Number.isFinite(bounds.start) ? seconds(bounds.start) : "Beginn nicht belegt"} – ${Number.isFinite(bounds.end) ? seconds(bounds.end) : bounds.ongoing ? "läuft" : "Ende nicht belegt"}`;
+    }
+    return `${label || "Ausgewählter Zeitraum"} · ${seconds(content.start)} – ${seconds(content.end)}`;
   }
   syncHistoryInformation(
     selection = null,
@@ -11541,109 +12112,13 @@ class SaunaPanel extends HTMLElement {
     content = this.historyInformationContent(selection, phase),
   ) {
     if (!content) return;
-    const {
-        rows,
-        singleGang,
-        selectedGang: selectedGangRow,
-        gangCount,
-        energy,
-        measuredPower,
-        measurements,
-      } = content,
-      range = selection?.kind === "range",
+    const kind = this.historySelectionKind(selection, phase, overview, content),
+      markup = this.historySelectionFiguresMarkup(kind, selection, phase),
       summary = this.$("[data-history-session-summary]");
-    if (summary) summary.hidden = !(overview || range);
-    if (overview || range) {
-      const valueRow = (
-          key,
-          label,
-          value,
-          unit = "",
-          reference = "",
-          status = "Nicht verfügbar",
-        ) =>
-          `<div data-key="history-information-${esc(key)}"${key === "energy" ? " data-history-energy" : ""}><span data-history-label>${esc(label)}</span>${Number.isFinite(value) ? `<span class="history-tooltip-value"><span class="history-tooltip-number">${this.historyReadoutNumber(value)}</span><span class="history-tooltip-unit">${esc(unit)}</span></span>${reference ? `<span class="history-information-reference">${reference}</span>` : ""}` : `<span class="history-information-status">${esc(status)}</span>`}</div>`,
-        energyValue =
-          energy &&
-          Number.isFinite(energy.measured_kwh) &&
-          Number.isFinite(energy.estimated_kwh) &&
-          !(
-            energy.unknown_seconds > 0 &&
-            !(energy.measured_seconds > 0 || energy.estimated_seconds > 0)
-          )
-            ? energy.measured_kwh + energy.estimated_kwh
-            : null,
-        energyReference = overview
-          ? energy?.accounted_at
-            ? `bis ${this.clock(energy.accounted_at)}`
-            : "Zeitstand nicht aufgezeichnet"
-          : `${this.clock(content.start)} – ${this.clock(content.end)}`,
-        maximumRows = !range
-          ? ""
-          : [...measurements]
-              .filter(([, measurement]) => measurement.quantity === "temperature")
-              .map(([key, measurement]) =>
-                valueRow(
-                  `maximum-${key}`,
-                  `Temperaturmaximum${this.historyDetail ? ` ${measurement.position === "upper" ? "oben" : "unten"}` : ""}`,
-                  measurement.maximum?.value,
-                  "°C",
-                  measurement.maximum
-                    ? `<time title="${esc(this.tooltipWhen(measurement.maximum.time))}">um ${this.clock(measurement.maximum.time)}</time>`
-                    : "",
-                  "Keine gültige Temperatur im Zeitraum",
-                ),
-              )
-              .join(""),
-        powerEnd = overview ? content.session.energy?.accounted_at : content.end,
-        powerDetails = !this.historyPowerMeasurement(measuredPower)
-          ? ""
-          : measuredPower
-            ? `<p>Gemessene Leistung · ${this.clock(content.start)} – ${powerEnd ? this.clock(powerEnd) : "Ende nicht aufgezeichnet"}${measuredPower.complete ? "" : " · Nur gemessene Abschnitte"}</p><div class="history-information-values">${valueRow("power-mean", "Mittlere gemessene Leistung", measuredPower.mean_w, "W")}${valueRow("power-peak", "Höchste gemessene Leistung", measuredPower.peak_w, "W")}</div>`
-            : '<p class="muted">Gemessene Leistung: Nicht verfügbar</p>';
-      const statistics = content.sectionStatistics,
-        temperature = statistics?.temperature,
-        energyKnown =
-          energy &&
-          Number.isFinite(energy.measured_kwh) &&
-          Number.isFinite(energy.estimated_kwh) &&
-          energy.unknown_seconds === 0,
-        heatingRatio =
-          content.sectionPhase === "aufheizen" &&
-          !temperature?.reason &&
-          temperature?.change > 0 &&
-          energyKnown &&
-          energyValue > 0
-            ? temperature.change / energyValue
-            : null,
-        metricRow = (key, label, value, unit, reason) =>
-          valueRow(`section-${key}`, label, value, unit, "", reason || "Nicht belegt"),
-        mainSectionRows =
-          !statistics || !range
-            ? ""
-            : `${metricRow("change", "Temperaturänderung", temperature?.change, "°C", temperature?.reason)}${metricRow("rate", "Temperaturänderung je Minute", temperature?.perMinute, "°C/min", temperature?.reason)}${content.sectionPhase === "aufheizen" ? metricRow("gain-energy", "Temperaturgewinn je Energie", heatingRatio, "°C/kWh", temperature?.reason || "Temperaturgewinn und lückenlose Abschnittsenergie erforderlich") : ""}${Number.isFinite(statistics.humidityLoss?.value) || ["nachlauf", "zwangskühlung"].includes(content.sectionPhase) ? metricRow("humidity-loss", "Feuchteabnahme je °C", statistics.humidityLoss?.value, "(g/m³)/°C", statistics.humidityLoss?.reason) : ""}`,
-        sectionDetails = !statistics
-          ? ""
-          : `<p>${this.historyDetail ? `Ausgewertete Messposition: ${this.historyPrimaryPosition(content.session) === "upper" ? "oben" : "unten"}. ` : ""}Zeitraum ${this.clock(content.start)} – ${this.clock(content.end)}.</p><div class="history-information-values">${this.historyDetail ? metricRow("difference", "Mittlere Temperaturdifferenz oben − unten", statistics.difference?.mean, "°C", statistics.difference?.reason) : ""}${metricRow("target-mean", "Mittlere absolute Sollabweichung", statistics.target?.meanAbsolute, "°C", statistics.target?.reason)}${metricRow("target-over", "Größte Sollüberschreitung", statistics.target?.reason ? null : Math.max(0, statistics.target.maximum), "°C", statistics.target?.reason)}${metricRow("target-under", "Größte Sollunterschreitung", statistics.target?.reason ? null : Math.max(0, -statistics.target.minimum), "°C", statistics.target?.reason)}</div>`;
-      const selectedGang = singleGang
-        ? `<div data-history-selected-gang data-gang-id="${esc(selectedGangRow.gang.gang_id)}" data-start="${esc(selectedGangRow.bounds.startedAt || "")}"><p>${esc(selectedGangRow.label)} · <strong>${esc(selectedGangRow.confirmationText)}</strong></p><p>Beginn · ${selectedGangRow.bounds.startedAt ? `<time datetime="${esc(selectedGangRow.bounds.startedAt)}" title="${esc(this.tooltipWhen(selectedGangRow.originalStarted))}">${this.clock(selectedGangRow.originalStarted)}</time>` : "Nicht belegt"}</p><p>Ende · ${Number.isFinite(selectedGangRow.originalEnded) ? this.clock(selectedGangRow.originalEnded) : selectedGangRow.bounds.ongoing ? "Noch offen" : "Nicht belegt"}</p>${selectedGangRow.bounds.reason ? `<p class="muted">${esc(selectedGangRow.bounds.reason)}. Kennzahlen beziehen sich auf den ausgewählten Zeitraum.</p>` : ""}</div>`
-        : "";
-      this.updateMarkup(
-        "[data-history-session-summary]",
-        `<div class="history-information-values">${overview ? `<div data-key="history-information-gang-count"><span data-history-label>Saunagänge</span><span class="history-tooltip-value"><span class="history-tooltip-number">${gangCount}</span><span class="history-tooltip-unit"></span></span></div>` : ""}${maximumRows}${valueRow("energy", "Energieverbrauch", energyValue, "kWh", energyReference, energy ? "Nicht verfügbar" : this.historyLoad ? "Nachladend" : "Für diesen Zeitraum nicht belegt")}${mainSectionRows}</div><details id="history-information-details"><summary>Weitere Daten · ${overview ? "Sitzung" : "Ausgewählter Zeitraum"}</summary><p class="muted">${this.clock(content.start)} – ${this.clock(content.end)}${overview && energy?.accounted_at ? ` · Energie bis ${this.clock(energy.accounted_at)}` : ""}</p>${selectedGang}${powerDetails}${sectionDetails}</details>`,
-      );
-    }
-    this.updateMarkup(
-      "[data-history-context-gangs]",
-      overview || !selection || singleGang
-        ? ""
-        : rows
-            .map(
-              ({ gang, label, startText, endText, durationText, confirmationText }) =>
-                `<div class="history-context-gang" data-key="history-context-gang:${esc(gang.gang_id)}" data-gang-id="${esc(gang.gang_id)}"><strong>${esc(label)}</strong><span>${esc(startText)} – ${esc(endText)}</span><span>${esc(durationText)}</span><span>${esc(confirmationText)}</span></div>`,
-            )
-            .join(""),
-    );
+    this.$("#history-inspection")?.setAttribute?.("data-history-selection-kind", kind);
+    if (summary) summary.hidden = !markup;
+    this.updateMarkup("[data-history-session-summary]", markup);
+    this.updateMarkup("[data-history-context-gangs]", "");
   }
   renderHistory(reasons = new Set(["viewport"])) {
     if (!this.isConnected || this.$("#history")?.hidden) return;
@@ -11705,89 +12180,16 @@ class SaunaPanel extends HTMLElement {
     const gangs = [...t.completed, ...(t.active ? [t.active] : [])];
     this.updateHistoryTimelineRevision(session);
     this.historyChart.render(reasons, session, gangs);
-    const selection =
-        this.navigation?.main === "history" ? this.historyValueSelection : null,
-      selectionKey = selection
-        ? `${selection.identity}:${selection.kind}:${selection.start}:${selection.end}`
-        : "",
-      selectionLabel = selection
-        ? selection.kind === "range"
-          ? `${this.clock(selection.start)} – ${this.clock(selection.end)}`
-          : this.clock(selection.start)
-        : "",
-      gangNow = t.active ? this.state.now : "";
-    const gangKey = `${this.navigation?.main}:${identity}:${this.historyTimelineRevision}:${gangNow}:${timeZone}:${selectionKey}`;
-    if (this.historyGangKey !== gangKey) {
-      this.historyGangKey = gangKey;
-      if (this.navigation?.main === "history") this.updateMarkup("#gangs", "");
-      else {
-        const information = this.historyInformationContent(selection),
-          e = information.energy,
-          energySummary =
-            e && !selection
-              ? `<p class="muted" data-history-energy>Energieverbrauch: ${this.num(e.measured_kwh + e.estimated_kwh, this.preference("energy_precision"))} kWh</p>`
-              : "",
-          point = selection?.kind === "point",
-          gangRows = information.rows.map((row) =>
-            point ? { ...row, startText: this.clock(selection.start) } : row,
-          );
-        this.updateMarkup(
-          "#gangs",
-          `<div class="card"><h2>Saunagänge${selection ? ` · ${esc(selectionLabel)}` : ""}</h2>${energySummary}${gangRows.length ? `<div class="scroll"><table><thead><tr><th>Gang</th><th>Status</th>${point ? "<th>Zeitpunkt</th>" : `<th>${selection ? "Von" : "Beginn"}</th><th>Dauer</th><th>${selection ? "Bis" : "Ende"}</th>`}</tr></thead><tbody>${gangRows.map(({ gang: g, bounds, number, startText, endText, durationText, confirmationText }) => `<tr data-gang-id="${esc(g.gang_id)}" data-start="${esc(bounds.startedAt || "")}"><td>${number}</td><td>${confirmationText}</td><td>${esc(startText)}</td>${point ? "" : `<td>${esc(durationText)}</td><td>${esc(endText)}</td>`}</tr>`).join("")}</tbody></table></div>` : '<p class="muted">Keine Saunagänge erkannt.</p>'}</div>`,
-        );
-      }
+    // Gangtabelle (toter Code) und Ereignisliste entfallen: die Ereignisse stehen im
+    // Ereignisband und mit ihren Zeiten in der Auswahl (Umzugstabelle Entwurf B).
+    if (this.historyGangKey !== identity) {
+      this.historyGangKey = identity;
+      this.updateMarkup("#gangs", "");
+      this.updateMarkup("#event-list", "");
     }
-    const eventKey = `${identity}:${this.historyProjection()}:${this.historyTimelineRevision}:${this.historyEventRevision || 0}:${timeZone}:${selectionKey}:${this.historyEventVisibilityKey()}`;
-    if (this.historyEventKey !== eventKey) {
-      this.historyEventKey = eventKey;
-      const openEvents = [
-        ...this.shadowRoot.querySelectorAll("#event-list details"),
-      ].map((d) => d.open);
-      const traces = this.diagnosticData().traces;
-      const eventRows =
-        this.navigation?.main === "history"
-          ? this.historyMainEvents(undefined, selection)
-          : orderedHistoryEvents(this.normalHistoryEvents());
-      const eventGroups = [];
-      for (const event of eventRows) {
-        const at = stamp(event.effective_at);
-        const minute = Number.isFinite(at)
-          ? Math.floor(at / this.preference("history_event_group_interval_ms"))
-          : null;
-        let group = eventGroups.at(-1);
-        if (!group || group.minute !== minute) {
-          group = {
-            minute,
-            label: minute == null ? "Ohne Zeit" : this.clock(at, timeZone),
-            events: [],
-          };
-          eventGroups.push(group);
-        }
-        group.events.push(event);
-      }
-      this.updateMarkup(
-        "#event-list",
-        `<div class="card history-event-card"><details><summary>Ereignisse (${eventRows.length})${selection ? ` · ${esc(selectionLabel)}` : ""}</summary><ol class="history-event-groups">${eventGroups
-          .map(
-            (group) =>
-              `<li class="history-event-group"><div class="history-event-time">${esc(group.label)}</div><ol class="history-event-items">${group.events
-                .map((e) => {
-                  const linked = e.display_only
-                      ? null
-                      : this.diagnosticTraceForEvent(traces, e),
-                    label = this.historyEventLabel(e);
-                  return `<li class="event-row" data-event-id="${esc(e.event_id)}" data-selected="false"><span>${esc(label)}</span>${linked && this.state?.permissions?.admin ? `<button data-action="event-row:${esc(e.event_id)}" aria-label="${esc(label)} im Erkennungsverlauf zeigen">Zum Marker</button>` : ""}</li>`;
-                })
-                .join("")}</ol></li>`,
-          )
-          .join(
-            "",
-          )}</ol>${!selection && t.retracted.length ? `<p class="muted">${t.retracted.length} vorläufige Erkennung(en) aufgehoben. Diese werden nicht als Gänge gezählt.</p>` : ""}</details>${selection ? "" : this.historyFaultMarkup(records, "history", this.navigation?.main !== "history")}</div>`,
-      );
-      this.shadowRoot
-        .querySelectorAll("#event-list details")
-        .forEach((d, i) => (d.open = !!openEvents[i]));
-      if (this.highlightedEventId) this.highlightEvent(this.highlightedEventId, false);
+    if (this.navigation?.main === "history") {
+      this.loadHistoryKeyFigures();
+      this.renderHistoryFigures();
     }
     const diagnosticsKey = this.diagnosticsRenderKey(timeZone);
     if (this.view === "diagnostics" && this.historyDiagnosticsKey !== diagnosticsKey) {
@@ -12134,19 +12536,26 @@ class SaunaPanel extends HTMLElement {
       this.pendingEventFocus = null;
       return;
     }
+    // Im Verlauf ist das Ziel das Ereignis im Ereignisband; es wird gewählt und
+    // steht damit in der Auswahl (die Ereignisliste entfällt, Entwurf B).
     const target = [
       ...this.shadowRoot.querySelectorAll(
-        kind === "row" ? "#event-list [data-action]" : ".diagnostic-marker",
+        kind === "row"
+          ? "[data-history-strip-events] [data-action]"
+          : ".diagnostic-marker",
       ),
-    ].find(
-      (node) =>
-        node.dataset.eventId === pending.eventId ||
-        node.dataset.action === `event-row:${pending.eventId}`,
+    ].find((node) =>
+      kind === "row"
+        ? JSON.parse(
+            decodeURIComponent(node.dataset.historyEventMembers || "%5B%5D"),
+          ).includes(pending.eventId)
+        : node.dataset.eventId === pending.eventId,
     );
     // A reveal is a single navigation operation, never a latent request that
     // can steal focus after unrelated data arrives.
     this.pendingEventFocus = null;
     if (!target) return;
+    if (kind === "row") this.inspectHistoryEvent(pending.eventId);
     this.highlightEvent(pending.eventId, kind === "row");
     target.scrollIntoView?.({ block: "center", behavior: "smooth" });
     target.focus?.({ preventScroll: true });
@@ -12555,15 +12964,11 @@ class SaunaPanel extends HTMLElement {
     for (const position of this.positions || ["upper"])
       for (const quantity of ["temperature", "humidity"]) {
         const sourceQuantity = quantity === "humidity" ? humidity.quantity : quantity,
-          summary = !selection
-            ? this.historySessionMeasurements(position, sourceQuantity)
-            : range
-              ? this.historyIntervalMeasurements(
-                  position,
-                  sourceQuantity,
-                  selection.start,
-                  selection.end,
-                )
+          // Laufende Sitzung: aktueller Wert und bisheriges Maximum (laufender Teil
+          // von R-10). Beendete Sitzung: Höchsttemperatur aus key-figures (K-S7).
+          summary =
+            !selection && !completed
+              ? this.historySessionMeasurements(position, sourceQuantity)
               : null;
         content.set(`${position}:${quantity}`, {
           position,
@@ -12575,13 +12980,21 @@ class SaunaPanel extends HTMLElement {
                 selection.start,
                 pinned,
               )
-            : completed
-              ? summary.maximum
-              : summary.last,
+            : summary?.last || null,
           end: range
             ? this.historyMeasurementAt(position, sourceQuantity, selection.end, pinned)
             : null,
           maximum: summary?.maximum || null,
+          // Feuchte am Zeitpunkt auch in der anderen Einheit (Brett „Touch“).
+          alternate:
+            quantity === "humidity" && selection && !range
+              ? this.historyMeasurementAt(
+                  position,
+                  humidity.quantity === "humidity" ? "absolute_humidity" : "humidity",
+                  selection.start,
+                  pinned,
+                )
+              : null,
         });
       }
     return content;
@@ -13052,10 +13465,14 @@ class SaunaPanel extends HTMLElement {
       const geometry =
           this.historySelectionDrag?.geometry ||
           this.historyChart?.interaction.cachedGeometry,
+        // Mit dem Finger ist der Griff so breit wie ein Bedienelement (Brett „Touch“).
+        coarse =
+          !!this.ownerDocument?.defaultView?.matchMedia?.("(pointer: coarse)")?.matches,
         hitRadius =
           Math.max(
             this.preference("event_marker_size_px"),
             this.preference("size_22_0_px"),
+            coarse ? this.preference("control_button_height_px") : 0,
           ) / 2;
       const axisHeight = this.historyTimeAxisHeight(),
         axisWidth = geometry?.rects?.timeAxis?.width || model.width,
@@ -13244,10 +13661,19 @@ class SaunaPanel extends HTMLElement {
             .join("")}</div>`,
         );
       } else {
+        // Sprung zur Erkennungskontrolle (bisher „Zum Marker“ in der Ereignisliste).
+        const marker =
+          event &&
+          !event.display_only &&
+          this.state?.permissions?.admin &&
+          this.navigation?.main === "history" &&
+          this.diagnosticTraceForEvent(this.diagnosticData().traces, event)
+            ? `<button type="button" data-action="event-row:${esc(event.event_id)}" aria-label="${esc(this.historyEventLabel(event))} im Erkennungsverlauf zeigen">Zum Marker</button>`
+            : "";
         this.updateMarkup(
           "#history-event-inspection",
           event
-            ? `<div class="history-inspected-event-row"><time datetime="${esc(event.effective_at)}" title="${esc(this.tooltipWhen(event.effective_at))}">${esc(this.clock(event.effective_at))}</time><span>${esc(this.historyEventLabel(event))}</span>${this.historyInfusionEndMarkup(event)}</div>`
+            ? `<div class="history-inspected-event-row"><time datetime="${esc(event.effective_at)}" title="${esc(this.tooltipWhen(event.effective_at))}">${esc(this.clock(event.effective_at))}</time><span>${esc(this.historyEventLabel(event))}</span>${this.historyInfusionEndMarkup(event)}${marker}</div>`
             : "",
         );
       }
@@ -14054,6 +14480,8 @@ class SaunaPanel extends HTMLElement {
       previousDetail = state.detail,
       transition = this.historyViewTransition,
       detailFor = ([start, end]) => {
+        // Verlauf: Phasenband immer mit Namen, soweit sie hineinpassen (Entwurf B).
+        if (this.navigation?.main === "history") return true;
         const domain = this.historyDomain();
         return !(start <= domain[0] && end >= domain[1]);
       };
@@ -14212,6 +14640,11 @@ class SaunaPanel extends HTMLElement {
     cache.set(name, result);
     return result;
   }
+  // Glatte Achsteilung des Verlaufs (V17): Schritte 1, 2, 2,5 und 5 × 10ⁿ, beide
+  // Achsen teilen sich die Querlinien. Die Zahl der Teilungen (aus der Höhe und dem
+  // Abstand der Wertbeschriftung) wird so gewählt, dass die schlechter genutzte
+  // Kurve die meiste Höhe bekommt; bei Gleichstand die feinere Teilung. Ohne Feuchte
+  // (Anlage) zählt die Temperaturachse allein.
   historyValueScale(
     low,
     high,
@@ -14222,11 +14655,9 @@ class SaunaPanel extends HTMLElement {
   ) {
     const geometry = this.historyGeometry(),
       epsilon = this.preference("tick_epsilon"),
-      precision = this.preference("tick_precision"),
-      round = (value) => Number(value.toPrecision(precision)),
-      minimumTicks = Math.max(this.preference("history_axis_min_ticks"), 1),
-      intervals = Math.max(
-        minimumTicks,
+      minimum = Math.max(this.preference("history_axis_min_ticks"), 1),
+      maximum = Math.max(
+        minimum,
         Math.min(
           this.preference("history_axis_max_ticks"),
           Math.floor(
@@ -14236,46 +14667,41 @@ class SaunaPanel extends HTMLElement {
           ),
         ),
       ),
-      axis = (minimum, maximum, intervals, resolution, alignTop = false) => {
-        const rough = Math.max((maximum - minimum) / intervals, resolution);
-        let unit = rough >= 1 ? Math.max(1, resolution) : resolution;
-        for (;;) {
-          const lower = round(Math.floor(minimum / unit) * unit),
-            upper = round(Math.ceil(maximum / unit) * unit),
-            step = round(
-              Math.ceil((upper - lower) / intervals / unit - epsilon) * unit,
-            );
-          if (step >= 1 && unit < 1) {
-            unit = 1;
-            continue;
-          }
-          const first = alignTop ? round(upper - intervals * step) : lower,
-            last = alignTop ? upper : round(first + intervals * step);
-          return {
-            first,
-            last,
-            values: Array.from({ length: intervals + 1 }, (_, index) =>
-              round(first + index * step),
-            ),
-          };
-        }
-      },
-      temperature = axis(
-        low,
-        high,
-        intervals,
-        10 ** -this.preference("value_precision"),
-        true,
-      ),
-      humidity = axis(humidityLow, humidityHigh, intervals, 10 ** -humidityPrecision);
+      humidityShown = Number.isFinite(humidityLow) && Number.isFinite(humidityHigh);
+    let best = null;
+    for (let intervals = minimum; intervals <= maximum; intervals++) {
+      const temperature = fixedSmoothAxis(
+          low,
+          high,
+          intervals,
+          true,
+          this.preference("value_precision"),
+        ),
+        humidity = humidityShown
+          ? fixedSmoothAxis(
+              humidityLow,
+              humidityHigh,
+              intervals,
+              false,
+              humidityPrecision,
+            )
+          : null;
+      if (!temperature || (humidityShown && !humidity)) continue;
+      const use = Math.min(temperature.use, humidity ? humidity.use : Infinity);
+      if (!best || use >= best.use - epsilon)
+        best = { use, intervals, temperature, humidity };
+    }
+    const { intervals, temperature, humidity } = best;
     return {
       intervals,
       low: temperature.first,
       high: temperature.last,
-      humidityLow: humidity.first,
-      humidityHigh: humidity.last,
+      humidityLow: humidity ? humidity.first : null,
+      humidityHigh: humidity ? humidity.last : null,
       temperature: temperature.values,
-      humidity: humidity.values,
+      humidity: humidity ? humidity.values : null,
+      temperatureDigits: temperature.digits,
+      humidityDigits: humidity ? humidity.digits : null,
     };
   }
   historyModel(
@@ -14290,16 +14716,21 @@ class SaunaPanel extends HTMLElement {
       bottom = geometry.bottom,
       ttl = historyMeasurementTtlSeconds(this, session) * 1000,
       positions = [...this.positions],
-      domain = chart.domain || this.historyDomain(),
-      zoomed = start > domain[0] || end < domain[1],
       humidityDisplay = this.historyHumidityDisplay(),
+      // Anlage: Temperatur gegen Soll, ohne Feuchte.
+      plant = this.historyPlantView(),
       series = new Map();
     let lo = Infinity,
       hi = -Infinity,
       humidityMinimum = Infinity,
       humidityMaximum = -Infinity;
+    if (plant)
+      for (const step of this.historyTargetSteps(start, end)) {
+        lo = Math.min(lo, step.value);
+        hi = Math.max(hi, step.value);
+      }
     for (const position of positions)
-      for (const quantity of ["temperature", "humidity"]) {
+      for (const quantity of plant ? ["temperature"] : ["temperature", "humidity"]) {
         const entry = this.historyPreparedSeries(
           position,
           quantity === "humidity" ? humidityDisplay.quantity : quantity,
@@ -14318,52 +14749,27 @@ class SaunaPanel extends HTMLElement {
           humidityMaximum = Math.max(humidityMaximum, entry.high);
         }
       }
-    const temperaturePadding = this.preference("history_temperature_padding_c"),
-      temperatureStep = zoomed
-        ? 10 ** -this.preference("value_precision")
-        : this.preference("history_temperature_scale_step_c"),
-      humidityPadding = this.preference("history_humidity_padding_percent"),
-      humidityStep = zoomed
-        ? 10 ** -humidityDisplay.precision
-        : this.preference("history_humidity_scale_step_percent"),
-      absoluteStep = 10 ** -humidityDisplay.precision,
-      fallback = this.appearanceScale("temperature"),
+    // Die Achsen fassen die Daten des Fensters (Höhenausnutzung = Datenspanne ÷
+    // Achsspanne, V17); ohne Daten gilt die Skala der Darstellung.
+    const fallback = this.appearanceScale("temperature"),
+      humidityFallback = this.appearanceScale("humidity"),
       frozen = this.historyInputSnapshot?.model,
-      dataLow = Number.isFinite(lo)
-        ? Math.floor((lo - temperaturePadding) / temperatureStep) * temperatureStep
-        : fallback.minimum,
-      dataHigh = Number.isFinite(hi)
-        ? Math.max(
-            dataLow + temperatureStep,
-            Math.ceil((hi + temperaturePadding) / temperatureStep) * temperatureStep,
-          )
-        : fallback.maximum,
-      humidity = Number.isFinite(humidityMaximum) ? humidityMaximum : 0,
-      humidityMargin =
-        humidityDisplay.mode === "absolute" ? absoluteStep : humidityPadding,
-      dataHumidityLow =
-        zoomed && Number.isFinite(humidityMinimum)
-          ? Math.max(
-              0,
-              Math.floor((humidityMinimum - humidityMargin) / humidityStep) *
-                humidityStep,
-            )
-          : 0,
-      dataHumidityHigh =
-        humidityDisplay.mode === "absolute"
-          ? Math.max(
-              dataHumidityLow + absoluteStep,
-              Math.ceil((humidity + (zoomed ? absoluteStep : 0)) / absoluteStep) *
-                absoluteStep,
-            )
-          : Math.max(
-              zoomed
-                ? dataHumidityLow + humidityStep
-                : this.preference("history_humidity_minimum_maximum_percent"),
-              Math.ceil((humidity + humidityPadding) / humidityStep) * humidityStep,
-            ),
+      dataLow = Number.isFinite(lo) ? lo : fallback.minimum,
+      dataHigh = Number.isFinite(hi) ? hi : fallback.maximum,
+      dataHumidityLow = plant
+        ? null
+        : Number.isFinite(humidityMinimum)
+          ? humidityMinimum
+          : (humidityFallback?.minimum ?? 0),
+      dataHumidityHigh = plant
+        ? null
+        : Number.isFinite(humidityMaximum)
+          ? humidityMaximum
+          : (humidityFallback?.maximum ?? 100),
       valueScale =
-        (frozen?.humidityMode === humidityDisplay.mode ? frozen.valueScale : null) ||
+        (frozen?.humidityMode === humidityDisplay.mode && !!frozen.plant === plant
+          ? frozen.valueScale
+          : null) ||
         this.historyValueScale(
           dataLow,
           dataHigh,
@@ -14381,20 +14787,22 @@ class SaunaPanel extends HTMLElement {
         this.historyLabelWidth("°C", labelGeometry),
         ...valueScale.temperature.map((value) =>
           this.historyLabelWidth(
-            this.num(value, this.preference("value_precision")),
+            this.num(value, valueScale.temperatureDigits),
             labelGeometry,
           ),
         ),
       ),
-      humidityLabelWidth = Math.max(
-        this.historyLabelWidth(humidityDisplay.unit, labelGeometry),
-        ...valueScale.humidity.map((value) =>
-          this.historyLabelWidth(
-            this.num(value, humidityDisplay.precision),
-            labelGeometry,
-          ),
-        ),
-      ),
+      humidityLabelWidth = valueScale.humidity
+        ? Math.max(
+            this.historyLabelWidth(humidityDisplay.unit, labelGeometry),
+            ...valueScale.humidity.map((value) =>
+              this.historyLabelWidth(
+                this.num(value, valueScale.humidityDigits),
+                labelGeometry,
+              ),
+            ),
+          )
+        : temperatureLabelWidth,
       maximumGutter = Math.max(
         0,
         (geometry.width - this.preference("size_32_0_px") * scaleX) / 2,
@@ -14439,6 +14847,7 @@ class SaunaPanel extends HTMLElement {
       humidityLow,
       humidityHigh,
       valueScale,
+      plant,
       humidityMode: humidityDisplay.mode,
       humidityUnit: humidityDisplay.unit,
       humidityPrecision: humidityDisplay.precision,
@@ -14529,9 +14938,15 @@ class SaunaPanel extends HTMLElement {
     if (event.kind === "door_open" || event.kind === "door_close") return "door";
     return null;
   }
+  // Unteransicht Anlage des Verlaufs (Brett „Verlauf · Anlage“).
+  historyPlantView() {
+    return this.navigation?.main === "history" && this.historySubview === "plant";
+  }
   historyEventCategoryVisible(kind) {
     const definition = this.appearanceCatalog().history_events?.[kind];
     if (!definition) return false;
+    // Anlage: Ofen und Tür immer, Aufgüsse nicht; die Schalter gelten für Sitzung.
+    if (this.historyPlantView()) return kind !== "infusion";
     if (!this.historyEventVisibility.has(kind))
       this.historyEventVisibility.set(kind, definition.default_visible);
     return this.historyEventVisibility.get(kind);
@@ -14946,63 +15361,54 @@ class SaunaPanel extends HTMLElement {
     const event = group.first.event;
     return this.historyEventLabel(event);
   }
+  // Ereignisbahnen unter dem Diagramm, je Art eine Bahn (G18): Aufguss als weiße
+  // Raute am Zeitpunkt, Tür als hellbrauner Balken über die Öffnungszeit, Ofen als
+  // Balken über die Heizzeit. Sitzung: Aufgüsse, Tür, Ofen nach den Schaltern;
+  // Anlage: Ofen und Tür.
+  historyEventLanes() {
+    const catalog = this.appearanceCatalog().history_events || {};
+    return (
+      this.historyPlantView() ? ["heater", "door"] : ["infusion", "door", "heater"]
+    )
+      .filter((kind) => catalog[kind] && this.historyEventCategoryVisible(kind))
+      .map((kind) => ({ kind, ...catalog[kind] }));
+  }
   historyStripEvents(model, geometry) {
     const groups = this.historyStripEventGroups(model, geometry),
       plotWidth = model.right - model.left,
       position = (time) => ((model.x(time) - model.left) / plotWidth) * 100,
-      bars = groups
-        .map((group) => {
-          const { members, first, start, end, open, kind } = group,
-            ids = members.map(({ event }) => event.event_id),
-            key = encodeURIComponent(JSON.stringify(ids)),
-            grouped = ids.length > 1,
-            label = group.label,
-            when =
-              start === end
-                ? this.tooltipWhen(start)
-                : `${this.tooltipWhen(start)} – ${this.tooltipWhen(end)}`,
-            left = position(Math.max(model.start, start)),
-            right = position(Math.min(model.end, end)),
-            overlapping = groups.filter(
-              (other) =>
-                other !== group &&
-                other.kind !== kind &&
-                other.start <= end &&
-                other.end >= start,
-            ),
-            overlap = overlapping.length > 0,
-            action = grouped
-              ? `history-event-group:${key}`
-              : `history-event:${first.event.event_id}`;
-          return `<button type="button" class="history-event-band-segment" data-key="history-band:${esc(group.key)}" data-action="${esc(action)}" data-history-event-kind="${kind}" data-history-event-members="${esc(key)}"${grouped ? ` data-history-event-group="${esc(key)}"` : ` data-history-event-id="${esc(first.event.event_id)}"`} data-point="${start === end}" data-open="${open}" data-overlap="${overlap}" data-overlap-heater="${overlapping.some((other) => other.kind === "heater")}" data-overlap-door="${overlapping.some((other) => other.kind === "door")}" aria-pressed="false" aria-label="${esc(label)} · ${esc(when)}" title="${esc(label)} · ${esc(when)}" style="left: ${left}%; width: ${right - left}%; --history-event-color: ${this.historyEventColor(first.event)}"><span>${esc(label)}</span></button>`;
-        })
-        .join(""),
-      names = Object.entries(this.appearanceCatalog().history_events || {})
-        .map(
-          ([kind, definition]) =>
-            `<button type="button" class="history-event-category" data-key="history-category:${esc(kind)}" data-action="history-event-category:${esc(kind)}" aria-pressed="${this.historyEventCategoryVisible(kind)}" style="--history-event-color: var(--sauna-color-${esc(definition.color.replaceAll("_", "-"))})">${esc(definition.label)}</button>`,
-        )
-        .join(""),
-      row = `<div class="history-event-band-row" role="group" aria-label="Ereignisse">${bars}</div><div class="history-band-names">${names}</div>`;
-    return row;
-  }
-  historyEventMarkers(model, geometry) {
-    return this.historyStripEventGroups(model, geometry)
-      .map(({ members, at }) => {
-        const x = model.x(at),
-          first = members[0].event,
-          sameColor = members.every(
-            ({ event }) => (event.kind === "infusion") === (first.kind === "infusion"),
-          ),
-          color = sameColor
-            ? this.historyEventColor(first)
-            : "var(--sauna-color-chart-event)",
-          key = encodeURIComponent(
-            JSON.stringify(members.map(({ event }) => event.event_id)),
-          );
-        return `<line class="history-event-guide" data-key="history-event-guide:${esc(key)}" data-history-event-members="${esc(key)}" vector-effect="non-scaling-stroke" style="--history-event-color: ${color}" x1="${x}" x2="${x}" y1="${model.top}" y2="${model.bottom}"/>`;
-      })
+      segment = (group) => {
+        const { members, first, start, end, open, kind } = group,
+          ids = members.map(({ event }) => event.event_id),
+          key = encodeURIComponent(JSON.stringify(ids)),
+          grouped = ids.length > 1,
+          point = kind === "infusion" || start === end,
+          label = group.label,
+          when =
+            start === end
+              ? this.tooltipWhen(start)
+              : `${this.tooltipWhen(start)} – ${this.tooltipWhen(end)}`,
+          left = position(Math.max(model.start, start)),
+          right = point ? left : position(Math.min(model.end, end)),
+          action = grouped
+            ? `history-event-group:${key}`
+            : `history-event:${first.event.event_id}`;
+        return `<button type="button" class="history-event-band-segment" data-key="history-band:${esc(group.key)}" data-action="${esc(action)}" data-history-event-kind="${kind}" data-history-event-members="${esc(key)}"${grouped ? ` data-history-event-group="${esc(key)}"` : ` data-history-event-id="${esc(first.event.event_id)}"`} data-point="${point}" data-open="${open}" data-overlap="false" aria-pressed="false" aria-label="${esc(label)} · ${esc(when)}" title="${esc(label)} · ${esc(when)}" style="left: ${left}%; width: ${right - left}%; --history-event-color: ${this.historyEventColor(first.event)}"><span>${esc(label)}</span></button>`;
+      };
+    return this.historyEventLanes()
+      .map(
+        ({ kind, label, color }) =>
+          `<div class="history-event-band-row" data-history-lane="${esc(kind)}" role="group" aria-label="${esc(label)}" style="--history-event-color: var(--sauna-color-${esc(color.replaceAll("_", "-"))})"><span class="history-lane-symbol" aria-hidden="true"></span>${groups
+            .filter((group) => group.kind === kind)
+            .map(segment)
+            .join("")}</div>`,
+      )
       .join("");
+  }
+  // Senkrechte Linien stehen als Aufgusslinie und Türfläche in den Annotationen;
+  // eine zweite Linie je Ereignis entfällt (Inventar V-09).
+  historyEventMarkers() {
+    return "";
   }
   historyAnnotations(model, session, gangs) {
     const { start, end, left, right, top, bottom, x } = model;
@@ -15032,11 +15438,30 @@ class SaunaPanel extends HTMLElement {
         );
       }
     }
+    const plant = this.historyPlantView();
     for (const group of this.historyEventGroups()) {
       if (group.annotation === "door")
         svg += interval(group.start, group.end, "door", "Saunatür offen");
-      else if (group.annotation === "heater")
+      // Anlage: der Ofen steht als eigene Bahn unter dem Diagramm.
+      else if (group.annotation === "heater" && !plant)
         svg += `<g style="--history-event-color: ${this.historyEventColor(group.first.event)}">${interval(group.start, group.end, "history-heater-interval", group.label)}</g>`;
+    }
+    if (plant) {
+      // Sollinie gestrichelt (V12) aus dem gespeicherten Sollverlauf der Sitzung.
+      const points = this.historyTargetSteps(start, end)
+        .flatMap(({ from, to, value }) => [
+          [x(from), model.yT(value)],
+          [x(to), model.yT(value)],
+        ])
+        .map(([px, py]) =>
+          [px, py]
+            .map((value) =>
+              value.toFixed(this.preference("chart_coordinate_precision")),
+            )
+            .join(","),
+        );
+      if (points.length)
+        svg += `<polyline class="history-target-line" points="${points.join(" ")}"><title>Soll</title></polyline>`;
     }
     const gridTicks = model.valueScale.intervals;
     for (let n = 0; n <= gridTicks; n++) {
@@ -15048,6 +15473,21 @@ class SaunaPanel extends HTMLElement {
       svg += `<line class="infusion" x1="${xx}" x2="${xx}" y1="${top}" y2="${bottom}"><title>Aufguss · ${this.clock(e.effective_at)}</title></line>`;
     }
     return svg;
+  }
+  // Sollwerte der Sitzung als Stufen im Zeitfenster (Darstellung des gespeicherten
+  // Sollverlaufs, keine Kennzahl); ohne Sollverlauf keine Linie.
+  historyTargetSteps(start, end) {
+    const session = this.shown?.session,
+      marks = (session?.target_history || [])
+        .map((mark) => ({ at: stamp(mark.at), value: Number(mark.target_c) }))
+        .filter((mark) => Number.isFinite(mark.at) && Number.isFinite(mark.value))
+        .sort((a, b) => a.at - b.at),
+      off = stamp(session?.ended_at || this.state?.now);
+    return marks.flatMap((mark, index) => {
+      const from = Math.max(start, mark.at),
+        to = Math.min(end, marks[index + 1]?.at ?? off ?? end);
+      return Number.isFinite(to) && to > from ? [{ from, to, value: mark.value }] : [];
+    });
   }
   historyAxes(model, { width = model.width, height = model.height, geometry } = {}) {
     const { start, end, left, right, top, bottom, valueScale, x } = model;
@@ -15066,22 +15506,20 @@ class SaunaPanel extends HTMLElement {
           (bottom - top) * fraction +
           (this.preference("font_size_small_px") / 3) * scaleY;
       svg += text(
-        this.num(valueScale.temperature[n], this.preference("value_precision")),
+        this.num(valueScale.temperature[n], valueScale.temperatureDigits),
         left - this.preference("control_group_gap_px") * scaleX,
         y,
         "axis-temperature",
         "end",
       );
-      svg += text(
-        this.num(
-          valueScale.humidity[n],
-          model.humidityPrecision ?? this.preference("value_precision"),
-        ),
-        right + this.preference("control_group_gap_px") * scaleX,
-        y,
-        "axis-humidity",
-        "start",
-      );
+      if (valueScale.humidity)
+        svg += text(
+          this.num(valueScale.humidity[n], valueScale.humidityDigits),
+          right + this.preference("control_group_gap_px") * scaleX,
+          y,
+          "axis-humidity",
+          "start",
+        );
     }
     const temperatureHeadingLeft =
         left - this.preference("control_group_gap_px") * scaleX,
@@ -15107,6 +15545,18 @@ class SaunaPanel extends HTMLElement {
       titleTop = headingY - titleHeight / 2,
       humidityTitleLeft = right,
       humidityTitleRight = model.width - this.preference("layout_space_13_px") * scaleX;
+    if (!valueScale.humidity)
+      return (
+        svg +
+        text(
+          "°C",
+          temperatureHeadingLeft,
+          headingY,
+          "axis-temperature",
+          "end",
+          ' dominant-baseline="central"',
+        )
+      );
     return (
       svg +
       text(
@@ -16898,10 +17348,32 @@ class SaunaPanel extends HTMLElement {
       ["#detection-plots", view !== "diagnostics"],
       ["#gangs", main === "details"],
       ["#event-list", main === "details"],
+      // Verlauf nach Entwurf B: Unteransichten, Kennzahlen, Diagrammkopf und Gänge
+      // gehören nur zur Hauptansicht Verlauf; Details bleibt unverändert.
+      [".history-subviews", main !== "history"],
+      ["#history-figures", main !== "history"],
+      ["#history-chart-head", main !== "history"],
+      ["#history-gangs", main !== "history" || this.historySubview === "plant"],
     ]) {
       const node = this.$(selector);
       if (node) node.hidden = hidden;
     }
+    const history = this.$("#history");
+    history?.setAttribute?.("data-main", main);
+    history?.setAttribute?.(
+      "data-subview",
+      main === "history" ? this.historySubview || "session" : "",
+    );
+    for (const button of this.shadowRoot?.querySelectorAll?.(
+      ".history-subviews [data-action]",
+    ) || [])
+      button.setAttribute?.(
+        "aria-pressed",
+        String(
+          button.dataset.action ===
+            `history-subview:${this.historySubview || "session"}`,
+        ),
+      );
     this.syncFullscreenNavigation();
     if (view === "overview") this.fitInstrumentReadouts();
   }
@@ -17193,6 +17665,17 @@ class SaunaPanel extends HTMLElement {
     }
   }
   async action(action) {
+    if (action.startsWith("history-subview:")) {
+      const subview = action.slice("history-subview:".length);
+      if (!["session", "plant"].includes(subview) || subview === this.historySubview)
+        return;
+      this.historySubview = subview;
+      this.syncNavigation();
+      this.historyFiguresKey = this.historyChartHeadKey = null;
+      this.historyChart?.interaction.invalidateGeometry("layout");
+      this.scheduleHistoryRender("subview");
+      return;
+    }
     if (action.startsWith("history-event-category:")) {
       this.toggleHistoryEventCategory(action.slice("history-event-category:".length));
       return;

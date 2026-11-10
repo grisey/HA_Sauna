@@ -172,8 +172,13 @@ test("phase and event bands retain their labels and colors without height contro
   assert.equal((phases.match(/data-history-phase="saunagang"/g) || []).length, 2);
   assert.equal((p.historyBandNames(model).match(/Saunagang/g) || []).length, 1);
   const events = p.historyStripEvents(model);
+  // B3b: je eingeblendeter Art eine Bahn (Standard nur Aufgüsse, V8); die Schalter
+  // stehen im Diagrammkopf.
+  assert.match(events, /data-history-lane="infusion"[^>]*aria-label="Aufgüsse"/);
+  assert.doesNotMatch(events, /data-history-lane="door"/);
+  const head = p.historyChartHeadMarkup({ plant: false, humidityMode: "relative" });
   for (const label of ["Türvorgänge", "Aufgüsse", "Ofen"])
-    assert.ok(events.includes(label));
+    assert.ok(head.includes(label));
   assert.doesNotMatch(markup + phases + events, /class="vent"|lüften|Lüftung/);
   const styles = p.historyCurveStyles();
   assert.deepEqual(Array.from(styles["upper:temperature"].lineDash), []);

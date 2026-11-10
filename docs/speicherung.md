@@ -119,33 +119,40 @@ Anlagenmodell. Die Liveansicht verwendet die aktuelle Zuordnung, eine archiviert
 Sitzung ihren gespeicherten Aufbau. Fehlt dieser in älteren Daten, bleibt die
 Konfiguration unbekannt; vorhandene Messungen werden trotzdem angezeigt.
 
-Phasen und Ereignisse erscheinen in eigenen Bändern am Diagramm. Ein Klick auf
-einen Zeitpunkt markiert dessen Messwerte, ein zweiter einen Zeitraum. Ein
-weiterer Klick oder **Auswahl aufheben** stellt die Sitzungsübersicht wieder her.
-Für einen ausgewählten Saunagang enthält **Weitere Daten** den belegten
-Türschluss beim Eintritt, den bestätigten Abschluss des zugehörigen
-Austrittsvorgangs und den Bestätigungsstand **Vorläufig** oder **Bestätigt**.
-Die Gangdauer verwendet diese zugeordneten Grenzen. Die Türöffnung allein
-beendet den Gang nicht. Fehlende oder unvollständige Grenzen bleiben unbelegt;
-gebuchte Steuerungszeiten füllen sie nicht auf. Bei einem laufenden Gang mit
-belegtem Eintritt wird die vom Backend ermittelte bisherige Dauer angezeigt.
-Kennzahlen einer unvollständigen Gangphase beziehen sich ausdrücklich auf den
-ausgewählten Zeitraum. Gebuchte Gang- und Bestätigungszeiten bleiben separat
-in den Sitzungsdaten der Detailansicht erhalten.
-Für Zeiträume stehen Temperaturänderung und Änderung je Minute an der ausgewerteten
-Messposition zur Verfügung. **Weitere Daten** enthält die zeitgewichtete
-Temperaturdifferenz oben minus unten, die mittlere absolute Abweichung vom
-damals gebuchten Sollwert sowie größte Über- und Unterschreitung. Dabei zählt
-jeder Wert für seine ursprüngliche Gültigkeitsdauer; der Endpunkt gehört nur
-zur Nettoänderung. Fehlende Werte, Quellenwechsel und Gültigkeitslücken liefern
-einen konkreten Fehlhinweis statt eines Teilmittelwerts für den ganzen Zeitraum.
+Der Verlauf hat zwei Unteransichten. **Sitzung** zeigt oben das Sitzungsbild
+(Saunazeit, Aufgüsse, Höchsttemperatur, Ruhe zwischen den Gängen, Sitzung),
+darunter das Diagramm mit Temperatur und Feuchte und unten die Gänge im Vergleich
+(Soll und mittlere Abweichung davon, Eintritt, Austritt, Höchste, Feuchteanstieg
+und Wasser je Aufguss, Ruhe)
+neben der Auswahl. **Anlage** zeigt Aufheizen, Regelung im Bereit, Heizen und
+Energie sowie den Wärmeverlust durch die Tür, darunter die Temperatur gegen die
+gestrichelte Sollinie mit Ofenbahn und Türflächen. Alle Zahlen stammen aus den
+[Kennzahlen](kennzahlen.md) der beendeten Sitzung; das Panel rechnet keine
+Kennzahl. Sollbezogene Werte erscheinen nur, wenn die Sitzung einen Sollwert hat.
+Für eine laufende Sitzung folgen die Kennzahlen nach ihrem Ende.
 
-Die Feuchteabnahme je °C verwendet die serverseitig aus archivierten
-Originalmessungen projizierte absolute Feuchte und setzt
-eine gemeinsame Nettoabnahme von Temperatur und Feuchte voraus. Ein Türschluss
-oder bestätigtes Durchlüften allein belegt kein physikalisches Feuchteplateau;
-ein durch eine Türöffnung begrenzter Aufguss belegt allein kein natürliches
-Abklingende. Daraus werden keine zusätzlichen Erholungszeiten abgeleitet.
+Beide Achsen des Diagramms sind glatt geteilt (Schritte 1, 2, 2,5 und 5 × 10ⁿ)
+und teilen sich die Querlinien; die Zahl der Teilungen gibt der schlechter
+genutzten Kurve die meiste Höhe. Phasen stehen im Band über dem Diagramm,
+Ereignisse in eigenen Bahnen darunter: Aufgüsse als weiße Raute und dünne Linie,
+Türvorgänge als hellbrauner Balken und Fläche, der Ofen als Balken. Die Schalter
+über dem Diagramm blenden Aufgüsse (Standard), Türvorgänge und Ofen ein und
+wechseln zwischen relativer und absoluter Feuchte.
+
+Ein Klick auf einen Zeitpunkt markiert dessen Messwerte, ein zweiter einen
+Zeitraum. Ein weiterer Klick oder **Auswahl aufheben** hebt die Auswahl auf; mit
+dem Finger gilt dasselbe für Tippen. Die **Auswahl** zeigt am Zeitpunkt
+Temperatur und Feuchte in beiden Einheiten und im Gang die Aufgüsse bis dahin,
+für einen Zeitraum die Werte an Anfang und Ende und die Ereignisse darin. Für
+einen gewählten Saunagang wird seine Karte hervorgehoben; die Auswahl nennt die
+Gangzeiten, die Zeiten der Aufgüsse, Eintritt, kurze Öffnungen und Austritt sowie
+die höchste Feuchte. In einer laufenden Sitzung nennt sie zusätzlich den
+Bestätigungsstand **Vorläufig** oder **Bestätigt** und den belegten Türschluss
+beim Eintritt. Die Gangdauer verwendet die zugeordneten Grenzen; die Türöffnung
+allein beendet den Gang nicht, fehlende Grenzen bleiben unbelegt. Ein gewähltes
+Ereignis zeigt Zeit, Art und beim Aufguss sein Ende; Administratoren springen von
+dort zum Erkennungsnachweis. Fehler im Sitzungsverlauf, aufgehobene vorläufige
+Erkennungen und gebuchte Gang- und Bestätigungszeiten stehen in der Detailansicht.
 Phasen und Ereignisse wählen ihre belegten Zeitgrenzen aus. Die Markierung in
 der Zeitachse wechselt zwischen dem gewählten Ausschnitt und der gesamten Sitzung;
 ihre Griffe ändern die Zeitgrenzen.

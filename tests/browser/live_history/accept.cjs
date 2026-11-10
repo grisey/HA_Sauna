@@ -320,7 +320,10 @@ fs.mkdirSync(output, { recursive: true });
     selectionSurface = selectionPanel.locator("svg.session-chart"),
     selectionTooltip = selectionPanel.locator("#tooltip"),
     readout = selectionPanel.locator(".history-readout"),
-    humidityButton = selectionPanel.locator('[data-action="history-humidity"]');
+    // Der Umschalter an der Feuchteachse; der Diagrammkopf (B3b) hat einen zweiten.
+    humidityButton = selectionPanel.locator(
+      '.session-chart [data-action="history-humidity"]',
+    );
   const settleSelection = async () => {
     await selectionPage.evaluate(() => f.settle());
     await selectionPage.waitForFunction(() => f.panel.historyFrame == null, null, {
@@ -384,7 +387,7 @@ fs.mkdirSync(output, { recursive: true });
               (cell) =>
                 `${cell.querySelector(".history-tooltip-number").textContent} ${cell.querySelector(".history-tooltip-unit").textContent}`,
             ),
-        button = p.$('[data-action="history-humidity"]'),
+        button = p.$('.session-chart [data-action="history-humidity"]'),
         axis = [...p.$("[data-history-axes]").querySelectorAll(".axis-humidity")].at(
           -1,
         );

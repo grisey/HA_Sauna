@@ -208,7 +208,13 @@ const modelFor = (p, records, seconds, chart) => {
     current = p.shown.session;
   current.timeline.session_id = "selected-physical-session";
   current.timeline.completed = [
-    { gang_id: "bound-gang", started_at: iso(10), ended_at: iso(90), confirmed: true },
+    {
+      gang_id: "bound-gang",
+      started_at: iso(10),
+      ended_at: iso(90),
+      confirmed: true,
+      recognition_kind: "presence_confirmed",
+    },
   ];
   current.gang_intervals = [
     { gang_id: "bound-gang", started_at: null, ended_at: iso(70), complete: false },
@@ -227,145 +233,47 @@ const modelFor = (p, records, seconds, chart) => {
     start: base + 10_000,
     end: base + 70_000,
   };
-  let content = p.historyInformationContent(selection, phase);
-  assert.equal(content.singleGang, true);
-  assert.equal(content.selectedGang.durationSeconds, null);
-  assert.match(
-    p.historyInformationHeading(selection, phase, "UTC", content),
-    /Dauer nicht belegt/,
-  );
-  content = p.historyInformationContent(selection, { ...phase, source_id: "foreign" });
+  // B3b: Gangkennzahlen kommen aus key-figures. Ohne geladene Kennzahlen nennt die
+  // Überschrift den Gang und den gewählten Zeitraum; eine Dauer rechnet das Panel nicht.
+  const content = p.historyInformationContent(selection, phase);
+  assert.equal("singleGang" in content, false);
+  assert.equal("sectionStatistics" in content, false);
   assert.equal(
-    content.singleGang,
-    false,
-    "phase-to-gang attribution requires the original matching identity",
+    p.historyInformationHeading(selection, phase, "UTC", content),
+    "Saunagang 1 · 22:13:30 – 22:14:30",
+  );
+  p.keyFigureData = {
+    entry: p.entry,
+    sessionId: "selected-physical-session",
+    result: {
+      figures: {
+        gangs: [
+          {
+            number: 1,
+            start: { display: iso(12) },
+            end: { display: null },
+          },
+        ],
+      },
+    },
+  };
+  p.shown.session.ended_at = iso(100);
+  assert.equal(
+    p.historyInformationHeading(
+      { ...selection, phaseKey: p.historyPhaseKey(phase) },
+      phase,
+      "UTC",
+      content,
+    ),
+    "Saunagang 1 · 22:13:32 – Ende nicht belegt",
   );
 }
 
-// Fixed interval oracles use originals, causal boundaries and time weights.
+// Temperaturänderung, Differenz oben − unten, Sollabweichung und Feuchteabnahme
+// je °C rechnet das Panel nicht mehr (B1-Liste R-05 bis R-08, Paket B3b).
 {
-  const measured = (second, value, position = "upper", quantity = "temperature") => {
-    const item = record(second, value, position, quantity);
-    item.payload.source = `sensor.${position}_${quantity}`;
-    return item;
-  };
-  const records = [
-    measured(0, 60),
-    measured(15, 90),
-    measured(60, 80),
-    measured(0, 50, "lower"),
-    measured(45, 70, "lower"),
-    measured(60, 80, "lower"),
-  ];
-  const p = panel(60, records);
-  p.shown.session.configuration.bindings = {
-    upper_temperature: "sensor.upper_temperature",
-    lower_temperature: "sensor.lower_temperature",
-  };
-  p.shown.session.configuration.parameters.sensor_timeout_seconds = 60;
-  p.shown.session.target_history = [
-    { at: iso(0), target_c: 80 },
-    { at: iso(30), target_c: 100 },
-  ];
-  let result = p.historySectionStatistics(base, base + 60_000, "upper");
-  assert.equal(result.temperature.change, 20);
-  assert.equal(result.temperature.perMinute, 20);
-  assert.equal(result.difference.mean, 27.5);
-  assert.equal(result.target.meanAbsolute, 12.5);
-  assert.equal(result.target.maximum, 10);
-  assert.equal(result.target.minimum, -20);
-  records.push(measured(20, null));
-  result = p.historySectionStatistics(base, base + 60_000, "upper");
-  assert.match(result.temperature.reason, /Messlücke/);
-  assert.match(result.difference.reason, /Messlücke/);
-  assert.ok(result.target.reason);
-  records.push(measured(20, 90));
-  assert.equal(
-    p.historySectionStatistics(base, base + 60_000, "upper").temperature.change,
-    20,
-    "latest same-time original withdraws the null",
-  );
-  p.shown.session.measurement_context = null;
-  assert.match(
-    p.historySectionStatistics(base, base + 60_000, "upper").temperature.reason,
-    /Messkontext/,
-  );
-}
-{
-  const source = (second, value, matches = true) => ({
-    ...record(second, value),
-    payload: { ...record(second, value).payload, source_matches_binding: matches },
-  });
-  const records = [source(0, 80), source(60, 70)];
-  const p = panel(60, records);
-  delete p.shown.session.configuration;
-  p.shown.session.measurement_context = {
-    roles: ["upper_temperature", "upper_humidity"],
-    regulation_position: "upper",
-    sensor_timeout_seconds: 60,
-  };
-  p.state.configuration.parameters.sensor_timeout_seconds = 1;
-  assert.equal(
-    p.historySectionStatistics(base, base + 60_000, "upper").temperature.change,
-    -10,
-    "archived context has priority over current TTL",
-  );
-  records.push(source(30, 78, false));
-  assert.match(
-    p.historySectionStatistics(base, base + 60_000, "upper").temperature.reason,
-    /Messquelle/,
-  );
-  records.pop();
-  p.invalidateHistoryIndex();
-  p.shown.session.measurement_context.sensor_timeout_seconds = 10;
-  assert.match(
-    p.historySectionStatistics(base, base + 60_000, "upper").temperature.reason,
-    /Gültigkeitslücke/,
-  );
-  p.shown.session.measurement_context.sensor_timeout_seconds = 60;
-  const before = p.historySectionStatistics(base - 1, base + 60_000, "upper");
-  assert.match(
-    before.temperature.reason,
-    /Beginn fehlt/,
-    "a future observation cannot establish the original beginning",
-  );
-}
-{
-  const records = [0, 60].flatMap((second) => [
-    {
-      ...record(second, second ? 70 : 80),
-      payload: {
-        ...record(second, second ? 70 : 80).payload,
-        source_matches_binding: true,
-      },
-      display: {
-        absolute_humidity: {
-          value: second ? 8 : 12,
-          received_at: iso(second),
-          valid_until: iso(120),
-        },
-      },
-    },
-    {
-      ...record(second, second ? 20 : 40, "upper", "humidity"),
-      payload: {
-        ...record(second, second ? 20 : 40, "upper", "humidity").payload,
-        source_matches_binding: true,
-      },
-    },
-  ]);
-  const p = panel(60, records);
-  delete p.shown.session.configuration;
-  p.shown.session.measurement_context = {
-    roles: ["upper_temperature", "upper_humidity"],
-    regulation_position: "upper",
-    sensor_timeout_seconds: 60,
-  };
-  assert.equal(
-    p.historySectionStatistics(base, base + 60_000, "upper").humidityLoss.value,
-    0.4,
-    "uses authoritative projected AH values without JS physics",
-  );
+  const p = panel(60, []);
+  assert.equal(typeof p.historySectionStatistics, "undefined");
 }
 const geometry = {
   width: 1200,

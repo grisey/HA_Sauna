@@ -38,9 +38,9 @@ kommt. Fehlende Daten ergeben einen fehlenden Wert, nicht 0.
 | Bereich | Kennzahlen |
 | --- | --- |
 | Gänge (K-S2 bis K-S8, K-G1 bis K-G9) | Anzahl, Dauern, Saunazeit, Ruhe, Aufgüsse, Höchsttemperatur mit Einordnung und Soll, Eintritts- und Austrittstemperatur beim Öffnen der Tür, Feuchteanstieg und Wasser je Aufguss, höchste Feuchte, Soll und Sollabweichung im Gang. |
-| Aufheizen (K-S9 bis K-S11, K-S15, K-S16, K-S22, K-S23) | Vom ersten Heizintervall bis zum ersten Bereit oder zum Öffnen der Eintrittstür des ersten Gangs, je nachdem was früher kommt; Art, Temperatur und Soll am Ende, Energie davor und danach, Türöffnungen, Anstieg je kWh. |
-| Anlage (K-S12 bis K-S14, K-S17 bis K-S19, K-S24, K-S25) | Heizzeit und Heizanteil, Energie mit Gegenprobe und Kosten, Heizen in den Gängen, Ofenkühlungen mit auslösendem Gang, Regelung im Bereit, Sollwerte und Programmart. |
-| Türvorgänge (K-S21) | Alle Paare Öffnen → Schließen der Sitzung mit Klasse Eintritt, Austritt, Schlusslüften oder sonstige; offen, Verlust und Wiedererreichen. |
+| Aufheizen (K-S9 bis K-S11, K-S15, K-S16, K-S22, K-S23) | Vom ersten Heizintervall bis zum ersten Bereit oder zum Öffnen der Eintrittstür des ersten Gangs, je nachdem was früher kommt; Art, Temperatur und Soll am Ende, Energie davor und danach, Türöffnungen, Anstieg je kWh; „frühere Sitzungen“ als Median über frühere Sitzungen derselben Programmart (`earlier_warmup.program_kind`). |
+| Anlage (K-S12 bis K-S14, K-S17 bis K-S19, K-S24, K-S25) | Heizzeit und Heizanteil, Energie mit Gegenprobe und Kosten, die Nennleistung der Gegenprobe (`nominal_power_kw`, gespeicherte Konfiguration), Heizen in den Gängen, Ofenkühlungen mit auslösendem Gang, Regelung im Bereit, Sollwerte und Programmart. |
+| Türvorgänge (K-S21) | Alle Paare Öffnen → Schließen der Sitzung mit Klasse Eintritt, Austritt, Schlusslüften oder sonstige; offen, Verlust und Wiedererreichen mit der Zahl der darauf geprüften Vorgänge (`recovery_checked_count`, ohne Schlusslüften); Mittel des Verlusts über Ein- und Austritt (`door_loss_entry_exit_mean_c`, dieselbe Rechnung wie je Sitzung in der Statistik). |
 | Außentemperatur (K-S20) | Außentemperatur zum Sitzungsbeginn mit ihrer Messzeit. |
 | Verworfene Kandidaten (K-E2) | Öffnungskandidaten mit unpassender Kurvenform (`candidates`); davon endgültig verworfen (`rejected`), in Episoden ohne Übernahme (`rejected_in_episodes`, Episoden `rejected_episodes`) oder einzeln (`rejected_single`). Kandidaten einer über die Anwesenheit übernommenen Episode zählen als Türvorgang (`taken_as_door`, Episoden `door_episodes`), nicht als verworfen. |
 
@@ -97,15 +97,30 @@ nach Programmart (`by_program`: Handbetrieb, Konstant, Programm).
 | Je Sitzung (`per_session`) | Beginn, Programmart, Dauer, Gänge mit Beginn, Ende, Dauer und Aufgüssen, Saunazeit, Aufgüsse in den Gängen, Energie, Heizanteil, mittlerer Türverlust über Ein- und Austritt |
 | Gruppen (`groups`) | Über alle Sitzungen je Saison und Sommer, in einer Saison je Jahreszeit, sonst keine: Sitzungen, Saunazeit, Gänge, Aufgüsse, Energie, Heizanteil, mittlerer Türverlust über Ein- und Austritt |
 | Ruhe (`rest`) | Mittel, Spanne und längste Ruhe mit ihrer Sitzung |
-| Gewohnheiten (`habits`) | Je Sitzung Wochentag und Beginn (Ortszeit), Sitzungen je Wochentag, die mittlere Hälfte der Beginnzeiten (1. bis 3. Quartil, zwischen den Beginnzeiten interpoliert), häufigste Gangzahl mit der Zahl ihrer Sitzungen |
+| Gewohnheiten (`habits`) | Je Sitzung Wochentag und Beginn (Ortszeit), Sitzungen je Wochentag, die mittlere Hälfte der Beginnzeiten (1. bis 3. Quartil, zwischen den Beginnzeiten interpoliert, auf dem Tageskreis), häufigste Gangzahl mit der Zahl ihrer Sitzungen |
 | Tür (`door_classes`, `door_entry_exit`) | Je Art Anzahl, Verlust, offen; Ein- und Austritt zusammen mit Mittel und größtem Verlust samt Art, Sitzung, Öffnungszeitpunkt und Öffnungsdauer |
 | Aufheizen (`warmup`) | Median, Spanne, je Sitzung Ende mit Art und die Kurve (`curve`) |
+
+Die Beginnzeiten liegen auf dem Tageskreis: Die Tagesgrenze liegt in der
+größten Lücke zwischen zwei aufeinanderfolgenden Beginnzeiten, die Lücke über
+Mitternacht eingeschlossen. Beginnt man meist abends, zählt ein Beginn kurz nach
+Mitternacht so zum späten Ende des Tages und nicht als frühester Beginn. Eine
+feste Uhrzeit gibt es dafür nicht. Die Quartile kommen als Uhrzeiten; reicht die
+mittlere Hälfte über Mitternacht, ist das 1. Quartil die spätere Uhrzeit.
 
 Die Kurve des Aufheizens ist die Temperatur oben vom Heizbeginn bis zum Ende
 des Aufheizens. Sie kommt nur als Anzeigewerte: Minuten ab Heizbeginn und °C,
 je auf eine Nachkommastelle, mit einem Punkt dort, wo sich die angezeigte
 Temperatur ändert, und dem Endpunkt. Nach der Zeitpunktregel geht in
 Anzeigegenauigkeit dabei nichts verloren; die Messreihe selbst bleibt im Archiv.
+
+Der **Verlauf** zeigt die Kennzahlen einer beendeten Sitzung in den
+Unteransichten **Sitzung** (Sitzungsbild, Gänge im Vergleich) und **Anlage**
+(Aufheizen, Regelung im Bereit, Heizen und Energie, Wärmeverlust durch die Tür).
+Die Programmart (K-S25) entscheidet, welche sollbezogenen Werte erscheinen: im
+Handbetrieb ohne Sollwert keine Sollwerte, Regelung im Bereit und Soll je Gang.
+Messwerte am Zeitpunkt und die Aufgüsse eines Gangs bis zu einem Zeitpunkt liest
+das Panel aus den gelieferten Messreihen und Listen.
 
 Die Seite **Statistik** im Panel steht allen Benutzern offen. Sie zeigt den
 gewählten Zeitraum (gesamt, Saison oder Sommer, Jahreszeit) in den Abschnitten

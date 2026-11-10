@@ -3028,18 +3028,25 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.errors,[])
 
     async def test_live_history_assignment_diagnostics_and_authenticated_download(self):
-        async def selected_gang_details(panel):
+        async def select_gang(panel):
             phase = panel.locator('.history-phase-band-segment[data-history-phase="saunagang"]').first
             await expect(phase).to_be_visible(timeout=browser_timeout("update"))
             if await phase.get_attribute("aria-pressed") != "true":
                 await phase.click()
-            details = panel.locator("#history-information-details")
-            await expect(details).to_be_attached(timeout=browser_timeout("update"))
-            if await details.get_attribute("open") is None:
-                await details.locator("summary").click()
-            gang = details.locator("[data-history-selected-gang]")
+
+        async def selected_gang_details(panel):
+            # Laufende Sitzung: die Auswahl nennt Bestätigung und Beginn des Gangs.
+            await select_gang(panel)
+            gang = panel.locator("#history-inspection [data-history-selected-gang]")
             await expect(gang).to_be_visible(timeout=browser_timeout("update"))
             return gang
+
+        async def selected_gang_heading(panel):
+            # Beendete Sitzung: die Überschrift der Auswahl nennt die Ganggrenzen.
+            await select_gang(panel)
+            heading = panel.locator("#history-inspection .history-inspection-heading .history-tooltip-time")
+            await expect(heading).to_contain_text("Saunagang", timeout=browser_timeout("update"))
+            return heading
 
         await self.panel.locator('#current [data-action="operation"]').click()
         await expect(self.panel.locator('#current [data-phase="aufheizen"]')).to_be_visible()
@@ -3216,7 +3223,7 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
         await expect(label).to_have_count(1)
         await expect(label).to_be_visible()
         await expect(self.panel.locator(".history-inspection-heading .history-tooltip-time")).to_have_text(
-            re.compile(r"^Aufheizen · \d{2}:\d{2}$")
+            re.compile(r"^\d{2}:\d{2}:\d{2} · Aufheizen$")
         )
         await expect(self.panel.locator("#tooltip .history-tooltip-status")).to_have_text("Saunastatus · Aufheizen")
         temperature_value = label.locator("..").locator("span").nth(1)
@@ -3304,35 +3311,30 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
         await self.panel.locator('[data-action="diagnostics"]').click()
         await expect(self.panel.locator('[data-series="detector_door_temperature_slope_upper"]')).to_be_attached()
         self.assertFalse(await self.panel.locator("#plots").is_visible())
-        # The main history owns the event list; detail history shows the
-        # controller tracks instead of duplicating those events.
+        # B3b: The main history has no event list. Events stand in the event
+        # lanes; the selected event offers the jump to its detection evidence.
+        event_id = door_event.event_id
+
+        async def select_door_event():
+            door_category = self.panel.locator(
+                '#history-chart-head [data-action="history-event-category:door"]')
+            if await door_category.get_attribute("aria-pressed") != "true":
+                await door_category.click()
+            segment = self.panel.locator(
+                '[data-history-strip-events] .history-event-band-segment[data-history-event-kind="door"]').first
+            await expect(segment).to_be_attached(timeout=browser_timeout("update"))
+            await segment.click()
+            member = self.panel.locator(f'#history-event-inspection [data-action="history-event:{event_id}"]')
+            if await member.count():
+                await member.click()
+            link = self.panel.locator(f'#history-event-inspection [data-action="event-row:{event_id}"]')
+            await expect(link).to_be_visible(timeout=browser_timeout("update"))
+            return link
+
         await self.panel.locator('.main-tabs [data-action="history"]').click()
-        await expect(self.panel.locator('#event-list')).to_be_visible()
-        door_category = self.panel.locator('[data-action="history-event-category:door"]')
-        if await door_category.get_attribute("aria-pressed") != "true":
-            await door_category.click()
-        event_details = self.panel.locator('#event-list details').first
-        if await event_details.get_attribute("open") is None:
-            await event_details.locator('summary').click()
-        event_link = self.panel.locator('#event-list [data-action^="event-row:"]').first
-        await expect(event_link).to_be_visible()
-        event_id = (await event_link.get_attribute('data-action')).split(':', 1)[1]
+        await expect(self.panel.locator('#event-list')).to_be_empty()
+        event_link = await select_door_event()
         await event_link.click()
-        selected_row = self.panel.locator(f'.event-row[data-event-id="{event_id}"]')
-        contrast = await selected_row.evaluate("""row => {
-          const style = getComputedStyle(row);
-          const light = color => {
-            const channels = color.match(/[\\d.]+/g).slice(0, 3).map(Number);
-            return channels.reduce((sum, value, index) => {
-              const x = value / 255;
-              return sum + [0.2126, 0.7152, 0.0722][index] *
-                (x <= 0.04045 ? x / 12.92 : ((x + 0.055) / 1.055) ** 2.4);
-            }, 0);
-          };
-          const a = light(style.outlineColor), b = light(style.backgroundColor);
-          return (Math.max(a, b) + 0.05) / (Math.min(a, b) + 0.05);
-        }""")
-        self.assertGreaterEqual(contrast, 3)
         await expect(self.panel.locator('.detail-tabs [data-action="diagnostics"]')).to_have_attribute('aria-current', 'page')
         await expect(self.panel.locator('#detection-plots')).to_be_visible()
         marker = self.panel.locator(f'.diagnostic-marker[data-event-id="{event_id}"][data-selected="true"]').first
@@ -3348,25 +3350,12 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
         self.assertGreater(float(await guide.get_attribute('y2')), float(await guide.get_attribute('y1')))
         await self.panel.locator(f'[data-action="event-history:{event_id}"]').click()
         await expect(self.panel.locator('.main-tabs [data-action="history"]')).to_have_attribute('aria-current', 'page')
-        await expect(self.panel.locator('#event-list')).to_be_visible()
-        selected_link = self.panel.locator(f'#event-list [data-action="event-row:{event_id}"]')
-        await expect(selected_link).to_be_focused()
-        self.assertGreaterEqual(
-            await selected_link.evaluate("button => parseFloat(getComputedStyle(button).outlineWidth)"),
-            2,
-        )
-        button_contrast = await selected_link.evaluate("""button => {
-          const style = getComputedStyle(button);
-          const light = color => color.match(/[\\d.]+/g).slice(0, 3).map(Number)
-            .reduce((sum, value, index) => {
-              const x = value / 255;
-              return sum + [0.2126, 0.7152, 0.0722][index] *
-                (x <= 0.04045 ? x / 12.92 : ((x + 0.055) / 1.055) ** 2.4);
-            }, 0);
-          const a = light(style.outlineColor), b = light(style.backgroundColor);
-          return (Math.max(a, b) + 0.05) / (Math.min(a, b) + 0.05);
-        }""")
-        self.assertGreaterEqual(button_contrast, 3)
+        # The return selects the event in its lane; the selection names it again.
+        selected_link = self.panel.locator(f'#history-event-inspection [data-action="event-row:{event_id}"]')
+        await expect(selected_link).to_be_visible(timeout=browser_timeout("update"))
+        focused = await self.panel.evaluate(
+            "p => decodeURIComponent(p.shadowRoot.activeElement?.dataset?.historyEventMembers || '')")
+        self.assertIn(event_id, focused)
         await self.panel.locator('[data-action="settings"]').click()
         temperature_color = editor.locator('[data-appearance-color="series_temperature"]')
         if not await temperature_color.is_visible():
@@ -3374,10 +3363,9 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
         await temperature_color.fill("#42A5FF")
         await editor.locator('[data-appearance-color="series_humidity"]').fill("#FF6B4A")
         await self.panel.locator('.main-tabs [data-action="history"]').click()
-        await expect(self.panel.locator('#event-list')).to_be_visible()
-        event_row = self.panel.locator(f'#event-list [data-action="event-row:{event_id}"]')
+        event_row = self.panel.locator(f'#history-event-inspection [data-action="event-row:{event_id}"]')
         if not await event_row.is_visible():
-            await event_row.locator('xpath=ancestor::details').locator('summary').click()
+            event_row = await select_door_event()
         await event_row.click()
         plot = self.panel.locator('#detection-plots .plot-panel').filter(
             has=self.page.locator('[data-series="detector_door_temperature_slope_upper"]'))
@@ -3415,13 +3403,11 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
         await expect(archived_option).not_to_contain_text("beendet")
         await expect(self.panel.locator("svg.session-chart")).to_be_visible()
         await self.select_dropdown(self.panel.locator("#session"), identity)
-        gang = await selected_gang_details(self.panel)
-        await expect(gang).to_contain_text("Bestätigt", timeout=browser_timeout("update"))
+        heading = await selected_gang_heading(self.panel)
         # Recording closure without a physical exit must not supply an end.
-        await expect(gang).to_contain_text("Zeitgrenzen unbelegt")
-        await expect(gang).to_contain_text("Ende · Nicht belegt")
-        self.assertEqual(await gang.get_attribute("data-start"), start)
-        await expect(gang.locator("time")).to_have_attribute("datetime", start)
+        await expect(heading).to_contain_text("Ende nicht belegt", timeout=browser_timeout("update"))
+        start_clock = await self.panel.evaluate("(p, s) => p.historyClockSeconds(s)", start)
+        await expect(heading).to_contain_text(start_clock)
         tokens = await self.page.evaluate("localStorage.getItem('hassTokens')")
 
         async def zone_snapshot(zone):
@@ -3448,23 +3434,17 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
                   while (p.busy) await new Promise(resolve => setTimeout(resolve, window.testSettings.browser.poll_ms));
                   if (p.historyLoad) await p.historyLoad.promise;
                 }""")
-                gang = await selected_gang_details(panel)
-                await expect(gang).to_contain_text("Bestätigt", timeout=browser_timeout("update"))
-                self.assertEqual(await gang.get_attribute("data-start"), start)
-                await expect(gang.locator("time")).to_have_attribute("datetime", start)
-                gang_time = await gang.locator("time").text_content()
-                # The selected gang excludes events on its end boundary. Read
-                # session event times in the overview, independently of that
-                # deliberate range filter, and wait for its rendered consumer.
+                heading = await selected_gang_heading(panel)
+                await expect(heading).to_contain_text("Ende nicht belegt", timeout=browser_timeout("update"))
+                gang_time = await heading.text_content()
+                # Event times stand in the event lanes (B3b, no event list);
+                # read them in the overview, independently of the selection.
                 await panel.locator('[data-action="clear-history-selection"]').click()
-                event_details = panel.locator("#event-list details").first
-                if await event_details.get_attribute("open") is None:
-                    await event_details.locator("summary").click()
-                await expect(panel.locator("#event-list .history-event-time").first).to_be_visible(
-                    timeout=browser_timeout("update")
-                )
+                await expect(
+                    panel.locator("[data-history-strip-events] .history-event-band-segment").first
+                ).to_be_attached(timeout=browser_timeout("update"))
                 snapshot = await panel.evaluate("""p => ({
-                  events: [...p.shadowRoot.querySelectorAll('#event-list .history-event-time')].map(e=>e.textContent),
+                  events: [...p.shadowRoot.querySelectorAll('[data-history-strip-events] .history-event-band-segment')].map(e=>e.getAttribute('title')),
                   annotations: [...p.shadowRoot.querySelectorAll('[data-history-annotations] title')].filter(e=>/Aufguss|Heizzeit/.test(e.textContent)).map(e=>e.textContent),
                   session: p.$('#session').selectedOptions[0].textContent,
                 })""")

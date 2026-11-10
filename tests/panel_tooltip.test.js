@@ -234,7 +234,8 @@ test("persistent hover rounds local values without changing original data", () =
   const original = measurement();
   const before = JSON.stringify(original);
   const { tooltip } = inTimeZone("Europe/Berlin", () => tooltipFor(original));
-  assert.equal(tooltip.children[0].textContent, "Punkt · 09:00");
+  // B3b: Zeitpunkt mit Sekunden zuerst, dann die Phase (Brett „Touch“).
+  assert.equal(tooltip.children[0].textContent, "09:00:20");
   assertTemperature(tooltip, "79,1");
   assert.equal(tooltip.children[2].textContent, "Saunastatus · Unbekannt");
   assert.doesNotMatch(tooltip.textContent, /Originalwert|Empfangen|Gemessen|GMT/);
@@ -362,15 +363,15 @@ test("persistent hover clock follows DST and the browser-local zone", () => {
     tooltipFor(measurement({ received_at: "2026-10-25T01:30:00.123456Z" })).tooltip
       .textContent,
   ]);
-  assert.match(beforeFallback, /^Punkt · 02:30Temperatur/);
-  assert.match(afterFallback, /^Punkt · 02:30Temperatur/);
+  assert.match(beforeFallback, /^02:30:00Temperatur/);
+  assert.match(afterFallback, /^02:30:00Temperatur/);
   const utc = inTimeZone("UTC", () => tooltipFor(measurement()).tooltip.textContent);
   const newYork = inTimeZone(
     "America/New_York",
     () => tooltipFor(measurement()).tooltip.textContent,
   );
-  assert.match(utc, /^Punkt · 08:00Temperatur/);
-  assert.match(newYork, /^Punkt · 03:00Temperatur/);
+  assert.match(utc, /^08:00:20Temperatur/);
+  assert.match(newYork, /^03:00:20Temperatur/);
 });
 
 test("persistent tooltip nodes are reused", () => {

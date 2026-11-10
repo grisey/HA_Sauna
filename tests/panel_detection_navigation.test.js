@@ -590,8 +590,10 @@ const parameters = historicalParameters();
   assert.equal(calls.length, 4);
 }
 
-// The event list is a chronological sequence with stable ties. Grouping only
-// supplies a minute heading; every source event keeps its own navigation row.
+// B3b: Die Ereignisliste entfällt; Ereignisse stehen im Ereignisband und in der
+// Auswahl. Der Sprung zur Erkennungskontrolle („Zum Marker“) steht für Admins beim
+// gewählten Ereignis, sofern es einen Erkennungsnachweis hat. Die Reihenfolge der
+// Ereignisse bleibt chronologisch mit stabilen Gleichständen.
 {
   const events = [
     { event_id: "late", kind: "infusion", effective_at: iso(60) },
@@ -612,6 +614,7 @@ const parameters = historicalParameters();
     };
     const p = Object.assign(fixturePanel(Panel), {
       entry: "entry",
+      navigation: { main: "history", detail: "detail" },
       historyEventVisibility: new Map([["door", true]]),
       state: { now: iso(90), permissions: { admin }, configuration: { parameters } },
       shown: {
@@ -628,7 +631,7 @@ const parameters = historicalParameters();
         },
       },
       historyChart: { identity: "entry:events", render() {} },
-      historyDetail: true,
+      historyDetail: false,
       historyTimelineRevision: 1,
       window: [Date.parse(iso(0)), Date.parse(iso(90))],
       isConnected: true,
@@ -636,6 +639,8 @@ const parameters = historicalParameters();
       $: node,
       shadowRoot: { querySelectorAll: () => [] },
       updateHistoryTimelineRevision() {},
+      loadHistoryKeyFigures() {},
+      renderHistoryFigures() {},
       diagnosticData: () => ({ traces: [] }),
       diagnosticTraceForEvent: (_traces, event) => event.event_id === "tie-a",
       diagnosticsRenderKey: () => "events",
@@ -643,20 +648,23 @@ const parameters = historicalParameters();
     });
     p.historyIndex(records);
     p.renderHistory(new Set(["status"]));
-    const html = node("#event-list").innerHTML;
-    assert.deepEqual(
-      [...html.matchAll(/class="event-row" data-event-id="([^"]+)"/g)].map(
-        (match) => match[1],
-      ),
-      ["early", "legacy-3", "tie-a", "tie-b", "late", "missing", "invalid"],
-    );
-    assert.equal((html.match(/class="history-event-group"/g) || []).length, 3);
-    assert.equal((html.match(/<span>Aufguss<\/span>/g) || []).length, 3);
-    assert.match(html, /class="history-event-groups"/);
-    assert.match(html, /class="history-event-time">Ohne Zeit/);
-    assert.match(html, /&lt;custom&gt;/);
-    assert.equal(html.includes('data-action="event-row:tie-a"'), admin);
-    assert.equal(html.includes('data-action="event-row:tie-b"'), false);
+    assert.equal(node("#event-list").innerHTML, "");
+    for (const [id, linked] of [
+      ["tie-a", admin],
+      ["tie-b", false],
+    ]) {
+      p.historyValueSelection = {
+        identity: p.historyValueIdentity(),
+        kind: "point",
+        start: Date.parse(iso(10)),
+        end: Date.parse(iso(10)),
+        eventIds: [id],
+      };
+      p.syncHistoryEventInspection();
+      const html = node("#history-event-inspection").innerHTML;
+      assert.match(html, /<span>Aufguss<\/span>/);
+      assert.equal(html.includes(`data-action="event-row:${id}"`), linked);
+    }
     assert.deepEqual(
       Array.from(
         p.historyEventsAt(Date.parse(iso(10)), 10000),

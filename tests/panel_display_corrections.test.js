@@ -237,27 +237,17 @@ test("the detail label table holds no entries without a delivering backend", () 
     assert.equal(p.detailFieldLabel(key), key.replaceAll("_", " "));
 });
 
-const informationContent = (shown, measuredPower = null) => ({
+const informationContent = (shown) => ({
   session: shown.session,
   selection: null,
-  rows: [],
-  singleGang: false,
-  selectedGang: null,
   start: Date.parse(iso(0)),
   end: Date.parse(iso(90)),
-  gangCount: 0,
-  energy: shown.session.energy,
-  measuredPower,
+  completed: true,
   measurements: new Map(),
-  sectionStatistics: {
-    temperature: { change: 10 },
-    difference: { mean: 8 },
-    target: { meanAbsolute: 1, maximum: 2, minimum: -3 },
-  },
   sectionPhase: null,
 });
 
-test("power rows require a power measurement in history and detail history", () => {
+test("power rows require a power measurement in detail history and leave the history view", () => {
   for (const [model, measuredPower, shownRows] of [
     [{ power_sensor_configured: false }, null, false],
     [null, null, false],
@@ -271,10 +261,11 @@ test("power rows require a power measurement in history and detail history", () 
     };
     const p = panel(shown);
     p.$ = () => null;
-    p.syncHistoryInformation(null, null, true, informationContent(shown, measuredPower));
+    p.syncHistoryInformation(null, null, true, informationContent(shown));
+    // B3b: Leistung und Energie stehen nicht mehr in der Auswahl des Verlaufs (R-02).
     const summary = p.markup["[data-history-session-summary]"];
-    assert.equal(/Gemessene Leistung/.test(summary), shownRows, JSON.stringify(model));
-    p.historyInformationContent = () => ({ measuredPower });
+    assert.doesNotMatch(summary, /Gemessene Leistung|Energie/, JSON.stringify(model));
+    p.historyMeasuredPower = () => measuredPower;
     const detail = p.renderSessionEvidenceContents(shown.session);
     assert.equal(
       /Gemessene Leistung|Messbezug|Gemessene mittlere Leistung/.test(detail),
@@ -284,7 +275,7 @@ test("power rows require a power measurement in history and detail history", () 
   }
 });
 
-test("measuring positions stay out of the history readout and remain in detail history", () => {
+test("the history selection shows no measuring positions and no panel-computed figures", () => {
   const shown = {
     session: { ...session(), configuration_model: { power_sensor_configured: false } },
     records: [],
@@ -296,7 +287,6 @@ test("measuring positions stay out of the history readout and remain in detail h
     p.historyDetail = detail;
     p.syncHistoryInformation(null, null, true, informationContent(shown));
     const summary = p.markup["[data-history-session-summary]"];
-    assert.equal(/Messposition|oben − unten|oben|unten/.test(summary), detail);
-    assert.match(summary, /Mittlere absolute Sollabweichung/);
+    assert.doesNotMatch(summary, /Messposition|oben − unten|Sollabweichung|Maximum/);
   }
 });

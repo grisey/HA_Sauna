@@ -20,7 +20,7 @@ from .timeline import utc
 # Einheit: Nachkommastellen des Anzeigewerts
 PLACES = {
     "°C": 1, "%": 1, "g/m³": 1, "kWh": 1, "€": 2, "l": 2, "°C/kWh": 1, "kWh/h": 1,
-    "mean": 1,
+    "mean": 1, "kW": 1,
 }
 
 
@@ -93,7 +93,8 @@ def figure(value, unit: str, started_at: datetime | None = None) -> dict:
 DOOR_CLASS = {
     "count": "count", "loss_mean_c": "°C", "loss_max_c": "°C",
     "open_mean_seconds": "min", "open_max_seconds": "min",
-    "recovered_count": "count", "recovered_mean_seconds": "min",
+    "recovered_count": "count", "recovery_checked_count": "count",
+    "recovered_mean_seconds": "min",
 }
 DOOR_CLASSES = {name: DOOR_CLASS for name in (
     "entry", "exit", "final_ventilation", "other", "all",
@@ -120,7 +121,8 @@ SESSION = {
     "warmup_end_target_c": "°C", "warmup_curve": "curve", "targets_c": ["°C"],
     "heating_time_seconds": "h:mm",
     "heating_share": "share", "energy_kwh": "kWh", "energy_measured_kwh": "kWh",
-    "energy_check_kwh": "kWh", "cost_eur": "€", "energy_warmup_kwh": "kWh",
+    "energy_check_kwh": "kWh", "nominal_power_kw": "kW", "cost_eur": "€",
+    "energy_warmup_kwh": "kWh",
     "energy_after_warmup_kwh": "kWh", "heating_phases_after_warmup": "count",
     "heating_in_gangs": "share",
     "oven_cooling": [{"start": "time", "end": "time", "duration_seconds": "min"}],
@@ -138,7 +140,8 @@ SESSION = {
         "opened": "time", "closed": "time", "open_seconds": "min",
         "temperature_at_open_c": "°C", "loss_c": "°C", "recovered_seconds": "min",
     }],
-    "door_classes": DOOR_CLASSES, "door_openings_warmup": "count", "rise_per_kwh": "°C/kWh",
+    "door_classes": DOOR_CLASSES, "door_loss_entry_exit_mean_c": "°C",
+    "door_openings_warmup": "count", "rise_per_kwh": "°C/kWh",
     "gangs": [GANG],
 }
 EARLIER_WARMUP = {"median_seconds": "h:mm"}
