@@ -1,4 +1,4 @@
-"""Kalibrierung mit Anweisungen per Benachrichtigung und Rückmeldung (V31).
+"""Kalibrierung mit Anweisungen per Benachrichtigung und Rückmeldung (V31, W-3).
 
 Ohne HA-Abhängigkeit. Module sind Daten; der Ablauf führt je Schritt
 Anweisung → Antwort oder Wartezeit und führt das Protokoll. Er bedient die
@@ -6,14 +6,20 @@ Sauna nicht: Steuerung, Erkennung und Gangmodell lesen weder Ablauf noch
 Protokoll. Die Auswertung vergleicht das Protokoll nachträglich mit
 Präsenzmeldungen, gebuchten Erkennungen, Gängen und Gangheizung.
 
+Grundablauf (W3-1, W3-3, W3-6): P1 (leere Kabine beim Aufheizen), Gang 1 nach
+Bereit, P2 (leere Kabine in der Pause nach Gang 1), Gang 2 nach „Nächster Gang“,
+danach der freiwillige Gang 3 nach „Nächster Gang“ oder „Beenden“. Zusatzmodule
+(P, A1, A2, A3, C/B, D) laufen einzeln in einer laufenden Sitzung.
+
 Zeitfenster eines Schritts: Untergrenze ist die Übergabe der Anweisung,
 Obergrenze die Antwort (``time_fired``), bei einem Schritt ohne Aktion das Ende
 seiner Wartezeit. Die Wartezeiten der Module sind Teil der Anweisungen an die
 Person, keine Größe der Steuerung oder Erkennung.
 
-Eine Kalibrierung zählt nur ununterbrochen (W-2a): Jede Unterbrechung beendet
-den Lauf sofort als ungültig, ein ungültiger Lauf wird nicht ausgewertet.
-Die Erkennungen eines Laufs werden seinen Referenzen in deren physikalischer
+Jeder Teil (eine Ausführung eines Moduls) gilt für sich (W3-2): Eine
+Unterbrechung (W-2a) beendet den Lauf und macht nur den laufenden Teil
+ungültig; abgeschlossene Teile bleiben gültig und werden ausgewertet. Die
+Erkennungen eines Laufs werden seinen Referenzen in deren physikalischer
 Reihenfolge zugeordnet (W-2b). ``CalibrationRun.status`` ist der Anzeigezustand
 für das Panel (W-2c).
 """
@@ -39,15 +45,19 @@ REPLY = "reply"
 DEVIATE = "deviate"
 CANCEL = "cancel"
 NEXT = "next"
+FINISH = "finish"
 REPEAT = "repeat"
 LABELS = {
     DEVIATE: "Abweichend",
     CANCEL: "Abbrechen",
     NEXT: "Nächster Gang",
+    FINISH: "Beenden",
     REPEAT: "Wiederholen",
 }
+# Antworten einer Pause, die auch das Panel geben kann.
+PAUSE_ACTIONS = (NEXT, FINISH)
 
-# Unterbrechungen (W-2a, W-2b); jede macht den Lauf ungültig.
+# Unterbrechungen (W-2a, W-2b); jede macht den laufenden Teil ungültig (W3-2).
 INTERRUPTIONS = {
     "cancelled": "abgebrochen",
     "operation_off": "Betrieb aus",
@@ -78,6 +88,13 @@ EVALUATED_KINDS = (DOOR_OPEN, DOOR_CLOSE, INFUSION)
 #   exit_close:  Austrittsschluss, Bezug des Nachlaufs
 EMPTY_ROLES = ("empty_after", "empty")
 
+# Beginn eines Teils:
+#   free:  sobald kein Gang aktiv ist (Zusatzmodul)
+#   now:   gleich nach dem Start oder dem vorigen Teil
+#   ready: nach Bereit, frühestens nach dem ersten Erreichen der Mindesttemperatur
+#   next:  nach „Nächster Gang“ in der Pause nach dem vorigen Teil
+BEGINS = ("free", "now", "ready", "next")
+
 
 @dataclass(frozen=True)
 class Step:
@@ -100,10 +117,20 @@ class Module:
     steps: tuple[Step, ...]
     gang: bool = True
     presence_only: bool = False
+    begin: str = "free"
+    optional: bool = False
+    # Name in den Nachrichten; ohne Angabe „Gang A1“ oder „Modul P“.
+    name: str | None = None
 
     @property
     def reference_infusions(self) -> int:
         return sum(INFUSION in step.expects for step in self.steps)
+
+    @property
+    def heading(self) -> str:
+        if self.name:
+            return self.name
+        return f"Gang {self.label}" if self.gang else f"Modul {self.label}"
 
 
 def _span(seconds: float) -> str:
@@ -130,26 +157,105 @@ def _exit_module(module_id, out_after, open_seconds, watch_seconds=0.0) -> Modul
     ))
 
 
-MODULES: dict[str, Module] = {
+# Leere Kabine: Modul P und die Teile P1 und P2 des Grundablaufs (W3-6).
+EMPTY_CABIN = (
+    Step("empty", "Kabine leer, Tür zu, nicht an die Kabine.",
+         "Beginn „leer“", "Kabine ist leer", role="empty_after"),
+    Step("door_front",
+         "2 min direkt vor der geschlossenen Tür stehen und bewegen.",
+         "Person vor der Tür", "Fertig", after_seconds=600, role="empty"),
+    Step("away", f"Weggehen, {_span(120)} nicht an die Kabine.", "leer",
+         hold_seconds=120, role="empty"),
+)
+
+
+def _short_visit(message: str) -> Step:
+    """Türvorgang mit kurzem Betreten ohne Gang (W3-4).
+
+    Die Kennung bleibt die der früheren Öffnung von außen (C/B), damit ältere
+    Protokolle weiter ausgewertet werden können.
+    """
+    return Step("outside_opening", message, "kurzer Türvorgang ohne Gang", "Tür zu",
+                expects=(DOOR_OPEN, DOOR_CLOSE))
+
+
+# Grundablauf (W-3): Teile in ihrer Folge.
+PARTS: tuple[Module, ...] = (
+    Module("P1", "P1", "Leere Kabine beim Aufheizen", EMPTY_CABIN, gang=False,
+           presence_only=True, begin="now", name="P1"),
+    Module("G1", "Gang 1", "nach Bereit", (
+        Step("entry", "Gang 1: hinein, Tür zu.", "Eintritt", "Drin, Tür zu",
+             expects=(DOOR_OPEN, DOOR_CLOSE), role="entry"),
+        Step("infusion_1", "Aufguss, eine Kelle.", "Aufguss 1", "Gegossen",
+             after_seconds=300, expects=(INFUSION,)),
+        Step("short_opening", "Tür 5 s öffnen, drinbleiben, schließen.",
+             "kurze Öffnung im Gang", "Tür zu", after_seconds=180,
+             expects=(DOOR_OPEN, DOOR_CLOSE)),
+        # Der Doppelguss zählt als ein Aufguss (E-17).
+        Step("infusion_2", "Zwei Kellen, die zweite 10–15 s nach der ersten.",
+             "Aufguss 2, Doppelguss", "Gegossen", after_seconds=120,
+             expects=(INFUSION,)),
+        Step("exit_open", "Hinaus, Tür offen lassen.", "Austrittsöffnung = Gangende",
+             "Draußen, Tür offen", after_seconds=30, expects=(DOOR_OPEN,),
+             role="exit_open"),
+        Step("exit_close", "Tür schließen.", "Austrittsschluss", "Tür zu",
+             after_seconds=45, expects=(DOOR_CLOSE,), role="exit_close"),
+    ), begin="ready", name="Gang 1"),
+    Module("P2", "P2", "Leere Kabine nach Gang 1", EMPTY_CABIN, gang=False,
+           presence_only=True, begin="now", name="P2"),
+    Module("G2", "Gang 2", "nach der Pause", (
+        _short_visit("Gang 2: Tür öffnen, kurz hinein, etwas ablegen, wieder hinaus, Tür zu."),
+        Step("entry", "Hinein, Tür zu.", "Eintritt", "Drin, Tür zu",
+             after_seconds=60, expects=(DOOR_OPEN, DOOR_CLOSE), role="entry"),
+        Step("infusion_1", "Aufguss, eine Kelle.", "Aufguss 1", "Gegossen",
+             after_seconds=300, expects=(INFUSION,)),
+        Step("decay_opening", "Tür 15 s öffnen, drinbleiben, schließen.",
+             "kurze Öffnung im Abklingen", "Tür zu", after_seconds=60,
+             expects=(DOOR_OPEN, DOOR_CLOSE)),
+        Step("infusion_2", "Aufguss, eine Kelle.", "Aufguss 2", "Gegossen",
+             after_seconds=240, expects=(INFUSION,)),
+        Step("exit_open", f"Hinaus, Tür offen lassen und {_span(60)} vor der offenen "
+             "Tür stehen.", "Austrittsöffnung = Gangende", "Draußen, Tür offen",
+             after_seconds=90, expects=(DOOR_OPEN,), role="exit_open", watch_seconds=60),
+        Step("exit_close", "Tür schließen.", "Austrittsschluss", "Tür zu",
+             after_seconds=180, expects=(DOOR_CLOSE,), role="exit_close"),
+    ), begin="next", name="Gang 2"),
+    Module("G3", "Gang 3", "freiwillig", (
+        Step("entry", "Gang 3: hinein, Tür zu.", "Eintritt", "Drin, Tür zu",
+             expects=(DOOR_OPEN, DOOR_CLOSE), role="entry"),
+        Step("infusion_1", "Aufguss, eine Kelle.", "Aufguss 1 kurz nach dem Schluss",
+             "Gegossen", after_seconds=60, expects=(INFUSION,)),
+        Step("waving", "30 s wedeln.", "Wedeln, keine Tür", "Fertig"),
+        Step("resting", "2–3 min ruhig liegen, nicht bewegen.",
+             "ruhig liegen, Präsenz durchgehend", "Fertig", after_seconds=240),
+        Step("infusion_2", "Aufguss, eine Kelle.", "Aufguss 2", "Gegossen",
+             expects=(INFUSION,)),
+        # Austrittsöffnung und -schluss mit einer Antwort; der Schritt ist die
+        # Referenz des Gangendes.
+        Step("exit", "Hinaus, Tür nach etwa 20 s schließen.",
+             "Austrittsöffnung = Gangende, Austrittsschluss", "Draußen, Tür zu",
+             after_seconds=60, expects=(DOOR_OPEN, DOOR_CLOSE), role="exit_open"),
+        Step("ventilation_open",
+             "Tür öffnen, kurz hinein, Fenster öffnen, hinaus, Tür offen lassen.",
+             "Lüften, kurzes Betreten ohne Gang", "Draußen, Tür offen",
+             after_seconds=120, expects=(DOOR_OPEN,)),
+        # Das Fenster wird immer mit der Tür geschlossen (W3-5).
+        Step("ventilation_close", "Kurz hinein, Fenster schließen, hinaus, Tür zu.",
+             "Lüften Ende", "Tür zu", after_seconds=60, expects=(DOOR_CLOSE,)),
+    ), begin="next", optional=True, name="Gang 3"),
+)
+
+# Zusatzmodule: einzeln in einer laufenden Sitzung, sobald kein Gang aktiv ist.
+ADDITIONAL: dict[str, Module] = {
     module.module_id: module
     for module in (
-        Module("P", "P", "Leere Kabine", (
-            Step("empty", "Kabine leer, Tür zu, nicht an die Kabine.",
-                 "Beginn „leer“", "Kabine ist leer", role="empty_after"),
-            Step("door_front",
-                 "2 min direkt vor der geschlossenen Tür stehen und bewegen.",
-                 "Person vor der Tür", "Fertig", after_seconds=600, role="empty"),
-            Step("away", f"Weggehen, {_span(120)} nicht an die Kabine.", "leer",
-                 hold_seconds=120, role="empty"),
-        ), gang=False, presence_only=True),
+        Module("P", "P", "Leere Kabine", EMPTY_CABIN, gang=False, presence_only=True),
         _exit_module("A1", 30, 45),
         _exit_module("A2", 60, 90),
         _exit_module("A3", 90, 180, 60),
         Module("CB", "C/B", "Kurze Öffnungen", (
-            Step("outside_opening",
-                 "Tür von außen 10 s öffnen, nicht eintreten, schließen.",
-                 "Öffnung ohne Gang", "Tür zu", expects=(DOOR_OPEN, DOOR_CLOSE),
-                 role="empty"),
+            _short_visit("Tür öffnen, kurz hinein, etwas ablegen oder holen, wieder "
+                         "hinaus, Tür zu."),
             Step("entry", "Hinein, Tür zu.", "Eintritt", "Drin, Tür zu",
                  after_seconds=60, expects=(DOOR_OPEN, DOOR_CLOSE), role="entry"),
             Step("short_opening", "Tür 5 s öffnen, drinbleiben, schließen.",
@@ -185,22 +291,31 @@ MODULES: dict[str, Module] = {
     )
 }
 
+# Alle bekannten Module für Auswertung und Anzeige gespeicherter Läufe.
+MODULES: dict[str, Module] = {
+    **{module.module_id: module for module in PARTS},
+    **ADDITIONAL,
+}
 
-def select_modules(requested: Iterable[str] | None, *, presence: bool) -> tuple[Module, ...]:
-    """Modules in their fixed order; without a presence sensor P is omitted."""
-    if requested is None:
-        return tuple(m for m in MODULES.values() if presence or not m.presence_only)
-    requested = tuple(requested)
-    unknown = [item for item in requested if item not in MODULES]
-    if unknown:
-        raise ValueError(f"Unbekanntes Kalibriermodul: {', '.join(unknown)}")
-    if len(set(requested)) != len(requested):
-        raise ValueError("Ein Kalibriermodul ist mehrfach angegeben")
-    if not requested:
-        raise ValueError("Mindestens ein Kalibriermodul ist erforderlich")
-    if not presence and any(MODULES[item].presence_only for item in requested):
+
+def procedure(*, presence: bool) -> tuple[Module, ...]:
+    """Teile des Grundablaufs; ohne Präsenzsensor entfallen P1 und P2."""
+    return tuple(m for m in PARTS if presence or not m.presence_only)
+
+
+def additional_modules(*, presence: bool) -> tuple[Module, ...]:
+    """Angebotene Zusatzmodule in fester Folge; ohne Präsenzsensor ohne P."""
+    return tuple(m for m in ADDITIONAL.values() if presence or not m.presence_only)
+
+
+def additional_module(module_id: str, *, presence: bool) -> Module:
+    """Ein Zusatzmodul für den Start in einer laufenden Sitzung."""
+    module = ADDITIONAL.get(module_id)
+    if module is None:
+        raise ValueError(f"Unbekanntes Zusatzmodul: {module_id}")
+    if module.presence_only and not presence:
         raise ValueError("Modul P braucht einen Präsenzsensor")
-    return tuple(m for m in MODULES.values() if m.module_id in requested)
+    return module
 
 
 def reply_targets(
@@ -242,7 +357,7 @@ class Instruction:
     execution: int | None
     module: str | None
     step: str | None
-    kind: str  # step | pause | result | invalid | evaluation
+    kind: str  # step | part | pause | result | interrupted | invalid | evaluation
     title: str
     message: str
     actions: tuple[tuple[str, str], ...] = ()
@@ -260,16 +375,19 @@ class _Execution:
     deviating: bool = False
 
 
+COMPLETED = "Die Auswertung der Erkennung folgt nach dem Sitzungsende."
+
+
 @dataclass
 class CalibrationRun:
-    """Schritt → Nachricht → Antwort oder Wartezeit für eine Folge von Modulen.
+    """Schritt → Nachricht → Antwort oder Wartezeit für eine Folge von Teilen.
 
-    ``kind`` "session": eigene Kalibriersitzung, das erste Modul beginnt nach
-    Bereit, weitere nach „Nächster Gang“. ``kind`` "module": ein Modul in einer
-    laufenden Sitzung, Beginn sobald kein Gang aktiv ist. ``records`` ist der
-    Ausgang des Protokolls, ``steps`` die abgeschlossenen Schritte. Gültig ist
-    nur ein Lauf, der alle Schritte abgeschlossen hat; ``interrupt`` beendet
-    ihn sonst als ungültig.
+    ``kind`` "procedure": Grundablauf in einer eigenen Sitzung, jeder Teil
+    beginnt nach seiner Regel (``Module.begin``). ``kind`` "module": ein
+    Zusatzmodul in einer laufenden Sitzung, Beginn sobald kein Gang aktiv ist.
+    ``records`` ist der Ausgang des Protokolls, ``steps`` die abgeschlossenen
+    Schritte. Gültig ist jeder abgeschlossene Teil (W3-2); ``interrupt``
+    beendet den Lauf und macht nur den laufenden Teil ungültig.
     """
 
     run_id: str
@@ -293,29 +411,58 @@ class CalibrationRun:
     _answered: set[int] = field(default_factory=set)
     _repeatable: int | None = None
     _repeat_module: Module | None = None
+    _pause: int | None = None
+    _valid: list[int] = field(default_factory=list)
+    _invalid: int | None = None
 
     def __post_init__(self) -> None:
-        if self.kind not in ("session", "module"):
-            raise ValueError("Kalibrierung ist eine Sitzung oder ein einzelnes Modul")
+        if self.kind not in ("procedure", "module"):
+            raise ValueError("Kalibrierung ist ein Grundablauf oder ein Zusatzmodul")
         if not self.modules or (self.kind == "module" and len(self.modules) != 1):
-            raise ValueError("Ein einzelnes Kalibriermodul ist genau ein Modul")
+            raise ValueError("Ein Zusatzmodul ist genau ein Modul")
+        if any(module.begin not in BEGINS for module in self.modules):
+            raise ValueError("Unbekannter Beginn eines Kalibrierteils")
         self._record("start", self.started_at, kind=self.kind,
-                     modules=[m.module_id for m in self.modules],
-                     user_id=self.user_id)
+                     modules=[m.module_id for m in self.modules if not m.optional],
+                     optional=[m.module_id for m in self.modules if m.optional],
+                     user_id=self.user_id, validity="part")
 
     @property
     def active(self) -> bool:
         return self.phase in ("waiting", "running", "pause")
 
     @property
+    def valid_executions(self) -> tuple[int, ...]:
+        """Abgeschlossene, damit gültige Teile (W3-2)."""
+        return tuple(self._valid)
+
+    @property
+    def invalid_execution(self) -> int | None:
+        """Der bei der Unterbrechung laufende, damit ungültige Teil."""
+        return self._invalid
+
+    @property
+    def evaluable(self) -> bool:
+        return bool(self._valid)
+
+    @property
     def valid(self) -> bool:
-        return self.phase == "finished"
+        """Beendet mit mindestens einem gültigen und keinem ungültigen Teil."""
+        return not self.active and bool(self._valid) and self._invalid is None
+
+    @property
+    def valid_steps(self) -> list[dict]:
+        """Abgeschlossene Schritte der gültigen Teile; nur sie werden ausgewertet."""
+        return [step for step in self.steps if step["execution"] in self._valid]
 
     @property
     def waiting_for(self) -> str | None:
+        """Beginn des wartenden Teils: ``free``, ``now`` oder ``ready``."""
         if self.phase != "waiting":
             return None
-        return "ready" if self.kind == "session" and not self.executions else "free"
+        if self._repeat_module is not None:
+            return "free"
+        return self.modules[self._next_module].begin
 
     @property
     def current(self) -> _Execution | None:
@@ -324,30 +471,48 @@ class CalibrationRun:
     def owns(self, action_id: str) -> bool:
         return action_id in self._actions
 
+    def _labels(self) -> list[str]:
+        begun = {execution.module.module_id for execution in self.executions}
+        return [m.label for m in self.modules if not m.optional or m.module_id in begun]
+
+    def _parts(self) -> dict:
+        labels = {execution.index: execution.module.label for execution in self.executions}
+        return {"valid": [labels[index] for index in self._valid],
+                "invalid": labels.get(self._invalid)}
+
+    def pause_actions(self) -> list[dict]:
+        """Antworten der offenen Pause ohne „Abbrechen“, für das Panel."""
+        if self.phase != "pause" or self._pause is None:
+            return []
+        return [{"action": kind, "label": LABELS[kind]}
+                for kind in self._messages[self._pause]["actions"] if kind in PAUSE_ACTIONS]
+
     def status(self) -> dict:
         """Display state without user identities (W-2c).
 
-        An active run names its module, step n of m and what it waits for:
-        ``ready`` (Bereit), ``gang_end`` (no gang active), ``reply`` or
-        ``hold`` (waiting time). An ended run names its validity and reason.
+        An active run names its part, step n of m and what it waits for:
+        ``ready`` (Bereit), ``gang_end`` (no gang active), ``reply``, ``hold``
+        (waiting time) or ``pause`` with the next part and the pause actions.
+        An ended run names its validity, reason and the valid and invalid parts.
         """
-        state = {"kind": self.kind, "modules": [m.label for m in self.modules],
+        state = {"kind": self.kind, "modules": self._labels(),
                  "started_at": self.started_at}
         if not self.active:
             return {**state, "valid": self.valid, "reason": self.end_reason,
                     "reason_text": INTERRUPTIONS.get(self.end_reason),
-                    "ended_at": self.ended_at}
+                    "ended_at": self.ended_at, "parts": self._parts()}
         if self.phase == "waiting":
             module = self._repeat_module or self.modules[self._next_module]
+            waiting = {"ready": "ready", "free": "gang_end"}.get(self.waiting_for, "hold")
             return {**state, "module": module.label, "step": None,
-                    "steps": len(module.steps),
-                    "waiting": "ready" if self.waiting_for == "ready" else "gang_end"}
+                    "steps": len(module.steps), "waiting": waiting}
         execution = self.current
         steps = len(execution.module.steps)
         if self.phase == "pause":
-            # All steps are closed; „Nächster Gang“ is the awaited reply.
             return {**state, "module": execution.module.label, "step": steps,
-                    "steps": steps, "waiting": "reply"}
+                    "steps": steps, "waiting": "pause",
+                    "next": self.modules[self._next_module].label,
+                    "actions": self.pause_actions()}
         step = execution.module.steps[execution.step]
         waiting = "reply" if execution.sent_at is not None and step.action else "hold"
         return {**state, "module": execution.module.label, "step": execution.step + 1,
@@ -383,6 +548,7 @@ class CalibrationRun:
             "kind": kind,
             "execution": execution.index if execution else None,
             "step": execution.step if execution and step else None,
+            "actions": tuple(action for action, _ in actions),
         }
         return instruction
 
@@ -411,7 +577,8 @@ class CalibrationRun:
         out: list[Instruction] = []
         while True:
             if self.phase == "waiting":
-                if not (ready if self.waiting_for == "ready" else not gang_active):
+                begin = self.waiting_for
+                if (begin == "ready" and not ready) or (begin == "free" and gang_active):
                     return out
                 module, self._repeat_module = self._repeat_module, None
                 self._start_execution(now, module)
@@ -447,7 +614,7 @@ class CalibrationRun:
         )
         self.executions.append(execution)
         self.phase = "running"
-        self._repeatable = None
+        self._repeatable = self._pause = None
         self._record("module", at, execution=execution.index, module=module.module_id)
 
     def _close(self, at, outcome, *, action=None, user_id=None, time_fired=None):
@@ -470,51 +637,82 @@ class CalibrationRun:
         return self._finish_execution(at)
 
     def _finish_execution(self, at):
+        """A completed part is valid (W3-2); the next one begins after its rule."""
         execution = self.current
+        self._valid.append(execution.index)
+        self._record("module_end", at, execution=execution.index,
+                     module=execution.module.module_id, valid=True, reason=None)
         text = execution_summary(self, execution.index, until=at)
-        more = self.kind == "session" and self._next_module < len(self.modules)
-        repeat = ((REPEAT, LABELS[REPEAT]),) if execution.module.presence_only else ()
-        if more:
-            self.phase = "pause"
-            instruction = self._emit(
-                at, "pause", f"{text} Pause. Weiter mit „{LABELS[NEXT]}“.",
-                (*repeat, (NEXT, LABELS[NEXT]), (CANCEL, LABELS[CANCEL])), execution,
-            )
-        else:
+        following = (self.modules[self._next_module]
+                     if self.kind == "procedure" and self._next_module < len(self.modules)
+                     else None)
+        repeat = (((REPEAT, LABELS[REPEAT]),)
+                  if self.kind == "module" and execution.module.presence_only else ())
+        if following is None:
             self._end(at, "finished")
-            closing = (" Kalibrierung abgeschlossen. Die Auswertung der Erkennung folgt "
-                       "nach Sitzungsende.") if self.kind == "session" else ""
+            closing = f" Kalibrierung abgeschlossen. {COMPLETED}" if self.kind == "procedure" else ""
             instruction = self._emit(at, "result", text + closing, repeat, execution)
-        if repeat:
-            self._repeatable = instruction.seq
-        return [instruction]
+            if repeat:
+                self._repeatable = instruction.seq
+            return [instruction]
+        if following.begin == "next":
+            self.phase = "pause"
+            if following.optional:
+                message = (f"{text} Pause. „{LABELS[NEXT]}“ beginnt den freiwilligen "
+                           f"{following.heading}, „{LABELS[FINISH]}“ schließt die "
+                           "Kalibrierung ab.")
+                actions = ((NEXT, LABELS[NEXT]), (FINISH, LABELS[FINISH]))
+            else:
+                message = f"{text} Pause. {following.heading} beginnt mit „{LABELS[NEXT]}“."
+                actions = ((NEXT, LABELS[NEXT]), (CANCEL, LABELS[CANCEL]))
+            instruction = self._emit(at, "pause", message, actions, execution)
+            self._pause = instruction.seq
+            return [instruction]
+        self.phase = "waiting"
+        after = f" {following.heading} beginnt nach Bereit." if following.begin == "ready" else ""
+        return [self._emit(at, "part", text + after, (), execution)]
 
     def _end(self, at, reason, *, user_id=None):
-        valid = reason == "finished"
-        self.phase = "finished" if valid else "invalid"
+        self.phase = "ended"
         self.ended_at, self.end_reason = at, reason
-        self._record("end", at, reason=reason, valid=valid, user_id=user_id)
+        self._pause = None
+        self._record("end", at, reason=reason, valid=self.valid, user_id=user_id,
+                     valid_executions=list(self._valid))
 
     def interrupt(self, at: datetime, reason: str, *, user_id=None) -> list[Instruction]:
-        """End an active run as invalid; return the message saying so (W-2a).
+        """End an active run; only the part running now becomes invalid (W-2a, W3-2).
 
-        An open step is recorded without reference. No instruction follows.
+        An open step is recorded without reference. No instruction follows;
+        the message names the invalid part and whether completed parts remain.
         """
         if not self.active:
             return []
         execution = self.current
-        if self.phase == "running" and execution.sent_at is not None:
-            step = execution.module.steps[execution.step]
-            self.steps.append(self._record(
-                "step", at, execution=execution.index,
-                module=execution.module.module_id, step=step.key,
-                reference=step.reference, handoff_at=execution.sent_at, closed_at=at,
-                outcome="cancelled", action=None, user_id=user_id, time_fired=None,
-            ))
+        if self.phase == "running":
+            if execution.sent_at is not None:
+                step = execution.module.steps[execution.step]
+                self.steps.append(self._record(
+                    "step", at, execution=execution.index,
+                    module=execution.module.module_id, step=step.key,
+                    reference=step.reference, handoff_at=execution.sent_at, closed_at=at,
+                    outcome="cancelled", action=None, user_id=user_id, time_fired=None,
+                ))
+            self._invalid = execution.index
+            self._record("module_end", at, execution=execution.index,
+                         module=execution.module.module_id, valid=False, reason=reason)
         self._repeatable = None
         self._end(at, reason, user_id=user_id)
-        return [self._emit(at, "invalid", f"Kalibrierung ungültig: {INTERRUPTIONS[reason]}. "
-                                          "Sie wird nicht ausgewertet.")]
+        text = INTERRUPTIONS[reason]
+        if not self._valid:
+            return [self._emit(at, "invalid", f"Kalibrierung ungültig: {text}. "
+                                              "Sie wird nicht ausgewertet.")]
+        remaining = "die abgeschlossenen Teile werden nach dem Sitzungsende ausgewertet."
+        if self._invalid is not None:
+            return [self._emit(at, "interrupted", (
+                f"Kalibrierung unterbrochen: {text}. {execution.module.heading} ist "
+                f"ungültig; {remaining}"))]
+        return [self._emit(at, "interrupted", f"Kalibrierung beendet: {text}. "
+                                              f"{remaining[0].upper()}{remaining[1:]}")]
 
     def reply(self, action_id: str, at: datetime, user_id: str | None, *,
               message_id: str | None = None,
@@ -530,15 +728,32 @@ class CalibrationRun:
         if entry is None:
             return "unknown", []
         seq, kind = entry
+        return self._answer(seq, kind, at, user_id, message_id=message_id,
+                            restart_allowed=restart_allowed)
+
+    def answer_pause(self, kind: str, at: datetime,
+                     user_id: str | None) -> tuple[str, list[Instruction]]:
+        """Answer the open pause from the panel, like its message would be answered.
+
+        Only the pause actions the message offers are accepted; without an
+        open pause the answer is unavailable and changes nothing.
+        """
+        if kind not in {item["action"] for item in self.pause_actions()}:
+            return "unavailable", []
+        return self._answer(self._pause, kind, at, user_id, source="panel")
+
+    def _answer(self, seq, kind, at, user_id, *, message_id=None, restart_allowed=True,
+                source=None):
         context = self._messages[seq]
         disposition, out = self._apply_reply(
             seq, kind, context, at, user_id, restart_allowed,
         )
         if disposition == "accepted":
             self._answered.add(seq)
+        extra = {"source": source} if source else {}
         self._record("reply", at, seq=seq, execution=context["execution"],
                      message_id=message_id, action=kind, time_fired=at,
-                     user_id=user_id, disposition=disposition)
+                     user_id=user_id, disposition=disposition, **extra)
         # A following step ("sofort" counts from this reply) is sent by advance.
         return disposition, out
 
@@ -564,19 +779,21 @@ class CalibrationRun:
                 at, outcome, action=label, user_id=user_id, time_fired=at,
             )
         if (kind == REPEAT and seq == self._repeatable and restart_allowed
-                and self.phase in ("pause", "finished")):
+                and self.phase == "ended"):
+            # A single module repeats under its own start condition.
             self._record("repeat", at, execution=execution.index, user_id=user_id)
-            if self.phase == "finished":
-                # A single module repeats under its own start condition.
-                self.phase, self.ended_at, self.end_reason = "waiting", None, None
-                self._repeatable, self._repeat_module = None, execution.module
-            else:
-                self._start_execution(at, execution.module)
+            self.phase, self.ended_at, self.end_reason = "waiting", None, None
+            self._repeatable, self._repeat_module = None, execution.module
             return "accepted", []
-        if (kind == NEXT and self.phase == "pause" and context["kind"] == "pause"
-                and context["execution"] == execution.index):
+        if self.phase != "pause" or seq != self._pause:
+            return stale
+        if kind == NEXT:
             self._start_execution(at)
             return "accepted", []
+        if kind == FINISH and FINISH in context["actions"]:
+            self._end(at, "finished", user_id=user_id)
+            return "accepted", [self._emit(
+                at, "result", f"Kalibrierung abgeschlossen. {COMPLETED}")]
         return stale
 
     def evaluation_message(self, at: datetime, text: str) -> Instruction:
@@ -944,21 +1161,46 @@ def evaluate(steps, *, presence, events, gangs, gang_heat, until, has_presence=T
             "totals": totals}
 
 
-def protocol_steps(records: Iterable[Mapping]) -> tuple[list[dict], list[str]]:
-    """Closed steps of uninterrupted runs and the runs passed over (W-2a).
+def protocol_steps(records: Iterable[Mapping]) -> tuple[list[dict], list[dict]]:
+    """Closed steps of valid parts and the parts passed over (W-2a, W3-2).
 
-    A run counts only if its last ``end`` record is valid; a run without an
-    end, as after an unclean stop, was interrupted as well.
+    A run with part validity (``validity`` "part" in its start record) keeps
+    every part it completed (``module_end`` valid); the part running at an
+    interruption or at an unclean stop is passed over. An older run without
+    part validity counts only as a whole: its last ``end`` record must be
+    valid. Each passed-over entry names the run and, for a part, its
+    execution and module.
     """
     records = [record for record in records if "run_id" in record]
-    valid = {}
+    validity, whole, parts = {}, {}, {}
     for record in records:
-        if record.get("event") == "end":
-            valid[record["run_id"]] = record.get("valid") is True
+        run_id, event = record["run_id"], record.get("event")
+        if event == "start":
+            validity[run_id] = record.get("validity")
+        elif event == "end":
+            whole[run_id] = record.get("valid") is True
+        elif event == "module_end":
+            parts[run_id, record.get("execution")] = record.get("valid") is True
+
+    def valid(run_id, execution):
+        if validity.get(run_id) == "part":
+            return parts.get((run_id, execution), False)
+        return whole.get(run_id, False)
+
     steps = [dict(record) for record in records
-             if record.get("event") == "step" and valid.get(record["run_id"])]
-    runs = dict.fromkeys(record["run_id"] for record in records)
-    return steps, [run_id for run_id in runs if not valid.get(run_id)]
+             if record.get("event") == "step" and valid(record["run_id"], record["execution"])]
+    skipped = []
+    for run_id in dict.fromkeys(record["run_id"] for record in records):
+        if validity.get(run_id) != "part":
+            if not whole.get(run_id):
+                skipped.append({"run_id": run_id, "execution": None, "module": None})
+            continue
+        skipped += [{"run_id": run_id, "execution": record["execution"],
+                     "module": record.get("module")}
+                    for record in records
+                    if record["run_id"] == run_id and record.get("event") == "module"
+                    and not valid(run_id, record["execution"])]
+    return steps, skipped
 
 
 def gang_heat_intervals(decisions, heating, until):
@@ -981,20 +1223,21 @@ def gang_heat_intervals(decisions, heating, until):
 
 
 def execution_summary(run: CalibrationRun, index: int, *, until: datetime) -> str:
-    """Live result of one module from presence; doors and infusions follow later."""
+    """Live result of one part from presence; doors and infusions follow later."""
     items = [step for step in run.steps if step["execution"] == index]
     module = next(e.module for e in run.executions if e.index == index)
     if not run.has_presence:
-        return f"Modul {module.label} beendet, ohne Präsenzmessung."
+        return f"{module.name or f'Modul {module.label}'} beendet, ohne Präsenzmessung."
     result = _presence_result(module, items, run.presence, until)
     if module.presence_only:
+        name = module.name or f"Modul {module.label}"
         reports = sum(e["reports"] for e in result["empty"])
         seconds = sum(e["present_s"] for e in result["empty"])
         if not reports:
-            return f"Modul {module.label}: keine Anwesenheit bei leerer Kabine."
-        return (f"Modul {module.label}: {reports}-mal Anwesenheit bei leerer Kabine, "
+            return f"{name}: keine Anwesenheit bei leerer Kabine."
+        return (f"{name}: {reports}-mal Anwesenheit bei leerer Kabine, "
                 f"zusammen {seconds:g} s.")
-    parts = [f"Gang {module.label} beendet."]
+    parts = [f"{module.heading} beendet."]
     dropouts = result["dropouts"]
     if dropouts is not None:
         parts.append(f"Präsenz: {dropouts['count']} Aussetzer"
@@ -1002,9 +1245,10 @@ def execution_summary(run: CalibrationRun, index: int, *, until: datetime) -> st
                         if dropouts["count"] else "."))
     if result["door_watch"] is not None:
         parts.append(f"Vor der offenen Tür {result['door_watch']['reports']}-mal anwesend.")
+    roles = {step.key: step.role for step in module.steps}
     if result["after_run_s"] is not None:
         parts.append(f"Nachlauf {result['after_run_s']:g} s.")
-    elif any(step["step"] == "exit_close" and _referenced(step) for step in items):
+    elif any(roles.get(step["step"]) == "exit_close" and _referenced(step) for step in items):
         parts.append("Präsenz meldet noch Anwesenheit.")
     return " ".join(parts)
 

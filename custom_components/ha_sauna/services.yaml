@@ -125,7 +125,7 @@ recognition_learn:
           integration: ha_sauna
 start_calibration:
   name: Kalibrierung starten
-  description: Ohne laufende Sitzung startet eine Kalibriersitzung im Automatikbetrieb; ihre Module folgen nach Bereit. In einer laufenden Sitzung startet ein einzelnes Modul, sobald kein Gang aktiv ist. Die Anweisungen gehen an die Companion-Ziele mit Antworten des startenden Benutzers.
+  description: Ohne laufende Sitzung startet der Grundablauf im Automatikbetrieb – P1 beim Aufheizen, Gang 1 nach Bereit, P2 in der Pause, Gang 2 und wahlweise Gang 3. In einer laufenden Sitzung startet ein Zusatzmodul, sobald kein Gang aktiv ist. Die Anweisungen gehen an die Companion-Ziele mit Antworten des startenden Benutzers.
   fields:
     entry_id:
       name: Sauna-Instanz
@@ -134,23 +134,10 @@ start_calibration:
         config_entry:
           integration: ha_sauna
     module:
-      name: Einzelnes Modul
-      description: Nur in einer laufenden Sitzung.
+      name: Zusatzmodul
+      description: Nur in einer laufenden Sitzung; ohne Angabe der Grundablauf.
       selector:
         select:
-          options:
-            - P
-            - A1
-            - A2
-            - A3
-            - CB
-            - D
-    modules:
-      name: Module der Kalibriersitzung
-      description: Nur ohne laufende Sitzung; ohne Angabe alle Module, ohne Präsenzsensor ohne Modul P.
-      selector:
-        select:
-          multiple: true
           options:
             - P
             - A1

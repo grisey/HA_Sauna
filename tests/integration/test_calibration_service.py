@@ -170,9 +170,12 @@ class CalibrationServiceTests(unittest.IsolatedAsyncioTestCase):
         async with ClientSession(headers=await self.headers(users[0])) as client:
             async with client.get(url + "/calibration") as response:
                 self.assertEqual(await response.json(), {"targets": len(references)})
+            # W-3: {} starts the basic procedure, "module" an additional module; the
+            # module choice of the former calibration session is gone.
             for body in (
                 [], {"module": "X"}, {"module": ["A1"]}, {"modules": []},
-                {"modules": ["A1", 2]}, {"module": "A1", "other": 1},
+                {"modules": ["A1", 2]}, {"modules": ["A1"]}, {"module": "G1"},
+                {"module": "A1", "other": 1},
             ):
                 async with client.post(url + "/calibration", json=body) as response:
                     self.assertEqual(response.status, 400, body)
@@ -209,6 +212,16 @@ class CalibrationServiceTests(unittest.IsolatedAsyncioTestCase):
                 [module["id"] for module in state["calibration"]["modules"]],
                 ["A1", "A2", "A3", "CB", "D"],
             )
+            # Without a presence sensor the basic procedure has no P1 and P2.
+            self.assertEqual(
+                [part["id"] for part in state["calibration"]["procedure"]], ["G1", "G2", "G3"]
+            )
+            # The panel answers only a pause; the running module has none.
+            async with client.post(
+                url + "/calibration/pause", json={"run_id": run.run_id, "action": "next"}
+            ) as response:
+                self.assertEqual(response.status, 409)
+                self.assertIn("wartet nicht", (await response.json())["error"])
             async with (
                 ClientSession(headers=await self.headers(stranger)) as other,
                 other.get(url + "/state") as response,

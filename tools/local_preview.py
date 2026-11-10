@@ -755,12 +755,20 @@ class Preview:
                 run_id=body.get("run_id")))
             self.sample()
             return result
+        elif path.endswith("/calibration/pause"):
+            if not isinstance(body, dict) or set(body) != {"run_id", "action"}:
+                raise ValueError("Die Pausenantwort erwartet run_id und action.")
+            result = self.run(self.runtime.answer_calibration_pause(
+                body["action"], run_id=body["run_id"],
+                actor=ActorRef(PREVIEW_DEFAULTS["calibration"]["user_id"], "lokale Vorschau")))
+            self.sample()
+            return result
         elif path.endswith("/calibration"):
-            if not isinstance(body, dict) or not set(body) <= {"module", "modules"}:
-                raise ValueError("module oder modules muss Kalibriermodule nennen.")
+            if not isinstance(body, dict) or not set(body) <= {"module"}:
+                raise ValueError("Der Start erwartet ein leeres Objekt oder module.")
             result = self.run(self.runtime.start_calibration(
                 actor=ActorRef(PREVIEW_DEFAULTS["calibration"]["user_id"], "lokale Vorschau"),
-                module=body.get("module"), modules=body.get("modules"),
+                module=body.get("module"),
             ))
             self.sample()
             return result

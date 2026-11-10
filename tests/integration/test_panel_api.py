@@ -9,6 +9,7 @@ from homeassistant.auth.const import GROUP_ID_ADMIN, GROUP_ID_USER
 from harness import advance_with_fresh_sources, create_sauna, start_hass
 from test_settings import async_timeout
 from custom_components.ha_sauna.appearance import appearance_options, validate_appearance
+from custom_components.ha_sauna.core.calibration import procedure
 from custom_components.ha_sauna.core.defaults import section
 from custom_components.ha_sauna.core.parameters import BY_KEY, Parameters
 
@@ -198,6 +199,38 @@ class PanelAPITests(unittest.IsolatedAsyncioTestCase):
             async with client.get(url) as response:
                 self.assertEqual(response.status, 200, await response.text())
                 self.assertEqual(await response.json(), {"runs": [], "run": None})
+
+    async def test_calibration_start_body_and_pause_answer_permissions(self):
+        # W-3: Start ohne Modulauswahl (Grundablauf) oder mit einem Zusatzmodul;
+        # Pausenantwort nur mit run_id und action, Steuerberechtigung wie der Start.
+        url = self.base + "/" + self.entry.entry_id + "/calibration"
+        denied = await self.hass.auth.async_create_user("Ohne Steuerung", group_ids=[])
+        token = await self.hass.auth.async_create_refresh_token(denied, client_id="http://localhost/")
+        headers = {"Authorization": "Bearer " + self.hass.auth.async_create_access_token(token)}
+        async with (
+            ClientSession(headers=headers) as client,
+            client.post(url + "/pause", json={"run_id": "r", "action": "next"}) as response,
+        ):
+            self.assertEqual(response.status, 403)
+        async with ClientSession(headers=self.headers) as client:
+            for body in ({"modules": ["A1"]}, {"module": "G1"}, {"module": "P1"}, []):
+                async with client.post(url, json=body) as response:
+                    self.assertEqual(response.status, 400, body)
+            for body in ({}, {"run_id": "r"}, {"action": "next"},
+                         {"run_id": "r", "action": "cancel"},
+                         {"run_id": "", "action": "next"},
+                         {"run_id": "r", "action": "next", "x": 1}):
+                async with client.post(url + "/pause", json=body) as response:
+                    self.assertEqual(response.status, 400, body)
+            async with client.post(url + "/pause",
+                                   json={"run_id": "r", "action": "finish"}) as response:
+                self.assertEqual(response.status, 409)
+                self.assertIn("keine Kalibrierung", (await response.json())["error"])
+            async with client.get(self.base + "/" + self.entry.entry_id + "/state") as response:
+                calibration = (await response.json())["calibration"]
+            presence = self.entry.runtime_data.configuration_model.direct_presence
+            self.assertEqual([part["id"] for part in calibration["procedure"]],
+                             [part.module_id for part in procedure(presence=presence)])
 
     async def test_archive_erase_permissions_session_guard_and_memory_invalidation(self):
         from harness import retain_session

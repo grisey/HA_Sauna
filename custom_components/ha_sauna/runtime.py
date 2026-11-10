@@ -598,12 +598,14 @@ class SaunaRuntime:
         """Calibration state for the panel (W-2c).
 
         ``active``: the running run, if any, with its ``run_id`` so that the
-        panel cancels only this run (L-W2c-3). ``last``: the last ended run with
-        its validity and reason; after its session ended also the totals of
-        the evaluation. ``modules``: the modules on offer, P only with a
+        panel cancels only this run (L-W2c-3); in a pause with its actions.
+        ``last``: the last ended run with its validity, reason and valid and
+        invalid parts; after its session ended also the totals of the
+        evaluation. ``procedure``: the parts of the basic procedure (W-3),
+        ``modules``: the additional modules on offer, P, P1 and P2 only with a
         presence sensor. ``blocked``: the reason the start offered now is
-        locked, with its text (W-2d, W-2e): without a session the calibration
-        session, in a session the single module.
+        locked, with its text (W-2d, W-2e): without a session the basic
+        procedure, in a session the additional module.
         """
         active = next((run for run in self._calibration_runs if run.active), None)
         ended = [run for run in self._calibration_runs if not run.active]
@@ -611,28 +613,33 @@ class SaunaRuntime:
         blocked = self._calibration_start_lock(
             presence_known=not presence or self._calibration_presence() is not None,
         )
+
+        def offered(module):
+            # B4a: Raster der Schritte mit den erwarteten Erkennungen.
+            return {"id": module.module_id, "label": module.label, "title": module.title,
+                    "optional": module.optional,
+                    "steps": [{"key": step.key, "reference": step.reference,
+                               "expects": list(step.expects)} for step in module.steps]}
+
         return {
             "active": {**active.status(), "run_id": active.run_id} if active is not None else None,
             "last": {**ended[-1].status(), "totals": None} if ended else self._calibration_last,
-            "modules": [
-                {"id": module.module_id, "label": module.label, "title": module.title,
-                 # B4a: Raster der Schritte mit den erwarteten Erkennungen.
-                 "steps": [{"key": step.key, "reference": step.reference,
-                            "expects": list(step.expects)} for step in module.steps]}
-                for module in calibration.select_modules(None, presence=presence)
-            ],
+            "procedure": [offered(module) for module in calibration.procedure(presence=presence)],
+            "modules": [offered(module)
+                        for module in calibration.additional_modules(presence=presence)],
             "blocked": self._calibration_lock_status(blocked),
         }
 
     def _calibration_start_lock(self, *, presence_known):
         """Reason the start offered now is locked, else ``None`` (W-2d, W-2e).
 
-        Without a session the calibration session is offered; it switches to
-        automatic itself and needs a known presence state. In a session the
-        single module is offered: locked in every state that would interrupt
-        it at once (Betrieb AUS in the resumption window included) and before
-        the session first reaches the minimum temperature, when its entry
-        would not count (L-G6a-2). The service keeps its behaviour.
+        Without a session the basic procedure is offered; it switches to
+        automatic itself and needs a known presence state. Its Gang 1 waits for
+        Bereit and the minimum temperature. In a session the additional module
+        is offered: locked in every state that would interrupt it at once
+        (Betrieb AUS in the resumption window included) and before the session
+        first reaches the minimum temperature, when its entry would not count
+        (L-G6a-2). The service keeps its behaviour.
         """
         if self.session is None:
             return None if presence_known else "presence_unavailable"
@@ -649,12 +656,12 @@ class SaunaRuntime:
         if reason in calibration.START_LOCKS:
             text = calibration.START_LOCKS[reason]
             return {"reason": reason, "reason_text": text, "text": (
-                "Modul starten ist bis zum ersten Erreichen der Mindesttemperatur gesperrt: "
-                "vorher zählt kein Eintritt, der Gang des Moduls fehlte."
+                "Zusatzmodul starten ist bis zum ersten Erreichen der Mindesttemperatur "
+                "gesperrt: vorher zählt kein Eintritt, der Gang des Zusatzmoduls fehlte."
             )}
         text = calibration.INTERRUPTIONS[reason]
-        subject = ("Ein jetzt gestartetes Modul" if self.session is not None
-                   else "Eine jetzt gestartete Kalibriersitzung")
+        subject = ("Ein jetzt gestartetes Zusatzmodul" if self.session is not None
+                   else "Eine jetzt gestartete Kalibrierung")
         return {"reason": reason, "reason_text": text,
                 "text": f"{subject} wäre sofort ungültig: {text}."}
 
@@ -2284,15 +2291,15 @@ class SaunaRuntime:
                 )
             await self._cycle()
 
-    async def start_calibration(
-        self, *, actor: ActorRef, modules=None, module=None, resolutions=None,
-    ):
-        """Start a calibration session or one module of the running session (V31).
+    async def start_calibration(self, *, actor: ActorRef, module=None, resolutions=None):
+        """Start the basic procedure or one additional module (V31, W-3).
 
-        Without a session this starts an automatic session; its modules follow
-        after Bereit. A single module needs a running session and starts once
-        no gang is active. Instructions go to the starting user's Companion
-        targets with replies. Only one run is active at a time.
+        Without a session this starts an automatic session with the basic
+        procedure: P1 at once while heating, Gang 1 after Bereit, P2 after
+        Gang 1, Gang 2 and the optional Gang 3 after „Nächster Gang“. An
+        additional module needs a running session and starts once no gang is
+        active. Instructions go to the starting user's Companion targets with
+        replies. Only one run is active at a time.
         """
         async with self.serialized():
             self._require_open()
@@ -2314,18 +2321,17 @@ class SaunaRuntime:
             presence = self.configuration_model.direct_presence
             now = self._clock()
             if module is not None:
-                if modules is not None:
-                    raise ValueError("module und modules schließen einander aus")
                 if self.session is None:
-                    raise ValueError("Ein einzelnes Modul startet in einer laufenden Sitzung")
-                selected, kind = calibration.select_modules((module,), presence=presence), "module"
+                    raise ValueError("Ein Zusatzmodul startet in einer laufenden Sitzung")
+                selected = (calibration.additional_module(module, presence=presence),)
+                kind = "module"
             else:
                 if self.session is not None:
                     raise ValueError(
-                        "Eine Kalibriersitzung startet ohne laufende Sitzung; "
-                        "in einer laufenden Sitzung startet ein einzelnes Modul"
+                        "Die Kalibrierung startet ohne laufende Sitzung; "
+                        "in einer laufenden Sitzung startet ein Zusatzmodul"
                     )
-                selected, kind = calibration.select_modules(modules, presence=presence), "session"
+                selected, kind = calibration.procedure(presence=presence), "procedure"
                 if self.controller.control_mode != "automatic":
                     self._set_control_mode("automatic", at=now, received_at=now)
                 self._apply_operation(True, actor=actor, received_at=now)
@@ -2367,6 +2373,25 @@ class SaunaRuntime:
             ))
             await self._cycle()
             return {"run_id": run.run_id}
+
+    async def answer_calibration_pause(self, action, *, run_id, actor: ActorRef | None = None):
+        """Answer the pause of the shown run from the panel (W-3): „Nächster Gang“
+        or „Beenden“, as its message offers them. It never operates the sauna."""
+        async with self.serialized():
+            self._require_open()
+            run = next((item for item in self._calibration_runs if item.active), None)
+            if run is None:
+                raise ValueError("Es läuft keine Kalibrierung")
+            if run.run_id != run_id:
+                raise ValueError("Die angezeigte Kalibrierung läuft nicht mehr")
+            disposition, instructions = run.answer_pause(
+                action, self._clock(), actor.user_id if actor else None,
+            )
+            if disposition != "accepted":
+                raise ValueError("Die Kalibrierung wartet nicht auf diese Antwort")
+            self._send_calibration(run, instructions)
+            await self._cycle()
+            return {"run_id": run.run_id, "action": action}
 
     async def calibration_reply(self, association):
         """Pass a reply with a calibration action to its run; it never operates the sauna."""
@@ -2420,9 +2445,12 @@ class SaunaRuntime:
             if reason is not None:
                 self._send_calibration(run, run.interrupt(now, reason))
             else:
+                # W-3: Gang 1 begins after Bereit, at the earliest once the
+                # session reached the minimum temperature (W-2e).
                 self._send_calibration(run, run.advance(
                     now,
-                    ready=self.controller.phase == "bereit",
+                    ready=(self.controller.phase == "bereit"
+                           and self.controller.minimum_temperature_reached_at is not None),
                     gang_active=session.timeline.active is not None,
                 ))
             self._archive_calibration(run)
@@ -2455,10 +2483,11 @@ class SaunaRuntime:
         return None
 
     def _finish_calibration(self, run, now):
-        """Doors and infusions of a valid run are evaluated once the session has ended (V04).
+        """Doors and infusions of the valid parts are evaluated once the session has ended (V04).
 
-        A run still active at the session end is interrupted; an invalid run
-        only reports that it is invalid (W-2a).
+        A run still active at the session end is interrupted; only a part
+        running then becomes invalid (W3-2). Without a valid part the run only
+        reports that it is invalid (W-2a).
         """
         instructions = run.interrupt(now, "session_ended")
         session = next(
@@ -2467,12 +2496,14 @@ class SaunaRuntime:
             None,
         )
         totals = None
-        if run.valid and session is not None:
+        if run.evaluable and session is not None:
             result = self._evaluate_calibration(run, session, now)
             run.records.append(
                 {"event": "evaluation", "run_id": run.run_id, "at": now, "result": result}
             )
-            instructions = [run.evaluation_message(
+            # The notice of an invalid part stays; the evaluation follows it.
+            notice = instructions if run.invalid_execution is not None else []
+            instructions = [*notice, run.evaluation_message(
                 now, calibration.evaluation_summary(result),
             )]
             totals = result["totals"]
@@ -2499,7 +2530,7 @@ class SaunaRuntime:
                      if item.session_id == session.session_id]
         heating = [(item.started_at, item.ended_at) for item in session.heating.intervals]
         return calibration.evaluate(
-            run.steps, presence=run.presence, events=events, gangs=gangs,
+            run.valid_steps, presence=run.presence, events=events, gangs=gangs,
             gang_heat=calibration.gang_heat_intervals(decisions, heating, until),
             until=until, has_presence=run.has_presence,
         )

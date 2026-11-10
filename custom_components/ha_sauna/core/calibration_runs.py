@@ -6,9 +6,10 @@ Zuordnung (``calibration.evaluate``) bleiben unverändert; hier werden ihre
 Ergebnisse je Schritt für die Anzeige zusammengestellt (G19: das Panel
 formatiert nur).
 
-* ``summary``: ein Lauf mit Art, Modulen, Beginn, Ende, Gültigkeit und, nach
+* ``summary``: ein Lauf mit Art, Teilen, Beginn, Ende, Gültigkeit und, nach
   der Auswertung, ihren Summen.
-* ``result``: dazu je Ausführung eines Moduls eine Zelle je Schritt mit dem
+* ``result``: dazu je Ausführung eines Moduls (Teil) ihre Gültigkeit und eine
+  Zelle je Schritt mit dem
   Ergebnis jeder erwarteten Erkennung (im Fenster gefunden, außerhalb
   zugeordnet mit Lage zum Fenster, fehlt) sowie die zusätzlichen Erkennungen in
   Zeitfolge zwischen den Schritten ihrer Ausführung. Die Kennung des zugehörigen
@@ -16,6 +17,11 @@ formatiert nur).
 
 Das Ergebnis des zuletzt beendeten Laufs steht damit auch nach einem Neustart
 oder Neuladen der Integration zur Verfügung (L-W2c-1).
+
+Gültigkeit: Läufe des Grundablaufs und der Zusatzmodule tragen sie je Teil
+(W3-2, Datensatz ``module_end``); ein Teil ohne diesen Datensatz lief bei einem
+unsauberen Ende und ist ungültig. Ältere Läufe ohne diese Angabe gelten nur als
+Ganzes nach ihrem ``end``.
 """
 
 from __future__ import annotations
@@ -34,7 +40,7 @@ from .calibration import (
 )
 from .timeline import utc
 
-KIND_TEXT = {"session": "Kalibriersitzung", "module": "Einzelnes Modul"}
+KIND_TEXT = {"procedure": "Grundablauf", "session": "Kalibriersitzung", "module": "Zusatzmodul"}
 EXPECTATION_LABELS = {DOOR_OPEN: "Tür auf", DOOR_CLOSE: "Tür zu", INFUSION: "Aufguss"}
 STATUS_TEXT = {
     "found": "im Fenster",
@@ -51,6 +57,8 @@ CELL_TEXT = {
     "not_reached": "nicht erreicht",
 }
 WITHOUT_END = "Protokoll ohne Ende"
+# Endgründe, nach denen die Laufzeit den Lauf nicht mehr hält und nicht auswertet.
+UNEVALUATED_ENDS = ("integration_unloaded",)
 
 
 def _time(value) -> datetime | None:
@@ -79,28 +87,71 @@ def _last(records, event):
     return next((record for record in reversed(records) if record.get("event") == event), None)
 
 
+def _parts(records: list) -> dict:
+    """Gültigkeit je begonnener Ausführung: {Nummer: (gültig, Grund)}.
+
+    Mit Gültigkeit je Teil (W3-2) aus ``module_end``; ohne diesen Datensatz lief
+    der Teil bei einem unsauberen Ende. Ältere Läufe gelten als Ganzes.
+    """
+    start = _last(records, "start") or {}
+    begun = [record.get("execution") for record in records if record.get("event") == "module"]
+    if start.get("validity") == "part":
+        ends = {record.get("execution"): record for record in records
+                if record.get("event") == "module_end"}
+        return {number: ((ends[number].get("valid") is True, ends[number].get("reason"))
+                         if number in ends else (False, None)) for number in begun}
+    end = _last(records, "end")
+    valid = end is not None and end.get("valid") is True
+    return {number: (valid, None if valid or end is None else end.get("reason"))
+            for number in begun}
+
+
+def _reason_text(reason: str | None) -> str:
+    return INTERRUPTIONS.get(reason, reason) if reason else WITHOUT_END
+
+
 def summary(run_id: str, session_id: str | None, records: list, *,
             modules: Mapping[str, Module] = MODULES) -> dict:
-    """Ein Lauf für die Auswahl: Art, Module, Zeiten, Gültigkeit und Summen."""
+    """Ein Lauf für die Auswahl: Art, Teile, Zeiten, Gültigkeit und Summen.
+
+    ``valid``: mindestens ein gültiger und kein ungültiger Teil; ``parts``: Zahl
+    der begonnenen und der gültigen Teile und die ungültigen. ``reason_text``
+    nennt jedes Ende außer dem regulären.
+    """
     start = _last(records, "start") or {}
     end = _last(records, "end")
     evaluation = _last(records, "evaluation")
-    valid = end is not None and end.get("valid") is True
     reason = end.get("reason") if end else None
     kind = start.get("kind")
+    parts = _parts(records)
+    labels = {record.get("execution"): record.get("module")
+              for record in records if record.get("event") == "module"}
+    valid_parts = [number for number, (valid, _) in parts.items() if valid]
+    invalid_parts = [number for number, (valid, _) in parts.items() if not valid]
+    planned = list(start.get("modules") or ())
+    planned += [item for item in dict.fromkeys(labels.values()) if item not in planned]
+
+    def label(module_id):
+        return modules[module_id].label if module_id in modules else module_id
+
     return {
         "run_id": run_id,
         "session_id": session_id,
         "kind": kind,
         "kind_text": KIND_TEXT.get(kind, "Kalibrierung"),
-        "modules": [modules[item].label if item in modules else item
-                    for item in start.get("modules") or ()],
+        "modules": [label(item) for item in planned],
         "started_at": _iso(start.get("at") or (records[0].get("at") if records else None)),
         "ended_at": _iso(end.get("at")) if end else None,
-        "valid": valid,
+        "valid": bool(valid_parts) and not invalid_parts,
         "reason": reason,
-        "reason_text": None if valid else (INTERRUPTIONS.get(reason, reason) if end else WITHOUT_END),
+        "reason_text": None if reason == "finished" else _reason_text(reason),
+        "parts": {"begun": len(parts), "valid": len(valid_parts),
+                  "invalid": [label(labels[number]) for number in invalid_parts]},
         "evaluated": evaluation is not None,
+        # Gültige Teile werden nach dem Sitzungsende ausgewertet, solange die
+        # Laufzeit den Lauf bis dahin hält.
+        "evaluation_pending": (evaluation is None and bool(valid_parts) and end is not None
+                               and reason not in UNEVALUATED_ENDS),
         "totals": (evaluation.get("result") or {}).get("totals") if evaluation else None,
     }
 
@@ -168,6 +219,7 @@ def result(run_id: str, session_id: str | None, records: list, *,
         return ids.get((kind, _iso(at)))
 
     steps = [record for record in records if record.get("event") == "step"]
+    parts = _parts(records)
     started = [(record.get("execution"), record.get("module"))
                for record in records if record.get("event") == "module"]
     evaluated = {item.get("execution"): item for item in (evaluation or {}).get("executions") or ()
@@ -180,13 +232,15 @@ def result(run_id: str, session_id: str | None, records: list, *,
         presence = found.get("presence")
         empty = {item.get("step"): item for item in (presence or {}).get("empty") or ()}
         module = modules.get(module_id)
+        valid, reason = parts.get(number, (False, None))
         cells = []
         for step in _steps(module, closed.values(), recognition):
             item = closed.get(step.key)
             cell = {
                 "type": "step",
                 "step": step.key,
-                "reference": step.reference,
+                # Die Referenz zur Zeit des Laufs; ein nicht erreichter Schritt die heutige.
+                "reference": (item.get("reference") if item else None) or step.reference,
                 "expects": [EXPECTATION_LABELS.get(kind, kind) for kind in step.expects],
                 "outcome": item.get("outcome") if item else None,
                 "window": [_iso(item.get("handoff_at")), _iso(item.get("closed_at"))] if item else None,
@@ -198,7 +252,7 @@ def result(run_id: str, session_id: str | None, records: list, *,
                 cell["status"] = "excluded"
             elif item.get("outcome") == "cancelled":
                 cell["status"] = "cancelled"
-            elif not head["valid"]:
+            elif not valid or (evaluation is None and not head["evaluation_pending"]):
                 cell["status"] = "unevaluated" if step.expects else "none"
             elif evaluation is None:
                 cell["status"] = "pending" if step.expects else "none"
@@ -226,6 +280,8 @@ def result(run_id: str, session_id: str | None, records: list, *,
             "label": module.label if module else module_id,
             "title": module.title if module else "",
             "repeat": any(other == module_id for _, other in started[:index]),
+            "valid": valid,
+            "reason_text": None if valid else _reason_text(reason),
             "cells": cells,
             "gang": found.get("gang"),
             "presence": None if presence is None else {
@@ -233,7 +289,8 @@ def result(run_id: str, session_id: str | None, records: list, *,
             },
             "merged": [],
         })
-    # Module der Auswahl, die der Lauf nicht mehr begonnen hat
+    # Geplante Teile, die der Lauf nicht mehr begonnen hat; ein freiwilliger Teil
+    # (``optional`` im Start) steht nur, wenn er begann.
     for module_id in (_last(records, "start") or {}).get("modules") or ():
         if any(other == module_id for _, other in started):
             continue
@@ -244,6 +301,7 @@ def result(run_id: str, session_id: str | None, records: list, *,
             "execution": None, "module": module_id,
             "label": module.label if module else module_id,
             "title": module.title if module else "", "repeat": False,
+            "valid": None, "reason_text": None,
             "cells": [{"type": "step", "step": step.key, "reference": step.reference,
                        "expects": [EXPECTATION_LABELS.get(kind, kind) for kind in step.expects],
                        "outcome": None, "window": None, "expected": [],
@@ -266,11 +324,13 @@ def _steps(module: Module | None, closed: Iterable[Mapping], recognition: Mappin
     """Schritte einer Ausführung in Ablauffolge.
 
     Ein bekanntes Modul liefert alle Schritte, auch die nicht erreichten. Kennt der
-    aktuelle Stand das Modul eines gespeicherten Laufs nicht mehr (geänderter
-    Ablauf), gelten die abgeschlossenen Schritte des Protokolls mit den
-    Erwartungen ihrer Auswertung.
+    aktuelle Stand das Modul eines gespeicherten Laufs oder einen seiner Schritte
+    nicht mehr (geänderter Ablauf), gelten die abgeschlossenen Schritte des
+    Protokolls mit den Erwartungen ihrer Auswertung.
     """
-    if module is not None:
+    closed = list(closed)
+    if module is not None and {item.get("step") for item in closed} <= {
+            step.key for step in module.steps}:
         return list(module.steps)
     return [Step(item.get("step"), "", item.get("reference") or item.get("step"),
                  expects=tuple(entry.get("kind") for entry in

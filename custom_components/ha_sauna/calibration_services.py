@@ -5,7 +5,7 @@ from homeassistant.core import SupportsResponse
 from homeassistant.exceptions import HomeAssistantError
 
 from .const import DOMAIN
-from .core.calibration import MODULES
+from .core.calibration import ADDITIONAL
 from .core.notification_recipients import ActorRef
 from .notifications import async_resolve_recipients
 from .recognition_services import _runtime as permitted_runtime
@@ -15,8 +15,7 @@ SERVICE_CANCEL = "cancel_calibration"
 START_SCHEMA = vol.Schema(
     {
         vol.Required("entry_id"): str,
-        vol.Optional("module"): vol.In(tuple(MODULES)),
-        vol.Optional("modules"): vol.All([vol.In(tuple(MODULES))], vol.Length(min=1)),
+        vol.Optional("module"): vol.In(tuple(ADDITIONAL)),
     }
 )
 CANCEL_SCHEMA = vol.Schema({vol.Required("entry_id"): str})
@@ -36,7 +35,6 @@ def register(hass):
             return await runtime.start_calibration(
                 actor=ActorRef(call.context.user_id, "ha_context"),
                 module=call.data.get("module"),
-                modules=call.data.get("modules"),
                 resolutions=resolutions,
             )
         except ValueError as error:

@@ -6002,6 +6002,11 @@ class SaunaPanel extends HTMLElement {
       #detail-calibration h2 { margin-top: 0; }
       .calibration-start [role="group"] { display: grid; gap: 0; }
       .calibration-start [role="group"] label { display: flex; align-items: center; gap: ${this.preference("layout_space_10_px")}px; min-height: ${this.preference("size_40_0_px")}px; border-top: ${this.preference("border_1_0_px")}px solid var(--sauna-color-border); }
+      /* W-3: Teile des Grundablaufs in der Startkarte, Gruppen im Raster. */
+      .calibration-parts { display: grid; gap: 0; list-style: none; margin: 0; padding: 0; }
+      .calibration-parts li { display: flex; flex-wrap: wrap; align-items: center; gap: ${this.preference("layout_space_10_px")}px; min-height: ${this.preference("size_40_0_px")}px; border-top: ${this.preference("border_1_0_px")}px solid var(--sauna-color-border); }
+      .calibration-parts li span { color: var(--sauna-card-muted-text); }
+      .calibration-group { margin: ${this.preference("layout_space_13_px")}px 0 0; }
       .calibration-result-head { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: flex-start; gap: ${this.preference("layout_space_10_px")}px; margin-bottom: ${this.preference("layout_space_13_px")}px; }
       .calibration-result-head h2, .calibration-result-head p { margin: 0; }
       .calibration-run-choice { display: flex; flex-wrap: wrap; align-items: center; gap: ${this.preference("layout_space_09_px")}px; min-width: 0; }
@@ -6242,7 +6247,6 @@ class SaunaPanel extends HTMLElement {
         this.statisticsPeriods = null;
         this.statisticsKind = null;
         this.calibrationTargets = undefined;
-        this.calibrationSelection = null;
         this.calibrationModule = null;
         this.calibrationMessage = "";
         this.historyLoad = null;
@@ -6343,11 +6347,6 @@ class SaunaPanel extends HTMLElement {
     });
     this.shadowRoot.addEventListener("change", (e) => {
       if (!this.state) return;
-      if (e.target.matches("[data-calibration-module]"))
-        this.selectCalibrationModule(
-          e.target.dataset.calibrationModule,
-          e.target.checked,
-        );
       if (e.target.id === "calibration-module") this.calibrationModule = e.target.value;
       if (e.target.id === "calibration-run") this.selectCalibrationRun(e.target.value);
       if (e.target.matches("[data-appearance-instrument]"))
@@ -11490,19 +11489,25 @@ class SaunaPanel extends HTMLElement {
             label:
               {
                 start: "Kalibrierung gestartet",
-                module: "Kalibriermodul begonnen",
+                module: "Kalibrierteil begonnen",
+                module_end: "Kalibrierteil beendet",
                 message: "Kalibrieranweisung übergeben",
                 step: "Kalibrierschritt abgeschlossen",
                 reply: "Antwort auf Kalibrieranweisung",
                 repeat: "Kalibriermodul wiederholt",
                 end: "Kalibrierung beendet",
               }[event] || "Kalibrierprotokoll",
+            // W3-2: Gültigkeit je Teil; das Ende eines solchen Laufs nennt nur seinen Grund.
             detail:
-              event === "end"
-                ? values.valid
-                  ? "Gültig"
-                  : `Ungültig, ${record.display?.reason_text || this.detailValue(values.reason)}`
-                : this.detailValue(values),
+              event === "end" && Array.isArray(values.valid_executions)
+                ? values.reason === "finished"
+                  ? "Abgeschlossen"
+                  : `Beendet, ${record.display?.reason_text || this.detailValue(values.reason)}`
+                : event === "end" || event === "module_end"
+                  ? values.valid
+                    ? "Gültig"
+                    : `Ungültig, ${record.display?.reason_text || this.detailValue(values.reason)}`
+                  : this.detailValue(values),
             record,
           },
         ];
@@ -17425,27 +17430,35 @@ class SaunaPanel extends HTMLElement {
               ? "Companion-Ziele werden geprüft …"
               : blocked
                 ? blocked.text ||
-                  `Ein jetzt gestartetes Modul wäre sofort ungültig: ${blocked.reason_text}.`
+                  `Ein jetzt gestartetes Zusatzmodul wäre sofort ungültig: ${blocked.reason_text}.`
                 : "";
     const disabled = locked || busy ? "disabled" : "";
+    // W-3: ohne Sitzung der Grundablauf, in einer Sitzung ein Zusatzmodul.
     let start;
     if (state.session) {
       const choice = this.calibrationModuleChoice(offered);
-      start = `<div class="row"><label for="calibration-module">Modul</label><select id="calibration-module" ${disabled}>${offered.map((module) => `<option value="${esc(module.id)}" ${module.id === choice ? "selected" : ""}>${esc(module.label)} – ${esc(module.title)}</option>`).join("")}</select><button class="confirm" data-action="calibration-start" ${disabled}>Modul starten</button></div><p class="muted">Das Modul startet, sobald kein Gang aktiv ist.</p>`;
+      start = `<div class="row"><label for="calibration-module">Zusatzmodul</label><select id="calibration-module" ${disabled}>${offered.map((module) => `<option value="${esc(module.id)}" ${module.id === choice ? "selected" : ""}>${esc(module.label)} – ${esc(module.title)}</option>`).join("")}</select><button class="confirm" data-action="calibration-start" ${disabled}>Zusatzmodul starten</button></div><p class="muted">Das Zusatzmodul startet, sobald kein Gang aktiv ist.</p>`;
     } else {
-      const chosen = this.calibrationSessionChoice(offered);
-      start = `<div class="row" role="group" aria-label="Module der Kalibriersitzung">${offered.map((module) => `<label><input type="checkbox" data-calibration-module="${esc(module.id)}" ${chosen.includes(module.id) ? "checked" : ""} ${disabled}> ${esc(module.label)} – ${esc(module.title)}</label>`).join("")}</div><div class="row"><button class="confirm" data-action="calibration-start" ${disabled || (chosen.length ? "" : "disabled")}>Kalibriersitzung starten</button></div><p class="muted">Startet den Saunabetrieb im Automatikbetrieb. Die Module folgen nach Bereit.</p>`;
+      start = `<ol class="calibration-parts" aria-label="Grundablauf">${(calibration.procedure || []).map((part) => `<li><strong>${esc(part.label)}</strong><span>${esc(part.title)}</span></li>`).join("")}</ol><div class="row"><button class="confirm" data-action="calibration-start" ${disabled}>Kalibrierung starten</button></div><p class="muted">Startet den Saunabetrieb im Automatikbetrieb. Jeder Teil gilt für sich; eine Unterbrechung macht nur den laufenden Teil ungültig.</p>`;
     }
     // B4e: Das letzte Ergebnis steht mit Summen und Ergebnis je Schritt in der
-    // Karte daneben, gelesen aus dem Archiv (L-W2c-1).
+    // Karte daneben, gelesen aus dem Archiv (L-W2c-1). In einer Pause stehen
+    // ihre Antworten, getrennt vom Abbruch (G16).
+    const allowed = state.permissions.control && !busy ? "" : "disabled",
+      pause = (run?.actions || [])
+        .map(
+          (item) =>
+            `<button ${item.action === "next" ? 'class="confirm" ' : ""}data-action="calibration-pause:${esc(item.action)}" ${allowed}>${esc(item.label)}</button>`,
+        )
+        .join("");
     const status = run
-      ? `<p><strong>${run.kind === "session" ? "Kalibriersitzung" : "Einzelnes Modul"} läuft:</strong> ${esc(this.calibrationProgress(run))}</p><div class="row"><button class="stop" data-action="calibration-cancel" ${state.permissions.control && !busy ? "" : "disabled"}>Kalibrierung abbrechen</button></div><p class="muted">Nach dem Abbruch ist der Lauf ungültig und wird nicht ausgewertet.</p>`
+      ? `<p><strong>${run.kind === "module" ? "Zusatzmodul" : "Kalibrierung"} läuft:</strong> ${esc(this.calibrationProgress(run))}</p>${pause ? `<div class="row">${pause}</div>` : ""}<div class="row"><button class="stop" data-action="calibration-cancel" ${allowed}>Kalibrierung abbrechen</button></div><p class="muted">Ein Abbruch macht nur den laufenden Teil ungültig; abgeschlossene Teile werden ausgewertet.</p>`
       : "";
     if (this.$("#calibration-grid")) {
       if (this.view === "detail-calibration") void this.loadCalibrationRuns();
       this.updateMarkup(
         "#calibration-grid",
-        this.calibrationResultMarkup(offered, run),
+        this.calibrationResultMarkup(offered, run, calibration.procedure || []),
       );
     }
     this.updateMarkup(
@@ -17454,10 +17467,25 @@ class SaunaPanel extends HTMLElement {
     );
   }
   // B4a: Raster der Module und Schritte mit den erwarteten Erkennungen (Brett
-  // „Details · Kalibrierung“); der laufende Schritt ist hervorgehoben.
-  calibrationGridMarkup(modules, run) {
-    if (!modules.length) return "";
-    return `<h2>Module und Schritte</h2>${this.calibrationModuleRows(modules, run)}<p class="muted">Jede Zelle ist ein Schritt mit den erwarteten Erkennungen.</p>`;
+  // „Details · Kalibrierung“); der laufende Schritt ist hervorgehoben. W-3: die
+  // Teile des Grundablaufs und die Zusatzmodule je als Gruppe.
+  calibrationGridMarkup(modules, run, procedure = []) {
+    if (!modules.length && !procedure.length) return "";
+    return `<h2>Module und Schritte</h2>${this.calibrationGroups(modules, run, procedure)}<p class="muted">Jede Zelle ist ein Schritt mit den erwarteten Erkennungen.</p>`;
+  }
+  calibrationGroups(modules, run, procedure = []) {
+    if (!procedure.length) return this.calibrationModuleRows(modules, run);
+    const shown = run?.kind === "procedure" ? [run, null] : [null, run];
+    return [
+      ["Grundablauf", procedure, shown[0]],
+      ["Zusatzmodule", modules, shown[1]],
+    ]
+      .filter(([, items]) => items.length)
+      .map(
+        ([title, items, current]) =>
+          `<p class="stat-key calibration-group">${title}</p>${this.calibrationModuleRows(items, current)}`,
+      )
+      .join("");
   }
   calibrationModuleRows(modules, run) {
     const expected = (step) => {
@@ -17476,7 +17504,10 @@ class SaunaPanel extends HTMLElement {
     };
     return modules
       .map((module) => {
-        const current = run && run.module === module.label ? run.step : null,
+        const current =
+            run && run.waiting !== "pause" && run.module === module.label
+              ? run.step
+              : null,
           cells = (module.steps || [])
             .map(
               (step, index) =>
@@ -17550,9 +17581,37 @@ class SaunaPanel extends HTMLElement {
     this.drawCalibration();
   }
   calibrationRunLabel(run) {
-    return `${this.when(run.started_at)} · ${run.kind_text} ${(run.modules || []).join(", ")} · ${run.valid ? "gültig" : "ungültig"}`;
+    return `${this.when(run.started_at)} · ${run.kind_text} ${(run.modules || []).join(", ")} · ${run.valid ? "gültig" : run.parts?.valid ? "teilweise gültig" : "ungültig"}`;
   }
-  calibrationResultMarkup(offered, active) {
+  // W3-2: Gültigkeit je Teil. Ein Lauf ist gültig, teilweise gültig (ein
+  // ungültiger Teil neben gültigen) oder ungültig; die Angaben kommen aus dem
+  // Archiv, das Panel formatiert sie nur.
+  calibrationRunState(run) {
+    const pending = run.evaluation_pending !== false,
+      line = (text, valid) =>
+        `<p class="calibration-run-state"${valid ? ` data-valid="${valid}"` : ""}>${text}</p>`;
+    if (run.valid) {
+      const parts = [
+        run.reason_text ? `Beendet: ${esc(run.reason_text)}.` : "",
+        run.evaluated
+          ? ""
+          : pending
+            ? "Gültig. Die Auswertung der Erkennung folgt nach dem Sitzungsende."
+            : "Gültig, nicht ausgewertet.",
+      ].filter(Boolean);
+      return parts.length ? line(parts.join(" ")) : "";
+    }
+    if (run.parts?.valid)
+      return line(
+        `<strong>Teilweise gültig:</strong> ${esc((run.parts.invalid || []).join(", "))} ungültig (${esc(run.reason_text || "")}). Die übrigen Teile ${run.evaluated ? "sind ausgewertet" : pending ? "werden nach dem Sitzungsende ausgewertet" : "sind nicht ausgewertet"}.`,
+        "partial",
+      );
+    return line(
+      `<strong>Ungültig:</strong> ${esc(run.reason_text || "")}. Ungültige Läufe werden nicht ausgewertet.`,
+      "false",
+    );
+  }
+  calibrationResultMarkup(offered, active, procedure = []) {
     const data = this.calibrationRunsData(),
       result = data?.result || null,
       runs = result?.runs || [],
@@ -17579,15 +17638,11 @@ class SaunaPanel extends HTMLElement {
           ? `<p class="muted">Läufe nicht verfügbar: ${esc(data.error)}</p>`
           : "";
       if (!offered.length && !status) return "";
-      return `<div class="calibration-result-head"><h2>Module und Schritte</h2>${choiceMarkup}</div>${overview ? "" : status}${this.calibrationModuleRows(offered, active)}${note}`;
+      return `<div class="calibration-result-head"><h2>Module und Schritte</h2>${choiceMarkup}</div>${overview ? "" : status}${this.calibrationGroups(offered, active, procedure)}${note}`;
     }
     const title = shown.run_id === runs[0]?.run_id ? "Letzter Lauf" : "Gewählter Lauf",
       period = `${esc(this.when(shown.started_at))}${shown.ended_at ? ` – ${esc(this.clock(shown.ended_at))}` : ""} · ${esc(shown.kind_text)} ${esc((shown.modules || []).join(", "))}`,
-      state = !shown.valid
-        ? `<p class="calibration-run-state" data-valid="false"><strong>Ungültig:</strong> ${esc(shown.reason_text || "")}. Ungültige Läufe werden nicht ausgewertet.</p>`
-        : !shown.evaluated
-          ? '<p class="calibration-run-state">Gültig. Die Auswertung der Erkennung folgt nach dem Sitzungsende.</p>'
-          : "",
+      state = this.calibrationRunState(shown),
       unplaced = (shown.additional || []).length
         ? `<div class="calibration-module"><h3>Weitere zusätzliche Erkennungen</h3><ol class="calibration-steps">${shown.additional.map((cell, index) => this.calibrationCellMarkup(cell, "additional", index)).join("")}</ol></div>`
         : "",
@@ -17638,7 +17693,11 @@ class SaunaPanel extends HTMLElement {
     const cells = (execution.cells || [])
       .map((cell, index) => this.calibrationCellMarkup(cell, row, index))
       .join("");
-    return `<div class="calibration-module" data-calibration-execution="${esc(execution.module)}"><h3>${esc(execution.label)} · ${esc(execution.title || "")}${execution.repeat ? " · Wiederholung" : ""}</h3><ol class="calibration-steps">${cells}</ol>${this.calibrationFactsMarkup(execution)}</div>`;
+    const invalid =
+      execution.valid === false
+        ? ` · ungültig${execution.reason_text ? `: ${esc(execution.reason_text)}` : ""}`
+        : "";
+    return `<div class="calibration-module" data-calibration-execution="${esc(execution.module)}"${execution.valid === false ? ' data-valid="false"' : ""}><h3>${esc(execution.label)} · ${esc(execution.title || "")}${execution.repeat ? " · Wiederholung" : ""}${invalid}</h3><ol class="calibration-steps">${cells}</ol>${this.calibrationFactsMarkup(execution)}</div>`;
   }
   calibrationOffset(value, window = "") {
     const seconds = (number) =>
@@ -17760,6 +17819,12 @@ class SaunaPanel extends HTMLElement {
     return this.refresh(true);
   }
   calibrationProgress(run, { waiting = true } = {}) {
+    if (run.waiting === "pause") {
+      const answers = (run.actions || [])
+        .map((item) => `„${item.label}“`)
+        .join(" oder ");
+      return `${run.module} beendet, Pause vor ${run.next}${waiting && answers ? `, wartet auf ${answers}` : ""}`;
+    }
     const reason = `wartet auf ${
       {
         ready: "Bereit",
@@ -17770,21 +17835,6 @@ class SaunaPanel extends HTMLElement {
     }`;
     if (run.step == null) return `${run.module}, ${reason}`;
     return `${run.module}, Schritt ${run.step} von ${run.steps}${waiting ? `, ${reason}` : ""}`;
-  }
-  selectCalibrationModule(id, chosen) {
-    const selection = new Set(
-      this.calibrationSessionChoice(this.state?.calibration?.modules || []),
-    );
-    if (chosen) selection.add(id);
-    else selection.delete(id);
-    this.calibrationSelection = [...selection];
-    this.drawCalibration();
-  }
-  calibrationSessionChoice(offered) {
-    const ids = offered.map((module) => module.id);
-    return this.calibrationSelection
-      ? ids.filter((id) => this.calibrationSelection.includes(id))
-      : ids;
   }
   calibrationModuleChoice(offered) {
     return offered.some((module) => module.id === this.calibrationModule)
@@ -17826,10 +17876,8 @@ class SaunaPanel extends HTMLElement {
     )
       return;
     const offered = state.calibration?.modules || [],
-      body = state.session
-        ? { module: this.calibrationModuleChoice(offered) }
-        : { modules: this.calibrationSessionChoice(offered) };
-    if (state.session ? !body.module : !body.modules.length) return;
+      body = state.session ? { module: this.calibrationModuleChoice(offered) } : {};
+    if (state.session && !body.module) return;
     await this.calibrationRequest("", body);
   }
   async cancelCalibration() {
@@ -17844,6 +17892,20 @@ class SaunaPanel extends HTMLElement {
     // L-W2c-3: nur den angezeigten Lauf abbrechen.
     const runId = state.calibration.active.run_id;
     await this.calibrationRequest("/cancel", runId ? { run_id: runId } : {});
+  }
+  // W-3: Antwort auf die Pause des angezeigten Laufs, wie in ihrer Nachricht.
+  async answerCalibrationPause(action) {
+    const state = this.state,
+      run = state?.calibration?.active;
+    if (
+      !state?.permissions?.admin ||
+      !state.permissions.control ||
+      this.calibrationBusy ||
+      !run?.run_id ||
+      !(run.actions || []).some((item) => item.action === action)
+    )
+      return;
+    await this.calibrationRequest("/pause", { run_id: run.run_id, action });
   }
   async calibrationRequest(path, body) {
     const entry = this.entry,
@@ -18919,6 +18981,8 @@ class SaunaPanel extends HTMLElement {
     if (action === "calibration-targets") return this.loadCalibrationTargets();
     if (action === "calibration-start") return this.startCalibration();
     if (action === "calibration-cancel") return this.cancelCalibration();
+    if (action.startsWith("calibration-pause:"))
+      return this.answerCalibrationPause(action.slice(18));
     if (action.startsWith("calibration-cell:")) {
       if (!this.state?.permissions?.admin) return;
       const [, row, index] = action.split(":");

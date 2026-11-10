@@ -66,8 +66,9 @@ Der abschließende Notify-Transport ist synthetisch; diese Prüfungen belegen
 weder Empfang noch Rückmeldungen eines tatsächlichen Companion-Clients.
 
 Die [Kalibrierung](../docs/kalibrierung.md) prüft `test_calibration.py` im
-Fachkernlauf: vollständiger Durchlauf aller Module mit simulierten Antworten,
-Wiederholung, doppelte und verspätete Antworten, Startbedingungen und
+Fachkernlauf: der Grundablauf mit simulierten Antworten mit zwei und mit drei
+Gängen, Beenden nach Gang 2, Zusatzmodule, Wiederholung, doppelte und
+verspätete Antworten, die Pausenantwort aus dem Panel, Startbedingungen und
 Auswertung gegen synthetische Fenster, darunter die Zuordnung in physikalischer
 Reihenfolge ohne Kreuzung über die Arten, früh oder spät erkannte Ereignisse,
 zusammengelegte Türvorgänge und der Gang über den zugeordneten Eintrittsschluss.
@@ -76,7 +77,10 @@ mit synthetischem Abschlusstransport; derselbe Eingangsverlauf ohne Kalibrierung
 ergibt dieselben Heizentscheidungen und denselben Gangverlauf. Abbrechen,
 Betrieb AUS, manueller Modus, manuelle Ofenwahl, ein unbekannter oder nicht
 verfügbarer Präsenzsensor, Entladen und ein Sitzungsende vor dem letzten Schritt
-machen die Kalibrierung ungültig, ohne weitere Anweisung und ohne Auswertung.
+machen den laufenden Teil ungültig, ohne weitere Anweisung; abgeschlossene Teile
+bleiben gültig und werden ausgewertet, etwa P1, Gang 1 und P2 bei einem Abbruch
+in Gang 2. `test_calibration_runs.py` prüft das Ergebnis je Teil aus dem Archiv,
+auch nach einem Neuladen, und die Lesbarkeit älterer Läufe.
 `test_archive_retention.py` prüft die Aufbewahrung von Sitzungen mit
 Kalibrierprotokoll.
 `integration/test_calibration_service.py` führt den registrierten Dienst über
@@ -84,13 +88,14 @@ die Mobile-App-Geräteaktion und den nativen Antworteingang bis zum Ablauf und
 zum Archivprotokoll. Derselbe Test führt Start und Abbruch über die
 authentifizierten Panelansichten mit derselben Berechtigungsgrenze wie die
 Dienste und prüft den Kalibrierstatus im Zustand, für Normalbenutzer nur den
-laufenden Lauf. `test_calibration.py` prüft dazu Modul, Schritt und Wartegrund
+laufenden Lauf. `test_calibration.py` prüft dazu Teil, Schritt und Wartegrund
 des Anzeigezustands, den Sperrgrund für den Modulstart gleich dem Grund, mit dem
 ein gestartetes Modul sofort ungültig endet, sowie das letzte Ergebnis nach dem
 Sitzungsende,
-`test_local_preview.py` denselben Weg in der lokalen Vorschau und
-`panel_calibration.test.js` Karte, Sperrgründe und den Hinweis in der
-Steuerungsansicht.
+`test_local_preview.py` denselben Weg in der lokalen Vorschau,
+`panel_calibration.test.js` Karte, Pausenantworten, Sperrgründe und den Hinweis
+in der Steuerungsansicht und `panel_calibration_w3.test.js` die Gültigkeit je
+Teil im Ergebnis und das Raster mit Grundablauf und Zusatzmodulen.
 
 Die [Modellübergaben](../docs/modelluebergaben.md) werden durch
 `test_model_handoff.py`, `test_control_handoff.py`,

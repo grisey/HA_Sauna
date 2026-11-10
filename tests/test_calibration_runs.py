@@ -3,8 +3,9 @@
 L-B4-3: nach einem Lauf je Zelle gefunden im Fenster, außerhalb zugeordnet mit
 Lage, fehlt, zusätzlich. L-W2c-1: das letzte Ergebnis kommt aus dem Archiv und
 steht damit auch nach einem Neuladen. L-W2c-3: der Abbruch aus dem Panel nennt
-den Lauf. Bewertung und Zuordnung (``calibration.evaluate``) bleiben unverändert;
-die Fälle lesen ihr Ergebnis nur.
+den Lauf. W-3: Läufe des Grundablaufs tragen die Gültigkeit je Teil (W3-2);
+ältere Läufe gelten als Ganzes und bleiben lesbar. Bewertung und Zuordnung
+(``calibration.evaluate``) bleiben unverändert; die Fälle lesen ihr Ergebnis nur.
 """
 
 import asyncio
@@ -15,11 +16,12 @@ from datetime import timedelta
 from pathlib import Path
 
 import test_calibration as base
-from test_calibration import A1, CB, USER, D, at
+from test_calibration import A1, CB, USER, D, Driver, at, procedure_run
 
 from custom_components.ha_sauna.archive import plain
 from custom_components.ha_sauna.core import calibration, calibration_runs
 from custom_components.ha_sauna.core.notification_recipients import ActorRef
+from custom_components.ha_sauna.core.presence import binary_presence
 
 
 def protocol(module, windows, *, run_id="run", execution=1, outcomes=None):
@@ -31,7 +33,8 @@ def protocol(module, windows, *, run_id="run", execution=1, outcomes=None):
 
 
 def records(run_id, kind, modules, steps, *, end=None, events=(), has_presence=False):
-    """Archived protocol of one run as the archive returns it (JSON)."""
+    """Archived protocol of one run in the older format (validity of the whole run),
+    as the archive returns it (JSON)."""
     items = [{"event": "start", "run_id": run_id, "at": at(0), "kind": kind,
               "modules": modules, "user_id": USER}]
     numbers = {}
@@ -66,7 +69,7 @@ class CalibrationRunResultTests(unittest.TestCase):
                         events=events)
         result = calibration_runs.result("run", "s", items, processed=processed("s", events))
         self.assertEqual((result["kind_text"], result["modules"], result["valid"],
-                          result["evaluated"]), ("Einzelnes Modul", ["A1"], True, True))
+                          result["evaluated"]), ("Zusatzmodul", ["A1"], True, True))
         self.assertEqual(result["totals"]["events"]["found"], 3)
         cells = result["executions"][0]["cells"]
         self.assertEqual([(c["type"], c.get("reference", c.get("label")), c["status"])
@@ -133,6 +136,10 @@ class CalibrationRunResultTests(unittest.TestCase):
         self.assertEqual([cell["status"] for cell in first["cells"]],
                          ["unevaluated", "cancelled", "not_reached", "not_reached"])
         self.assertEqual((second["execution"], second["label"]), (None, "D"))
+        # An older run is valid only as a whole: every begun part names its reason.
+        self.assertEqual((first["valid"], first["reason_text"]), (False, "abgebrochen"))
+        self.assertEqual((result["kind_text"], result["parts"]),
+                         ("Kalibriersitzung", {"begun": 1, "valid": 0, "invalid": ["A1"]}))
         self.assertTrue(all(cell["status"] == "not_reached" and cell["window"] is None
                             for cell in second["cells"]))
         # Without an end record (an unclean stop) the run is invalid as well.
@@ -168,6 +175,22 @@ class CalibrationRunResultTests(unittest.TestCase):
                          [("nicht begonnen", "not_reached")])
         self.assertEqual(result["modules"], ["X1", "B9"])
 
+    def test_an_older_run_of_cb_keeps_its_recorded_reference(self):
+        # W3-4 changed the first step of C/B; an older run shows what it instructed.
+        steps = protocol("CB", CB)
+        steps[0]["reference"] = "Öffnung ohne Gang"
+        result = calibration_runs.result("run", "s", records(
+            "run", "module", ["CB"], steps, end="finished", events=[]))
+        cells = result["executions"][0]["cells"]
+        self.assertEqual((cells[0]["reference"], cells[0]["expects"], cells[1]["reference"]),
+                         ("Öffnung ohne Gang", ["Tür auf", "Tür zu"], "Eintritt"))
+        # A step key the module no longer knows: the protocol steps stand.
+        steps[0]["step"] = "outside_only"
+        result = calibration_runs.result("run", "s", records(
+            "run", "module", ["CB"], steps, end="cancelled"))
+        self.assertEqual([cell["step"] for cell in result["executions"][0]["cells"]],
+                         [step["step"] for step in steps])
+
     def test_a_valid_run_waits_for_the_evaluation_after_the_session_end(self):
         items = records("run", "module", ["A1"], protocol("A1", A1), end="finished", events=None)
         result = calibration_runs.result("run", "s", items)
@@ -192,6 +215,129 @@ class CalibrationRunResultTests(unittest.TestCase):
             "reason_text"], "abgebrochen")
         self.assertIsNone(calibration_runs.view(stored, run_id="r3", active_run_id="r3"))
         self.assertEqual(calibration_runs.view([]), {"runs": [], "run": None})
+
+
+def procedure_records(reason="operation_off"):
+    """A basic procedure interrupted in Gang 2: P1, Gang 1 and P2 completed (W3-2).
+
+    The valid parts are evaluated with the unchanged rules; the protocol is
+    archived as JSON like the runtime stores it.
+    """
+    run = procedure_run(run_id="proc")
+    driver = Driver(run)
+    for _ in range(3):
+        closing = driver.follow()
+    driver.answer(closing, calibration.NEXT)
+    driver.answer(driver.advance()[0])
+    driver.advance(60)
+    run.interrupt(driver.now, reason)
+    gang1 = {item["step"]: item for item in run.steps if item["module"] == "G1"}
+    events = [("door_open", gang1["entry"]["handoff_at"] + timedelta(seconds=4)),
+              ("door_close", gang1["entry"]["handoff_at"] + timedelta(seconds=9)),
+              ("infusion", gang1["infusion_1"]["closed_at"] + timedelta(seconds=6)),
+              ("door_open", gang1["exit_open"]["handoff_at"] + timedelta(seconds=10)),
+              ("door_close", gang1["exit_close"]["handoff_at"] + timedelta(seconds=8)),
+              # A spurious door in P2 and one in the invalid Gang 2.
+              ("door_open", gang1["exit_close"]["closed_at"] + timedelta(seconds=400)),
+              ("door_open", driver.now - timedelta(seconds=5))]
+    result = calibration.evaluate(run.valid_steps, presence=run.presence, events=events,
+                                  gangs=[], gang_heat=[], until=driver.now + timedelta(hours=1))
+    items = run.take_records() + [{"event": "evaluation", "run_id": "proc", "at": driver.now,
+                                   "result": result}]
+    return json.loads(json.dumps(plain(items))), events
+
+
+class CalibrationProcedureRunTests(unittest.TestCase):
+    """W-3: result per part from the archive; the panel follows these data (B4e)."""
+
+    def test_valid_parts_are_evaluated_and_the_interrupted_gang_2_is_not(self):
+        items, events = procedure_records()
+        result = calibration_runs.result("proc", "s", items,
+                                         processed=processed("s", events))
+        self.assertEqual((result["kind_text"], result["modules"], result["valid"],
+                          result["reason_text"], result["evaluated"]),
+                         ("Grundablauf", ["P1", "Gang 1", "P2", "Gang 2"], False, "Betrieb aus",
+                          True))
+        self.assertEqual(result["parts"], {"begun": 4, "valid": 3, "invalid": ["Gang 2"]})
+        self.assertEqual(
+            [(item["label"], item["valid"], item["reason_text"]) for item in result["executions"]],
+            [("P1", True, None), ("Gang 1", True, None), ("P2", True, None),
+             ("Gang 2", False, "Betrieb aus")])
+        p1, gang1, p2, gang2 = result["executions"]
+        self.assertEqual([(cell["reference"], cell["status"]) for cell in gang1["cells"]], [
+            ("Eintritt", "found"), ("Aufguss 1", "outside"), ("kurze Öffnung im Gang", "missing"),
+            ("Aufguss 2, Doppelguss", "missing"), ("Austrittsöffnung = Gangende", "found"),
+            ("Austrittsschluss", "found")])
+        self.assertEqual(gang1["cells"][1]["expected"][0]["event_id"],
+                         f"recognition:s:infusion:{events[2][1].isoformat()}")
+        self.assertEqual({cell["status"] for cell in p1["cells"]}, {"none"})
+        # The spurious door in P2 is additional, in time order between its steps;
+        # the one in the invalid Gang 2 is not considered.
+        self.assertEqual([cell["type"] for cell in p2["cells"]],
+                         ["step", "additional", "step", "step"])
+        self.assertEqual([(cell["reference"], cell["status"]) for cell in gang2["cells"]], [
+            ("kurzer Türvorgang ohne Gang", "unevaluated"), ("Eintritt", "cancelled"),
+            ("Aufguss 1", "not_reached"), ("kurze Öffnung im Abklingen", "not_reached"),
+            ("Aufguss 2", "not_reached"), ("Austrittsöffnung = Gangende", "not_reached"),
+            ("Austrittsschluss", "not_reached")])
+        self.assertEqual(result["totals"]["gangs"]["reference"], 1)
+        self.assertEqual(result["totals"]["events"]["additional"], 1)
+        # The optional Gang 3 did not begin and is not listed.
+        self.assertNotIn("Gang 3", [item["label"] for item in result["executions"]])
+        self.assertEqual(calibration_runs.summary("proc", "s", items)["parts"],
+                         result["parts"])
+
+    def test_before_the_evaluation_and_after_an_unload(self):
+        items, _ = procedure_records()
+        pending = [item for item in items if item["event"] != "evaluation"]
+        result = calibration_runs.result("proc", "s", pending)
+        self.assertEqual((result["evaluated"], result["evaluation_pending"]), (False, True))
+        self.assertEqual({cell["status"] for cell in result["executions"][1]["cells"]},
+                         {"pending"})
+        # The runtime does not keep a run beyond an unload; nothing evaluates it.
+        unloaded, _ = procedure_records("integration_unloaded")
+        unloaded = [item for item in unloaded if item["event"] != "evaluation"]
+        result = calibration_runs.result("proc", "s", unloaded)
+        self.assertEqual((result["evaluation_pending"], result["parts"]["valid"]), (False, 3))
+        self.assertEqual({cell["status"] for cell in result["executions"][1]["cells"]},
+                         {"unevaluated"})
+        # Without an end record (unclean stop) the running part is invalid.
+        unclean = [item for item in pending if item["event"] not in ("end", "module_end")
+                   or item.get("valid") is True]
+        summary = calibration_runs.summary("proc", "s", unclean)
+        self.assertEqual((summary["parts"], summary["reason_text"], summary["evaluation_pending"]),
+                         ({"begun": 4, "valid": 3, "invalid": ["Gang 2"]}, "Protokoll ohne Ende",
+                          False))
+
+    def test_a_complete_procedure_with_gang_3_and_one_ended_by_beenden(self):
+        run = procedure_run(run_id="full")
+        driver = Driver(run)
+        for _ in range(3):
+            closing = driver.follow()
+        driver.answer(closing, calibration.NEXT)
+        closing = driver.follow()
+        driver.answer(closing, calibration.NEXT)
+        driver.follow()
+        items = json.loads(json.dumps(plain(run.take_records())))
+        summary = calibration_runs.summary("full", "s", items)
+        self.assertEqual((summary["modules"], summary["valid"], summary["reason_text"],
+                          summary["parts"]),
+                         (["P1", "Gang 1", "P2", "Gang 2", "Gang 3"], True, None,
+                          {"begun": 5, "valid": 5, "invalid": []}))
+        result = calibration_runs.result("full", "s", items)
+        self.assertEqual([cell["reference"] for cell in result["executions"][-1]["cells"]],
+                         [step.reference for step in calibration.MODULES["G3"].steps])
+
+        run = procedure_run(run_id="short")
+        driver = Driver(run)
+        for _ in range(3):
+            closing = driver.follow()
+        driver.answer(closing, calibration.NEXT)
+        driver.answer(driver.follow(), calibration.FINISH)
+        items = json.loads(json.dumps(plain(run.take_records())))
+        result = calibration_runs.result("short", "s", items)
+        self.assertEqual((result["modules"], result["valid"], len(result["executions"])),
+                         (["P1", "Gang 1", "P2", "Gang 2"], True, 4))
 
 
 class CalibrationRunArchiveTests(unittest.TestCase):
@@ -249,6 +395,50 @@ class CalibrationRunArchiveTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             asyncio.run(exercise(directory))
 
+    def test_a_procedure_with_operation_off_in_gang_2_from_the_archive(self):
+        # W3-2 over runtime and archive: P1, Gang 1 and P2 stay valid and are
+        # evaluated after the session end; Gang 2 is invalid. Readable after a reload.
+        helper = base.CalibrationRuntimeTests("test_start_conditions")
+
+        async def exercise(directory):
+            clock = [base.START]
+            runtime = helper.runtime(clock)
+            await runtime.start_archive(Path(directory) / "a.sqlite", "entry")
+            runtime.controller.set_temperature(80, base.START)
+            await runtime.accept_presence(binary_presence(
+                "binary_sensor.presence", "off", base.START, base.START))
+            await runtime.start_calibration(actor=ActorRef(USER, "ha_context"))
+            run = runtime.calibration_runs[0]
+            await helper.proceed(runtime, clock, until=lambda item: (
+                item.current.module.module_id == "G2" and item.current.step == 2))
+            await runtime.set_operation(False, actor=ActorRef(USER, "ha_context"))
+            await helper.settle(runtime)
+            self.assertEqual((run.valid_executions, run.invalid_execution, run.end_reason),
+                             ((1, 2, 3), 4, "operation_off"))
+            self.assertEqual(runtime.notification_transport.sent[-1].payload["message"],
+                             "Kalibrierung unterbrochen: Betrieb aus. Gang 2 ist ungültig; die "
+                             "abgeschlossenen Teile werden nach dem Sitzungsende ausgewertet.")
+            await helper.end_session(runtime, clock)
+            await runtime.archive.flush()
+            path = runtime.archive.path
+            await runtime.close()
+            from custom_components.ha_sauna.archive import Archive
+            from custom_components.ha_sauna.core.parameters import Parameters
+
+            view = Archive(path, "entry", parameters=Parameters({})).calibration_runs()
+            result = view["run"]
+            self.assertEqual((result["kind_text"], result["evaluated"], result["parts"]),
+                             ("Grundablauf", True, {"begun": 4, "valid": 3, "invalid": ["Gang 2"]}))
+            self.assertEqual([(item["label"], item["valid"]) for item in result["executions"]],
+                             [("P1", True), ("Gang 1", True), ("P2", True), ("Gang 2", False)])
+            self.assertEqual(result["totals"]["gangs"]["reference"], 1)
+            # Interrupted between two steps: the reached ones are not evaluated.
+            self.assertEqual([cell["status"] for cell in result["executions"][3]["cells"]][:3],
+                             ["unevaluated", "unevaluated", "not_reached"])
+
+        with tempfile.TemporaryDirectory() as directory:
+            asyncio.run(exercise(directory))
+
     def test_cancel_with_the_run_id_cancels_that_run(self):
         helper = base.CalibrationRuntimeTests("test_start_conditions")
 
@@ -258,7 +448,7 @@ class CalibrationRunArchiveTests(unittest.TestCase):
             result = await runtime.cancel_calibration(actor=ActorRef(USER, "x"),
                                                       run_id=run.run_id)
             self.assertEqual(result, {"run_id": run.run_id})
-            self.assertEqual((run.phase, run.end_reason), ("invalid", "cancelled"))
+            self.assertEqual((run.phase, run.end_reason), ("ended", "cancelled"))
             with self.assertRaisesRegex(ValueError, "keine Kalibrierung"):
                 await runtime.cancel_calibration(run_id=run.run_id)
             await runtime.close()

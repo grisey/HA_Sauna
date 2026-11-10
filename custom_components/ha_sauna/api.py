@@ -1377,11 +1377,12 @@ class RecognitionSessionsView(HomeAssistantView):
 
 
 class CalibrationView(HomeAssistantView):
-    """Start a calibration from the panel (W-2c).
+    """Start a calibration from the panel (W-2c, W-3).
 
     Same runtime method and permission boundary as ha_sauna.start_calibration;
-    the starting user is the authenticated request user. GET reports how many
-    Companion targets with replies that user has.
+    the starting user is the authenticated request user. ``{}`` starts the
+    basic procedure, ``{"module": …}`` an additional module. GET reports how
+    many Companion targets with replies that user has.
     """
 
     url = "/api/ha_sauna/{entry_id}/calibration"
@@ -1403,26 +1404,22 @@ class CalibrationView(HomeAssistantView):
         require_control(request, entry_id)
         body = await json_body(request)
 
-        def known(value):
-            return isinstance(value, str) and value in calibration.MODULES
-
         if not (
             isinstance(body, dict)
-            and set(body) <= {"module", "modules"}
-            and ("module" not in body or known(body["module"]))
-            and ("modules" not in body or (
-                isinstance(body["modules"], list) and body["modules"]
-                and all(known(item) for item in body["modules"])
+            and set(body) <= {"module"}
+            and ("module" not in body or (
+                isinstance(body["module"], str) and body["module"] in calibration.ADDITIONAL
             ))
         ):
-            raise web.HTTPBadRequest(text="module oder modules muss Kalibriermodule nennen.")
+            raise web.HTTPBadRequest(
+                text="Der Start erwartet ein leeres Objekt oder module mit einem Zusatzmodul.")
         hass = request.app[KEY_HASS]
         runtime = runtime_for(hass, entry_id)
         resolutions = await async_resolve_recipients(hass)
         try:
             result = await runtime.start_calibration(
                 actor=request_actor(request), module=body.get("module"),
-                modules=body.get("modules"), resolutions=resolutions,
+                resolutions=resolutions,
             )
         except ValueError as error:
             return self.json({"error": str(error)}, status_code=409)
@@ -1452,6 +1449,36 @@ class CalibrationCancelView(HomeAssistantView):
         try:
             result = await runtime.cancel_calibration(
                 actor=request_actor(request), run_id=body.get("run_id"),
+            )
+        except ValueError as error:
+            return self.json({"error": str(error)}, status_code=409)
+        return self.json(result)
+
+
+class CalibrationPauseView(HomeAssistantView):
+    """Answer the pause of the running calibration from the panel (W-3).
+
+    ``{"run_id": …, "action": "next" | "finish"}``: „Nächster Gang“ or
+    „Beenden“, as the pause message offers them; same permission boundary as
+    the start. A run that is no longer shown or not in such a pause gives 409.
+    """
+
+    url = "/api/ha_sauna/{entry_id}/calibration/pause"
+    name = "api:ha_sauna:calibration:pause"
+    requires_auth = True
+
+    async def post(self, request, entry_id):
+        require_control(request, entry_id)
+        body = await json_body(request)
+        if not (isinstance(body, dict) and set(body) == {"run_id", "action"}
+                and isinstance(body["run_id"], str) and body["run_id"]
+                and body["action"] in calibration.PAUSE_ACTIONS):
+            raise web.HTTPBadRequest(
+                text="Die Pausenantwort erwartet run_id und action (next oder finish).")
+        runtime = runtime_for(request.app[KEY_HASS], entry_id)
+        try:
+            result = await runtime.answer_calibration_pause(
+                body["action"], run_id=body["run_id"], actor=request_actor(request),
             )
         except ValueError as error:
             return self.json({"error": str(error)}, status_code=409)
@@ -1493,4 +1520,5 @@ def register(hass):
     hass.http.register_view(RecognitionSessionsView)
     hass.http.register_view(CalibrationView)
     hass.http.register_view(CalibrationCancelView)
+    hass.http.register_view(CalibrationPauseView)
     data["api_registered"] = True

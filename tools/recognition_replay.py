@@ -52,7 +52,10 @@ Kalibrierprotokoll die Referenz: ``calibration`` enthält dann die Auswertung
 nach ``core/calibration.evaluate`` mit Präsenz, gebuchten Erkennungen, Gängen
 und Gangheizung dieses Replays.  Die Protokollzeiten werden über
 ``started_at`` aus ``case.json`` auf die Zeitachse übertragen.  Ausgewertet
-werden nur ununterbrochene Läufe; ``skipped_runs`` nennt die übergangenen.
+werden die gültigen Teile (W3-2): Eine Unterbrechung macht nur den laufenden
+Teil ungültig.  ``skipped`` nennt die übergangenen Teile mit Lauf, Ausführung und
+Modul; ein älterer Lauf ohne Gültigkeit je Teil gilt als Ganzes und steht dort
+ohne Ausführung.
 
 Eine Fallaktion ``{"name": "end_gang", "t": …}`` in ``case.json`` beendet den
 zu diesem Zeitpunkt laufenden Gang von Hand, wie die Taste „Gang beenden“ auf der
@@ -518,7 +521,7 @@ async def replay(case_dir: Path, parameters: dict | None, *, presence: bool = Fa
         result["calibration"] = {**plain(calibration.evaluate(
             steps, presence=presence_marks, events=events, gangs=references,
             gang_heat=calibration.gang_heat_intervals(commands, booked, until), until=until,
-            has_presence=direct)), "skipped_runs": skipped}
+            has_presence=direct)), "skipped": skipped}
     return result
 
 
