@@ -83,6 +83,7 @@ nicht an einem einzelnen Zeitpunkt, und es gibt keine feste Frist.
 | Abgeschlossener Türvorgang im Gang, nach dessen Öffnung Abwesenheit gemeldet ist und als letzte Meldung gilt, ohne Aufguss danach | Beendet den bestätigten Gang (Endgrund `absence`); entschieden beim Türschluss oder bei der späteren Abwesenheit, Gangende ist die erste Abwesenheit nach der Öffnung. Nimmt einen vorläufigen zurück. Der Türvorgang ist kein Eintritt |
 | Abwesenheit ohne Türvorgang, `unknown`, `unavailable` | Kein Übergang; zur Wirkung eines vorläufigen Gangs siehe [unten](#vorläufiger-gang-im-sensorbetrieb) |
 | Betrieb-AUS | Ende des offenen Gangs |
+| **Gang beenden** auf der Steuerungsseite | Beendet den bestätigten Gang zum Tastendruck (Endgrund `manual`); nimmt einen vorläufigen zurück ([Gang von Hand beenden](#gang-von-hand-beenden)) |
 
 Maßgeblich ist der Zustand am Beginn des Türschlusskandidaten aus dem erhaltenen
 Türschlussbeleg; ein rückblickend zugeordneter Türzeitpunkt ersetzt ihn nicht.
@@ -195,6 +196,7 @@ Sensorbetrieb bleibt er vorläufig.
 | Weiterer Aufguss | Ergänzt den aktiven Gang |
 | Bestätigtes Lüften nach Austrittsöffnung | Gangende zum Buchungszeitpunkt der Lüftungsbestätigung |
 | Betrieb-AUS | Ende des offenen Gangs |
+| **Gang beenden** auf der Steuerungsseite | Beendet den bestätigten Gang zum Tastendruck (Endgrund `manual`); nimmt einen vorläufigen zurück ([Gang von Hand beenden](#gang-von-hand-beenden)) |
 
 Einmalige Personensignale anderer Herkunft (etwa aus älteren Aufzeichnungen)
 behandelt das Gangmodell weiterhin: Ein zulässiges Personensignal nach
@@ -222,6 +224,24 @@ bereits läuft. Erkannte Personenbelege begrenzen eine laufende Kühlung auf ihr
 [Mindestgesamtdauer](ofenkuehlung.md#kühlung-abwarten-oder-vorzeitig-beenden), auch
 ohne bestätigten Gang. Eine kurze Türöffnung ohne bestätigtes Lüften beendet
 keinen Gang.
+
+## Gang von Hand beenden
+
+Erkennt die Steuerung das Ende eines Gangs nicht, beendet **Gang beenden** auf
+der Steuerungsseite den laufenden Gang, in Automatik wie im Handbetrieb. Die
+Folgen sind dieselben wie bei einem erkannten Gangende: Ein bestätigter Gang
+endet zum Zeitpunkt des Tastendrucks (Endgrund `manual`), ein vorläufiger wird
+zurückgenommen. In Automatik enden damit Gangheizung und Saunagang; Ofenkühlung
+und nächste Temperaturstufe folgen wie nach Lüften oder Abwesenheit. Im
+Handbetrieb wird nur der Gang abgeschlossen.
+
+Der Tastendruck ist ein eigenes Ereignis (`manual_gang_end`); die Erkennung
+bleibt unverändert. Der zu diesem Zeitpunkt letzte Türvorgang, auch ein gerade
+offener, beginnt keinen neuen Gang mehr; der nächste Gang beginnt wie immer mit
+der nächsten Tür. Ein von Hand beendeter Gang hat keinen Austritts-Türvorgang;
+seine Austrittstemperatur gilt wie ohne erkannte Tür am Gangende
+([Kennzahlen](kennzahlen.md#sitzung-und-gang)). Läuft der angezeigte Gang
+inzwischen nicht mehr, wird der Tastendruck abgelehnt.
 
 ## Gang zählen und nächste Temperaturstufe beginnen
 

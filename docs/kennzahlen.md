@@ -54,7 +54,9 @@ Bereit-Intervalle.
 
 Eintritt ist der Türvorgang, dessen Schließen genau der Gangbeginn ist;
 Austritt die letzte Öffnung im Gang; Schlusslüften eine Öffnung nach dem Ende
-des letzten Gangs. Fehlt einem Gang ein belegter Beginn oder ein belegtes Ende,
+des letzten Gangs. Ein [von Hand beendeter Gang](gangmodell.md#gang-von-hand-beenden)
+hat keinen Austritt: Seine Öffnungen zählen zu den Türvorgängen im Gang (K-G6),
+die Austrittstemperatur gilt am Gangende wie ohne erkannte Tür (K-G2). Fehlt einem Gang ein belegter Beginn oder ein belegtes Ende,
 fehlen seine Dauer und die davon abhängigen Summen, Mittel und Einordnungen;
 Türvorgänge, deren Klasse von dieser Grenze abhängt, bleiben ohne Klasse. Ein
 Aufguss ohne erkanntes Ende hat keinen Feuchteanstieg. Ohne Kabinenvolumen gibt

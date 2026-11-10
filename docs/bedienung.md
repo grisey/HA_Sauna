@@ -87,6 +87,15 @@ Solange eine Ofen- oder Lichtwahl die Automatik übersteuert, steht unter den
 Tasten des Geräts die Wahl und die Restzeit bis zur Rückkehr, etwa
 „Von Hand ein · Automatik wieder in 25 Minuten“.
 
+## Gang von Hand beenden
+
+Während eines Gangs steht auf der Steuerungsseite **Gang beenden**, in
+Automatik neben **Ausschalten**, im Handbetrieb über Ofen und Licht. Die Taste
+beendet den laufenden Gang zum Zeitpunkt des Drückens, mit denselben Folgen wie
+ein erkanntes Gangende ([Gangmodell](gangmodell.md#gang-von-hand-beenden)). Sie
+ist für den Fall gedacht, dass die Steuerung einen Austritt nicht erkennt. Der
+nächste Gang beginnt mit der nächsten Tür.
+
 ## Dauerhaft manuell betreiben
 
 Die Betriebsart **Manuell** ist mit normalen Bedienrechten bei ausgeschaltetem

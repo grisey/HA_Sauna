@@ -149,7 +149,10 @@ Gangzeiten, die Zeiten der Aufgüsse, Eintritt, kurze Öffnungen und Austritt so
 die höchste Feuchte. In einer laufenden Sitzung nennt sie zusätzlich den
 Bestätigungsstand **Vorläufig** oder **Bestätigt** und den belegten Türschluss
 beim Eintritt. Die Gangdauer verwendet die zugeordneten Grenzen; die Türöffnung
-allein beendet den Gang nicht, fehlende Grenzen bleiben unbelegt. Ein gewähltes
+allein beendet den Gang nicht, fehlende Grenzen bleiben unbelegt. Ein
+[von Hand beendeter Gang](gangmodell.md#gang-von-hand-beenden) endet zum
+Tastendruck; der Tastendruck steht als Bedienhandlung `manual_gang_end` mit Gang,
+Zeitpunkt, vorherigem Bestätigungsstand und Bediener im Archiv. Ein gewähltes
 Ereignis zeigt Zeit, Art und beim Aufguss sein Ende; Administratoren springen von
 dort zum Erkennungsnachweis. Fehler im Sitzungsverlauf, aufgehobene vorläufige
 Erkennungen und gebuchte Gang- und Bestätigungszeiten stehen in der Detailansicht.

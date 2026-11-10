@@ -1658,6 +1658,32 @@ class Controller:
         self._evaluate(at)
         return deadline
 
+    def end_gang(self, gang_id, at):
+        """Den laufenden Gang von Hand beenden (GE1).
+
+        Das Ende wird auf demselben Weg gebucht wie ein erkanntes Gangende;
+        die Folgen (Gangheizung, Ofenkühlung, nächste Programmstufe, Fristen)
+        ergeben sich aus der gemeinsamen Übergangslogik. Ein vorläufiger Gang
+        wird zurückgenommen. Ist ``gang_id`` nicht mehr der laufende Gang, wird
+        abgelehnt.
+        """
+        at = utc(at)
+        self.advance(at)
+        session = self._session
+        if session is None or not session.operation_enabled:
+            raise ValueError("Es läuft keine Session mit einem Gang.")
+        active = session.timeline.active
+        if active is None or active.gang_id != gang_id:
+            raise ValueError(
+                "Dieser Gang läuft nicht mehr. Bitte die Anzeige aktualisieren."
+            )
+        event = Event(
+            f"{Kind.MANUAL_GANG_END.value}:{gang_id}", session.session_id,
+            Kind.MANUAL_GANG_END, at, self._received_at(at), at,
+        )
+        self.process(event)
+        return active
+
     def _current_phase_key(self):
         return (self._session.session_id if self._session else None, self.phase)
 

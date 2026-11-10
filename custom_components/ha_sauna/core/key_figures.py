@@ -73,6 +73,8 @@ class GangInput:
     start: float | None
     end: float | None
     infusions: tuple[float, ...] = ()
+    # Von Hand beendet (GE1): keine Öffnung ist der Austritt (GE1-6).
+    manual_end: bool = False
 
 
 @dataclass(frozen=True)
@@ -287,7 +289,7 @@ def _door_class(a, b, openings, gangs):
             door_class, unresolved = "entry", False
         if gang.start is not None and gang.end is not None:
             inside = [x for x in openings if gang.start < x <= gang.end]
-            if inside and a == inside[-1]:
+            if inside and a == inside[-1] and not gang.manual_end:
                 door_class, unresolved = "exit", False
         elif (gang.start is None or a > gang.start) and (gang.end is None or a <= gang.end):
             unresolved = True
@@ -453,7 +455,7 @@ def gang_figures(session: SessionInput, gang: GangInput, number: int) -> dict:
     )
     duration = end - start if bounded else None
     entry = entry_opening(session, start)
-    exit_opening = inside[-1] if inside else None
+    exit_opening = inside[-1] if inside and not gang.manual_end else None
     entry_at = entry if entry is not None else start
     exit_at = exit_opening if exit_opening is not None else end if bounded else None
     temperature = session.upper_temperature
@@ -475,7 +477,9 @@ def gang_figures(session: SessionInput, gang: GangInput, number: int) -> dict:
             rise_mean * session.volume_m3 / 1000
             if rise_mean is not None and session.volume_m3 is not None else None
         ),
-        "inner_door_openings": len(inside[:-1]) if inside is not None else None,
+        "inner_door_openings": (
+            len(inside if exit_opening is None else inside[:-1]) if inside is not None else None
+        ),
         "exit_opening": exit_opening,
         "highest_humidity_percent": humidity_peak,
         "highest_humidity_at": humidity_peak_at,
@@ -1310,6 +1314,7 @@ def session_input_from_archive(
             _seconds(start, intervals[g["gang_id"]]["ended_at"]),
             tuple(sorted(_seconds(start, e["effective_at"])
                          for e in g.get("infusion_events") or ())),
+            g.get("end_reason") == "manual",
         )
         for g in archived if g.get("gang_id") in intervals and _confirmed(g)
     )

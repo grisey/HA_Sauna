@@ -408,6 +408,34 @@ class FinishPhaseView(HomeAssistantView):
         return self.json({"success": True})
 
 
+class EndGangView(HomeAssistantView):
+    """Den laufenden Gang von Hand beenden (GE1)."""
+
+    url = "/api/ha_sauna/{entry_id}/end_gang"
+    name = "api:ha_sauna:end_gang"
+    requires_auth = True
+
+    async def post(self, request, entry_id):
+        require_control(request, entry_id)
+        runtime = runtime_for(request.app[KEY_HASS], entry_id)
+        body = await json_body(request)
+        if (
+            not isinstance(body, dict)
+            or set(body) != {"gang_id"}
+            or not isinstance(body["gang_id"], str)
+            or not body["gang_id"]
+        ):
+            return self.json(
+                {"error": "Bitte einen laufenden Gang auswählen."},
+                status_code=400,
+            )
+        try:
+            await runtime.end_gang(body["gang_id"], actor=request_actor(request))
+        except ValueError as error:
+            return self.json({"error": str(error)}, status_code=409)
+        return self.json({"success": True})
+
+
 class FinishSessionView(HomeAssistantView):
     url = "/api/ha_sauna/{entry_id}/finish-session"
     name = "api:ha_sauna:finish_session"
@@ -904,8 +932,8 @@ class ArchiveView(HomeAssistantView):
                     "decision", "command", "light_command", "consumer_event",
                     "source_state", "heating_observation", "illuminance", "notice",
                     "manual_light", "manual_heater", "heater_override_rejected",
-                    "manual_phase_end", "manual_session_light_end", "interruption",
-                    "session", "calibration",
+                    "manual_phase_end", "manual_gang_end", "manual_session_light_end",
+                    "interruption", "session", "calibration",
                 ) if request["hass_user"].is_admin else (
                     "measurement", "source_snapshot", "phase",
                 ),
@@ -1303,6 +1331,7 @@ def register(hass):
     hass.http.register_view(StateView)
     hass.http.register_view(ControlView)
     hass.http.register_view(FinishPhaseView)
+    hass.http.register_view(EndGangView)
     hass.http.register_view(FinishSessionView)
     hass.http.register_view(ParametersView)
     hass.http.register_view(TemperatureView)

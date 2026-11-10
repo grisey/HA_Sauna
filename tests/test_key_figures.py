@@ -413,6 +413,22 @@ class DoorTests(unittest.TestCase):
             present_session(figures)["door_classes"]["all"]["recovery_checked_count"],
             {"value": 4, "display": 4, "unit": "count"})
 
+    def test_gang_ended_by_hand_has_no_exit_door(self):
+        # GE1-6: ein Gangende von Hand ergibt keinen Austritt-Türvorgang; die Austritts-
+        # temperatur gilt wie ohne erkannte Tür am Gangende (K-G2), Öffnungen im Gang
+        # zählen zu K-G6.
+        temperature = series([(0, 80), (2600, 80), (2700, 70), (7200, 70)])
+        figures = kf.session_figures(session(
+            doors=self.DOORS, upper_temperature=temperature,
+            gangs=(kf.GangInput(1800.0, 2700.0, manual_end=True),)))
+        self.assertEqual([d["door_class"] for d in figures["doors"]],
+                         ["other", "entry", "other", "other", "final_ventilation"])
+        gang = figures["gangs"][0]
+        self.assertIsNone(gang["exit_opening"])
+        self.assertEqual(gang["exit_temperature_c"], 70.0)
+        self.assertEqual(gang["inner_door_openings"], 2)
+        self.assertEqual(gang["duration_seconds"], 900.0)
+
     def test_statistics_door_loss_over_entry_and_exit_with_the_largest_one(self):
         temperature = series([(0, 80), (1700, 80), (1750, 74), (1830, 80), (2000, 79),
                               (2600, 80), (2620, 70), (2700, 80), (3000, 80)])

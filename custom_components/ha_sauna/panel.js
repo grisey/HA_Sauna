@@ -423,6 +423,7 @@ const events = {
   presence_ended: "Gangende · Abwesenheit und Durchlüften",
   presence_close_ended: "Gangende · Türschluss ohne dauerhafte Anwesenheit",
   absence_exit: "Gangende · Türvorgang mit Abwesenheit",
+  manual_gang_end: "Gangende · von Hand beendet",
 };
 const historyEventMarkerKinds = new Set(["door_open", "door_close", "infusion"]);
 const gangConfirmed = (g) =>
@@ -7247,11 +7248,18 @@ class SaunaPanel extends HTMLElement {
       session?.after_run && s.operation_enabled && !manualMode
         ? `<button class="tile operation" data-action="end-phase:after_run:${esc(encodeURIComponent(session.after_run.phase_id))}" ${permissions.control ? "" : "disabled"}>Kühlung beenden</button>`
         : "";
+    // GE1: Gang von Hand beenden, Folgen wie bei einem erkannten Gangende.
+    const endGang =
+      active && s.operation_enabled
+        ? `<button class="tile operation" data-action="end-gang:${esc(encodeURIComponent(active.gang_id))}" ${permissions.control ? "" : "disabled"}>Gang beenden</button>`
+        : "";
     const operation = manualMode
-      ? ""
+      ? endGang
+        ? `<div class="operation-control">${endGang}</div>`
+        : ""
       : sessionGap
         ? `<div class="operation-control${lightAfterRun ? " split" : ""}">${lightAfterRun ? `<button class="tile operation stop" data-action="finish-session:${esc(encodeURIComponent(sessionGap.token))}" ${permissions.control ? "" : "disabled"}>Lichtnachlauf beenden</button>` : ""}<button class="tile operation primary" data-action="operation"${this.controlCommandAttributes("operation", !s.operation_enabled)} ${canStart ? "" : "disabled"}>${this.controlCommandLabel("operation", true, "Fortsetzen")}</button></div>`
-        : `<div class="operation-control${finishPhase ? " split" : ""}"><button class="tile operation ${s.operation_enabled ? "stop" : "primary"}" data-action="operation"${this.controlCommandAttributes("operation", !s.operation_enabled)} ${canStart ? "" : "disabled"}>${this.controlCommandLabel("operation", !s.operation_enabled, s.operation_enabled ? "Ausschalten" : "Einschalten")}</button>${finishPhase}</div>`;
+        : `<div class="operation-control${finishPhase || endGang ? " split" : ""}"><button class="tile operation ${s.operation_enabled ? "stop" : "primary"}" data-action="operation"${this.controlCommandAttributes("operation", !s.operation_enabled)} ${canStart ? "" : "disabled"}>${this.controlCommandLabel("operation", !s.operation_enabled, s.operation_enabled ? "Ausschalten" : "Einschalten")}</button>${endGang}${finishPhase}</div>`;
     const phaseLabel =
       s.phase === "aufheizen" ? "Heizen" : phases[s.phase] || "Unbekannt";
     const availabilityHint = availabilityLine;
@@ -10453,6 +10461,7 @@ class SaunaPanel extends HTMLElement {
           "manual_light",
           "manual_heater",
           "manual_phase_end",
+          "manual_gang_end",
           "manual_session_light_end",
           "interruption",
         ].includes(record.kind)
@@ -11119,6 +11128,7 @@ class SaunaPanel extends HTMLElement {
       manual_heater: ["Bedienung", "Ofenwahl"],
       heater_override_rejected: ["Bedienung", "Ofenwahl abgelehnt"],
       manual_phase_end: ["Bedienung", "Ofenkühlung beendet"],
+      manual_gang_end: ["Bedienung", "Gang beendet"],
       manual_session_light_end: ["Bedienung", "Lichtnachlauf beendet"],
       interruption: ["Betrieb", "Sitzung unterbrochen"],
       notice: ["Hinweis", "Betriebshinweis"],
@@ -11404,6 +11414,7 @@ class SaunaPanel extends HTMLElement {
         manual_heater: "Ofenwahl",
         heater_override_rejected: "Ofenwahl abgelehnt",
         manual_phase_end: "Ofenkühlung beendet",
+        manual_gang_end: "Gang beendet",
         manual_session_light_end: "Lichtnachlauf beendet",
         interruption: "Unterbrechung",
         calibration: "Kalibrierprotokoll",
@@ -11816,6 +11827,7 @@ class SaunaPanel extends HTMLElement {
               presence_ended: "Austrittsöffnung · Abwesenheit und Durchlüften belegt",
               presence_close_ended: "Türschluss · keine dauerhafte Sensoranwesenheit",
               absence_exit: "Türvorgang abgeschlossen · Abwesenheit gemeldet",
+              manual_gang_end: "Gang beenden auf der Steuerungsseite",
               infusion: "Feuchteanstieg erkannt",
             }[e.kind] ||
             events[e.kind] ||
@@ -17785,7 +17797,9 @@ class SaunaPanel extends HTMLElement {
     const permissions = this.state?.permissions || {},
       manualControls = this.manualControlAvailability();
     if (
-      ((action === "operation" || action.startsWith("finish-session:")) &&
+      ((action === "operation" ||
+        action.startsWith("finish-session:") ||
+        action.startsWith("end-gang:")) &&
         !permissions.control) ||
       (action.startsWith("preset:") && !permissions.temperature) ||
       (action === "program-apply" && !permissions.program) ||
@@ -18113,6 +18127,13 @@ class SaunaPanel extends HTMLElement {
       await this.api(`/${this.entry}/finish_phase`, "POST", {
         purpose,
         token: decodeURIComponent(token),
+      });
+      await this.refresh();
+      return;
+    }
+    if (action.startsWith("end-gang:")) {
+      await this.api(`/${this.entry}/end_gang`, "POST", {
+        gang_id: decodeURIComponent(action.slice("end-gang:".length)),
       });
       await this.refresh();
       return;

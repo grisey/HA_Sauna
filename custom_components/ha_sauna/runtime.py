@@ -2162,6 +2162,31 @@ class SaunaRuntime:
                 )
             await self._cycle()
 
+    async def end_gang(self, gang_id, *, actor: ActorRef | None = None):
+        """Den laufenden Gang von Hand beenden (GE1); Folgen wie bei einem erkannten Gangende."""
+        async with self.serialized():
+            self._require_open()
+            now = self._clock()
+            ended = self.controller.end_gang(gang_id, now)
+            self._record_notification_participant(actor)
+            self.log.info(
+                "gang_ended_manually",
+                "Gang von Hand beendet; regulärer Folgeablauf wird fortgesetzt.",
+            )
+            if self.archive:
+                self.archive.append(
+                    "manual_gang_end",
+                    now,
+                    {
+                        "gang_id": gang_id,
+                        "ended_at": now,
+                        "confirmation": ended.confirmation.value,
+                        "user_id": actor.user_id if actor else None,
+                    },
+                    ended.session_id,
+                )
+            await self._cycle()
+
     async def finish_session_gap(self, token, *, actor: ActorRef | None = None):
         """End light after-run while preserving the shared recording interval."""
         async with self.serialized():

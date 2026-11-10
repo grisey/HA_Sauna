@@ -35,6 +35,7 @@ class Kind(StrEnum):
     PRESENCE_ENDED = "presence_ended"
     PRESENCE_CLOSE_ENDED = "presence_close_ended"
     ABSENCE_EXIT = "absence_exit"
+    MANUAL_GANG_END = "manual_gang_end"
 
 
 class Door(StrEnum):
@@ -326,7 +327,8 @@ def project_gang_intervals(timeline: Timeline | Mapping, *, door_cycles=None) ->
     Durchlüften liefert den Abschluss. Präsenzabschlüsse früherer Fassungen
     bleiben in gespeicherten Abläufen lesbar. Betrieb-AUS und fehlende
     Altarchivquellen erzeugen keinen Lüftungsnachweis. Alle Türbezüge behalten
-    die Mehrdeutigkeitsprüfung der gemeinsamen Türzyklusprojektion.
+    die Mehrdeutigkeitsprüfung der gemeinsamen Türzyklusprojektion. Ein von
+    Hand beendeter Gang endet zum Tastendruck ohne Türvorgang (GE1).
     """
     get = _projection_value
     cycles = project_door_cycles(timeline) if door_cycles is None else door_cycles
@@ -347,7 +349,11 @@ def project_gang_intervals(timeline: Timeline | Mapping, *, door_cycles=None) ->
         exit_cycle = exits[0] if len(exits) == 1 else None
         start_at = _projection_time(get(gang, "started_at")) if entry is not None else None
         start = start_at.isoformat() if start_at is not None else None
-        end_at = _projection_time(get(gang, "ended_at")) if exit_cycle is not None else None
+        # Ein Gang, der von Hand beendet wurde, endet zum Tastendruck ohne
+        # Türvorgang (GE1-3, GE1-6).
+        manual = get(gang, "end_reason") == "manual"
+        end_at = (_projection_time(get(gang, "ended_at"))
+                  if exit_cycle is not None or manual else None)
         end = end_at.isoformat() if end_at is not None else None
         if start is not None and end is not None and _projection_time(end) < _projection_time(start):
             end, exit_cycle = None, None
@@ -607,6 +613,18 @@ def project_door_cycles(timeline: Timeline | Mapping) -> list[dict]:
     return cycles
 
 
+def _manual_end_since_opening(state: Timeline) -> bool:
+    """Wurde ein Gang von Hand beendet, seit die aktuelle Tür geöffnet wurde?"""
+    if state.opening is None:
+        return False
+    for previous in reversed(state.processed):
+        if previous == state.opening:
+            return False
+        if previous.kind == Kind.MANUAL_GANG_END:
+            return True
+    return False
+
+
 def apply(
     state: Timeline, event: Event, *, gang_start_at: datetime | None = None,
     qualified_presence: bool | None = None,
@@ -677,6 +695,13 @@ def apply(
             # remains available if that earlier conjecture later expires.
             result = replace(result, rejected_start_sources=(
                 *state.rejected_start_sources, event.event_id,
+            ))
+        if _manual_end_since_opening(state):
+            # Gang von Hand beendet, während diese Tür offen war (GE1-6): der
+            # Türvorgang gehört zum beendeten Gang; erst die nächste Tür kann
+            # einen neuen Gang beginnen.
+            result = replace(result, rejected_start_sources=(
+                *result.rejected_start_sources, event.event_id,
             ))
     elif event.kind in (Kind.PERSON_STRONG, Kind.PERSON_WEAK, Kind.INFUSION,
                         Kind.PRESENCE_ENTRY, Kind.PRESENCE_CONFIRMED):
@@ -767,6 +792,24 @@ def apply(
             finished = replace(state.active, ended_at=event.effective_at,
                                end_event_id=event.event_id, end_reason="absence")
             result = replace(state, active=None, completed=state.completed + (finished,))
+    elif event.kind == Kind.MANUAL_GANG_END:
+        # Gang von Hand beendet (GE1): wie ein erkanntes Gangende. Ein
+        # bestätigter Gang endet zum Tastendruck (GE1-3), ein vorläufiger wird
+        # zurückgenommen. Der zum Tastendruck letzte abgeschlossene Türvorgang
+        # beginnt keinen neuen Gang mehr; erst die nächste Tür (GE1-6).
+        if state.active is None:
+            raise ValueError("Gang beenden benötigt einen laufenden Gang")
+        if state.active.confirmation == Confirmation.PROVISIONAL:
+            result = replace(state, active=None, retracted=state.retracted + (state.active,))
+        else:
+            finished = replace(state.active, ended_at=event.effective_at,
+                               end_event_id=event.event_id, end_reason="manual")
+            result = replace(state, active=None, completed=state.completed + (finished,))
+        if (state.door == Door.CLOSED and state.anchor is not None
+                and state.anchor.event_id not in result.rejected_start_sources):
+            result = replace(result, rejected_start_sources=(
+                *result.rejected_start_sources, state.anchor.event_id,
+            ))
     elif event.kind == Kind.VENTILATION_COMPLETE:
         if state.door != Door.OPEN:
             raise ValueError("Vollständiges Lüften benötigt eine offene Episode")

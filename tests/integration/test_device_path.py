@@ -2553,6 +2553,37 @@ class DevicePathTests(unittest.IsolatedAsyncioTestCase):
         actions = [r["payload"]["purpose"] for r in archived["records"] if r["kind"] == "manual_phase_end"]
         self.assertEqual(actions, ["after_run"])
 
+    async def test_manual_gang_end_books_the_end_like_a_detected_end(self):
+        # GE1 (Nutzer 10.11.2026): Gang beenden auf der Steuerungsseite.
+        await self.set_source("upper_temperature", 70)
+        await self.runtime.set_operation(True)
+        await self.hass.async_block_till_done()
+        from custom_components.ha_sauna.core.timeline import Event, Kind
+        origin = self.now
+        for second, kind in ((0, Kind.DOOR_OPEN), (1, Kind.DOOR_CLOSE), (2, Kind.INFUSION)):
+            self.now = origin + timedelta(seconds=second)
+            await self.runtime.receive(Event(f"manual-gang:{second}", self.runtime.session.session_id,
+                kind, self.now, self.now))
+            await self.hass.async_block_till_done()
+        gang = self.runtime.session.timeline.active
+        self.assertIsNotNone(gang)
+        self.now = origin + timedelta(seconds=30)
+        await self.runtime.end_gang(gang.gang_id)
+        await self.hass.async_block_till_done()
+        self.assertEqual(self.runtime.controller.phase, "nachlauf")
+        ended = self.runtime.session.timeline.completed[-1]
+        self.assertEqual((ended.gang_id, ended.end_reason, ended.ended_at),
+                         (gang.gang_id, "manual", self.now))
+        with self.assertRaises(ValueError):
+            await self.runtime.end_gang(gang.gang_id)
+        import asyncio
+        identity = self.runtime.session.session_id
+        await self.runtime.archive.flush()
+        archived = await asyncio.to_thread(self.runtime.archive.read, identity, limit=10000)
+        rows = [r["payload"] for r in archived["records"] if r["kind"] == "manual_gang_end"]
+        self.assertEqual([(r["gang_id"], r["confirmation"]) for r in rows],
+                         [(gang.gang_id, "confirmed")])
+
     async def test_contactor_only_counts_without_invented_temperature_cutoff(self):
         await self.configure_feedback()
         await self.runtime.set_operation(True)

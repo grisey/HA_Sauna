@@ -503,6 +503,8 @@ class PanelAPITests(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(response.status, 401)
             async with client.post(url + "/finish_phase", json={"purpose":"after_run","token":"old"}) as response:
                 self.assertEqual(response.status, 401)
+            async with client.post(url + "/end_gang", json={"gang_id": "old"}) as response:
+                self.assertEqual(response.status, 401)
         user = await self.hass.auth.async_create_user("Read only", group_ids=[])
         token = await self.hass.auth.async_create_refresh_token(user, client_id="http://localhost/")
         headers = {"Authorization": "Bearer " + self.hass.auth.async_create_access_token(token)}
@@ -510,6 +512,8 @@ class PanelAPITests(unittest.IsolatedAsyncioTestCase):
             async with client.post(url + "/control", json={"enabled": True}) as response:
                 self.assertEqual(response.status, 403)
             async with client.post(url + "/finish_phase", json={"purpose":"after_run","token":"old"}) as response:
+                self.assertEqual(response.status, 403)
+            async with client.post(url + "/end_gang", json={"gang_id": "old"}) as response:
                 self.assertEqual(response.status, 403)
             for route in ("/heater", "/light"):
                 async with client.post(url + route, json={"value": True}) as response:
@@ -1282,7 +1286,7 @@ class PanelAPITests(unittest.IsolatedAsyncioTestCase):
         original_options = dict(self.entry.options)
         async with ClientSession(headers=self.headers) as client:
             for suffix in (
-                "/control", "/finish_phase", "/finish-session", "/parameters",
+                "/control", "/finish_phase", "/end_gang", "/finish-session", "/parameters",
                 "/temperature", "/appearance", "/program", "/programs",
                 "/standards",
                 "/button-program", "/control-mode", "/light", "/heater", "/logging",

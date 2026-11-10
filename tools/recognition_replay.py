@@ -53,6 +53,10 @@ nach ``core/calibration.evaluate`` mit Präsenz, gebuchten Erkennungen, Gängen
 und Gangheizung dieses Replays.  Die Protokollzeiten werden über
 ``started_at`` aus ``case.json`` auf die Zeitachse übertragen.  Ausgewertet
 werden nur ununterbrochene Läufe; ``skipped_runs`` nennt die übergangenen.
+
+Eine Fallaktion ``{"name": "end_gang", "t": …}`` in ``case.json`` beendet den
+zu diesem Zeitpunkt laufenden Gang von Hand, wie die Taste „Gang beenden“ auf der
+Steuerungsseite (GE1).  Läuft dann kein Gang, steht die Aktion unter ``rejected``.
 """
 
 from __future__ import annotations
@@ -109,7 +113,7 @@ def iso(at):
 PRESENCE = "binary_sensor.praesenz"
 # events that withdraw a provisional gang
 RETRACTION = {Kind.VENTILATION: "ventilation", Kind.CONFIRMATION_EXPIRED: "expired",
-              Kind.PRESENCE_ENTRY: "replaced"}
+              Kind.PRESENCE_ENTRY: "replaced", Kind.MANUAL_GANG_END: "manual"}
 DECAY_COLUMNS = ("t", "state", "p_infusion", "p_decay", "joining", "slope", "steepest", "check", "ratio")
 CONTROL_COLUMNS = ("demand", "demand_reason", "command", "command_reason", "cooling", "phase", "gang",
                    "contactor", "heating")
@@ -278,6 +282,7 @@ async def replay(case_dir: Path, parameters: dict | None, *, presence: bool = Fa
     switches = sorted((a["t"], a["name"] == "start") for a in actions if a["name"] in ("start", "stop"))
     if not switches:
         switches = [(rows[0]["t"], True)]
+    manual_ends = sorted(a["t"] for a in actions if a["name"] == "end_gang")   # GE1
     now = [ORIGIN]
     bindings = dict(BINDINGS) | ({"presence": PRESENCE} if direct else {})
     runtime = SaunaRuntime(Configuration(
@@ -392,6 +397,13 @@ async def replay(case_dir: Path, parameters: dict | None, *, presence: bool = Fa
                 c.set_operation(False, now[0])
         for report in reports:
             await runtime.accept_presence(report)
+        while manual_ends and manual_ends[0] <= second:
+            manual_ends.pop(0)
+            active = c.session.timeline.active if c.session is not None else None
+            if active is None:
+                rejected.append(("manual_gang_end", iso(now[0]), "kein laufender Gang"))
+            else:
+                await runtime.end_gang(active.gang_id)
         await runtime.tick()
         if runtime.detector is not None and fed_to[0] is not runtime.detector:
             # a new session's recognizer starts with the current values (as the device snapshot does)
