@@ -410,7 +410,8 @@ class CalibrationRunArchiveTests(unittest.TestCase):
             await runtime.start_calibration(actor=ActorRef(USER, "ha_context"))
             run = runtime.calibration_runs[0]
             await helper.proceed(runtime, clock, until=lambda item: (
-                item.current.module.module_id == "G2" and item.current.step == 2))
+                item.current is not None
+                and item.current.module.module_id == "G2" and item.current.step == 2))
             await runtime.set_operation(False, actor=ActorRef(USER, "ha_context"))
             await helper.settle(runtime)
             self.assertEqual((run.valid_executions, run.invalid_execution, run.end_reason),

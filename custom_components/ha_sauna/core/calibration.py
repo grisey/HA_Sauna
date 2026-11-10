@@ -6,8 +6,8 @@ Sauna nicht: Steuerung, Erkennung und Gangmodell lesen weder Ablauf noch
 Protokoll. Die Auswertung vergleicht das Protokoll nachträglich mit
 Präsenzmeldungen, gebuchten Erkennungen, Gängen und Gangheizung.
 
-Grundablauf (W3-1, W3-3, W3-6): P1 (leere Kabine beim Aufheizen), Gang 1 nach
-Bereit, P2 (leere Kabine in der Pause nach Gang 1), Gang 2 nach „Nächster Gang“,
+Grundablauf (W3-1, W3-3, W3-6): Zeitschaltuhr aufziehen (BN-a, kein
+Referenzvorgang), P1 (leere Kabine beim Aufheizen), Gang 1 nach Bereit, P2 (leere Kabine in der Pause nach Gang 1), Gang 2 nach „Nächster Gang“,
 danach der freiwillige Gang 3 nach „Nächster Gang“ oder „Beenden“. Zusatzmodule
 (P, A1, A2, A3, C/B, D) laufen einzeln in einer laufenden Sitzung.
 
@@ -47,13 +47,21 @@ CANCEL = "cancel"
 NEXT = "next"
 FINISH = "finish"
 REPEAT = "repeat"
+TIMER = "timer"
 LABELS = {
     DEVIATE: "Abweichend",
     CANCEL: "Abbrechen",
     NEXT: "Nächster Gang",
     FINISH: "Beenden",
     REPEAT: "Wiederholen",
+    TIMER: "Uhr ist gestellt",
 }
+# BN-a: Der Grundablauf beginnt mit dem Aufziehen der mechanischen Zeitschaltuhr.
+# Der Schritt ist kein Referenzvorgang; seine Bestätigung startet die Zählung
+# der Ofenzeit (Benachrichtigungen, Anlass Zeitschaltuhr). Die Erinnerung vor
+# Ablauf kommt während eines Laufs als Nachricht des Laufs.
+TIMER_LABEL = "Zeitschaltuhr"
+TIMER_MESSAGE = "Zeitschaltuhr aufziehen."
 # Antworten einer Pause, die auch das Panel geben kann.
 PAUSE_ACTIONS = (NEXT, FINISH)
 
@@ -416,6 +424,7 @@ class CalibrationRun:
     _pause: int | None = None
     _valid: list[int] = field(default_factory=list)
     _invalid: int | None = None
+    _timer: int | None = None
 
     def __post_init__(self) -> None:
         if self.kind not in ("procedure", "module"):
@@ -424,6 +433,9 @@ class CalibrationRun:
             raise ValueError("Ein Zusatzmodul ist genau ein Modul")
         if any(module.begin not in BEGINS for module in self.modules):
             raise ValueError("Unbekannter Beginn eines Kalibrierteils")
+        if self.kind == "procedure":
+            # BN-a: zuerst die Zeitschaltuhr, dann der erste Teil.
+            self.phase = "timer"
         self._record("start", self.started_at, kind=self.kind,
                      modules=[m.module_id for m in self.modules if not m.optional],
                      optional=[m.module_id for m in self.modules if m.optional],
@@ -431,7 +443,7 @@ class CalibrationRun:
 
     @property
     def active(self) -> bool:
-        return self.phase in ("waiting", "running", "pause")
+        return self.phase in ("timer", "waiting", "running", "pause")
 
     @property
     def valid_executions(self) -> tuple[int, ...]:
@@ -473,6 +485,11 @@ class CalibrationRun:
     def owns(self, action_id: str) -> bool:
         return action_id in self._actions
 
+    def action_kind(self, action_id: str) -> str | None:
+        """Reply kind of one of this run's native actions."""
+        entry = self._actions.get(action_id)
+        return entry[1] if entry is not None else None
+
     def _labels(self) -> list[str]:
         begun = {execution.module.module_id for execution in self.executions}
         return [m.label for m in self.modules if not m.optional or m.module_id in begun]
@@ -503,6 +520,9 @@ class CalibrationRun:
             return {**state, "valid": self.valid, "reason": self.end_reason,
                     "reason_text": INTERRUPTIONS.get(self.end_reason),
                     "ended_at": self.ended_at, "parts": self._parts()}
+        if self.phase == "timer":
+            return {**state, "module": TIMER_LABEL, "step": None, "steps": 1,
+                    "waiting": "reply"}
         if self.phase == "waiting":
             module = self._repeat_module or self.modules[self._next_module]
             waiting = {"ready": "ready", "free": "gang_end"}.get(self.waiting_for, "hold")
@@ -577,6 +597,13 @@ class CalibrationRun:
 
     def advance(self, now: datetime, *, ready: bool, gang_active: bool) -> list[Instruction]:
         out: list[Instruction] = []
+        if self.phase == "timer":
+            if self._timer is None:
+                instruction = self._emit(now, "timer", TIMER_MESSAGE, (
+                    (TIMER, LABELS[TIMER]), (CANCEL, LABELS[CANCEL])))
+                self._timer = instruction.seq
+                out.append(instruction)
+            return out
         while True:
             if self.phase == "waiting":
                 begin = self.waiting_for
@@ -764,6 +791,13 @@ class CalibrationRun:
         if kind == CANCEL:
             out = self.interrupt(at, "cancelled", user_id=user_id)
             return ("accepted", out) if out else stale
+        if kind == TIMER:
+            # BN-a: the timer is wound; the first part follows. No reference.
+            if seq in self._answered or not self.active:
+                return stale
+            if self.phase == "timer" and seq == self._timer:
+                self.phase = "waiting"
+            return "accepted", []
         execution = self.current
         if context["kind"] == "step":
             if (self.phase != "running" or execution.seq != seq
@@ -797,6 +831,12 @@ class CalibrationRun:
             return "accepted", [self._emit(
                 at, "result", f"Kalibrierung abgeschlossen. {COMPLETED}")]
         return stale
+
+    def timer_reminder(self, at: datetime, text: str) -> list[Instruction]:
+        """Reminder before the timer runs out, as a message of this active run (BN-a)."""
+        if not self.active:
+            return []
+        return [self._emit(at, "timer", text, ((TIMER, LABELS[TIMER]),))]
 
     def evaluation_message(self, at: datetime, text: str) -> Instruction:
         """Closing message after the session end; it offers no action."""

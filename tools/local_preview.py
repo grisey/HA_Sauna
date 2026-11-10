@@ -265,7 +265,8 @@ class Preview:
             item["action"]
             for item in notification.payload.get("data", {}).get("actions", [])
             if item["action"].endswith((f"_{calibration.REPLY.upper()}",
-                                        f"_{calibration.NEXT.upper()}"))
+                                        f"_{calibration.NEXT.upper()}",
+                                        f"_{calibration.TIMER.upper()}"))
         ), None)
         if action is None:
             raise ValueError("Diese Anweisung endet mit ihrer Wartezeit.")

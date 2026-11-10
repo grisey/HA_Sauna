@@ -632,7 +632,8 @@ class Controller:
         The same rule applies in automatic and manual operation. Every
         latch and release is also kept in ``ready_history``. In manual
         operation readiness is only stored in the session state: phase,
-        heater, light, notifications and the phase display do not read it.
+        heater, light and the phase display do not read it. The notifications
+        Bereit, nächster Gang and Sauna ohne Nutzung read ``ready_history``.
         """
         session = self._session
         target = self.target_temperature

@@ -14,12 +14,17 @@ Empfänger (``audience``):
   anwesenden Geräte, ohne anwesendes Gerät alle Zugeordneten
 * ``assigned``: alle Zugeordneten, auch ohne Sitzung
 * ``user``: die eigenen Ziele eines Benutzers (Testnachricht)
+* ``calibration``: Nachricht des laufenden Kalibrierlaufs (Erinnerung zur
+  Zeitschaltuhr während einer Kalibrierung)
+
+Während eines Kalibrierlaufs gehen keine normalen Anlässe (BN-a); die
+Kalibrierung führt mit eigenen Nachrichten. Sicherheitsmeldungen bleiben.
 """
 
 from __future__ import annotations
 
 from collections.abc import Iterable, Mapping
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import datetime, timedelta, tzinfo
 from math import isfinite
 
@@ -58,8 +63,9 @@ OCCASIONS = {
     ),
     "next_gang": (
         "Nächster Gang voraussichtlich",
-        ("Sobald die Temperatur nach dem Austritt wieder gleichmäßig steigt und die Dauer "
-         "bis Bereit abschätzbar ist; ebenso beim Aufheizen vor dem ersten Gang."),
+        ("Nach dem Austritt, wenn die Temperatur wieder gleichmäßig steigt und seit dem "
+         "Tiefpunkt so viel Zeit vergangen ist, wie bis Bereit noch fehlt; ebenso beim "
+         "Aufheizen vor dem ersten Gang."),
     ),
     "gang_end": (
         "Rückfrage Gangende",
@@ -355,8 +361,15 @@ class Notifier:
 
     # -- Ablauf ------------------------------------------------------------
 
-    def advance(self, facts: Facts) -> tuple[list[Message], str | None]:
-        """Fällige Nachrichten; zweiter Wert: die Sitzung, die eben endete."""
+    def advance(self, facts: Facts, *, calibrating: bool = False,
+                ) -> tuple[list[Message], str | None]:
+        """Fällige Nachrichten; zweiter Wert: die Sitzung, die eben endete.
+
+        ``calibrating``: ein Kalibrierlauf ist aktiv. Dann gehen nur
+        Sicherheitsmeldungen und die Erinnerung zur Zeitschaltuhr als Nachricht
+        des Laufs (``audience`` ``calibration``); Bereit und Gänge dieser Zeit
+        werden nicht nachgemeldet.
+        """
         out: list[Message] = []
         ended = None
         current = self._session
@@ -368,9 +381,14 @@ class Notifier:
                 facts.session_id, facts.session_started_at or facts.now,
                 ready_seen=sum(1 for _, ready in facts.ready_marks if ready),
             )
-            if facts.operation_enabled and self.settings.enabled("timer_start"):
+            if (facts.operation_enabled and not calibrating
+                    and self.settings.enabled("timer_start")):
                 out.append(self._timer_start(facts, current))
-        if current is not None:
+        if current is not None and calibrating:
+            current.ready_seen = sum(1 for _, ready in facts.ready_marks if ready)
+            current.samples.clear()
+            out += self._timer_expiry(facts, current, audience="calibration")
+        elif current is not None:
             out += self._timer(facts, current)
             out += self._ready(facts, current)
             out += self._next_gang(facts, current)
@@ -378,6 +396,18 @@ class Notifier:
             out += self._idle(facts, current)
         out += self._safety_messages(facts)
         return out, ended
+
+    def confirm_timer(self, at: datetime, user_id: str | None, *, source: str) -> bool:
+        """Bestätigung „Uhr ist gestellt“ aus einem anderen Ablauf (Kalibrierung)."""
+        session = self._session
+        if session is None:
+            return False
+        session.timer_confirmed_at = at
+        session.timer_confirmed_by = user_id
+        self._record("reply", at, session.session_id, seq=None, occasion="timer_start",
+                     action=ACTION_LABELS[TIMER_SET], user_id=user_id, outcome="confirmed",
+                     outcome_text=f"{OUTCOMES['confirmed']} ({source})")
+        return True
 
     # Z1/Z2 -----------------------------------------------------------------
 
@@ -413,6 +443,10 @@ class Notifier:
                 and self.settings.enabled("timer_start")):
             # Start ohne Betrieb (Wiederaufnahme) oder Anlass eben eingeschaltet
             return [self._timer_start(facts, session)]
+        return self._timer_expiry(facts, session)
+
+    def _timer_expiry(self, facts: Facts, session: _Session, *,
+                      audience: str | None = None) -> list[Message]:
         confirmed = session.timer_confirmed_at
         if (confirmed is None or session.expiry_sent_for == confirmed
                 or not self.settings.enabled("timer_expiry")):
@@ -423,9 +457,13 @@ class Notifier:
             return []
         session.expiry_sent_for = confirmed
         remaining = max(1, round((runtime - counted) / 60))
-        return [self._emit("timer_expiry", facts.now,
-                           f"Zeitschaltuhr läuft in etwa {remaining} min ab",
-                           actions=(TIMER_SET,), session_id=session.session_id)]
+        message = self._emit("timer_expiry", facts.now,
+                             f"Zeitschaltuhr läuft in etwa {remaining} min ab",
+                             actions=(TIMER_SET,), session_id=session.session_id)
+        if audience is not None:
+            message = replace(message, audience=audience)
+            self._messages[message.seq] = message
+        return [message]
 
     # B1 --------------------------------------------------------------------
 
@@ -484,6 +522,11 @@ class Notifier:
             anchor=(anchor - origin).total_seconds(),
         )
         if result is None:
+            return []
+        # BN-a: später senden. Gesendet wird erst, wenn seit dem Tiefpunkt nach
+        # dem Austritt bzw. seit Heizbeginn mindestens so viel Zeit vergangen ist,
+        # wie bis zum geschätzten Bereit noch fehlt.
+        if result.ready_at - times[-1] > times[-1] - result.minimum_at:
             return []
         session.forecast_sent.add(key)
         session.samples.clear()

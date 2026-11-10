@@ -27,19 +27,30 @@ Teilnehmer nichts; eine fällige Erinnerung zur Zeitschaltuhr folgt nach dem
 Gang. Die Rückfrage zum Gangende und Sicherheitsmeldungen sind davon
 ausgenommen.
 
+Während eines [Kalibrierlaufs](kalibrierung.md), im Grundablauf wie in einem
+Zusatzmodul, gehen keine Anlässe außer den Sicherheitsmeldungen; Bereit, Gänge
+und ein Sitzungsende in dieser Zeit werden nicht nachgemeldet. Die
+Zeitschaltuhr ist Teil des Kalibrierablaufs
+([Grundablauf](kalibrierung.md#grundablauf)); ihre Erinnerung vor Ablauf kommt
+während eines Laufs als Nachricht des Laufs.
+
 | Anlass | Auslöser | Text | Antwort | Empfänger |
 | --- | --- | --- | --- | --- |
 | Testnachricht | **Testnachricht senden** unter **Einstellungen → Benachrichtigungen** | „Testnachricht der Sauna“ | **Empfangen** | eigene Ziele des Benutzers |
 | Zeitschaltuhr beim Start | Sitzungsbeginn, über die Oberfläche, Taster oder Schalter; ohne Antwort erneut nach der Wiederholzeit, bis zur Antwort, zu Betrieb-AUS oder zum Sitzungsende | „Sauna gestartet – Zeitschaltuhr aufziehen“ | **Uhr ist gestellt** | Ziele des startenden Benutzers; ohne bekannten Benutzer die anwesenden Geräte; ohne anwesendes Gerät alle Zugeordneten |
 | Zeitschaltuhr läuft ab | gezählte Ofenzeit seit der letzten Bestätigung erreicht Laufzeit minus Vorlauf | „Zeitschaltuhr läuft in etwa 15 min ab“ | **Uhr ist gestellt** | wie beim Start |
 | Bereit | Übergang in Bereit, vor dem ersten und nach jedem Gang | „Sauna bereit, 85 °C“, „Bereit für Gang 2, 88 °C“ | – | Teilnehmer |
-| Nächster Gang voraussichtlich | Temperatur steigt nach dem Austritt wieder gleichmäßig, die Dauer bis Bereit ist abschätzbar; ebenso beim Aufheizen vor dem ersten Gang; einmal je Pause | „Gang 2 möglich ab etwa 20:41 (in 23 min), 88 °C“ | – | Teilnehmer |
+| Nächster Gang voraussichtlich | Temperatur steigt nach dem Austritt wieder gleichmäßig, die Dauer bis Bereit ist abschätzbar und seit dem Tiefpunkt ist mindestens so viel Zeit vergangen, wie bis Bereit noch fehlt; ebenso beim Aufheizen vor dem ersten Gang; einmal je Pause | „Gang 2 möglich ab etwa 20:41 (in 23 min), 88 °C“ | – | Teilnehmer |
 | Rückfrage Gangende | Präsenzsensor meldet nach einer Tür im Gang Abwesenheit, der Gang läuft nach dem Türschluss weiter; einmal je Gang | „Gang 1 läuft laut Sauna noch – bist du draußen?“ | **Gang beenden** | Teilnehmer |
 | Sauna läuft ohne Nutzung | im Bereit zwei Abschaltungen an der oberen Regeltemperatur ohne Gang und ohne Anwesenheit seit Bereit bzw. seit dem letzten Gangende | „Sauna läuft seit 19:12 ohne Nutzung“ | **Ausschalten** | Teilnehmer |
 | Sauna aus | Sitzungsende | „Sauna aus · Ofen aus bestätigt“ mit Gängen, Aufgüssen, Saunazeit, Energie und Kosten | – | Teilnehmer |
 | Sicherheit | Ofenrückmeldung „an“ bei Befehl „aus“ über die Störungsbestätigungszeit; obere Messung fällt aus, während der Ofen heizt; obere Temperatur ab der Übertemperaturgrenze | „Achtung: …“ | – | alle Zugeordneten, auch ohne Sitzung |
 
-Teilnehmer sind die [Sitzungsempfänger](#sitzung-und-antworten). Bereit folgt
+Teilnehmer sind die [Sitzungsempfänger](#sitzung-und-antworten). Beginnt eine
+Sitzung ohne bekannten Benutzer, etwa per Taster oder Schalter, gehen die
+Nachrichten an die Teilnehmer zusätzlich an die anwesenden Geräte, ohne
+anwesendes Gerät an alle Zugeordneten. Bedient danach ein Benutzer über die
+Oberfläche, kommen seine Ziele wie üblich hinzu. Bereit folgt
 der [Bereitschaftsregel](betrieb.md#aufheizen-und-bereitschaft) der Betriebsart;
 im manuellen Modus gilt das gespeicherte Bereit. Die Zusammenfassung „Sauna aus“
 verwendet die [Kennzahlen](kennzahlen.md) der Sitzung; ohne auswertbare
@@ -62,9 +73,10 @@ Versand neu gelesen.
 Die mechanische Zeitschaltuhr im Stromkreis des Ofens läuft nur, solange der
 Ofen tatsächlich an ist. Gezählt wird deshalb die gebuchte Heizzeit aus der
 Ofenrückmeldung, wie bei der [Heizzeit](betrieb.md#heizzeit-und-energie), ab der
-letzten Antwort **Uhr ist gestellt**. Ohne Bestätigung beim Start gibt es keine
-Zählung und keine Erinnerung. Eine Antwort auf die Erinnerung beginnt die
-Zählung neu.
+letzten Antwort **Uhr ist gestellt**, auch auf den Schritt der
+[Kalibrierung](kalibrierung.md#grundablauf). Ohne Bestätigung beim Start gibt
+es keine Zählung und keine Erinnerung. Eine Antwort auf die Erinnerung beginnt
+die Zählung neu.
 
 ### Nächster Gang voraussichtlich
 
@@ -79,11 +91,14 @@ Rückmeldung. Zwei Erklärungen werden verglichen:
 - **Wieder linear:** bis zu einem unbekannten Zeitpunkt eine solche Kurve, danach
   eine Gerade.
 
-Gesendet wird, sobald „wieder linear“ den Abschnitt mindestens 150-mal besser
-erklärt (Bayes-Faktor mit der effektiven Zahl unabhängiger Messwerte) und der
-Anstieg der Geraden mit 150 : 1 positiv ist. Uhrzeit und Dauer sind der
-Zeitpunkt, an dem die Gerade den aktuellen Sollwert erreicht. Bereit selbst
-meldet der Anlass **Bereit**.
+Die Schätzung gilt, sobald „wieder linear“ den Abschnitt mindestens 150-mal
+besser erklärt (Bayes-Faktor mit der effektiven Zahl unabhängiger Messwerte) und
+der Anstieg der Geraden mit 150 : 1 positiv ist. Uhrzeit und Dauer sind der
+Zeitpunkt, an dem die Gerade den aktuellen Sollwert erreicht. Gesendet wird erst,
+wenn seit dem Tiefpunkt, beim Aufheizen seit dem Heizbeginn, mindestens so viel
+Zeit vergangen ist, wie bis zu diesem Zeitpunkt noch fehlt; bis dahin wird die
+Schätzung mit jedem Messwert erneuert. Bereit selbst meldet der Anlass
+**Bereit**.
 
 ### Einstellungen
 

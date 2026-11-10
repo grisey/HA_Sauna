@@ -541,3 +541,172 @@ class RuntimeTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class FollowUpTests(unittest.TestCase):
+    """BN-a (Nutzer 10.11.2026): später senden, Sitzungen ohne Benutzer, Kalibrierung."""
+
+    def test_next_gang_is_sent_once_the_observed_rise_covers_the_remaining_time(self):
+        notifier = rules.Notifier(rules.NotificationSettings(
+            frozenset({"timer_start", "timer_expiry", "ready"})), zone=ZONE)
+        noise = [0.004 * ((i * 7919) % 11 - 5) / 5 for i in range(1200)]
+        values = [v + n for v, n in zip(recovery_then_line(1200, start=78.0), noise)]
+        first_decision = next(
+            end for end in range(20, 1200)
+            if ready_forecast.forecast(range(end), values[:end], 90.0) is not None)
+        sent = None
+        for second, value in enumerate(values):
+            messages, _ = notifier.advance(facts(
+                second, gang_count=1, last_gang_end=at(0), target_c=90.0, contactor=True,
+                heating=((at(0), None),), door_events=(("door_close", at(0)),),
+                temperature=(at(second), value)))
+            if messages:
+                sent = (second, messages[0])
+                break
+        self.assertIsNotNone(sent)
+        second, message = sent
+        self.assertGreater(second, first_decision)
+        self.assertTrue(message.text.startswith("Gang 2 möglich ab etwa "))
+        forecast = notifier.take_records()[-1]
+        self.assertEqual(forecast["event"], "forecast")
+        remaining = (forecast["ready_at"] - at(second)).total_seconds()
+        self.assertLessEqual(remaining, second)
+        expected = next(t for t in range(5000)
+                        if 78 + 0.012 * t + 3 * (1 - exp(-t / 60)) >= 90)
+        self.assertLess(abs((forecast["ready_at"] - at(expected)).total_seconds()), 60)
+
+    def test_no_normal_occasions_during_calibration_and_the_timer_comes_from_the_run(self):
+        notifier = rules.Notifier(zone=ZONE)
+        heating = ((at(0), None),)
+        messages, _ = notifier.advance(facts(0, heating=heating), calibrating=True)
+        self.assertEqual(messages, [])
+        marks = ((at(10), True),)
+        self.assertEqual(notifier.advance(facts(10, ready_marks=marks, heating=heating),
+                                          calibrating=True)[0], [])
+        self.assertTrue(notifier.confirm_timer(at(20), USER, source="Kalibrierung"))
+        reply = notifier.take_records()[-1]
+        self.assertEqual((reply["event"], reply["outcome_text"]),
+                         ("reply", "Zeitschaltuhr bestätigt (Kalibrierung)"))
+        reminder, _ = notifier.advance(facts(20 + 225 * 60, ready_marks=marks, heating=heating),
+                                       calibrating=True)
+        self.assertEqual([(m.occasion, m.audience) for m in reminder],
+                         [("timer_expiry", "calibration")])
+        # Safety stays during a run.
+        self.assertEqual([m.occasion for m in notifier.advance(
+            facts(20 + 226 * 60, upper_temperature_c=106, contactor=True, heating=heating,
+                  ready_marks=marks),
+            calibrating=True)[0]], ["safety"])
+        # After the run: neither Bereit nor the confirmed timer are reported again.
+        self.assertEqual(notifier.advance(facts(20 + 227 * 60, ready_marks=marks,
+                                                heating=heating))[0], [])
+
+    def test_unanswered_timer_follows_after_the_calibration_run(self):
+        notifier = rules.Notifier(zone=ZONE)
+        self.assertEqual(notifier.advance(facts(0), calibrating=True)[0], [])
+        messages, _ = notifier.advance(facts(60))
+        self.assertEqual([m.occasion for m in messages], ["timer_start"])
+
+
+class FollowUpRuntimeTests(unittest.TestCase):
+    # Helpers only; inheriting RuntimeTests would run its tests twice.
+    runtime = RuntimeTests.runtime
+    settle = staticmethod(RuntimeTests.settle)
+
+    def test_session_without_known_user_reports_to_present_devices(self):
+        async def exercise(present, actor_later):
+            clock = [START]
+            runtime = self.runtime(clock, present=present)
+            runtime.notifier.configure(rules.replace_settings(
+                runtime.notifier.settings, {"occasions": {"timer_start": False}}))
+            runtime.controller.set_temperature(60, START)
+            await runtime.set_operation(True, actor=ActorRef(None, "ha_context"))
+            if actor_later:
+                await runtime.set_heater_override(False, actor=ActorRef(OTHER, "ha"))
+            clock[0] += timedelta(seconds=30)
+            runtime.controller.set_temperature(80, clock[0])
+            await runtime.tick()
+            await self.settle(runtime)
+            ready = [n for n in runtime.notification_transport.sent
+                     if n.payload["message"].startswith("Sauna bereit")]
+            basis = [payload["basis"] for kind, payload in runtime.archive.records
+                     if kind == "notification" and payload["event"] == "recipients"
+                     and payload["occasion"] == "ready"]
+            await runtime.close()
+            return sorted(n.target.endpoint for n in ready), basis
+
+        self.assertEqual(asyncio.run(exercise({"phone-1"}, False)),
+                         (["phone-1"], ["anwesende Geräte"]))
+        self.assertEqual(asyncio.run(exercise(frozenset(), False)),
+                         (["notify.other", "phone-1"], ["alle Zugeordneten (kein Gerät anwesend)"]))
+        self.assertEqual(asyncio.run(exercise({"phone-1"}, True)),
+                         (["notify.other", "phone-1"], ["Teilnehmer und anwesende Geräte"]))
+
+    def test_started_by_a_known_user_only_participants_receive(self):
+        async def exercise():
+            clock = [START]
+            runtime = self.runtime(clock, present={"phone-1"})
+            runtime.controller.set_temperature(60, START)
+            await runtime.set_operation(True, actor=ActorRef(OTHER, "ha"))
+            clock[0] += timedelta(seconds=30)
+            runtime.controller.set_temperature(80, clock[0])
+            await runtime.tick()
+            await self.settle(runtime)
+            ready = [n.target.endpoint for n in runtime.notification_transport.sent
+                     if n.payload["message"].startswith("Sauna bereit")]
+            await runtime.close()
+            return ready
+
+        self.assertEqual(asyncio.run(exercise()), ["notify.other"])
+
+
+class CalibrationTimerTests(unittest.TestCase):
+    """BN-a: the basic procedure begins with the timer; its reminder is a run message."""
+
+    def test_timer_step_reminder_and_no_normal_occasions_during_the_run(self):
+        import test_calibration as base
+
+        helper = base.CalibrationRuntimeTests("test_start_conditions")
+
+        async def exercise():
+            clock = [base.START]
+            runtime = helper.runtime(clock)
+            runtime.enable_notifications(rules.NotificationSettings(
+                timer_runtime_minutes=20, timer_lead_minutes=15), zone=ZONE)
+            runtime.notification_presence = frozenset
+            runtime.controller.set_temperature(30, base.START)
+            runtime.controller.report_contactor(True, base.START)
+            runtime.controller.report_heating(True, base.START)
+            await runtime.accept_presence(binary_presence(
+                "binary_sensor.presence", "off", base.START, base.START))
+            await runtime.start_calibration(actor=ActorRef(base.USER, "ha_context"))
+            await helper.settle(runtime)
+            await RuntimeTests.settle(runtime)
+            sent = runtime.notification_transport.sent
+            self.assertEqual([n.payload["message"] for n in sent], ["Zeitschaltuhr aufziehen."])
+            run = runtime.calibration_runs[0]
+            clock[0] += timedelta(seconds=40)
+            self.assertEqual(await runtime.calibration_reply(
+                helper.association(sent[0], "timer", clock[0])), "accepted")
+            self.assertEqual(runtime.notifier.timer["confirmed_at"], clock[0])
+            self.assertEqual(run.steps, [])  # kein Referenzvorgang
+            await helper.settle(runtime)
+            self.assertEqual(sent[-1].payload["title"], "Sauna-Kalibrierung P1")
+            # Five minutes of oven time later: the reminder as a message of the run.
+            clock[0] += timedelta(minutes=5, seconds=1)
+            await runtime.tick()
+            await helper.settle(runtime)
+            await RuntimeTests.settle(runtime)
+            reminders = [n for n in sent if n.payload["message"].startswith("Zeitschaltuhr läuft")]
+            self.assertEqual(len(reminders), 1)
+            self.assertEqual(reminders[0].payload["title"], "Sauna-Kalibrierung")
+            self.assertEqual([a["title"] for a in reminders[0].payload["data"]["actions"]],
+                             ["Uhr ist gestellt"])
+            self.assertTrue(all(n.correlation_id.startswith("calibration:") for n in sent))
+            later = clock[0] + timedelta(seconds=5)
+            self.assertEqual(await runtime.calibration_reply(
+                helper.association(reminders[0], "timer", later)), "accepted")
+            self.assertEqual(runtime.notifier.timer["confirmed_at"], later)
+            self.assertEqual(run.phase, "running")
+            await runtime.close()
+
+        asyncio.run(exercise())

@@ -189,6 +189,25 @@ assert.match(
   /17:12:00<\/span><span><strong>Zeitschaltuhr beim Start<\/strong>[\s\S]*Antwort „Uhr ist gestellt“ 17:13:00: Zeitschaltuhr bestätigt · Max/,
 );
 assert.equal(panel.controlNotificationCard([]), "");
+// BN-a: eine Bestätigung aus der Kalibrierung ohne eigene Nachricht steht für sich.
+const calibrated = panel.controlNotificationCard([
+  {
+    id: 5,
+    kind: "notification",
+    received_at: "2026-11-10T17:20:00Z",
+    payload: {
+      event: "reply",
+      seq: null,
+      at: "2026-11-10T17:20:00Z",
+      action: "Uhr ist gestellt",
+      outcome_text: "Zeitschaltuhr bestätigt (Kalibrierung)",
+    },
+  },
+]);
+assert.match(
+  calibrated,
+  /17:20:00<\/span><span><strong>Antwort „Uhr ist gestellt“<\/strong> · Zeitschaltuhr bestätigt \(Kalibrierung\)/,
+);
 
 (async () => {
   const calls = [];

@@ -11994,10 +11994,14 @@ class SaunaPanel extends HTMLElement {
       Number.isFinite(entry.at),
     );
     if (!entries.length) return "";
-    const replies = entries.filter((entry) => entry.reply);
+    const replies = entries.filter((entry) => entry.reply),
+      messages = new Set(entries.filter((entry) => !entry.reply).map((entry) => entry.seq));
+    // Eine Bestätigung aus einem anderen Ablauf (Kalibrierung) steht für sich.
     const rows = entries
-      .filter((entry) => !entry.reply)
+      .filter((entry) => !entry.reply || !messages.has(entry.seq))
       .map((entry) => {
+        if (entry.reply)
+          return `<li><span>${this.clockSeconds(entry.at)}</span><span><strong>${esc(entry.label)}</strong> · ${esc(entry.detail)}</span></li>`;
         const answers = replies
           .filter((reply) => reply.seq === entry.seq)
           .map(

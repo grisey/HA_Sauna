@@ -2424,13 +2424,19 @@ class SaunaRuntime:
             run = next((item for item in self._calibration_runs if item.owns(action)), None)
             if run is None:
                 return "unknown"
+            at = reply.observed_at or self._clock()
             disposition, instructions = run.reply(
-                action, reply.observed_at or self._clock(), reply.actor.user_id,
+                action, at, reply.actor.user_id,
                 message_id=association.notification.message_id,
                 restart_allowed=not any(
                     item.active for item in self._calibration_runs if item is not run
                 ),
             )
+            if (disposition == "accepted" and run.action_kind(action) == calibration.TIMER
+                    and self.notifier is not None):
+                # BN-a: the wound timer starts the oven-time count like Z1.
+                self.notifier.confirm_timer(at, reply.actor.user_id, source="Kalibrierung")
+                self._archive_bn()
             self._send_calibration(run, instructions)
             await self._cycle()
             return disposition
@@ -2606,6 +2612,8 @@ class SaunaRuntime:
         self._bn_participants = (None, frozenset())
         self._bn_starters = {}
         self._bn_last_present = None
+        # BN-a: session of the last cycle with an active calibration run
+        self._bn_calibrating = None
 
     def enable_notifications(self, settings=None, zone=None):
         """Start the occasions with the loaded settings (HA setup, preview, tests)."""
@@ -2767,10 +2775,25 @@ class SaunaRuntime:
                         participants.targets if participants is not None else frozenset())}
             else:
                 self._bn_last_present = None
-            messages, ended = self.notifier.advance(self._notification_facts(now))
-            if ended is not None:
+            # BN-a: no normal occasions during a calibration run; it leads with its own messages.
+            run = next((item for item in self._calibration_runs if item.active
+                        and session is not None and item.session_id == session.session_id),
+                       None)
+            calibrated, self._bn_calibrating = self._bn_calibrating, (
+                session.session_id if run is not None else None)
+            messages, ended = self.notifier.advance(
+                self._notification_facts(now), calibrating=run is not None)
+            if ended is not None and ended != calibrated:
                 self._bn_session_end(now, ended)
+            elif ended is not None:
+                self._bn_starters.pop(ended, None)
             for message in messages:
+                if message.audience == "calibration":
+                    self.notifier.addressed(
+                        message, len(self._calibration_targets.get(run.run_id, ())),
+                        "Kalibrierung")
+                    self._send_calibration(run, run.timer_reminder(message.at, message.text))
+                    continue
                 targets, basis = self._bn_targets(message)
                 self._send_bn(message, targets, basis)
             self._archive_bn()
@@ -2783,27 +2806,37 @@ class SaunaRuntime:
         if audience == "assigned":
             return self._assigned_targets(), "alle Zugeordneten"
         if audience == "participants":
-            session_id, targets = self._bn_participants
-            return (targets if session_id == message.session_id else frozenset()), "Teilnehmer"
+            return self._participant_targets(message.session_id)
         if audience == "timer":
             started = self._bn_starters.get(message.session_id) or frozenset()
             if started:
                 return started, "startender Benutzer"
-            assigned = self._assigned_targets()
-            present = (frozenset(self.notification_presence(assigned))
-                       if self.notification_presence is not None else frozenset())
-            if present:
-                return present, "anwesende Geräte"
-            return assigned, "alle Zugeordneten (kein Gerät anwesend)"
+            return self._present_targets()
         return frozenset(), "keine"
+
+    def _present_targets(self):
+        """Present devices (Companion „home“), without any all assigned targets."""
+        assigned = self._assigned_targets()
+        present = (frozenset(self.notification_presence(assigned))
+                   if self.notification_presence is not None else frozenset())
+        if present:
+            return present, "anwesende Geräte"
+        return assigned, "alle Zugeordneten (kein Gerät anwesend)"
+
+    def _participant_targets(self, session_id):
+        """Participants; a session started without a known user adds the present devices (BN-a)."""
+        known, targets = self._bn_participants
+        targets = targets if known == session_id else frozenset()
+        if self._bn_starters.get(session_id):
+            return targets, "Teilnehmer"
+        present, basis = self._present_targets()
+        return targets | present, f"Teilnehmer und {basis}" if targets else basis
 
     def _bn_session_end(self, now, session_id):
         """Sauna aus (E): text with the key figures of the archived session."""
         if self.notifier is None or not self.notifier.settings.enabled("session_end"):
             return
-        _, participants = self._bn_participants
-        if self._bn_participants[0] != session_id:
-            participants = frozenset()
+        participants, basis = self._participant_targets(session_id)
         heater_off = (False if self.controller.contactor is True
                       else True if self.controller.contactor is False else None)
         self._bn_starters.pop(session_id, None)
@@ -2832,7 +2865,7 @@ class SaunaRuntime:
                     notification_rules.summary(figures, heater_off=heater_off),
                 )
                 if message is not None:
-                    self._send_bn(message, participants, "Teilnehmer")
+                    self._send_bn(message, participants, basis)
                     self._archive_bn()
 
         task = asyncio.get_running_loop().create_task(compose())

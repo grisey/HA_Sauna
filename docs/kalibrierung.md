@@ -21,7 +21,7 @@ angemeldete Benutzer. **Details** steht Administratoren zur Verfügung.
 
 | Weg | Start im Panel | Start per Dienst | Ablauf |
 | --- | --- | --- | --- |
-| Grundablauf | **Kalibrierung starten** ohne laufende Sitzung | `ha_sauna.start_calibration` ohne laufende Sitzung und ohne `module` | Startet den Saunabetrieb im Automatikbetrieb, aus dem manuellen Modus mit Wechsel auf Automatik. P1 beginnt sofort beim Aufheizen, Gang 1 nach **Bereit**, P2 in der Pause nach Gang 1, Gang 2 nach **Nächster Gang**, danach wahlweise Gang 3 ([Grundablauf](#grundablauf)). |
+| Grundablauf | **Kalibrierung starten** ohne laufende Sitzung | `ha_sauna.start_calibration` ohne laufende Sitzung und ohne `module` | Startet den Saunabetrieb im Automatikbetrieb, aus dem manuellen Modus mit Wechsel auf Automatik. Zuerst kommt **Zeitschaltuhr aufziehen**, P1 beginnt nach der Antwort beim Aufheizen, Gang 1 nach **Bereit**, P2 in der Pause nach Gang 1, Gang 2 nach **Nächster Gang**, danach wahlweise Gang 3 ([Grundablauf](#grundablauf)). |
 | Zusatzmodul | **Zusatzmodul starten** in einer laufenden Sitzung, mit Auswahl eines Moduls | `ha_sauna.start_calibration` mit `module` in einer laufenden Sitzung | Startet, sobald kein Gang aktiv ist. Ein vorläufiger Gang zählt als aktiv ([Zusatzmodule](#zusatzmodule)). |
 
 Voraussetzungen:
@@ -178,6 +178,16 @@ Sitzung bleibt mit dem Protokoll erhalten
 ## Grundablauf
 
 Jeder Gang hat Aufgüsse; „Wann“ nennt die Wartezeit vor der Anweisung.
+
+**Zeitschaltuhr** (vor P1). Die erste Nachricht des Grundablaufs lautet
+„Zeitschaltuhr aufziehen.“ mit **Uhr ist gestellt** und **Abbrechen**. Die
+Antwort beginnt den ersten Teil und startet die Zählung der Ofenzeit wie beim
+Anlass [Zeitschaltuhr beim Start](benachrichtigungen.md#zeitschaltuhr). Der
+Schritt ist kein Referenzvorgang und geht nicht in die Auswertung ein. Läuft
+die gezählte Ofenzeit während eines Laufs ab, kommt die Erinnerung „Zeitschaltuhr
+läuft in etwa 15 min ab“ als Nachricht des Laufs mit **Uhr ist gestellt**; diese
+Antwort beginnt die Zählung neu. Während eines Kalibrierlaufs gehen keine
+übrigen [Anlässe der Sauna](benachrichtigungen.md#anlässe-der-sauna).
 
 **P1 Leere Kabine beim Aufheizen** und **P2 Leere Kabine nach Gang 1** (nur mit
 Präsenzsensor). P1 beginnt mit dem Start, P2 direkt nach dem Austrittsschluss

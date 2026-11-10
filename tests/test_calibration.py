@@ -117,10 +117,21 @@ class Driver:
             self.answer(self.instruction())
 
 
+def wind_timer(run, now=T0):
+    """BN-a: the basic procedure begins with winding the timer; answered at once."""
+    instruction = run.advance(now, ready=False, gang_active=False)[0]
+    assert instruction.kind == "timer"
+    action = ids(run, instruction, "timer")[calibration.TIMER]
+    assert run.reply(action, now, USER, message_id="timer")[0] == "accepted"
+    return instruction
+
+
 def procedure_run(presence=True, run_id="run"):
-    return calibration.CalibrationRun(
+    run = calibration.CalibrationRun(
         run_id, "procedure", calibration.procedure(presence=presence), USER, "session", T0,
         has_presence=presence, presence=[(T0, False)] if presence else [])
+    wind_timer(run)
+    return run
 
 
 class CalibrationProcedureTests(unittest.TestCase):
@@ -969,6 +980,14 @@ class CalibrationRuntimeTests(unittest.TestCase):
             await self.settle(runtime)
             if run.phase == "waiting":
                 return
+            if run.phase == "timer":
+                # BN-a: the procedure begins with winding the timer.
+                clock[0] += timedelta(seconds=5)
+                timer = next(item for item in reversed(sent)
+                             if item.correlation_id.startswith(f"calibration:{run.run_id}:")
+                             and item.payload["message"] == calibration.TIMER_MESSAGE)
+                await runtime.calibration_reply(self.association(timer, "timer", clock[0]))
+                continue
             if run.phase == "pause":
                 clock[0] += timedelta(seconds=5)
                 pause_message = next(item for item in reversed(sent)
@@ -1003,13 +1022,23 @@ class CalibrationRuntimeTests(unittest.TestCase):
             self.assertTrue(runtime.session.operation_enabled)
             self.assertEqual(runtime.controller.control_mode, "automatic")
             await self.settle(runtime)
-            # W3-6: P1 begins at once, while the sauna heats.
+            # BN-a: first the timer, no reference; its reply starts P1.
             sent = runtime.notification_transport.sent
             self.assertEqual([(item.payload["title"], item.payload["message"]) for item in sent],
+                             [("Sauna-Kalibrierung", "Zeitschaltuhr aufziehen.")])
+            self.assertEqual([a["title"] for a in sent[0].payload["data"]["actions"]],
+                             ["Uhr ist gestellt", "Abbrechen"])
+            self.assertEqual(runtime.calibration_status["active"]["module"], "Zeitschaltuhr")
+            self.assertEqual(await runtime.calibration_reply(
+                self.association(sent[0], "timer", START)), "accepted")
+            await self.settle(runtime)
+            # W3-6: P1 begins at once, while the sauna heats.
+            self.assertEqual([(item.payload["title"], item.payload["message"])
+                              for item in sent[1:]],
                              [("Sauna-Kalibrierung P1",
                                "Kabine leer, Tür zu, nicht an die Kabine.")])
-            self.assertEqual(sent[0].session_id, runtime.session.session_id)
-            self.assertEqual([a["title"] for a in sent[0].payload["data"]["actions"]],
+            self.assertEqual(sent[1].session_id, runtime.session.session_id)
+            self.assertEqual([a["title"] for a in sent[1].payload["data"]["actions"]],
                              ["Kabine ist leer", "Abweichend", "Abbrechen"])
             with self.assertRaisesRegex(ValueError, "bereits"):
                 await runtime.start_calibration(actor=ActorRef(USER, "ha_context"),
