@@ -332,7 +332,7 @@ fs.mkdirSync(output, { recursive: true });
       await f.refresh();
     });
     // B3b: Der Verlauf hat keine Ereignis- und Fehlerliste mehr; die Fehler im
-    // Sitzungsverlauf stehen in Details · Detailverlauf.
+    // Sitzungsverlauf stehen in Details · Steuerung.
     const faultFree = await panel.locator("#history").innerText();
     assert.doesNotMatch(faultFree, /Historische Fehler|Fehler[^\n]*\(1\)/);
     assert.equal(await panel.locator("#event-list [data-fault-count]").count(), 0);

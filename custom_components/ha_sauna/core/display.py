@@ -3,6 +3,7 @@
 from datetime import timedelta
 from math import isfinite
 
+from .moisture import absolute_humidity
 from .timeline import active_gang_duration_seconds
 
 
@@ -188,3 +189,38 @@ def start_availability(controller, now, estimated_ready_seconds=None):
             "Noch nicht abschätzbar: Es fehlt ein belastbarer positiver Temperaturtrend."
         )
     return result
+
+
+def position_values(measurements, status=None) -> dict:
+    """D5 (Nutzer 04.11.): Werte je Messposition und Differenz oben − unten.
+
+    ``measurements`` sind die aktuellen Messungen des Geräts, ``status`` deren
+    Gültigkeit je Rolle (``measurement_status``). Die absolute Feuchte rechnet
+    ``core.moisture``; die Differenz nur, wenn beide Positionen den Wert haben.
+    """
+    status = status or {}
+    values = {}
+    for measurement in measurements:
+        position = getattr(measurement.position, "value", measurement.position)
+        quantity = getattr(measurement.quantity, "value", measurement.quantity)
+        entry = values.setdefault(position, {"position": position})
+        entry[quantity] = measurement.value
+        entry[f"{quantity}_state"] = (status.get(f"{position}_{quantity}") or {}).get("state")
+    for entry in values.values():
+        temperature, humidity = entry.get("temperature"), entry.get("humidity")
+        entry["absolute_humidity"] = (
+            absolute_humidity(temperature, min(max(humidity, 0.0), 100.0))
+            if temperature is not None and humidity is not None else None
+        )
+    upper, lower = values.get("upper"), values.get("lower")
+    difference = None
+    if upper and lower:
+        difference = {
+            key: upper[key] - lower[key]
+            if upper.get(key) is not None and lower.get(key) is not None else None
+            for key in ("temperature", "absolute_humidity")
+        }
+    return {
+        "positions": [values[p] for p in ("upper", "lower") if p in values],
+        "difference": difference,
+    }

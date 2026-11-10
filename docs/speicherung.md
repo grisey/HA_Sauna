@@ -205,6 +205,14 @@ Zeitfenster, Zoom, Markierungen und offene Abschnitte bleiben dabei erhalten.
 **Wird geladen** kennzeichnet den ersten Datenabruf. Bei einer fehlgeschlagenen
 Aktualisierung bleibt der vorhandene Stand mit einem Fehlerhinweis sichtbar.
 
+**Details** (Administratoren) hat vier Unteransichten. **Zustand** zeigt den
+aktuellen Betrieb, Ofen, Licht, Messung, die Werte je Messposition (Temperatur,
+relative und absolute Feuchte, Gültigkeit, Regelposition) mit der Differenz
+oben − unten, die Umgebung, die Präsenz und eingeklappt die aktuellen Daten im
+Detail. **Erkennung** ist die Erkennungskontrolle, **Steuerung** der Verlauf der
+Sitzung mit Regelentscheidungen, Fristen und Protokoll, **Kalibrierung** Start,
+Lauf und Raster der [Kalibrierung](kalibrierung.md#start-und-abbruch).
+
 Die Details zeigen gespeicherte Werte mit ihrer Herkunft. Nicht aufgezeichnete
 Messverläufe lassen sich rückwirkend nicht ergänzen; fehlende Angaben erscheinen
 entsprechend gekennzeichnet. Eine Heizbeobachtung bei einem Zustandswechsel ist

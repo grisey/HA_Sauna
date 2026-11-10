@@ -34,13 +34,18 @@ from custom_components.ha_sauna.core.configuration_model import (
     temperature_control,
 )
 from custom_components.ha_sauna.core.defaults import section
-from custom_components.ha_sauna.core.display import phase_timer, start_availability
+from custom_components.ha_sauna.core.display import (
+    phase_timer,
+    position_values,
+    start_availability,
+)
 from custom_components.ha_sauna.core.history import (
     measurement_window,
 )
 from custom_components.ha_sauna.core.light import normal_brightness
 from custom_components.ha_sauna.core.light_control import light_plan, select_light
 from custom_components.ha_sauna.core.light_output import LightOutput, LightQuantizer
+from custom_components.ha_sauna.core.models import Measurement, Position, Quantity
 from custom_components.ha_sauna.core.notification_exchange import (
     ReplyAssociation,
     ReplyDisposition,
@@ -616,6 +621,11 @@ class Preview:
             "start_errors":[], "issues":[], "decision_text":decision_message(c.last_decision),
             "measurement_status":{f"upper_{q}":{"state":"current"} for q in ("temperature","humidity")},
             "regulation_temperature_position":"upper", "measurement_positions":["upper"],
+            "position_values":position_values(
+                [Measurement(Position.UPPER, Quantity(q), v, str(v), f"preview.upper_{q}", self.now)
+                 for q, v in (("temperature", c.temperature), ("humidity", self.humidity))],
+                {f"upper_{q}":{"state":"current"} for q in ("temperature","humidity")},
+            ),
             "gang_count":session.timeline.gang_count if session else 0,
             "gang_confirmation":active.confirmation if active else None,
             "decision":c.last_decision, "measurements":measurements, "faults":{}, "protection":[],

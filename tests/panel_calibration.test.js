@@ -173,7 +173,7 @@ test("the last result names validity, reason and the totals of the evaluation", 
     html(),
     /Gänge 1 von 1 gefunden, 0 zusätzlich\. Türen und Aufgüsse 4 von 5 im Fenster gefunden, 1 außerhalb des Fensters zugeordnet, 0 fehlen, 2 zusätzlich\./,
   );
-  assert.match(html(), /Einzelheiten stehen im Detailverlauf der Sitzung/);
+  assert.match(html(), /Einzelheiten stehen im Verlauf der Sitzung unter Details · Steuerung/);
   ({ p, html } = fixture({ calibration: { last: { ...last, totals: null } } }));
   p.drawCalibration();
   assert.match(html(), /folgt nach dem Sitzungsende/);

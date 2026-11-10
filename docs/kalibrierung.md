@@ -9,11 +9,10 @@ Antworten bedienen die Sauna nicht.
 
 ## Start und Abbruch
 
-Die Kalibrierung startet im Sauna-Panel unter **Einstellungen → Daten und
-Wartung → Kalibrierung** oder über den Dienst `ha_sauna.start_calibration`.
-Beide Wege verwenden denselben Ablauf und dieselbe Berechtigungsprüfung;
-startender Benutzer ist im Panel der angemeldete Benutzer. Der Bereich **Daten
-und Wartung** steht Administratoren zur Verfügung.
+Die Kalibrierung startet im Sauna-Panel unter **Details → Kalibrierung** oder
+über den Dienst `ha_sauna.start_calibration`. Beide Wege verwenden denselben
+Ablauf und dieselbe Berechtigungsprüfung; startender Benutzer ist im Panel der
+angemeldete Benutzer. **Details** steht Administratoren zur Verfügung.
 
 | Weg | Start im Panel | Start per Dienst | Ablauf |
 | --- | --- | --- | --- |
@@ -58,6 +57,10 @@ Karte das letzte Ergebnis: gültig oder ungültig mit Grund, bei einer gültigen
 Kalibrierung nach dem Sitzungsende die Summen der Auswertung. Das letzte
 Ergebnis gilt bis zum Neuladen der Integration; die Einzelheiten stehen im
 Archiv der Sitzung.
+
+Unter der Karte steht das Raster **Module und Schritte**: je angebotenem Modul
+seine Schritte mit Referenz und erwarteten Erkennungen (Tür auf, Tür zu,
+Aufguss). Während eines Laufs ist der laufende Schritt hervorgehoben.
 
 ## Gültigkeit
 

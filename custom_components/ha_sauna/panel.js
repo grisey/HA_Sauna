@@ -5886,6 +5886,11 @@ class SaunaPanel extends HTMLElement {
       .history-figure-grid[data-history-figures="plant"] { grid-template-columns: repeat(auto-fit, minmax(${this.preference("size_270_0_px")}px, 1fr)); }
       .history-test-row { display: flex; flex-wrap: wrap; align-items: center; gap: ${this.preference("layout_space_13_px")}px; margin-top: ${this.preference("layout_space_13_px")}px; }
       .history-test-row p { margin: 0; }
+      .calibration-module h3 { margin: ${this.preference("layout_space_13_px")}px 0 ${this.preference("layout_space_07_px")}px; }
+      .calibration-steps { display: grid; grid-template-columns: repeat(auto-fill, minmax(${this.preference("size_120_0_px")}px, 1fr)); gap: ${this.preference("layout_space_07_px")}px; list-style: none; margin: 0; padding: 0; }
+      .calibration-step { display: grid; gap: 2px; padding: ${this.preference("layout_space_07_px")}px; border: 1px solid var(--sauna-color-border); border-radius: var(--sauna-control-radius); }
+      .calibration-step span { color: var(--secondary-text-color); font-size: .9em; }
+      .calibration-step[aria-current="step"] { border-color: var(--primary-color); }
       .history-figure-grid > .card, .history-gang-row > .card { margin: 0; }
       .history-figure-card .stat-value small, .history-gang-card .stat-value small { color: var(--sauna-card-muted-text); }
       .history-figure-list { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: ${this.preference("layout_space_07_px")}px ${this.preference("layout_space_13_px")}px; margin: 0; font-size: ${this.preference("font_size_compact_px")}px; align-items: baseline; }
@@ -5993,8 +5998,8 @@ class SaunaPanel extends HTMLElement {
   shell() {
     this.shadowRoot.innerHTML = `<style id="panel-appearance-style">${this.appearanceStyles()}</style><main>
       <header><div class="header-brand"><button class="header-icon" data-action="menu" aria-label="Home-Assistant-Seitenleiste umschalten" title="Home-Assistant-Seitenleiste umschalten" hidden><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h16M4 12h16M4 18h16"/></svg></button><h1 id="instance-title">Sauna</h1></div><nav class="tabs main-tabs" id="main-navigation" aria-label="Ansicht"><button data-action="overview" aria-current="page">Steuerung</button><button data-action="history">Verlauf</button><button data-action="statistics">Statistik</button><button data-action="details">Details</button><button data-action="settings">Einstellungen</button></nav><div class="header-context"><select id="instance" aria-label="Sauna auswählen"></select><button class="header-icon" data-action="fullscreen" aria-label="Vollbild" title="Vollbild" hidden><svg data-fullscreen-icon="enter" viewBox="0 0 24 24" aria-hidden="true"><path d="M8 3H3v5m13-5h5v5M3 16v5h5m13-5v5h-5"/></svg><svg data-fullscreen-icon="exit" viewBox="0 0 24 24" aria-hidden="true" hidden><path d="M3 8h5V3m8 0v5h5M8 21v-5H3m18 0h-5v5"/></svg></button></div></header>
-      <nav class="tabs detail-tabs" aria-label="Detailansicht" hidden><button data-action="detail" aria-current="page">Betrieb & Fristen</button><button data-action="detail-history">Detailverlauf</button><button data-action="diagnostics">Erkennungskontrolle</button></nav>
-      <div id="message" role="alert"></div><section id="current" aria-live="polite"><p>Lade Saunadaten …</p></section><section id="details" hidden></section>
+      <nav class="tabs detail-tabs" aria-label="Detailansicht" hidden><button data-action="detail" aria-current="page">Zustand</button><button data-action="diagnostics">Erkennung</button><button data-action="detail-history">Steuerung</button><button data-action="detail-calibration">Kalibrierung</button></nav>
+      <div id="message" role="alert"></div><section id="current" aria-live="polite"><p>Lade Saunadaten …</p></section><section id="details" hidden></section><section id="detail-calibration" aria-label="Kalibrierung" hidden><div class="card"><h2>Kalibrierung</h2><p class="muted">Anweisungen kommen als Companion-Benachrichtigung an den startenden Benutzer; jede Antwort schließt das Zeitfenster ihres Vorgangs. Steuerung, Erkennung und Gangmodell bleiben unverändert.</p><div id="calibration"></div></div><div class="card" id="calibration-grid"></div></section>
       <section id="history" hidden><div class="plot-panel history-panel"><div class="history-controls"><div class="history-subviews segmented-mode" role="group" aria-label="Unteransicht"><button type="button" data-action="history-subview:session" aria-pressed="true">Sitzung</button><button type="button" data-action="history-subview:plant" aria-pressed="false">Anlage</button></div><div class="history-session-choice"><label for="session">Sitzung vom</label><select id="session" aria-label="Saunasitzung auswählen"><option value="live">Letzte Sitzung</option></select></div><div class="history-selection-actions"><button data-action="clear-history-selection" hidden disabled>Auswahl aufheben</button></div><span id="history-loading" role="status" hidden></span></div><div id="history-figures" class="history-figures" aria-live="polite"></div><div class="history-plot-frame"><div id="history-chart-head" class="history-chart-head"></div><div id="plots"></div><div id="history-legends">${this.historyLegendMarkup()}</div></div>
         <div class="history-below"><section id="history-gangs" class="history-gangs" aria-label="Gänge im Vergleich"></section><div class="history-inspection" id="history-inspection" aria-label="Auswahl"><p class="history-inspection-key">Auswahl</p><div class="history-inspection-heading"></div><div class="history-inspection-content"><div class="history-readout"><strong class="history-column-heading">Messwerte</strong><div id="tooltip" role="group" aria-label="Werte am markierten Zeitpunkt" hidden></div></div><div class="history-event-column"><strong class="history-column-heading">Ereignisse</strong><div class="history-event-readout"><div id="history-event-inspection" role="group" aria-label="Ereignisinspektion" aria-live="polite" hidden></div></div></div></div><div class="history-session-summary" data-history-session-summary hidden></div><div class="history-context-gangs" data-history-context-gangs></div></div></div></div><div id="control-history" hidden></div><div id="detection-plots" hidden></div><div id="gangs"></div><div id="event-list"></div>
       </section><section id="statistics" aria-label="Statistik" hidden></section><section id="settings" hidden></section>
@@ -9028,7 +9033,39 @@ class SaunaPanel extends HTMLElement {
       measurements,
       detectionText,
     } = view;
-    return `<div class="card hero">${stateLine}${timers}</div><div class="detail-grid"><div class="card"><h2>Ofen</h2><dl><dt>Aktuelle Solltemperatur</dt><dd>${targetTemperature} °C</dd>${nextGangTemperature == null ? "" : `<dt>Solltemperatur des nächsten Gangs</dt><dd>${nextGangTemperature} °C</dd>`}<dt>Obere Regeltemperatur</dt><dd data-readiness>${thermostatTarget} °C</dd><dt>Wiedereinschaltschwelle</dt><dd>${restartThreshold} °C</dd><dt>Temperaturprogramm</dt><dd>${temperatureProgram}</dd><dt>Heizzustand</dt><dd>${heatCaption}</dd><dt>Ermittlung der Heizzeit</dt><dd>${heatSource}</dd><dt>Energieverbrauch</dt><dd>${energyText}</dd><dt>Ofenleistung</dt><dd>${powerText}</dd></dl><p>${decisionText}</p></div><div class="card"><h2>Licht</h2><p class="manual-status ${lightMode}" data-light-status="${lightMode}">${lightStatus}</p><dl><dt>Automatischer Wert</dt><dd>${this.num(lightAutomatic, this.preference("percentage_precision"))} %</dd><dt>Manuelle Vorgabe</dt><dd>${lightManual == null ? "Keine" : `${this.num(lightManual, this.preference("percentage_precision"))} %`}</dd><dt>Übersteuerung</dt><dd>${lightOverrideRemaining}</dd></dl></div><div class="card"><h2>Messung</h2><p data-door-status>${doorText}</p>${measurements}<p class="muted">${detectionText}</p></div>${this.renderEnvironmentDetails()}</div>${presence}${this.renderLiveEvidence()}`;
+    return `<div class="card hero">${stateLine}${timers}</div><div class="detail-grid"><div class="card"><h2>Ofen</h2><dl><dt>Aktuelle Solltemperatur</dt><dd>${targetTemperature} °C</dd>${nextGangTemperature == null ? "" : `<dt>Solltemperatur des nächsten Gangs</dt><dd>${nextGangTemperature} °C</dd>`}<dt>Obere Regeltemperatur</dt><dd data-readiness>${thermostatTarget} °C</dd><dt>Wiedereinschaltschwelle</dt><dd>${restartThreshold} °C</dd><dt>Temperaturprogramm</dt><dd>${temperatureProgram}</dd><dt>Heizzustand</dt><dd>${heatCaption}</dd><dt>Ermittlung der Heizzeit</dt><dd>${heatSource}</dd><dt>Energieverbrauch</dt><dd>${energyText}</dd><dt>Ofenleistung</dt><dd>${powerText}</dd></dl><p>${decisionText}</p></div><div class="card"><h2>Licht</h2><p class="manual-status ${lightMode}" data-light-status="${lightMode}">${lightStatus}</p><dl><dt>Automatischer Wert</dt><dd>${this.num(lightAutomatic, this.preference("percentage_precision"))} %</dd><dt>Manuelle Vorgabe</dt><dd>${lightManual == null ? "Keine" : `${this.num(lightManual, this.preference("percentage_precision"))} %`}</dd><dt>Übersteuerung</dt><dd>${lightOverrideRemaining}</dd></dl></div><div class="card"><h2>Messung</h2><p data-door-status>${doorText}</p>${this.renderPositionValues() || measurements}<p class="muted">${detectionText}</p></div>${this.renderEnvironmentDetails()}</div>${presence}${this.renderLiveEvidence()}`;
+  }
+  // D5 (B4a): Werte je Messposition mit Differenz oben − unten; gerechnet im Backend.
+  // Ersetzt in der Karte „Messung“ die bisherigen Zeilen je Position (D1, nicht doppelt).
+  renderPositionValues() {
+    const data = this.state?.position_values,
+      positions = data?.positions || [];
+    if (!positions.length) return "";
+    const regulation = this.state.regulation_temperature_position,
+      validity = (state) =>
+        ({
+          current: "gültig",
+          stale: "veraltet",
+          unavailable: "fehlt",
+          validity_unconfigured: "Gültigkeit nicht eingestellt",
+        })[state] || "fehlt",
+      value = (number, precision, unit) =>
+        number == null ? "–" : `${this.num(number, this.preference(precision))} ${unit}`,
+      signed = (number, precision, unit) =>
+        number == null
+          ? "–"
+          : `${number > 0 ? "+" : ""}${this.num(number, this.preference(precision))} ${unit}`,
+      rows = positions
+        .map((item) => {
+          const name = item.position === "lower" ? "Unten" : "Oben",
+            states = [...new Set([item.temperature_state, item.humidity_state])].map(validity);
+          return `<dt>${name}${item.position === regulation ? " · Regelposition" : ""}</dt><dd>${value(item.temperature, "value_precision", "°C")} · ${value(item.humidity, "value_precision", "%")} · ${value(item.absolute_humidity, "absolute_humidity_precision", "g/m³")} <span class="muted">${esc(states.join(", "))}</span></dd>`;
+        })
+        .join(""),
+      difference = data.difference
+        ? `<dt>Oben − unten</dt><dd>${signed(data.difference.temperature, "value_precision", "°C")} · ${signed(data.difference.absolute_humidity, "absolute_humidity_precision", "g/m³")}</dd>`
+        : "";
+    return `<dl data-position-values>${rows}${difference}</dl>`;
   }
   renderLiveEvidence() {
     const state = this.state;
@@ -16436,9 +16473,9 @@ class SaunaPanel extends HTMLElement {
       );
       const parameterGroup = (group) => this.settingsParameterGroup(group);
       const contents = {
-        programs: `<div class="card settings-programs"><h2>Programme</h2><div id="program-library"></div></div><div class="card"><h2>Start über Taster oder Betriebsschalter</h2><div id="button-settings"></div></div>`,
+        programs: `<div class="card"><h2>Start über Taster oder Betriebsschalter</h2><div id="button-settings"></div></div><div class="card settings-programs"><h2>Programme</h2><div id="program-library"></div></div>`,
         appearance: admin ? this.appearanceSettingsMarkup() : "",
-        maintenance: `<div class="card"><h2>Sitzungsarchiv ${this.infoButton("archive-retention", "Gespeicherte Sitzungen", "Nur Sitzungen mit bestätigtem Saunagang oder mit Kalibrierprotokoll bleiben im Archiv.")}</h2><button class="confirm" data-action="export">Archiv als ZIP herunterladen</button><div id="archive-management"></div></div><div class="card"><h2>Lernsitzungen ${this.infoButton("recognition-learning", "Freigabe für das Nachlernen", "Nach jeder Sitzung werden Lernbelege der Erkennung gespeichert, zunächst nicht freigegeben. Nur freigegebene Sitzungen gehen in die Aktion „Erkennung nachlernen“ ein.")}</h2><div id="recognition-learning"></div></div><div class="card"><h2>Kalibrierung ${this.infoButton("calibration", "Kalibrierung", "Anweisungen kommen als Companion-Benachrichtigung an den startenden Benutzer; jede Antwort schließt das Zeitfenster ihres Vorgangs. Steuerung, Erkennung und Gangmodell bleiben unverändert.")}</h2><div id="calibration"></div></div><div class="card"><h2>Protokollierung ${this.infoButton("logging", "Protokollumfang", "Home-Assistant-Protokoll, unabhängig vom Sitzungsarchiv. Betriebsereignisse enthalten auch Fehler und Warnungen; Diagnose ergänzt Messwerte und Erkennungsprüfungen.")}</h2><div class="row"><label for="log-level">Umfang</label><select id="log-level"><option value="ERROR">Fehler</option><option value="INFO">Betriebsereignisse</option><option value="DEBUG">Detaillierte Diagnose</option></select><button data-action="logging" class="confirm">Übernehmen</button></div><a href="/config/logs">Home-Assistant-Protokoll öffnen</a></div><div class="card"><h2>Standards und Werkseinstellungen</h2><p>Vorschau für alle gespeicherten Felder einschließlich ausgeblendeter Einstellungen. Programmbibliothek und Gerätezuordnung werden in ihren eigenen Bereichen verwaltet.</p>${this.standardMenuButton({ all: true }, "Standards für alle Bereiche")}</div>`,
+        maintenance: `<div class="card"><h2>Sitzungsarchiv ${this.infoButton("archive-retention", "Gespeicherte Sitzungen", "Nur Sitzungen mit bestätigtem Saunagang oder mit Kalibrierprotokoll bleiben im Archiv.")}</h2><button class="confirm" data-action="export">Archiv als ZIP herunterladen</button><div id="archive-management"></div></div><div class="card"><h2>Lernsitzungen ${this.infoButton("recognition-learning", "Freigabe für das Nachlernen", "Nach jeder Sitzung werden Lernbelege der Erkennung gespeichert, zunächst nicht freigegeben. Nur freigegebene Sitzungen gehen in die Aktion „Erkennung nachlernen“ ein.")}</h2><div id="recognition-learning"></div></div><div class="card"><h2>Protokollierung ${this.infoButton("logging", "Protokollumfang", "Home-Assistant-Protokoll, unabhängig vom Sitzungsarchiv. Betriebsereignisse enthalten auch Fehler und Warnungen; Diagnose ergänzt Messwerte und Erkennungsprüfungen.")}</h2><div class="row"><label for="log-level">Umfang</label><select id="log-level"><option value="ERROR">Fehler</option><option value="INFO">Betriebsereignisse</option><option value="DEBUG">Detaillierte Diagnose</option></select><button data-action="logging" class="confirm">Übernehmen</button></div><a href="/config/logs">Home-Assistant-Protokoll öffnen</a></div><div class="card"><h2>Standards und Werkseinstellungen</h2><p>Vorschau für alle gespeicherten Felder einschließlich ausgeblendeter Einstellungen. Programmbibliothek und Gerätezuordnung werden in ihren eigenen Bereichen verwaltet.</p>${this.standardMenuButton({ all: true }, "Standards für alle Bereiche")}</div>`,
         personal: `<div class="card"><h2>Persönliche Startseite ${this.infoButton("start-page", "Gültigkeit der Startseite", "Gilt nur für das aktuelle Home-Assistant-Profil.")}</h2><button data-action="default-page" class="confirm">Als Startseite festlegen</button><p id="start-page-status" class="muted" role="status"></p></div>`,
       };
       this.$("#settings").innerHTML =
@@ -16642,12 +16679,46 @@ class SaunaPanel extends HTMLElement {
     const status = run
       ? `<p><strong>${run.kind === "session" ? "Kalibriersitzung" : "Einzelnes Modul"} läuft:</strong> ${esc(this.calibrationProgress(run))}</p><div class="row"><button class="stop" data-action="calibration-cancel" ${state.permissions.control && !busy ? "" : "disabled"}>Kalibrierung abbrechen</button></div><p class="muted">Nach dem Abbruch ist der Lauf ungültig und wird nicht ausgewertet.</p>`
       : last
-        ? `<p><strong>Letztes Ergebnis${last.ended_at ? ` vom ${esc(this.when(last.ended_at))}` : ""}:</strong> ${last.valid ? "gültig" : `ungültig, ${esc(last.reason_text || last.reason || "")}`}</p>${last.valid ? `<p>${esc(this.calibrationTotals(last.totals))}</p>` : ""}<p class="muted">Die Einzelheiten stehen im Detailverlauf der Sitzung (Details → Detailverlauf).</p>`
+        ? `<p><strong>Letztes Ergebnis${last.ended_at ? ` vom ${esc(this.when(last.ended_at))}` : ""}:</strong> ${last.valid ? "gültig" : `ungültig, ${esc(last.reason_text || last.reason || "")}`}</p>${last.valid ? `<p>${esc(this.calibrationTotals(last.totals))}</p>` : ""}<p class="muted">Die Einzelheiten stehen im Verlauf der Sitzung unter Details · Steuerung.</p>`
         : "";
+    if (this.$("#calibration-grid"))
+      this.updateMarkup("#calibration-grid", this.calibrationGridMarkup(offered, run));
     this.updateMarkup(
       "#calibration",
       `${status}${run ? "" : start}${locked ? `<p class="muted">${esc(locked)}</p>` : ""}${!run && state.permissions.control && (targets === 0 || targets === null) ? `<div class="row"><button data-action="calibration-targets" ${this.calibrationTargetsLoading ? "disabled" : ""}>Companion-Ziele erneut prüfen</button></div>` : ""}<p role="status">${esc(this.calibrationMessage || "")}</p>`,
     );
+  }
+  // B4a: Raster der Module und Schritte mit den erwarteten Erkennungen (Brett
+  // „Details · Kalibrierung“); der laufende Schritt ist hervorgehoben.
+  calibrationGridMarkup(modules, run) {
+    if (!modules.length) return "";
+    const expected = (step) => {
+      const set = new Set(step.expects || []),
+        door = set.has("door_open") && set.has("door_close")
+          ? "Tür auf, zu"
+          : set.has("door_open")
+            ? "Tür auf"
+            : set.has("door_close")
+              ? "Tür zu"
+              : "";
+      return (
+        [door, set.has("infusion") ? "Aufguss" : ""].filter(Boolean).join(" · ") ||
+        "keine Erkennung erwartet"
+      );
+    };
+    const rows = modules
+      .map((module) => {
+        const current = run && run.module === module.label ? run.step : null,
+          cells = (module.steps || [])
+            .map(
+              (step, index) =>
+                `<li class="calibration-step"${current === index + 1 ? ' aria-current="step"' : ""}><strong>${esc(step.reference)}</strong><span>${esc(expected(step))}</span></li>`,
+            )
+            .join("");
+        return `<div class="calibration-module"><h3>${esc(module.label)} · ${esc(module.title || "")}</h3><ol class="calibration-steps">${cells}</ol></div>`;
+      })
+      .join("");
+    return `<h2>Module und Schritte</h2>${rows}<p class="muted">Jede Zelle ist ein Schritt mit den erwarteten Erkennungen.</p>`;
   }
   calibrationProgress(run, { waiting = true } = {}) {
     const reason = `wartet auf ${
@@ -17363,6 +17434,7 @@ class SaunaPanel extends HTMLElement {
     for (const [selector, hidden] of [
       ["#current", view !== "overview"],
       ["#details", view !== "detail"],
+      ["#detail-calibration", view !== "detail-calibration"],
       ["#history", !["history", "diagnostics"].includes(view)],
       ["#statistics", view !== "statistics"],
       ["#settings", view !== "settings"],
@@ -17411,7 +17483,7 @@ class SaunaPanel extends HTMLElement {
     if (!preserveEventFocus) this.pendingEventFocus = null;
     this.setSettingsMenu(false);
     this.navigation ??= { main: "overview", detail: "detail" };
-    if (["detail", "detail-history", "diagnostics"].includes(action)) {
+    if (["detail", "detail-history", "diagnostics", "detail-calibration"].includes(action)) {
       this.navigation.main = "details";
       this.navigation.detail = action;
     } else this.navigation.main = action === "normal" ? "overview" : action;
@@ -17843,6 +17915,7 @@ class SaunaPanel extends HTMLElement {
         action === "detail" ||
         action === "detail-history" ||
         action === "diagnostics" ||
+        action === "detail-calibration" ||
         action === "logging" ||
         action === "export") &&
         !permissions.admin)
@@ -17960,6 +18033,7 @@ class SaunaPanel extends HTMLElement {
         "detail",
         "detail-history",
         "diagnostics",
+        "detail-calibration",
         "settings",
       ].includes(action)
     ) {
@@ -17973,6 +18047,7 @@ class SaunaPanel extends HTMLElement {
       }
       this.setPanelView(action);
       if (action === "settings") return this.drawSettings();
+      if (action === "detail-calibration") return this.drawCalibration();
       if (action === "statistics") return this.loadStatistics();
       if (["history", "detail-history", "diagnostics"].includes(action))
         return this.refresh(true);

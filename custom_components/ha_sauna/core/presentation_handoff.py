@@ -177,6 +177,7 @@ class CommonPanelFields(WireValue):
     measurement_status: FrozenMap
     regulation_temperature_position: str | None
     measurement_positions: tuple[str, ...]
+    position_values: FrozenMap
     gang_count: int
     gang_confirmation: str | None
     gang_duration_seconds: float | None

@@ -235,11 +235,6 @@ _PREFERENCE_KEYS = frozenset(
         "energy_precision",
         "absolute_humidity_precision",
         "history_readout_precision",
-        "history_temperature_padding_c",
-        "history_temperature_scale_step_c",
-        "history_humidity_padding_percent",
-        "history_humidity_scale_step_percent",
-        "history_humidity_minimum_maximum_percent",
         "history_axis_min_ticks",
         "history_axis_max_ticks",
         "history_value_tick_spacing_px",
@@ -632,10 +627,27 @@ def _resolve_catalog_value(catalog, value, seen=()):
     return deepcopy(value)
 
 
+# B4: Achsskalen des Verlaufs kommen aus der Integration; diese Werte wirkten nie.
+# Gespeicherte Darstellungen älterer Stände enthalten sie noch und bleiben ladbar.
+RETIRED_PREFERENCE_KEYS = frozenset(
+    {
+        "history_temperature_padding_c",
+        "history_temperature_scale_step_c",
+        "history_humidity_padding_percent",
+        "history_humidity_scale_step_percent",
+        "history_humidity_minimum_maximum_percent",
+    }
+)
+
+
 def preference_values(value, *, catalog=None, reject_catalog_overrides=False):
     """One validation path for factory and saved display preferences."""
     source = catalog if catalog is not None else _CATALOG
     definitions = source["appearance"]["preferences"]
+    if isinstance(value, dict):
+        value = {
+            key: item for key, item in value.items() if key not in RETIRED_PREFERENCE_KEYS
+        }
     if not isinstance(value, dict) or value.keys() - definitions.keys():
         raise ValueError("Unknown display preferences")
     result = {}

@@ -7,11 +7,12 @@
 | Home-Assistant-Integrationskonfiguration | **Geräte und Erkennungsverfahren**: Sensoren, Schaltausgänge, Bedieneingang und Erkennungsverfahren. |
 | Home-Assistant-Integrationskonfiguration | **Betrieb und Ofen**, **Sensoren und Erkennung**, **Licht**: dauerhafte Einstellungen, nach Funktion in Untergruppen gegliedert. |
 | Home-Assistant-Integrationskonfiguration | **Daten und Laufzeit**: Messkontext vor und nach archivierten Sitzungen. |
-| Sauna-Panel → **Einstellungen** | **Programme und Start**: Programmbibliothek sowie Taster- und Startvorgaben. |
+| Sauna-Panel → **Einstellungen** | **Programme und Start**: Start über Taster oder Betriebsschalter, danach die Programmbibliothek. |
 | Sauna-Panel → **Einstellungen** | **Darstellung**: Instrumente, Farben, Diagramme, Aktualisierung, Bedienung, Seitengrößen und Gestaltung sowie konstante Temperaturen der Schnellwahl. |
-| Sauna-Panel → **Einstellungen** | **Daten und Wartung**: Archiv, [Lernsitzungen](erkennung.md#gelernte-größen-und-nachlernen), [Kalibrierung](kalibrierung.md#start-und-abbruch), Protokollierung und Zurücksetzen. |
+| Sauna-Panel → **Einstellungen** | **Daten und Wartung**: Archiv, [Lernsitzungen](erkennung.md#gelernte-größen-und-nachlernen), Protokollierung und Zurücksetzen. |
 | Sauna-Panel → **Einstellungen** | **Persönlich**: Sauna als Startseite des aktuellen Home-Assistant-Profils. |
 | Sauna-Panel → Steuerung | Aktuelle Temperaturwahl und vorübergehende Ofen- oder Lichtwahl. |
+| Sauna-Panel → **Details** (Administratoren) | **Zustand**, **Erkennung**, **Steuerung** und **Kalibrierung** ([Start](kalibrierung.md#start-und-abbruch)); keine Einstellungen außer dem Kalibrierstart. |
 
 Die Einstellungen für Betrieb, Erkennung und Licht gelten unmittelbar und bleiben
 nach einem Neustart erhalten. Sie und die Gerätezuordnungen sind mit

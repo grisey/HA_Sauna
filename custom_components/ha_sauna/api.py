@@ -17,7 +17,7 @@ from .core import calibration
 from .core.configuration_model import ConfigurationModel, temperature_control
 from .core.notification_recipients import ActorRef
 from .notification_options import CONF_NOTIFICATION_ASSIGNMENTS
-from .core.display import phase_timer, start_availability
+from .core.display import phase_timer, position_values, start_availability
 from .core.parameters import EDITABLE_DEFINITIONS, LIVE_TEMPERATURE_KEYS, ParameterError
 from .core.power import watts
 from .core.seasons import PARTS as SEASON_PARTS
@@ -286,6 +286,10 @@ class StateView(HomeAssistantView):
                             if regulation_measurement else None
                         ),
                         "measurement_positions": configuration_model.measurement_positions,
+                        # D5: Werte je Messposition mit Differenz oben − unten.
+                        "position_values": position_values(
+                            device.measurements.values(), device.measurement_status(now),
+                        ) if device else {"positions": [], "difference": None},
                         "gang_count": session.timeline.gang_count if session else 0,
                         "gang_confirmation": active.confirmation if active else None,
                         "decision": controller.last_decision,

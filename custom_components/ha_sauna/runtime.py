@@ -614,7 +614,10 @@ class SaunaRuntime:
             "active": active.status() if active is not None else None,
             "last": {**ended[-1].status(), "totals": None} if ended else self._calibration_last,
             "modules": [
-                {"id": module.module_id, "label": module.label, "title": module.title}
+                {"id": module.module_id, "label": module.label, "title": module.title,
+                 # B4a: Raster der Schritte mit den erwarteten Erkennungen.
+                 "steps": [{"key": step.key, "reference": step.reference,
+                            "expects": list(step.expects)} for step in module.steps]}
                 for module in calibration.select_modules(None, presence=presence)
             ],
             "blocked": {
