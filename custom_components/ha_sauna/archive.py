@@ -21,6 +21,7 @@ from hashlib import sha256
 from math import isfinite
 from pathlib import Path
 
+from .core import recognition_archive
 from .core.history import HISTORY_CONTEXT_SECONDS, measurement_window
 from .core.key_figure_display import present_session, present_statistics
 from .core.key_figures import (
@@ -35,6 +36,7 @@ from .core.key_figures import (
 from .core.models import Energy, Position, Quantity, TimedPhase
 from .core.parameters import BY_KEY, Parameters
 from .core.phases import project_archive, project_session
+from .core.recognition_control import recognition_control
 from .history_humidity import project_absolute_humidity
 from .key_figure_parameters import door_sensor_lag
 
@@ -1591,6 +1593,44 @@ class Archive:
                 earlier_warmup(earlier, program_kind(sessions[index]["figures"])),
             ),
         }
+
+    def recognition_control(self, session_id, *, now=None):
+        """Erkennungskontrolle einer Sitzung (B4b, Details · Erkennung), sonst ``None``.
+
+        Liest nur gespeicherte Einträge; Sitzungen ohne Zustandsverlauf (vor B2)
+        liefern Ereignisse ohne Spur und ohne verworfene Kandidaten.
+        """
+        with closing(sqlite3.connect(self.path)) as db:
+            db.execute("BEGIN")
+            column = self._configuration_column(db)
+            row = db.execute(
+                "SELECT payload,ended_at" + column + " FROM sessions WHERE entry_id=? AND session_id=?",
+                (self.entry_id, session_id),
+            ).fetchone()
+            if row is None:
+                return None
+            session = self._decode_payload(db, row[0], row[2] if column else None)
+
+            def records(kind):
+                return [json.loads(raw) for (raw,) in db.execute(
+                    "SELECT payload FROM records WHERE entry_id=? AND session_id=? AND kind=? "
+                    "ORDER BY id", (self.entry_id, session_id, kind),
+                )]
+
+            recorded = db.execute(
+                "SELECT 1 FROM records WHERE entry_id=? AND session_id=? AND kind=? LIMIT 1",
+                (self.entry_id, session_id, recognition_archive.STATE),
+            ).fetchone() is not None
+            return recognition_control(
+                session,
+                ended_at=row[1],
+                now=now,
+                detections=records("detection"),
+                not_taken=records("detection_rejected"),
+                states=records(recognition_archive.STATE) if recorded else None,
+                rejected=records(recognition_archive.REJECTED_CANDIDATE) if recorded else None,
+                episodes=records(recognition_archive.EPISODE),
+            )
 
     def key_figure_statistics(self, zone, *, season=None, part=None, summer=None,
                               volume_m3=None, price_eur_per_kwh=None):

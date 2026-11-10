@@ -118,6 +118,40 @@ class PanelAPITests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(body["test"], True)
             self.assertGreater(body["archive_revision"], revision)
 
+    async def test_recognition_control_permissions_and_ended_session(self):
+        # B4b: Erkennungskontrolle (Details · Erkennung) nur für Administratoren.
+        from harness import retain_session
+
+        runtime = self.entry.runtime_data
+        url = self.base + "/" + self.entry.entry_id + "/archive/recognition"
+        user = await self.hass.auth.async_create_user("Recognition reader", group_ids=[GROUP_ID_USER])
+        token = await self.hass.auth.async_create_refresh_token(user, client_id="http://localhost/")
+        headers = {"Authorization": "Bearer " + self.hass.auth.async_create_access_token(token)}
+        async with (
+            ClientSession(headers=headers) as client,
+            client.get(url, params={"session_id": "x"}) as response,
+        ):
+            self.assertEqual(response.status, 403)
+        async with ClientSession(headers=self.headers) as client:
+            async with client.get(url) as response:
+                self.assertEqual(response.status, 400)
+            async with client.get(url, params={"session_id": "missing"}) as response:
+                self.assertEqual(response.status, 404)
+            await runtime.set_operation(True)
+            identity = runtime.session.session_id
+            retain_session(runtime)
+            await runtime.set_operation(False)
+            runtime.controller.finish_session(runtime._clock(), light_after_run=False)
+            await runtime._cycle()
+            await runtime.archive.flush()
+            async with client.get(url, params={"session_id": identity}) as response:
+                self.assertEqual(response.status, 200, await response.text())
+                body = await response.json()
+        self.assertEqual(body["session_id"], identity)
+        self.assertEqual(body["summary"]["gangs"], 0)
+        self.assertIsInstance(body["recorded"], bool)
+        self.assertIsInstance(body["events"], list)
+
     async def test_archive_erase_permissions_session_guard_and_memory_invalidation(self):
         from harness import retain_session
 

@@ -307,3 +307,30 @@ Ereignis mit dem Grund. In beiden Profilen archiviert werden außerdem jeder
 Wechsel des wahrscheinlichsten Zustands, jeder von der Öffnungsform verworfene
 Kandidat und jede gemeldete Episode mit ihrem Ergebnis
 ([Archiv](speicherung.md#umgebung-und-erkennungsverlauf)).
+
+### Erkennungskontrolle
+
+**Details → Erkennung** (Administratoren) zeigt für die gewählte Sitzung:
+
+- Zusammenfassung: Gänge, Aufgüsse in Gängen und außerhalb, Türvorgänge,
+  verworfene Kandidaten (wie in den [Kennzahlen](kennzahlen.md)) und
+  aufgehobene vorläufige Gänge.
+- Kurven oben und unten (Temperatur, absolute Feuchte) im Ausschnitt mit Türen,
+  Aufgüssen und verworfenen Kandidaten, darunter die Zustandsspur aus dem
+  gespeicherten Zustandsverlauf: Ruhe, offen, Aufguss, Abklingen, Erholung,
+  Heizwechsel.
+- Gewähltes Ereignis: Zeitpunkt, Bedeutung für das Gangmodell (etwa „Eintritt
+  Gang 2“, „Aufguss außerhalb eines Gangs“), Zeit bis zur Entscheidung,
+  gespeicherte Wahrscheinlichkeit bei der Entscheidung und Herkunft. Für
+  verworfene Kandidaten steht das Verhältnis zur nächstbesten Erklärung, für
+  übernommene Ereignisse ist es nicht gespeichert.
+- Listen der Ereignisse und verworfenen Kandidaten im Ausschnitt, der
+  aufgehobenen vorläufigen Gänge mit Grund und der erkannten, vom Gangmodell
+  nicht übernommenen Ereignisse.
+
+Sitzungen, die vor 0.9.0b6 aufgezeichnet wurden, haben keinen Zustandsverlauf
+und keine verworfenen Kandidaten; die Ansicht kennzeichnet das und zeigt die
+Ereignisse ohne Spur. Die Werte kommen aus `GET
+/api/ha_sauna/{entry_id}/archive/recognition`; das Panel rechnet nichts nach.
+Darunter stehen wie bisher die Erkennungswerte je Messschritt, soweit das
+Analyseprofil sie gespeichert hat.

@@ -32,6 +32,7 @@ const navigationPanel = (admin = true) => {
       "#current",
       "#details",
       "#detail-calibration",
+      "#recognition-control",
       "#history",
       "#statistics",
       "#settings",
@@ -102,8 +103,13 @@ test("the calibration subview shows only its own section and draws the calibrati
     "page",
   );
   assert.deepEqual(calls, ["calibration"]);
+  assert.equal(nodes["#recognition-control"].hidden, true);
+  await panel.action("diagnostics");
+  assert.equal(nodes["#recognition-control"].hidden, false, "B4b: control only under Erkennung");
+  assert.equal(nodes["#detail-calibration"].hidden, true);
   await panel.action("detail");
   assert.equal(nodes["#detail-calibration"].hidden, true);
+  assert.equal(nodes["#recognition-control"].hidden, true);
   await panel.action("details");
   assert.equal(panel.view, "detail", "returning to details keeps the last subview");
 });

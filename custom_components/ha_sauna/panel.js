@@ -2886,6 +2886,16 @@ class SaunaPanel extends HTMLElement {
   clock(value, timeZone) {
     return clock(value, timeZone, this.preference("timestamp_formatter_cache_entries"));
   }
+  clockSeconds(value) {
+    const date = new Date(value);
+    return value != null && Number.isFinite(date.getTime())
+      ? timestampFormatter(
+          "clockSeconds",
+          localTimeZone(),
+          this.preference("timestamp_formatter_cache_entries"),
+        ).format(date)
+      : "–";
+  }
   tooltipWhen(value, timeZone) {
     return tooltipWhen(
       value,
@@ -5889,8 +5899,37 @@ class SaunaPanel extends HTMLElement {
       .calibration-module h3 { margin: ${this.preference("layout_space_13_px")}px 0 ${this.preference("layout_space_07_px")}px; }
       .calibration-steps { display: grid; grid-template-columns: repeat(auto-fill, minmax(${this.preference("size_120_0_px")}px, 1fr)); gap: ${this.preference("layout_space_07_px")}px; list-style: none; margin: 0; padding: 0; }
       .calibration-step { display: grid; gap: 2px; padding: ${this.preference("layout_space_07_px")}px; border: 1px solid var(--sauna-color-border); border-radius: var(--sauna-control-radius); }
-      .calibration-step span { color: var(--secondary-text-color); font-size: .9em; }
+      .calibration-step span { color: var(--sauna-card-muted-text); font-size: .9em; }
       .calibration-step[aria-current="step"] { border-color: var(--primary-color); }
+      .recognition-summary { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: ${this.preference("layout_space_07_px")}px ${this.preference("layout_space_13_px")}px; margin: 0; }
+      .recognition-summary dt, .recognition-selected dt, .recognition-summary dd, .recognition-selected dd { margin: 0; align-self: baseline; }
+      .recognition-selected { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: ${this.preference("layout_space_07_px")}px ${this.preference("layout_space_13_px")}px; margin: 0; }
+      .recognition-chart { height: auto; }
+      .recognition-chart text { font-size: ${this.preference("font_size_compact_px")}px; paint-order: stroke; stroke: var(--sauna-color-chart-background); stroke-width: 3px; stroke-linejoin: round; }
+      .recognition-mark { cursor: pointer; }
+      .recognition-mark line { stroke-width: ${this.preference("stroke_1_0_ratio")}; opacity: .75; }
+      .recognition-mark.door line { stroke: var(--sauna-color-event-door); }
+      .recognition-mark.infusion line { stroke: var(--sauna-color-event-infusion); }
+      .recognition-mark[data-selected="true"] line { stroke-width: ${this.preference("stroke_2_0_ratio")}; opacity: 1; }
+      .recognition-mark:focus-visible line { stroke: var(--sauna-chart-focus, var(--accent)); stroke-width: ${this.preference("stroke_2_0_ratio")}; outline: none; }
+      .recognition-hit { fill: transparent; stroke: none; pointer-events: all; }
+      .recognition-rejected { stroke: var(--sauna-card-muted-text); stroke-dasharray: 3 3; stroke-width: ${this.preference("stroke_1_0_ratio")}; opacity: .6; }
+      .recognition-state { fill: var(--sauna-color-border, var(--divider-color)); background: var(--sauna-color-border, var(--divider-color)); }
+      .recognition-state.state-open { fill: var(--sauna-color-event-door); background: var(--sauna-color-event-door); }
+      .recognition-state.state-infusion { fill: var(--sauna-color-event-infusion); background: var(--sauna-color-event-infusion); }
+      .recognition-state.state-decay { fill: var(--sauna-color-series-humidity); background: var(--sauna-color-series-humidity); }
+      .recognition-state.state-recovery { fill: var(--sauna-color-series-temperature); background: var(--sauna-color-series-temperature); }
+      .recognition-state.state-shift { fill: color-mix(in srgb, var(--sauna-card-muted-text) 45%, transparent); background: color-mix(in srgb, var(--sauna-card-muted-text) 45%, transparent); }
+      .recognition-legend { display: flex; flex-wrap: wrap; gap: ${this.preference("layout_space_07_px")}px ${this.preference("layout_space_13_px")}px; margin: ${this.preference("layout_space_07_px")}px 0 0; font-size: ${this.preference("font_size_compact_px")}px; }
+      .recognition-legend-item { display: inline-flex; align-items: center; gap: ${this.preference("layout_space_07_px")}px; }
+      .recognition-legend-item i { display: inline-block; width: ${this.preference("size_12_0_px")}px; height: ${this.preference("size_8_0_px")}px; border-radius: ${this.preference("radius_2_0_px")}px; }
+      .recognition-swatch.door { background: var(--sauna-color-event-door); }
+      .recognition-swatch.infusion { background: var(--sauna-color-event-infusion); }
+      .recognition-swatch.rejected { background: var(--sauna-card-muted-text); }
+      .recognition-table tr[aria-selected="true"] td { background: color-mix(in srgb, var(--primary-color) 14%, transparent); }
+      .recognition-pick { all: unset; cursor: pointer; text-decoration: underline; color: inherit; }
+      .recognition-pick:focus-visible { outline: 2px solid var(--primary-color); outline-offset: 2px; }
+      .recognition-analysis-heading { font-size: 1em; margin: ${this.preference("layout_space_13_px")}px 0 ${this.preference("layout_space_07_px")}px; color: var(--sauna-card-muted-text); }
       .history-figure-grid > .card, .history-gang-row > .card { margin: 0; }
       .history-figure-card .stat-value small, .history-gang-card .stat-value small { color: var(--sauna-card-muted-text); }
       .history-figure-list { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: ${this.preference("layout_space_07_px")}px ${this.preference("layout_space_13_px")}px; margin: 0; font-size: ${this.preference("font_size_compact_px")}px; align-items: baseline; }
@@ -6001,7 +6040,7 @@ class SaunaPanel extends HTMLElement {
       <nav class="tabs detail-tabs" aria-label="Detailansicht" hidden><button data-action="detail" aria-current="page">Zustand</button><button data-action="diagnostics">Erkennung</button><button data-action="detail-history">Steuerung</button><button data-action="detail-calibration">Kalibrierung</button></nav>
       <div id="message" role="alert"></div><section id="current" aria-live="polite"><p>Lade Saunadaten …</p></section><section id="details" hidden></section><section id="detail-calibration" aria-label="Kalibrierung" hidden><div class="card"><h2>Kalibrierung</h2><p class="muted">Anweisungen kommen als Companion-Benachrichtigung an den startenden Benutzer; jede Antwort schließt das Zeitfenster ihres Vorgangs. Steuerung, Erkennung und Gangmodell bleiben unverändert.</p><div id="calibration"></div></div><div class="card" id="calibration-grid"></div></section>
       <section id="history" hidden><div class="plot-panel history-panel"><div class="history-controls"><div class="history-subviews segmented-mode" role="group" aria-label="Unteransicht"><button type="button" data-action="history-subview:session" aria-pressed="true">Sitzung</button><button type="button" data-action="history-subview:plant" aria-pressed="false">Anlage</button></div><div class="history-session-choice"><label for="session">Sitzung vom</label><select id="session" aria-label="Saunasitzung auswählen"><option value="live">Letzte Sitzung</option></select></div><div class="history-selection-actions"><button data-action="clear-history-selection" hidden disabled>Auswahl aufheben</button></div><span id="history-loading" role="status" hidden></span></div><div id="history-figures" class="history-figures" aria-live="polite"></div><div class="history-plot-frame"><div id="history-chart-head" class="history-chart-head"></div><div id="plots"></div><div id="history-legends">${this.historyLegendMarkup()}</div></div>
-        <div class="history-below"><section id="history-gangs" class="history-gangs" aria-label="Gänge im Vergleich"></section><div class="history-inspection" id="history-inspection" aria-label="Auswahl"><p class="history-inspection-key">Auswahl</p><div class="history-inspection-heading"></div><div class="history-inspection-content"><div class="history-readout"><strong class="history-column-heading">Messwerte</strong><div id="tooltip" role="group" aria-label="Werte am markierten Zeitpunkt" hidden></div></div><div class="history-event-column"><strong class="history-column-heading">Ereignisse</strong><div class="history-event-readout"><div id="history-event-inspection" role="group" aria-label="Ereignisinspektion" aria-live="polite" hidden></div></div></div></div><div class="history-session-summary" data-history-session-summary hidden></div><div class="history-context-gangs" data-history-context-gangs></div></div></div></div><div id="control-history" hidden></div><div id="detection-plots" hidden></div><div id="gangs"></div><div id="event-list"></div>
+        <div class="history-below"><section id="history-gangs" class="history-gangs" aria-label="Gänge im Vergleich"></section><div class="history-inspection" id="history-inspection" aria-label="Auswahl"><p class="history-inspection-key">Auswahl</p><div class="history-inspection-heading"></div><div class="history-inspection-content"><div class="history-readout"><strong class="history-column-heading">Messwerte</strong><div id="tooltip" role="group" aria-label="Werte am markierten Zeitpunkt" hidden></div></div><div class="history-event-column"><strong class="history-column-heading">Ereignisse</strong><div class="history-event-readout"><div id="history-event-inspection" role="group" aria-label="Ereignisinspektion" aria-live="polite" hidden></div></div></div></div><div class="history-session-summary" data-history-session-summary hidden></div><div class="history-context-gangs" data-history-context-gangs></div></div></div></div><div id="control-history" hidden></div><div id="recognition-control" hidden></div><div id="detection-plots" hidden></div><div id="gangs"></div><div id="event-list"></div>
       </section><section id="statistics" aria-label="Statistik" hidden></section><section id="settings" hidden></section>
     </main>`;
     this.shadowRoot.addEventListener("click", (e) => {
@@ -16178,7 +16217,258 @@ class SaunaPanel extends HTMLElement {
         .join(", ") || "Keine",
     )}</p>${groups.map(([label, items, kind]) => `<details id="diagnostic-values-${esc(label.toLowerCase().replaceAll(" ", "-"))}"><summary>${label}</summary><dl>${entries(items, kind)}</dl></details>`).join("")}</section>`;
   }
+  // ---------- B4b Details · Erkennung: Erkennungskontrolle ----------
+  // Werte aus dem Endpunkt archive/recognition (G19); das Panel zeichnet und formatiert.
+  recognitionControlId() {
+    return this.shown?.session?.timeline?.session_id || null;
+  }
+  recognitionControlData() {
+    const id = this.recognitionControlId(),
+      data = this.recognitionControl;
+    return id && data?.sessionId === id && data.entry === this.entry ? data : null;
+  }
+  async loadRecognitionControl() {
+    const id = this.recognitionControlId(),
+      entry = this.entry;
+    if (!id || !entry || !this.state?.permissions?.admin) return;
+    const session = this.shown.session,
+      key = `${entry}|${id}|${session.ended_at || ""}|${this.historyTimelineRevision ?? ""}`;
+    if (this.recognitionControl?.key === key || this.recognitionControlRequest?.key === key)
+      return;
+    const request = { key };
+    this.recognitionControlRequest = request;
+    let data;
+    try {
+      const result = await this.api(
+        `/${entry}/archive/recognition?session_id=${encodeURIComponent(id)}`,
+      );
+      data = { key, entry, sessionId: id, result };
+    } catch (error) {
+      data = { key, entry, sessionId: id, result: null, error: errorText(error) };
+    }
+    if (this.recognitionControlRequest !== request) return;
+    this.recognitionControlRequest = null;
+    this.recognitionControl = data;
+    if (this.view === "diagnostics") this.drawRecognitionControl();
+  }
+  drawRecognitionControl() {
+    if (!this.$("#recognition-control")) return;
+    if (!this.state?.permissions?.admin || !this.shown) {
+      this.updateMarkup("#recognition-control", "");
+      return;
+    }
+    const data = this.recognitionControlData();
+    if (!data) {
+      this.updateMarkup(
+        "#recognition-control",
+        '<div class="card"><h2>Erkennung</h2><p class="muted" role="status">Erkennungskontrolle wird geladen …</p></div>',
+      );
+      void this.loadRecognitionControl();
+      return;
+    }
+    if (!data.result) {
+      this.updateMarkup(
+        "#recognition-control",
+        `<div class="card"><h2>Erkennung</h2><p class="muted">Erkennungskontrolle nicht verfügbar${data.error ? `: ${esc(data.error)}` : ""}.</p></div>`,
+      );
+      return;
+    }
+    this.updateMarkup("#recognition-control", this.recognitionControlMarkup(data.result));
+  }
+  recognitionControlMarkup(control) {
+    const [start, end] = this.window || [],
+      inWindow = (at) => {
+        const time = stamp(at);
+        return Number.isFinite(time) && (!Number.isFinite(start) || (time >= start && time <= end));
+      },
+      count = (value) => (value == null ? "–" : String(value)),
+      seconds = (value) =>
+        value == null ? "–" : `${this.num(value, this.preference("value_precision"))} s`,
+      percent = (value) =>
+        value == null
+          ? "nicht gespeichert"
+          : `${this.num(value * 100, this.preference("detail_value_precision"))} %`,
+      ratio = (item) =>
+        item.ratio == null
+          ? "nicht gespeichert"
+          : `${esc(item.state || "–")} ${this.num(item.ratio, this.preference("value_precision"))}-mal so wahrscheinlich wie ${esc(item.against || "–")}`,
+      summary = control.summary || {},
+      rejected = summary.rejected_candidates,
+      events = (control.events || []).filter((event) => inWindow(event.effective_at)),
+      selected =
+        (control.events || []).find((event) => event.event_id === this.recognitionSelected) ||
+        null;
+    const recordedNote = control.recorded
+      ? ""
+      : '<p class="muted" data-recognition-recorded="false">Für diese Sitzung ist kein Zustandsverlauf gespeichert. Die Ereignisse stehen ohne Zustandsspur; verworfene Kandidaten sind nicht gespeichert.</p>';
+    const summaryMarkup = `<dl class="recognition-summary"><dt>Gänge</dt><dd>${count(summary.gangs)}</dd><dt>Aufgüsse</dt><dd>${count(summary.infusions)} <span class="muted">· ${count(summary.infusions_in_gangs)} in Gängen, ${count(summary.infusions_outside)} außerhalb</span></dd><dt>Türvorgänge</dt><dd>${count(summary.door_operations)}</dd><dt>Verworfene Kandidaten</dt><dd>${rejected ? `${count(rejected.rejected)} <span class="muted">· ${count(rejected.rejected_in_episodes)} in Episoden, ${count(rejected.rejected_single)} einzeln; ${count(rejected.taken_as_door)} als Türvorgang übernommen</span>` : "nicht gespeichert"}</dd><dt>Aufgehobene vorläufige Gänge</dt><dd>${count(summary.retracted_gangs)}</dd></dl>`;
+    const selectedMarkup = selected
+      ? `<dl class="recognition-selected" data-recognition-selected="${esc(selected.event_id)}"><dt>Ereignis</dt><dd>${esc(selected.label)} · ${esc(this.when(selected.effective_at))}</dd><dt>Bedeutung</dt><dd>${esc(selected.meaning)}</dd><dt>Entscheidung</dt><dd>${seconds(selected.decision_seconds)} nach dem Zeitpunkt${selected.decided_at ? ` · ${esc(this.clockSeconds(selected.decided_at))}` : ""}</dd><dt>Sicherheit</dt><dd>${selected.probability == null ? "nicht gespeichert" : `Wahrscheinlichkeit bei der Entscheidung ${percent(selected.probability)}`}</dd><dt>Herkunft</dt><dd>${esc(selected.source)}</dd></dl>${selected.probability == null ? "" : '<p class="muted">Das Verhältnis zur nächstbesten Erklärung ist für übernommene Ereignisse nicht gespeichert.</p>'}`
+      : '<p class="muted">Ein Ereignis in der Liste oder im Diagramm wählen.</p>';
+    const eventRows = events
+      .map(
+        (event) =>
+          `<tr data-recognition-event="${esc(event.event_id)}"${event.event_id === this.recognitionSelected ? ' aria-selected="true"' : ""}><td><button type="button" class="recognition-pick" data-action="recognition-event:${esc(event.event_id)}">${esc(this.clockSeconds(event.effective_at))}</button></td><td>${esc(event.label)}</td><td>${esc(event.meaning)}</td><td>${seconds(event.decision_seconds)}</td><td>${event.probability == null ? "–" : percent(event.probability)}</td></tr>`,
+      )
+      .join("");
+    const candidateRows = (control.rejected || [])
+      .filter((item) => inWindow(item.effective_at))
+      .map(
+        (item) =>
+          `<tr><td>${esc(this.clockSeconds(item.effective_at))}</td><td>${esc(item.reason_label)}</td><td>${ratio(item)}</td><td>${seconds(item.decision_seconds)}</td><td>${esc(item.result)}</td></tr>`,
+      )
+      .join("");
+    const retractedRows = (control.retracted || [])
+      .map(
+        (item) =>
+          `<tr><td>${esc(this.clockSeconds(item.started_at))}</td><td>${esc(item.recognition)}</td><td>${item.retracted_at ? esc(this.clockSeconds(item.retracted_at)) : "–"}</td><td>${esc(item.reason)}</td></tr>`,
+      )
+      .join("");
+    const notTakenRows = (control.not_taken || [])
+      .map(
+        (item) =>
+          `<tr><td>${esc(this.clockSeconds(item.effective_at))}</td><td>${esc(item.label)}</td><td>${esc(item.reason || "–")}</td></tr>`,
+      )
+      .join("");
+    const table = (head, rows, empty) =>
+      rows
+        ? `<div class="scroll"><table class="recognition-table"><thead><tr>${head.map((label) => `<th>${label}</th>`).join("")}</tr></thead><tbody>${rows}</tbody></table></div>`
+        : `<p class="muted">${empty}</p>`;
+    return `<div class="card recognition-overview"><h2>Erkennung</h2>${recordedNote}${summaryMarkup}</div><div class="card recognition-curves"><h3>Kurven oben und unten</h3>${this.recognitionCurveMarkup(control)}</div><div class="card"><h3>Gewähltes Ereignis</h3>${selectedMarkup}</div><div class="card"><h3>Ereignisse im Ausschnitt</h3>${table(["Zeitpunkt", "Ereignis", "Bedeutung", "Entscheidung nach", "Wahrscheinlichkeit"], eventRows, "Keine Ereignisse im Ausschnitt.")}</div>${control.recorded ? `<div class="card"><h3>Verworfene Kandidaten</h3>${table(["Zeitpunkt", "Grund", "Sicherheit des Kandidaten", "Entscheidung nach", "Ergebnis"], candidateRows, "Keine verworfenen Kandidaten im Ausschnitt.")}</div>` : ""}<div class="card"><h3>Aufgehobene vorläufige Gänge</h3>${table(["Beginn", "Erkennung", "Aufgehoben", "Grund"], retractedRows, "Keine aufgehobenen vorläufigen Gänge.")}</div>${notTakenRows ? `<div class="card"><h3>Erkannt, vom Gangmodell nicht übernommen</h3>${table(["Zeitpunkt", "Ereignis", "Grund"], notTakenRows, "")}</div>` : ""}<h2 class="recognition-analysis-heading">Erkennungswerte je Messschritt (Analyseprofil)</h2>`;
+  }
+  recognitionCurveMarkup(control) {
+    const [start, end] = this.window || [];
+    if (!Number.isFinite(start) || !Number.isFinite(end) || end <= start)
+      return '<p class="muted">Kein Ausschnitt gewählt.</p>';
+    const records = this.shown?.records || (this.emptyHistoryRecords ??= []);
+    if (
+      this.chartDataIndex?.records !== records ||
+      this.chartDataIndex.indexedCount !== records.length
+    )
+      this.historyIndex(records);
+    const series = this.chartDataIndex?.series || new Map(),
+      width = Math.max(
+        this.preference("diagnostic_min_plot_width_px"),
+        (this.$("#recognition-control")?.getBoundingClientRect?.().width ||
+          this.preference("diagnostic_fallback_width_px")) -
+          this.preference("diagnostic_plot_padding_px"),
+      ),
+      left = this.preference("diagnostic_axis_left_padding_px"),
+      right = width - this.preference("diagnostic_axis_right_padding_px"),
+      panelHeight = this.preference("diagnostic_plot_height_px"),
+      gap = this.preference("diagnostic_plot_gap_px"),
+      trackHeight = this.preference("history_compact_band_height_px") * 2,
+      labelSpace =
+        this.preference("font_size_compact_px") +
+        this.preference("detail_time_label_bottom_padding_px") * 2,
+      x = (time) => left + ((time - start) / (end - start)) * (right - left),
+      panels = [
+        ["temperature", "Temperatur", "°C"],
+        ["absolute_humidity", "Absolute Feuchte", "g/m³"],
+      ];
+    let y0 = 0,
+      svg = "";
+    for (const [quantity, label, unit] of panels) {
+      const lines = ["upper", "lower"]
+        .map((position) => [
+          position,
+          (series.get(`${position}:${quantity}`) || []).filter(
+            (point) =>
+              Number.isFinite(point.time) &&
+              point.time >= start &&
+              point.time <= end &&
+              Number.isFinite(point.value),
+          ),
+        ])
+        .filter(([, points]) => points.length);
+      const values = lines.flatMap(([, points]) => points.map((point) => point.value));
+      const top = y0 + this.preference("diagnostic_axis_top_padding_px"),
+        bottom = y0 + panelHeight - this.preference("diagnostic_axis_bottom_padding_px");
+      svg += `<text class="axis-${quantity === "temperature" ? "temperature" : "humidity"}" x="${left}" y="${y0 + this.preference("diagnostic_axis_top_padding_px") - 4}">${label} (${unit})</text>`;
+      if (values.length) {
+        const lo = Math.min(...values),
+          hi = Math.max(...values),
+          span = hi - lo || 1,
+          y = (value) => bottom - ((value - lo) / span) * (bottom - top);
+        for (const [position, points] of lines) {
+          // Ein Punkt je Bildpunktspalte (Mittel der Messwerte darin); nur zum Zeichnen.
+          const columns = new Map();
+          for (const point of points) {
+            const column = Math.round(x(point.time)),
+              entry = columns.get(column);
+            if (!entry) columns.set(column, { sum: point.value, count: 1 });
+            else {
+              entry.sum += point.value;
+              entry.count += 1;
+            }
+          }
+          let path = "";
+          for (const [column, { sum, count }] of columns)
+            path += `${path ? "L" : "M"}${column},${y(sum / count).toFixed(1)}`;
+          svg += `<path class="${quantity === "temperature" ? "temperature" : "humidity"} ${position}" data-series="recognition_${position}_${quantity}" d="${path}" fill="none"/>`;
+        }
+        svg += `<text class="axis-${quantity === "temperature" ? "temperature" : "humidity"}" x="${right}" y="${top + 4}" text-anchor="end">${this.num(hi, this.preference("value_precision"))}</text><text class="axis-${quantity === "temperature" ? "temperature" : "humidity"}" x="${right}" y="${bottom}" text-anchor="end">${this.num(lo, this.preference("value_precision"))}</text>`;
+      } else
+        svg += `<text x="${(left + right) / 2}" y="${(top + bottom) / 2}" text-anchor="middle">Keine Messwerte im Ausschnitt</text>`;
+      y0 += panelHeight + gap;
+    }
+    const chartBottom = y0 - gap;
+    // Zustandsspur aus dem gespeicherten Zustandsverlauf (B2).
+    const trackTop = chartBottom + gap;
+    if (control.states) {
+      for (const item of control.states) {
+        const from = Math.max(start, stamp(item.at)),
+          to = Math.min(end, stamp(item.until) || end);
+        if (!(to > from)) continue;
+        const x1 = x(from),
+          x2 = x(to);
+        svg += `<rect class="recognition-state state-${esc(item.state)}" x="${x1.toFixed(1)}" y="${trackTop}" width="${Math.max(1, x2 - x1).toFixed(1)}" height="${trackHeight}"><title>${esc(item.label)} · ${esc(this.clock(item.at))}</title></rect>`;
+      }
+      svg += `<text x="${left}" y="${trackTop - 3}">Zustand der Erkennung</text>`;
+    } else
+      svg += `<text x="${(left + right) / 2}" y="${trackTop + trackHeight / 2 + 4}" text-anchor="middle" data-recognition-track="missing">Zustandsspur nicht gespeichert</text>`;
+    const height = trackTop + trackHeight + labelSpace;
+    // Ereignisse: Tür und Aufguss als Linien über beide Kurven, verworfene Kandidaten gestrichelt.
+    const marks = [];
+    for (const event of control.events || []) {
+      const time = stamp(event.effective_at);
+      if (!Number.isFinite(time) || time < start || time > end) continue;
+      const kind = ["door_open", "door_close"].includes(event.kind)
+        ? "door"
+        : event.kind === "infusion"
+          ? "infusion"
+          : null;
+      if (!kind) continue;
+      marks.push(
+        `<g class="recognition-mark ${kind}" tabindex="0" role="button" data-action="recognition-event:${esc(event.event_id)}" data-selected="${event.event_id === this.recognitionSelected}" aria-label="${esc(`${event.label} ${this.clock(event.effective_at)}`)}"><line x1="${x(time).toFixed(1)}" x2="${x(time).toFixed(1)}" y1="0" y2="${chartBottom}"/><rect class="recognition-hit" x="${(x(time) - 6).toFixed(1)}" y="0" width="12" height="${chartBottom}"/></g>`,
+      );
+    }
+    for (const item of control.rejected || []) {
+      const time = stamp(item.effective_at);
+      if (!Number.isFinite(time) || time < start || time > end) continue;
+      marks.push(
+        `<line class="recognition-rejected" x1="${x(time).toFixed(1)}" x2="${x(time).toFixed(1)}" y1="0" y2="${chartBottom}"><title>Verworfener Kandidat ${esc(this.clock(item.effective_at))}</title></line>`,
+      );
+    }
+    const ticks = this.preference("diagnostic_axis_ticks");
+    for (let n = 0; n <= ticks; n++) {
+      const t = start + ((end - start) * n) / ticks;
+      svg += `<text text-anchor="middle" x="${x(t).toFixed(1)}" y="${height - 4}">${this.clock(t)}</text>`;
+    }
+    const order = ["closed", "open", "infusion", "decay", "recovery", "shift"],
+      states = control.states
+      ? [...new Map(control.states.map((item) => [item.state, item.label])).entries()]
+          .sort(([a], [b]) => order.indexOf(a) - order.indexOf(b))
+          .map(
+            ([state, label]) =>
+              `<span class="recognition-legend-item"><i class="recognition-state state-${esc(state)}"></i>${esc(label)}</span>`,
+          )
+          .join("")
+      : "";
+    return `<svg class="chart recognition-chart" viewBox="0 0 ${width} ${height}" role="group" aria-label="Kurven oben und unten mit Ereignissen">${svg}${marks.join("")}</svg><p class="recognition-legend"><strong>Kurven</strong><span class="recognition-legend-item">oben durchgezogen, unten gestrichelt</span></p><p class="recognition-legend"><strong>Ereignisse</strong><span class="recognition-legend-item"><i class="recognition-swatch door"></i>Tür</span><span class="recognition-legend-item"><i class="recognition-swatch infusion"></i>Aufguss</span>${control.recorded ? '<span class="recognition-legend-item"><i class="recognition-swatch rejected"></i>verworfener Kandidat</span>' : ""}</p>${states ? `<p class="recognition-legend"><strong>Zustand</strong>${states}</p>` : ""}`;
+  }
   drawDiagnostics() {
+    this.drawRecognitionControl();
     if (!this.state?.permissions?.admin) {
       this.updateMarkup("#detection-plots", "");
       return;
@@ -17448,6 +17738,7 @@ class SaunaPanel extends HTMLElement {
         view === "diagnostics" || (main === "details" && detail === "detail-history"),
       ],
       ["#detection-plots", view !== "diagnostics"],
+      ["#recognition-control", view !== "diagnostics"],
       ["#gangs", main === "details"],
       ["#event-list", main === "details"],
       // Verlauf nach Entwurf B: Unteransichten, Kennzahlen, Diagrammkopf und Gänge
@@ -17957,6 +18248,13 @@ class SaunaPanel extends HTMLElement {
         level: this.$("#log-level").value,
       });
       await this.refresh();
+      return;
+    }
+    if (action.startsWith("recognition-event:")) {
+      if (!permissions.admin) return;
+      const eventId = action.slice(18);
+      this.recognitionSelected = this.recognitionSelected === eventId ? null : eventId;
+      this.drawRecognitionControl();
       return;
     }
     if (action.startsWith("event-marker:")) {

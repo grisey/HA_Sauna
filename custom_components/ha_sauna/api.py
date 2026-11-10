@@ -1137,6 +1137,32 @@ class EraseArchiveView(HomeAssistantView):
                           "archive_revision": runtime.archive.revision})
 
 
+class RecognitionControlView(HomeAssistantView):
+    """Erkennungskontrolle einer Sitzung (B4b, Details · Erkennung), nur Administratoren."""
+
+    url = "/api/ha_sauna/{entry_id}/archive/recognition"
+    name = "api:ha_sauna:archive:recognition"
+    requires_auth = True
+
+    async def get(self, request, entry_id):
+        require_read(request, entry_id)
+        if not request["hass_user"].is_admin:
+            raise web.HTTPForbidden()
+        session_id = request.query.get("session_id")
+        if not session_id:
+            raise web.HTTPBadRequest(text="session_id ist erforderlich.")
+        runtime = runtime_for(request.app[KEY_HASS], entry_id)
+        await runtime.archive.flush()
+        clock = getattr(runtime, "_clock", None)
+        result = await asyncio.to_thread(
+            runtime.archive.recognition_control, session_id,
+            now=clock() if callable(clock) else None,
+        )
+        if result is None:
+            raise web.HTTPNotFound()
+        return self.json(result)
+
+
 class SessionLabelView(HomeAssistantView):
     """Testbetrieb (G25): abgeschlossene Sitzung kennzeichnen oder Kennzeichnung aufheben."""
 
@@ -1365,6 +1391,7 @@ def register(hass):
     hass.http.register_view(FinishPhaseView)
     hass.http.register_view(EndGangView)
     hass.http.register_view(SessionLabelView)
+    hass.http.register_view(RecognitionControlView)
     hass.http.register_view(FinishSessionView)
     hass.http.register_view(ParametersView)
     hass.http.register_view(TemperatureView)

@@ -586,10 +586,21 @@ def rejected_candidates(session: SessionInput) -> dict | None:
     """
     if session.rejected_candidates is None:
         return None
-    episodes = session.rejected_episodes
-    taken = {t for episode in episodes if episode.door for t in episode.candidates}
-    held = {t for episode in episodes if not episode.door for t in episode.candidates}
-    candidates = session.rejected_candidates
+    return rejected_summary(
+        session.rejected_candidates,
+        [(episode.door, episode.candidates) for episode in session.rejected_episodes],
+    )
+
+
+def rejected_summary(candidates, episodes) -> dict:
+    """K-E2 aus Kandidatenzeitpunkten und Episoden ``(übernommen, Kandidaten)``.
+
+    Gemeinsam für die Kennzahlen und die Erkennungskontrolle (B4b).
+    """
+    episodes = list(episodes)
+    candidates = list(candidates)
+    taken = {t for door, members in episodes if door for t in members}
+    held = {t for door, members in episodes if not door for t in members}
     door = sum(1 for t in candidates if t in taken)
     in_episodes = sum(1 for t in candidates if t in held and t not in taken)
     rejected = len(candidates) - door
@@ -598,9 +609,9 @@ def rejected_candidates(session: SessionInput) -> dict | None:
         "rejected": rejected,
         "rejected_in_episodes": in_episodes,
         "rejected_single": rejected - in_episodes,
-        "rejected_episodes": sum(1 for episode in episodes if not episode.door),
+        "rejected_episodes": sum(1 for door, _ in episodes if not door),
         "taken_as_door": door,
-        "door_episodes": sum(1 for episode in episodes if episode.door),
+        "door_episodes": sum(1 for door, _ in episodes if door),
     }
 
 
@@ -1181,6 +1192,9 @@ def _confirmed(gang: Mapping) -> bool:
     return bool(gang.get("infusion_events")) or (
         gang.get("recognition_kind") == Kind.PRESENCE_CONFIRMED
     )
+
+
+gang_confirmed = _confirmed
 
 
 def _series(points) -> Series:
