@@ -230,11 +230,13 @@ PARTS: tuple[Module, ...] = (
              "ruhig liegen, Präsenz durchgehend", "Fertig", after_seconds=240),
         Step("infusion_2", "Aufguss, eine Kelle.", "Aufguss 2", "Gegossen",
              expects=(INFUSION,)),
-        # Austrittsöffnung und -schluss mit einer Antwort; der Schritt ist die
-        # Referenz des Gangendes.
-        Step("exit", "Hinaus, Tür nach etwa 20 s schließen.",
-             "Austrittsöffnung = Gangende, Austrittsschluss", "Draußen, Tür zu",
-             after_seconds=60, expects=(DOOR_OPEN, DOOR_CLOSE), role="exit_open"),
+        # Austrittsöffnung und -schluss mit je einer Antwort wie in Gang 1 und 2
+        # (Nutzer 10.11.); damit ist auch der Nachlauf messbar.
+        Step("exit_open", "Hinaus, Tür offen lassen.", "Austrittsöffnung = Gangende",
+             "Draußen, Tür offen", after_seconds=60, expects=(DOOR_OPEN,),
+             role="exit_open"),
+        Step("exit_close", "Tür schließen.", "Austrittsschluss", "Tür zu",
+             after_seconds=20, expects=(DOOR_CLOSE,), role="exit_close"),
         Step("ventilation_open",
              "Tür öffnen, kurz hinein, Fenster öffnen, hinaus, Tür offen lassen.",
              "Lüften, kurzes Betreten ohne Gang", "Draußen, Tür offen",
@@ -1004,6 +1006,25 @@ def _state_at(presence, at):
     return state
 
 
+def _after_run_bound(modules, following, until):
+    """End of the window in which the after-run presence goes off (W-2, W-3a).
+
+    The first handoff of the next execution of the run, without one ``until``.
+    Begins the next execution with „Kabine ist leer“ (P2 after Gang 1), the
+    window reaches that reply (Nutzer 10.11.): until then the person leaves the
+    cabin. Assignment and the other results keep their windows.
+    """
+    if following is None:
+        return until
+    first = following[0]
+    module = modules.get(first["module"])
+    if module is not None:
+        step = next((step for step in module.steps if step.key == first["step"]), None)
+        if step is not None and step.role == "empty_after" and _referenced(first):
+            return first["closed_at"]
+    return first["handoff_at"]
+
+
 def _presence_result(module, items, presence, bound):
     roles = {step.key: step for step in module.steps}
     result = {"empty": [], "dropouts": None, "after_run_s": None, "after_run_off": None,
@@ -1139,8 +1160,9 @@ def evaluate(steps, *, presence, events, gangs, gang_heat, until, has_presence=T
                                 "window": [item["handoff_at"], item["closed_at"]],
                                 "expected": expected})
             totals["events"]["reference"] += len(expected)
-        following = next((grouped[k][0]["handoff_at"] for k in keys[keys.index(key) + 1:]
-                          if k[0] == key[0]), until)
+        following = _after_run_bound(
+            modules, next((grouped[k] for k in keys[keys.index(key) + 1:] if k[0] == key[0]),
+                          None), until)
         presence_result = (_presence_result(module, items, presence, following)
                            if has_presence else None)
         if presence_result:

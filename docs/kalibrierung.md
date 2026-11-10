@@ -221,15 +221,16 @@ von Gang 1. Beide sind gleich aufgebaut.
 | sofort | 30 s wedeln. | Fertig | Wedeln, keine Tür |
 | +4 min | 2–3 min ruhig liegen, nicht bewegen. | Fertig | ruhig liegen, Präsenz durchgehend |
 | sofort | Aufguss, eine Kelle. | Gegossen | Aufguss 2 |
-| +60 s | Hinaus, Tür nach etwa 20 s schließen. | Draußen, Tür zu | Austrittsöffnung = Gangende, Austrittsschluss |
+| +60 s | Hinaus, Tür offen lassen. | Draußen, Tür offen | Austrittsöffnung = Gangende |
+| +20 s | Tür schließen. | Tür zu | Austrittsschluss |
 | +2 min | Tür öffnen, kurz hinein, Fenster öffnen, hinaus, Tür offen lassen. | Draußen, Tür offen | Lüften, kurzes Betreten ohne Gang |
 | +1 min | Kurz hinein, Fenster schließen, hinaus, Tür zu. | Tür zu | Lüften Ende |
 
 Eine Türöffnung geht stets mit einem kurzen Betreten einher; das Fenster wird
 stets zusammen mit der Tür wieder geschlossen. Der Doppelguss in Gang 1 zählt
-als ein Aufguss, ein Guss nach dem Plateau als neuer. In Gang 3 schließt eine
-Antwort Austrittsöffnung und Austrittsschluss; der Schritt ist die Referenz des
-Gangendes.
+als ein Aufguss, ein Guss nach dem Plateau als neuer. Jeder Gang hat für
+Austrittsöffnung und Austrittsschluss je eine Antwort (Festlegung Nutzer
+10.11.2026).
 
 ## Zusatzmodule
 
@@ -284,8 +285,21 @@ Erkennung.
 | Bereich | Auswertung |
 | --- | --- |
 | Erkennung | Gebuchte Türöffnungen, Türschlüsse und Aufgüsse von der ersten Anweisung bis zum Ende des letzten Fensters der gültigen Teile, den Referenzen zugeordnet wie unten beschrieben. Jede Referenz ist im Fenster gefunden, außerhalb des Fensters zugeordnet oder fehlt. Eine Zuordnung außerhalb trägt ihre Lage zum Fenster: Sekunden davor negativ, danach positiv. Nicht zugeordnete Ereignisse gelten als zusätzlich, auch in den Teilen ohne Türerwartung wie P1, P2 und den Schritten „Wedeln“ und „ruhig liegen“. Die Summen weisen Treffer im Fenster und außerhalb getrennt aus. Abweichende Schritte bleiben ohne Referenz; Ereignisse in ihrem Fenster bleiben außer Betracht. |
-| Präsenz | Aussetzer nach Zahl und Dauer zwischen dem Abschluss von **Drin, Tür zu** und der Anweisung zum Austritt. Nachlauf: Präsenz aus minus **Tür zu** nach dem Austritt bis zum Beginn des nächsten Teils, negativ bei Abwesenheit schon vor dem Schluss; in Gang 3 mit gemeinsamer Antwort für Austrittsöffnung und -schluss entfällt er. In Gang 2 und A3 die Anwesenheit in der Minute vor der offenen Tür. Anwesenheit bei leerer Kabine in P, P1 und P2. |
+| Präsenz | Aussetzer nach Zahl und Dauer zwischen dem Abschluss von **Drin, Tür zu** und der Anweisung zum Austritt. Nachlauf: Präsenz aus minus **Tür zu** nach dem Austritt, negativ bei Abwesenheit schon vor dem Schluss ([Messfenster](#nachlauf)). In Gang 2 und A3 die Anwesenheit in der Minute vor der offenen Tür. Anwesenheit bei leerer Kabine in P, P1 und P2. |
 | Gang | Der Gang, dessen Beginn das dem Eintrittsschluss zugeordnete Ereignis ist, sonst der Gang mit Beginn ab der Anweisung zum Eintritt und vor der Anweisung zum Austritt; fehlend, weitere Gänge mit Beginn im Teil zusätzlich, etwa aus dem kurzen Türvorgang ohne Gang. Beginn, Bestätigung und Ende mit Lage zu den Fenstern von Eintritt und Austrittsöffnung, Aufgusszahl gegen die Referenz und Gangheizung nach dem Austritt: gebuchte Heizzeit mit der Ganganforderung als Grund der Heizentscheidung, ab dem Abschluss der Austrittsöffnung bis zum Gangende. |
+
+### Nachlauf
+
+Der Nachlauf eines Gangs ist die Zeit vom Abschluss von **Tür zu** nach dem
+Austritt bis zur ersten Meldung „abwesend“. Gesucht wird sie bis zum Beginn des
+nächsten Teils des Laufs, ohne folgenden Teil bis zum Sitzungsende. Beginnt der
+nächste Teil mit **Kabine ist leer** – P2 direkt nach Gang 1 –, reicht das
+Messfenster bis zu dieser Antwort: Bis dahin verlässt die Person die Kabine
+(Festlegung Nutzer 10.11.2026). Ist dieser Schritt abweichend, endet das Fenster
+mit seiner Übergabe. Zuordnung der Erkennungen, Gang und übrige Präsenzwerte
+behalten ihre Fenster; die Leermessung von P2 beginnt weiter mit der Antwort.
+
+### Zuordnung
 
 Zuordnung der Erkennung, ohne Toleranz und ohne feste Größe:
 
@@ -311,12 +325,16 @@ ein Schluss, der einem späteren Referenz-Türvorgang zugeordnet ist, hat die
 Erkennung diese Türvorgänge zusammengelegt. Das Ergebnis weist das als Hinweis
 aus; die Zuordnung bleibt unverändert.
 
-Die Präsenzwerte stehen nach jedem Teil fest. Türen, Aufgüsse und Gänge werden
-erst nach dem Sitzungsende ausgewertet, weil ihre Bestätigung keine feste
-Wartezeit hat. Die Auswertung liest dann nur die gebuchten Ereignisse; die
-Fenster wirken nicht auf Erkennung, Gangmodell oder Steuerung. Ungültige Teile
-werden nicht ausgewertet, auch nicht im Replay; das Replay nennt sie unter
-`skipped`.
+### Zeitpunkt der Auswertung
+
+Die Präsenzwerte stehen nach jedem Teil fest, der Nachlauf nach Gang 1 mit der
+Antwort **Kabine ist leer** von P2; die Nachricht am Ende von Gang 1 nennt ihn
+nur, wenn die Präsenz schon vor **Tür zu** abfiel. Türen, Aufgüsse, Gänge und alle Präsenzwerte des Ergebnisses
+werden nach dem Sitzungsende ausgewertet, weil die Bestätigung der Erkennungen
+keine feste Wartezeit hat. Die Auswertung liest dann nur die gebuchten
+Ereignisse; die Fenster wirken nicht auf Erkennung, Gangmodell oder Steuerung.
+Ungültige Teile werden nicht ausgewertet, auch nicht im Replay; das Replay nennt
+sie unter `skipped`.
 
 ## Protokoll und Aufbewahrung
 

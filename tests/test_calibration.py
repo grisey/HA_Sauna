@@ -229,15 +229,20 @@ class CalibrationProcedureTests(unittest.TestCase):
         self.assertEqual(run.status()["modules"], ["P1", "Gang 1", "P2", "Gang 2", "Gang 3"])
         g3 = [s for s in run.steps if s["module"] == "G3"]
         self.assertEqual([s["step"] for s in g3], [
-            "entry", "infusion_1", "waving", "resting", "infusion_2", "exit",
-            "ventilation_open", "ventilation_close"])
+            "entry", "infusion_1", "waving", "resting", "infusion_2", "exit_open",
+            "exit_close", "ventilation_open", "ventilation_close"])
         # "sofort" after the reply: waving and the second infusion.
         self.assertEqual([(b["handoff_at"] - a["closed_at"]).total_seconds()
-                          for a, b in pairwise(g3)], [60, 0, 240, 0, 60, 120, 60])
+                          for a, b in pairwise(g3)], [60, 0, 240, 0, 60, 20, 120, 60])
         module = calibration.MODULES["G3"]
         roles = {step.key: (step.expects, step.role) for step in module.steps}
-        # Exit opening and closing with one reply; the window of the gang end.
-        self.assertEqual(roles["exit"], (("door_open", "door_close"), "exit_open"))
+        # W-3a (Nutzer 10.11.): exit opening and closing with a reply each, as in
+        # Gang 1 and 2; the after-run of Gang 3 is measurable.
+        self.assertEqual(roles["exit_open"], (("door_open",), "exit_open"))
+        self.assertEqual(roles["exit_close"], (("door_close",), "exit_close"))
+        exit_open = next(step for step in module.steps if step.key == "exit_open")
+        self.assertEqual((exit_open.message, exit_open.action),
+                         ("Hinaus, Tür offen lassen.", "Draußen, Tür offen"))
         # W3-4/W3-5: ventilation with a short entry; the window closes with the door.
         self.assertEqual(roles["ventilation_open"], (("door_open",), None))
         self.assertEqual(roles["ventilation_close"], (("door_close",), None))
@@ -858,6 +863,35 @@ class CalibrationEvaluationTests(unittest.TestCase):
         self.assertEqual((gang["found"], gang["additional"]), (False, 1))
         self.assertEqual(result["totals"]["gangs"],
                          {"reference": 1, "found": 0, "missing": 1, "additional": 1})
+
+    def test_after_run_of_gang_1_reaches_the_reply_kabine_ist_leer_of_p2(self):
+        # W-3a (Nutzer 10.11.): P2 begins at the exit closing of Gang 1; the
+        # after-run window reaches the reply „Kabine ist leer“ of P2. Before, it
+        # ended at the handoff of P2 and was not measurable.
+        gang1 = ((0, 20), (320, 330), (510, 520), (640, 660), (690, 695), (740, 745))
+        p2 = ((745, 760), (1360, 1480), (1480, 1600))
+
+        def evaluate(off, outcome="reply"):
+            steps = self.protocol("G1", gang1) + self.protocol("P2", p2, execution=2)
+            steps[6]["outcome"] = outcome
+            presence = [(at(0), False), (at(10), True), (at(off), False)]
+            result = calibration.evaluate(steps, presence=presence, events=[], gangs=[],
+                                          gang_heat=[], until=at(3600))
+            return result["executions"]
+
+        gang, empty = evaluate(755)
+        self.assertEqual((gang["presence"]["after_run_s"], gang["presence"]["after_run_off"]),
+                         (10.0, at(755)))
+        # The empty cabin of P2 is measured from its reply, unchanged.
+        first = empty["presence"]["empty"][0]
+        self.assertEqual((first["reference"], first["from"], first["reports"]),
+                         ("leer", at(760), 0))
+        # Absence only after the reply, or a deviating first step of P2: as before.
+        self.assertIsNone(evaluate(770)[0]["presence"]["after_run_s"])
+        self.assertIsNone(evaluate(755, "deviate")[0]["presence"]["after_run_s"])
+        # The other results keep their windows: P2 without the deviating step.
+        self.assertEqual(evaluate(755, "deviate")[1]["presence"]["empty"][0]["reference"],
+                         "Person vor der Tür")
 
     def test_gang_heat_uses_booked_heating_during_the_gang_demand(self):
         decisions = [(at(0), True, "below_target"), (at(100), True, "gang_heat_demand"),
