@@ -178,6 +178,24 @@ class NotificationSettings:
         }
 
 
+def factory_deviations(settings: NotificationSettings) -> dict:
+    """E2: Werte und Anlässe, die von der Werkseinstellung abweichen, mit deren Wert.
+
+    Benachrichtigungen haben keinen gespeicherten Standard; Vergleichsstufe ist
+    immer die Werkseinstellung.
+    """
+    factory, current = NotificationSettings().as_dict(), settings.as_dict()
+    result = {key: factory[key] for key in VALUES if current[key] != factory[key]}
+    occasions = {
+        key: factory["occasions"][key]
+        for key in OCCASIONS
+        if current["occasions"][key] != factory["occasions"][key]
+    }
+    if occasions:
+        result["occasions"] = occasions
+    return result
+
+
 def describe() -> dict:
     """Bezeichnungen, Einheiten und Vorgaben für die Einstellungen im Panel."""
     return {

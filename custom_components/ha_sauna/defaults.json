@@ -75,14 +75,14 @@
       "default": 90,
       "minimum": null,
       "integer": false,
-      "description": "Solltemperatur beim Wechsel zu Konstant oder Manuell. Eine danach gewählte Temperatur gilt weiter; Programme verwenden ihre eigenen Temperaturen.",
+      "description": "Solltemperatur beim Wechsel zu Konstant oder Manuell und beim Start über Taster oder Schalter mit konstanter Temperatur. Eine danach gewählte Temperatur gilt weiter; Programme verwenden ihre eigenen Temperaturen.",
       "group": "temperature",
       "expert": false,
       "step": 1,
       "number_step": 1,
-      "settings_group": "operation",
+      "settings_group": "temperature",
       "order": 7,
-      "settings_subgroup": "temperature_control",
+      "settings_subgroup": "temperature_defaults",
       "minimum_parameter": "sauna_min_temperature_c",
       "configuration_surface": "integration"
     },
@@ -96,14 +96,14 @@
       "default": 50,
       "minimum": null,
       "integer": false,
-      "description": "Untergrenze für die Solltemperatur. Ein neuer Saunagang kann erst beginnen, wenn eine gültige Temperaturmessung diesen Wert erreicht.",
+      "description": "Niedrigste wählbare Solltemperatur, auch für Programme und Temperaturtasten. Ein Saunagang kann erst beginnen, wenn eine gültige Temperaturmessung diesen Wert erreicht.",
       "group": "temperature",
       "expert": false,
       "step": "any",
       "number_step": 0.01,
-      "settings_group": "operation",
+      "settings_group": "temperature",
       "order": 7,
-      "settings_subgroup": "temperature_control",
+      "settings_subgroup": "temperature_defaults",
       "configuration_surface": "integration"
     },
     {
@@ -121,7 +121,7 @@
       "expert": false,
       "step": "any",
       "number_step": 0.01,
-      "settings_group": "operation",
+      "settings_group": "control",
       "order": 8,
       "settings_subgroup": "temperature_control",
       "configuration_surface": "integration"
@@ -141,7 +141,7 @@
       "expert": false,
       "step": "any",
       "number_step": 0.01,
-      "settings_group": "operation",
+      "settings_group": "control",
       "order": 9,
       "settings_subgroup": "temperature_control",
       "configuration_surface": "integration"
@@ -161,7 +161,7 @@
       "expert": false,
       "step": "any",
       "number_step": 0.01,
-      "settings_group": "operation",
+      "settings_group": "control",
       "order": 10,
       "settings_subgroup": "temperature_control",
       "configuration_surface": "integration"
@@ -181,7 +181,7 @@
       "expert": false,
       "step": "any",
       "number_step": 0.01,
-      "settings_group": "operation",
+      "settings_group": "control",
       "order": 11,
       "settings_subgroup": "temperature_control",
       "configuration_surface": "integration"
@@ -196,12 +196,12 @@
       "default": 4.5,
       "minimum": null,
       "integer": false,
-      "description": "Ohne nutzbare Leistungsmessung wird die Energie aus dieser Leistung und der gemeldeten Heizzeit berechnet.",
+      "description": "Nennleistung des Ofens. Ohne nutzbare Leistungsmessung wird der Energieverbrauch aus dieser Leistung und der gemeldeten Heizzeit berechnet.",
       "group": "timer",
       "expert": false,
       "step": "any",
       "number_step": 0.01,
-      "settings_group": "operation",
+      "settings_group": "installation",
       "order": 20,
       "settings_subgroup": "heater_accounting",
       "configuration_surface": "integration"
@@ -216,12 +216,12 @@
       "default": null,
       "minimum": 0,
       "integer": false,
-      "description": "Optionaler Strompreis pro Kilowattstunde.",
+      "description": "Optionaler Strompreis je Kilowattstunde für die Stromkosten in den Kennzahlen. Ohne Wert entfallen die Kosten.",
       "group": "timer",
       "expert": false,
       "step": "any",
       "number_step": 0.0001,
-      "settings_group": "operation",
+      "settings_group": "installation",
       "order": 22,
       "settings_subgroup": "heater_accounting",
       "configuration_surface": "integration"
@@ -236,12 +236,12 @@
       "default": null,
       "minimum": null,
       "integer": false,
-      "description": "Optionales Luftvolumen der Kabine für die Wassermenge je Aufguss in der Statistik.",
+      "description": "Optionales Luftvolumen der Kabine für die Wassermenge je Aufguss in den Kennzahlen. Ohne Wert entfällt die Wassermenge.",
       "group": "timer",
       "expert": false,
       "step": "any",
       "number_step": 0.01,
-      "settings_group": "operation",
+      "settings_group": "installation",
       "order": 23,
       "settings_subgroup": "heater_accounting",
       "configuration_surface": "integration"
@@ -256,19 +256,19 @@
       "default": 50,
       "minimum": null,
       "integer": false,
-      "description": "Erst oberhalb dieser gemessenen Leistung zählt Heizzeit; kleinere Leistungen bleiben im Energieverbrauch enthalten.",
+      "description": "Nur mit Leistungsmessung: Erst oberhalb dieser gemessenen Leistung zählt Heizzeit. Kleinere Leistungen bleiben im Energieverbrauch enthalten.",
       "group": "timer",
       "expert": false,
       "step": "any",
       "number_step": 0.01,
-      "settings_group": "operation",
+      "settings_group": "installation",
       "order": 19,
-      "settings_subgroup": "heater_accounting",
+      "settings_subgroup": "heating_count",
       "configuration_surface": "integration"
     },
     {
       "key": "heat_reset_minutes",
-      "label": "Heizzeitzähler nach Heizpause zurücksetzen",
+      "label": "Heizzeitzähler zurücksetzen nach",
       "unit": "min",
       "allow_zero": false,
       "optional": false,
@@ -276,14 +276,14 @@
       "default": 10,
       "minimum": null,
       "integer": false,
-      "description": "Nach dieser durchgehend bestätigten Zeit ohne Heizen beginnt der Heizzeitzähler wieder bei null.",
+      "description": "Ist der Ofen laut Rückmeldung so lange ununterbrochen aus, beginnt die gezählte Heizzeit wieder bei null.",
       "group": "operation",
       "expert": false,
       "step": "any",
       "number_step": 0.01,
-      "settings_group": "operation",
+      "settings_group": "installation",
       "order": 21,
-      "settings_subgroup": "heater_accounting",
+      "settings_subgroup": "heating_count",
       "configuration_surface": "integration"
     },
     {
@@ -301,7 +301,7 @@
       "expert": false,
       "step": "any",
       "number_step": 0.01,
-      "settings_group": "operation",
+      "settings_group": "control",
       "order": 15,
       "settings_subgroup": "oven_cooling",
       "configuration_surface": "integration"
@@ -321,7 +321,7 @@
       "expert": false,
       "step": "any",
       "number_step": 0.01,
-      "settings_group": "operation",
+      "settings_group": "control",
       "order": 16,
       "settings_subgroup": "oven_cooling",
       "minimum_parameter": "after_run_minutes",
@@ -337,12 +337,12 @@
       "default": 2,
       "minimum": null,
       "integer": false,
-      "description": "Die gewichtete Heizzeit wird durch diesen Wert geteilt, bevor Bereitschaftspausen abgezogen werden.",
+      "description": "Je so viele gewichtete Heizminuten verlängern die Ofenkühlung über die Mindestdauer hinaus um eine Minute; Bereitschaftspausen werden davon abgezogen.",
       "group": "operation",
       "expert": false,
       "step": "any",
       "number_step": 0.01,
-      "settings_group": "operation",
+      "settings_group": "control",
       "order": 17,
       "settings_subgroup": "oven_cooling",
       "configuration_surface": "integration"
@@ -362,14 +362,14 @@
       "expert": false,
       "step": "any",
       "number_step": 0.01,
-      "settings_group": "operation",
+      "settings_group": "control",
       "order": 18,
       "settings_subgroup": "oven_cooling",
       "configuration_surface": "integration"
     },
     {
       "key": "confirmation_minutes",
-      "label": "Frist für Personenhinweis und Aufguss",
+      "label": "Frist für die Gangbestätigung",
       "unit": "min",
       "allow_zero": false,
       "optional": false,
@@ -382,7 +382,7 @@
       "expert": false,
       "step": "any",
       "number_step": 0.01,
-      "settings_group": "sensors",
+      "settings_group": "recognition",
       "order": 48,
       "settings_subgroup": "presence_evaluation",
       "configuration_surface": "integration"
@@ -397,14 +397,14 @@
       "default": 15,
       "minimum": null,
       "integer": false,
-      "description": "Innerhalb dieser Pause mit Lichtnachlauf setzt erneutes Einschalten dieselbe Sitzung fort.",
+      "description": "Erneutes Einschalten innerhalb dieser Zeit nach dem Ausschalten setzt dieselbe Sitzung fort, auch während des Lichtnachlaufs. Danach beginnt eine neue Sitzung.",
       "group": "operation",
       "expert": false,
       "step": "any",
       "number_step": 0.01,
-      "settings_group": "operation",
+      "settings_group": "control",
       "order": 5,
-      "settings_subgroup": "session_controls",
+      "settings_subgroup": "session_resume",
       "configuration_surface": "integration"
     },
     {
@@ -417,12 +417,12 @@
       "default": 2,
       "minimum": null,
       "integer": false,
-      "description": "Erforderliche Haltezeit für einen Taster, der nur Drücken und Loslassen meldet. Vom Gerät erkannte Gesten werden direkt übernommen.",
+      "description": "Nur für Taster, die lediglich Drücken und Loslassen melden: So lange muss der Taster für die Haltegeste gedrückt bleiben. Vom Gerät erkannte Gesten werden direkt übernommen.",
       "group": "operation",
       "expert": false,
       "step": "any",
       "number_step": 0.01,
-      "settings_group": "operation",
+      "settings_group": "temperature",
       "order": 4,
       "settings_subgroup": "session_controls",
       "configuration_surface": "integration"
@@ -442,7 +442,7 @@
       "expert": false,
       "step": "any",
       "number_step": 0.01,
-      "settings_group": "operation",
+      "settings_group": "temperature",
       "order": 6,
       "settings_subgroup": "session_controls",
       "configuration_surface": "integration"
@@ -462,7 +462,7 @@
       "expert": false,
       "step": "any",
       "number_step": 0.01,
-      "settings_group": "sensors",
+      "settings_group": "monitoring",
       "order": 22,
       "settings_subgroup": "signals",
       "configuration_surface": "integration"
@@ -477,19 +477,19 @@
       "default": 10,
       "minimum": null,
       "integer": false,
-      "description": "So lange wird auf den Abschluss eines Schaltbefehls oder die Rückmeldung des angeforderten Schützzustands gewartet.",
+      "description": "So lange wird nach einem Schaltbefehl auf dessen Abschluss und die Rückmeldung des angeforderten Schützzustands gewartet. Bleibt sie aus, gilt das als Störung.",
       "group": "monitoring",
       "expert": false,
       "step": "any",
       "number_step": 0.01,
-      "settings_group": "operation",
+      "settings_group": "monitoring",
       "order": 12,
       "settings_subgroup": "heater_feedback",
       "configuration_surface": "integration"
     },
     {
       "key": "fault_confirmation_seconds",
-      "label": "Schutzabschaltung nach anhaltender Störung",
+      "label": "Dauer bis zur Schutzabschaltung",
       "unit": "s",
       "allow_zero": false,
       "optional": false,
@@ -497,12 +497,12 @@
       "default": 60,
       "minimum": null,
       "integer": false,
-      "description": "Ein zentraler technischer Fehler verriegelt nach dieser Dauer die Schutzabschaltung; ungültige Regeltemperatur stoppt das Heizen schon vorher.",
+      "description": "Hält eine technische Störung so lange an, etwa eine fehlende Schaltbestätigung, ein nach dem Ausschalten weiter heizender Ofen oder ein nicht erreichbarer Schaltdienst, schaltet die Schutzabschaltung ab und bleibt verriegelt. Ohne gültige Regeltemperatur stoppt das Heizen schon vorher.",
       "group": "monitoring",
       "expert": false,
       "step": "any",
       "number_step": 0.01,
-      "settings_group": "operation",
+      "settings_group": "monitoring",
       "order": 13,
       "settings_subgroup": "heater_feedback",
       "configuration_surface": "integration"
@@ -517,19 +517,19 @@
       "default": 5,
       "minimum": null,
       "integer": false,
-      "description": "Zeitfenster für die Aufheizprognose und den Hinweis auf fehlenden Temperaturanstieg.",
+      "description": "Zeitraum, über den der Temperaturanstieg für die Aufheizprognose und den Hinweis auf fehlenden Anstieg ausgewertet wird.",
       "group": "display",
       "expert": false,
       "step": "any",
       "number_step": 0.01,
-      "settings_group": "operation",
+      "settings_group": "technical",
       "order": 14,
-      "settings_subgroup": "temperature_control",
+      "settings_subgroup": "warmup",
       "configuration_surface": "integration"
     },
     {
       "key": "presence_fallback_delay_seconds",
-      "label": "Wartezeit bis zur Proxy-Erkennung",
+      "label": "Wartezeit bis zur Ersatzerkennung",
       "unit": "s",
       "allow_zero": false,
       "optional": false,
@@ -537,19 +537,19 @@
       "default": 120,
       "minimum": 1,
       "integer": true,
-      "description": "Nach dieser durchgehenden Nichtverfügbarkeit des konfigurierten Präsenzsensors übernimmt die Proxy-Erkennung aus Temperatur und Feuchte.",
+      "description": "Ist der Präsenzsensor so lange durchgehend nicht verfügbar, übernimmt die Erkennung aus Temperatur und Feuchte.",
       "group": "detection",
       "expert": true,
       "step": 1,
       "number_step": 1,
-      "settings_group": "sensors",
+      "settings_group": "recognition",
       "order": 34,
       "settings_subgroup": "presence_direct",
       "configuration_surface": "integration"
     },
     {
       "key": "presence_recovery_delay_seconds",
-      "label": "Wartezeit bis zum Präsenzsensor",
+      "label": "Wartezeit bis zur Rückkehr zum Präsenzsensor",
       "unit": "s",
       "allow_zero": false,
       "optional": false,
@@ -557,12 +557,12 @@
       "default": 10,
       "minimum": 1,
       "integer": true,
-      "description": "Nach dieser durchgehenden Verfügbarkeit eines gültigen Ein-/Aus-Zustands übernimmt wieder der konfigurierte Präsenzsensor.",
+      "description": "Meldet der Präsenzsensor so lange durchgehend einen gültigen Zustand „anwesend“ oder „abwesend“, übernimmt er wieder.",
       "group": "detection",
       "expert": true,
       "step": 1,
       "number_step": 1,
-      "settings_group": "sensors",
+      "settings_group": "recognition",
       "order": 35,
       "settings_subgroup": "presence_direct",
       "configuration_surface": "integration"
@@ -577,7 +577,7 @@
       "default": 255,
       "minimum": 1,
       "integer": true,
-      "description": "Berücksichtigt die Helligkeitsstufen des Geräts beim Abgleich eines Lichtbefehls mit seiner Rückmeldung.",
+      "description": "Höchster Helligkeitswert, den das Lichtgerät meldet und annimmt, zum Beispiel 255. Lichtbefehle und Rückmeldungen werden damit abgeglichen.",
       "group": "light",
       "expert": false,
       "step": 1,
@@ -757,12 +757,12 @@
       "default": 70,
       "minimum": null,
       "integer": false,
-      "description": "Solltemperatur der ersten Schnellauswahltaste.",
+      "description": "Solltemperatur der ersten Temperaturtaste.",
       "group": "display",
       "expert": false,
       "step": 1,
       "number_step": 1,
-      "settings_group": "appearance",
+      "settings_group": "programs",
       "order": 63,
       "settings_subgroup": "temperature_choices",
       "minimum_parameter": "sauna_min_temperature_c",
@@ -778,12 +778,12 @@
       "default": 5,
       "minimum": null,
       "integer": false,
-      "description": "Temperaturunterschied zwischen benachbarten Schnellauswahltasten.",
+      "description": "Temperaturunterschied zwischen benachbarten Temperaturtasten.",
       "group": "display",
       "expert": false,
       "step": "any",
       "number_step": 0.01,
-      "settings_group": "appearance",
+      "settings_group": "programs",
       "order": 64,
       "settings_subgroup": "temperature_choices",
       "configuration_surface": "panel"
@@ -798,12 +798,12 @@
       "default": 6,
       "minimum": 1,
       "integer": true,
-      "description": "Anzahl der angebotenen Temperaturen in der Schnellauswahl.",
+      "description": "Anzahl der Temperaturtasten in der Schnellwahl.",
       "group": "display",
       "expert": false,
       "step": 1,
       "number_step": 1,
-      "settings_group": "appearance",
+      "settings_group": "programs",
       "order": 65,
       "settings_subgroup": "temperature_choices",
       "configuration_surface": "panel"
@@ -823,7 +823,7 @@
       "expert": true,
       "step": "any",
       "number_step": 0.01,
-      "settings_group": "runtime",
+      "settings_group": "technical",
       "settings_subgroup": "scheduler",
       "order": 100,
       "configuration_surface": "catalog"
@@ -838,12 +838,12 @@
       "default": 900,
       "minimum": 0,
       "integer": false,
-      "description": "Zeitlicher Kontext der Sitzungsansicht. Die gespeicherte Vorgabe einer Sitzung bestimmt ihren Archivbereich.",
+      "description": "Zeitraum vor Beginn und nach Ende einer Sitzung, der mit ihr gespeichert und angezeigt wird. Eine archivierte Sitzung behält den bei ihr gespeicherten Wert.",
       "group": "runtime",
       "expert": true,
       "step": "any",
       "number_step": 0.01,
-      "settings_group": "runtime",
+      "settings_group": "technical",
       "settings_subgroup": "archive",
       "order": 101,
       "configuration_surface": "integration"
@@ -863,7 +863,7 @@
       "expert": true,
       "step": 1,
       "number_step": 1,
-      "settings_group": "runtime",
+      "settings_group": "technical",
       "settings_subgroup": "archive",
       "order": 102,
       "configuration_surface": "catalog"
@@ -883,7 +883,7 @@
       "expert": true,
       "step": 1,
       "number_step": 1,
-      "settings_group": "runtime",
+      "settings_group": "technical",
       "settings_subgroup": "archive",
       "order": 103,
       "configuration_surface": "catalog"
@@ -903,7 +903,7 @@
       "expert": true,
       "step": 1,
       "number_step": 1,
-      "settings_group": "runtime",
+      "settings_group": "technical",
       "settings_subgroup": "archive",
       "order": 104,
       "configuration_surface": "catalog"
@@ -923,7 +923,7 @@
       "expert": true,
       "step": 1,
       "number_step": 1,
-      "settings_group": "runtime",
+      "settings_group": "technical",
       "settings_subgroup": "archive",
       "order": 105,
       "configuration_surface": "catalog"
@@ -983,8 +983,8 @@
       "expert": true,
       "step": "any",
       "number_step": 0.01,
-      "settings_group": "light",
-      "settings_subgroup": "light_transitions",
+      "settings_group": "technical",
+      "settings_subgroup": "fixed_values",
       "order": 108,
       "configuration_surface": "catalog"
     },
@@ -1003,8 +1003,8 @@
       "expert": true,
       "step": 1,
       "number_step": 1,
-      "settings_group": "operation",
-      "settings_subgroup": "temperature_control",
+      "settings_group": "technical",
+      "settings_subgroup": "warmup",
       "order": 109,
       "configuration_surface": "catalog"
     },
@@ -1023,8 +1023,8 @@
       "expert": true,
       "step": "any",
       "number_step": 0.01,
-      "settings_group": "operation",
-      "settings_subgroup": "temperature_control",
+      "settings_group": "technical",
+      "settings_subgroup": "warmup",
       "order": 110,
       "configuration_surface": "catalog"
     },
@@ -1038,13 +1038,13 @@
       "default": 2,
       "minimum": 0,
       "integer": false,
-      "description": "Der gefittete Anstieg muss stärker sein als dieser Faktor der mittleren quadratischen Abweichung.",
+      "description": "Der ermittelte Anstieg muss mindestens um diesen Faktor größer sein als die mittlere quadratische Abweichung der Messwerte.",
       "group": "operation",
       "expert": true,
       "step": "any",
       "number_step": 0.01,
-      "settings_group": "operation",
-      "settings_subgroup": "temperature_control",
+      "settings_group": "technical",
+      "settings_subgroup": "warmup",
       "order": 111,
       "configuration_surface": "catalog"
     },
@@ -1063,8 +1063,8 @@
       "expert": true,
       "step": "any",
       "number_step": 0.01,
-      "settings_group": "operation",
-      "settings_subgroup": "temperature_control",
+      "settings_group": "technical",
+      "settings_subgroup": "warmup",
       "order": 112,
       "configuration_surface": "catalog"
     },
@@ -1083,7 +1083,7 @@
       "expert": true,
       "step": "any",
       "number_step": 0.01,
-      "settings_group": "runtime",
+      "settings_group": "technical",
       "settings_subgroup": "numerics",
       "order": 113,
       "configuration_surface": "catalog"
@@ -1103,7 +1103,7 @@
       "expert": true,
       "step": "any",
       "number_step": 0.01,
-      "settings_group": "runtime",
+      "settings_group": "technical",
       "settings_subgroup": "numerics",
       "order": 115,
       "configuration_surface": "catalog"
@@ -1123,8 +1123,8 @@
       "expert": true,
       "step": "any",
       "number_step": 0.01,
-      "settings_group": "operation",
-      "settings_subgroup": "temperature_control",
+      "settings_group": "technical",
+      "settings_subgroup": "warmup",
       "order": 182,
       "configuration_surface": "catalog"
     },
@@ -1143,8 +1143,8 @@
       "expert": true,
       "step": "any",
       "number_step": 0.01,
-      "settings_group": "operation",
-      "settings_subgroup": "temperature_control",
+      "settings_group": "technical",
+      "settings_subgroup": "warmup",
       "order": 183,
       "configuration_surface": "catalog"
     },
@@ -1163,8 +1163,8 @@
       "expert": true,
       "step": "any",
       "number_step": 0.01,
-      "settings_group": "operation",
-      "settings_subgroup": "temperature_control",
+      "settings_group": "technical",
+      "settings_subgroup": "warmup",
       "order": 184,
       "configuration_surface": "catalog"
     },
@@ -1183,8 +1183,8 @@
       "expert": true,
       "step": "any",
       "number_step": 0.01,
-      "settings_group": "operation",
-      "settings_subgroup": "temperature_control",
+      "settings_group": "technical",
+      "settings_subgroup": "warmup",
       "order": 185,
       "configuration_surface": "catalog"
     },
@@ -1203,8 +1203,8 @@
       "expert": true,
       "step": 1,
       "number_step": 1,
-      "settings_group": "operation",
-      "settings_subgroup": "temperature_control",
+      "settings_group": "technical",
+      "settings_subgroup": "fixed_values",
       "order": 186,
       "configuration_surface": "catalog"
     }
@@ -1650,9 +1650,9 @@
         "configuration_surface": "catalog"
       },
       "detail_records_per_page": {
-        "label": "Rohdaten je Seite",
-        "description": "Rohdaten je Seite. Gilt für die Darstellung dieser Sauna-Instanz.",
-        "group": "Verlauf",
+        "label": "Einzelbelege je Seite",
+        "description": "Zeilen je Seite der Einzelbelege unter Details · Steuerung.",
+        "group": "Seitengrößen in den Details",
         "default": 40,
         "minimum": 1,
         "maximum": 500,
@@ -1662,9 +1662,9 @@
         "configuration_surface": "panel"
       },
       "detail_events_per_page": {
-        "label": "Aktivitäten je Seite",
-        "description": "Aktivitäten je Seite. Gilt für die Darstellung dieser Sauna-Instanz.",
-        "group": "Verlauf",
+        "label": "Protokolleinträge je Seite",
+        "description": "Einträge je Seite im Protokoll unter Details · Steuerung.",
+        "group": "Seitengrößen in den Details",
         "default": 60,
         "minimum": 1,
         "maximum": 500,
@@ -1747,8 +1747,8 @@
       },
       "history_wheel_zoom_coefficient": {
         "label": "Empfindlichkeit des Mausrad-Zooms",
-        "description": "Empfindlichkeit des Mausrad-Zooms. Gilt für die Darstellung dieser Sauna-Instanz.",
-        "group": "Bedienverhalten",
+        "description": "Vergrößerung je Mausradschritt im Verlauf; größere Werte zoomen schneller.",
+        "group": "Zoom und Verschieben im Verlauf",
         "default": 0.002,
         "minimum": 0.0001,
         "maximum": 0.02,
@@ -1759,8 +1759,8 @@
       },
       "history_max_zoom": {
         "label": "Maximale Vergrößerung",
-        "description": "Maximale Vergrößerung. Gilt für die Darstellung dieser Sauna-Instanz.",
-        "group": "Verlauf",
+        "description": "Größte Vergrößerung des Verlaufs gegenüber der ganzen Sitzung.",
+        "group": "Zoom und Verschieben im Verlauf",
         "default": 256,
         "minimum": 2,
         "maximum": 4096,
@@ -1771,8 +1771,8 @@
       },
       "history_keyboard_pan_fraction": {
         "label": "Verschiebung mit Pfeiltasten",
-        "description": "Verschiebung mit Pfeiltasten. Gilt für die Darstellung dieser Sauna-Instanz.",
-        "group": "Bedienverhalten",
+        "description": "Anteil des sichtbaren Ausschnitts, um den die Pfeiltasten den Verlauf verschieben.",
+        "group": "Zoom und Verschieben im Verlauf",
         "default": 0.1,
         "minimum": 0.01,
         "maximum": 1,
@@ -1795,8 +1795,8 @@
       },
       "history_zoom_factor": {
         "label": "Vergrößerung je Tastenschritt",
-        "description": "Vergrößerung je Tastenschritt. Gilt für die Darstellung dieser Sauna-Instanz.",
-        "group": "Bedienverhalten",
+        "description": "Vergrößerung je Tastenschritt mit Plus und Minus im Verlauf.",
+        "group": "Zoom und Verschieben im Verlauf",
         "default": 2,
         "minimum": 1.1,
         "maximum": 10,
@@ -1903,8 +1903,8 @@
       },
       "value_precision": {
         "label": "Messwerte und Temperatur",
-        "description": "Messwerte und Temperatur. Gilt für die Darstellung dieser Sauna-Instanz.",
-        "group": "Genauigkeit",
+        "description": "Nachkommastellen für Messwerte und Temperaturen.",
+        "group": "Nachkommastellen",
         "default": 1,
         "minimum": 0,
         "maximum": 8,
@@ -1915,8 +1915,8 @@
       },
       "detail_value_precision": {
         "label": "Werte in der Detailansicht",
-        "description": "Werte in der Detailansicht. Gilt für die Darstellung dieser Sauna-Instanz.",
-        "group": "Genauigkeit",
+        "description": "Nachkommastellen für Werte in den Details.",
+        "group": "Nachkommastellen",
         "default": 2,
         "minimum": 0,
         "maximum": 8,
@@ -1927,8 +1927,8 @@
       },
       "percentage_precision": {
         "label": "Licht und Prozentwerte",
-        "description": "Licht und Prozentwerte. Gilt für die Darstellung dieser Sauna-Instanz.",
-        "group": "Genauigkeit",
+        "description": "Nachkommastellen für Licht und andere Prozentwerte.",
+        "group": "Nachkommastellen",
         "default": 0,
         "minimum": 0,
         "maximum": 4,
@@ -1939,8 +1939,8 @@
       },
       "energy_precision": {
         "label": "Energieverbrauch",
-        "description": "Energieverbrauch. Gilt für die Darstellung dieser Sauna-Instanz.",
-        "group": "Genauigkeit",
+        "description": "Nachkommastellen, auf die der Energieverbrauch der Sauna-Entität in Home Assistant gerundet wird.",
+        "group": "Nachkommastellen",
         "default": 4,
         "minimum": 0,
         "maximum": 8,
@@ -1951,8 +1951,8 @@
       },
       "absolute_humidity_precision": {
         "label": "Absolute Luftfeuchte",
-        "description": "Absolute Luftfeuchte. Gilt für die Darstellung dieser Sauna-Instanz.",
-        "group": "Genauigkeit",
+        "description": "Nachkommastellen der absoluten Luftfeuchte im Panel und in den Sauna-Entitäten.",
+        "group": "Nachkommastellen",
         "default": 2,
         "minimum": 0,
         "maximum": 8,
@@ -5535,13 +5535,8 @@
         "surface": "panel"
       },
       {
-        "id": "operation",
-        "label": "Betrieb und Ofen",
-        "surface": "integration"
-      },
-      {
-        "id": "sensors",
-        "label": "Sensoren und Erkennung",
+        "id": "temperature",
+        "label": "Temperatur und Bedienung",
         "surface": "integration"
       },
       {
@@ -5550,18 +5545,33 @@
         "surface": "integration"
       },
       {
-        "id": "appearance",
-        "label": "Darstellung",
-        "surface": "panel"
+        "id": "installation",
+        "label": "Anlage und Energie",
+        "surface": "integration"
       },
       {
-        "id": "maintenance",
-        "label": "Daten und Wartung",
-        "surface": "panel"
+        "id": "control",
+        "label": "Steuerung",
+        "surface": "integration"
+      },
+      {
+        "id": "monitoring",
+        "label": "Überwachung",
+        "surface": "integration"
+      },
+      {
+        "id": "recognition",
+        "label": "Präsenz und Erkennung",
+        "surface": "integration"
       },
       {
         "id": "notifications",
         "label": "Benachrichtigungen",
+        "surface": "panel"
+      },
+      {
+        "id": "appearance",
+        "label": "Darstellung",
         "surface": "panel"
       },
       {
@@ -5570,9 +5580,16 @@
         "surface": "panel"
       },
       {
-        "id": "runtime",
-        "label": "Daten und Laufzeit",
-        "surface": "integration"
+        "id": "maintenance",
+        "label": "Daten und Wartung",
+        "surface": "panel"
+      },
+      {
+        "id": "technical",
+        "label": "Technik",
+        "surface": "integration",
+        "collapsed": true,
+        "description": "Selten benötigte Werte für Aufheizschätzung, Archiv und Laufzeit. Feste Werte sind nicht einstellbar und nur zur Information aufgeführt."
       }
     ],
     "temperature_dial_step_c": {
@@ -5583,24 +5600,51 @@
     },
     "settings_subgroups": [
       {
+        "id": "temperature_choices",
+        "label": "Temperaturtasten",
+        "description": "Konstante Temperaturen der Schnellwahl auf der Steuerungsseite, neben den Programmen."
+      },
+      {
+        "id": "temperature_defaults",
+        "label": "Temperaturvorgaben"
+      },
+      {
         "id": "session_controls",
-        "label": "Sitzung und Taster"
+        "label": "Taster und Handbedienung"
+      },
+      {
+        "id": "light_curve",
+        "label": "Helligkeit nach Temperatur und Tageszeit",
+        "description": "Vom Kaltpunkt bis zur Solltemperatur verändert sich das Licht linear; im Saunagang gilt direkt das Tag- oder Nachtziel."
+      },
+      {
+        "id": "light_phases",
+        "label": "Einschalten, Nachlauf und Ofenkühlung"
+      },
+      {
+        "id": "light_transitions",
+        "label": "Lichtgerät und Überblendung"
+      },
+      {
+        "id": "heater_accounting",
+        "label": "Ofen, Strompreis und Kabine"
+      },
+      {
+        "id": "heating_count",
+        "label": "Gezählte Heizzeit",
+        "description": "Die gezählte Heizzeit beruht auf der Rückmeldung des Ofens, nicht auf dem Schaltbefehl."
       },
       {
         "id": "temperature_control",
-        "label": "Temperaturregelung und Aufheizen"
-      },
-      {
-        "id": "heater_feedback",
-        "label": "Schaltbestätigung und Schutz"
+        "label": "Heizregelung"
       },
       {
         "id": "oven_cooling",
         "label": "Ofenkühlung"
       },
       {
-        "id": "heater_accounting",
-        "label": "Heizzeit und Verbrauch"
+        "id": "session_resume",
+        "label": "Sitzung fortsetzen"
       },
       {
         "id": "signals",
@@ -5608,20 +5652,44 @@
         "description": "Gültigkeit von Temperatur und Feuchte für Regelung und Erkennung."
       },
       {
+        "id": "heater_feedback",
+        "label": "Schaltbestätigung und Schutzabschaltung"
+      },
+      {
         "id": "presence_direct",
         "label": "Präsenzsensor",
         "presence_sources": [
           "ha_presence"
         ],
-        "description": "Bei anhaltendem Ausfall übernimmt die Proxy-Erkennung. Gültige Zustände „anwesend“ und „abwesend“ haben kein Höchstalter."
+        "description": "Gilt nur mit Präsenzsensor. Bei anhaltendem Ausfall übernimmt die Erkennung aus Temperatur und Feuchte. Gültige Zustände „anwesend“ und „abwesend“ haben kein Höchstalter."
       },
       {
         "id": "presence_evaluation",
-        "label": "Personenerkennung und Gangbestätigung",
+        "label": "Gangbestätigung",
         "presence_sources": [
           "proxy"
         ],
-        "description": "Der erste Aufguss nach einem vollständigen Eintritt eröffnet den Gang, wenn er innerhalb der Bestätigungsfrist erkannt wird."
+        "description": "Gilt für die Erkennung aus Temperatur und Feuchte. Der erste Aufguss nach einem vollständigen Eintritt eröffnet den Gang, wenn er innerhalb der Bestätigungsfrist erkannt wird."
+      },
+      {
+        "id": "warmup",
+        "label": "Aufheizschätzung"
+      },
+      {
+        "id": "archive",
+        "label": "Archiv und Übertragung"
+      },
+      {
+        "id": "scheduler",
+        "label": "Laufzeit"
+      },
+      {
+        "id": "numerics",
+        "label": "Toleranzen"
+      },
+      {
+        "id": "fixed_values",
+        "label": "Weitere feste Werte"
       },
       {
         "id": "ventilation",
@@ -5632,44 +5700,11 @@
         }
       },
       {
-        "id": "light_curve",
-        "label": "Licht nach Temperatur und Tageslicht",
-        "description": "Vom Kaltpunkt bis zur Solltemperatur verändert sich das Licht linear; im Saunagang gilt direkt das Tag- oder Nachtziel."
-      },
-      {
-        "id": "light_phases",
-        "label": "Ofenkühlung und Lichtnachlauf"
-      },
-      {
-        "id": "light_transitions",
-        "label": "Lichtgerät und Lichtwechsel"
-      },
-      {
-        "id": "temperature_choices",
-        "label": "Temperaturtasten"
-      },
-      {
-        "id": "brightness",
-        "label": "Helligkeiten"
-      },
-      {
         "id": "presence",
         "label": "Personenerkennung",
         "presence_sources": [
           "proxy"
         ]
-      },
-      {
-        "id": "scheduler",
-        "label": "Laufzeit"
-      },
-      {
-        "id": "archive",
-        "label": "Archiv und Übertragung"
-      },
-      {
-        "id": "numerics",
-        "label": "Numerische Genauigkeit"
       }
     ],
     "control_button_height_px": {
@@ -5715,7 +5750,7 @@
       "expert": false,
       "step": "any",
       "number_step": 0.01,
-      "settings_group": "operation",
+      "settings_group": "control",
       "order": 19,
       "settings_subgroup": null,
       "configuration_surface": "catalog"
@@ -5855,7 +5890,7 @@
       "expert": true,
       "step": "any",
       "number_step": 0.01,
-      "settings_group": "sensors",
+      "settings_group": "recognition",
       "order": 54,
       "settings_subgroup": null,
       "configuration_surface": "catalog"
@@ -5875,7 +5910,7 @@
       "expert": true,
       "step": "any",
       "number_step": 0.01,
-      "settings_group": "sensors",
+      "settings_group": "recognition",
       "order": 66,
       "settings_subgroup": "presence",
       "configuration_surface": "catalog"
@@ -5895,7 +5930,7 @@
       "expert": true,
       "step": "any",
       "number_step": 0.01,
-      "settings_group": "sensors",
+      "settings_group": "recognition",
       "order": 67,
       "settings_subgroup": "presence",
       "configuration_surface": "catalog"
@@ -5915,7 +5950,7 @@
       "expert": true,
       "step": "any",
       "number_step": 0.01,
-      "settings_group": "sensors",
+      "settings_group": "recognition",
       "order": 72,
       "settings_subgroup": "presence",
       "configuration_surface": "catalog"
@@ -5935,7 +5970,7 @@
       "expert": true,
       "step": "any",
       "number_step": 0.01,
-      "settings_group": "sensors",
+      "settings_group": "recognition",
       "order": 73,
       "settings_subgroup": "presence",
       "configuration_surface": "catalog"
@@ -5955,7 +5990,7 @@
       "expert": true,
       "step": "any",
       "number_step": 0.01,
-      "settings_group": "sensors",
+      "settings_group": "recognition",
       "order": 77,
       "settings_subgroup": null,
       "configuration_surface": "catalog"
@@ -5975,7 +6010,7 @@
       "expert": true,
       "step": "any",
       "number_step": 0.01,
-      "settings_group": "sensors",
+      "settings_group": "recognition",
       "order": 28,
       "settings_subgroup": null,
       "configuration_surface": "catalog"
@@ -5995,7 +6030,7 @@
       "expert": true,
       "step": "any",
       "number_step": 0.01,
-      "settings_group": "sensors",
+      "settings_group": "recognition",
       "order": 27,
       "settings_subgroup": null,
       "configuration_surface": "catalog"
@@ -6015,7 +6050,7 @@
       "expert": true,
       "step": "any",
       "number_step": 0.01,
-      "settings_group": "sensors",
+      "settings_group": "recognition",
       "order": 29,
       "settings_subgroup": null,
       "configuration_surface": "catalog"
@@ -6035,7 +6070,7 @@
       "expert": true,
       "step": "any",
       "number_step": 0.01,
-      "settings_group": "sensors",
+      "settings_group": "recognition",
       "order": 30,
       "settings_subgroup": null,
       "configuration_surface": "catalog"
@@ -6055,7 +6090,7 @@
       "expert": true,
       "step": 1,
       "number_step": 1,
-      "settings_group": "sensors",
+      "settings_group": "recognition",
       "order": 31,
       "settings_subgroup": null,
       "configuration_surface": "catalog"
@@ -6075,7 +6110,7 @@
       "expert": true,
       "step": "any",
       "number_step": 0.01,
-      "settings_group": "sensors",
+      "settings_group": "recognition",
       "order": 32,
       "settings_subgroup": null,
       "configuration_surface": "catalog"
@@ -6095,7 +6130,7 @@
       "expert": true,
       "step": 1,
       "number_step": 1,
-      "settings_group": "sensors",
+      "settings_group": "recognition",
       "order": 33,
       "settings_subgroup": null,
       "configuration_surface": "catalog"
@@ -6115,7 +6150,7 @@
       "expert": true,
       "step": "any",
       "number_step": 0.01,
-      "settings_group": "sensors",
+      "settings_group": "recognition",
       "order": 34,
       "settings_subgroup": null,
       "configuration_surface": "catalog"
@@ -6135,7 +6170,7 @@
       "expert": true,
       "step": 1,
       "number_step": 1,
-      "settings_group": "sensors",
+      "settings_group": "recognition",
       "order": 35,
       "settings_subgroup": null,
       "configuration_surface": "catalog"
@@ -6155,7 +6190,7 @@
       "expert": true,
       "step": "any",
       "number_step": 0.01,
-      "settings_group": "sensors",
+      "settings_group": "recognition",
       "order": 46,
       "settings_subgroup": null,
       "configuration_surface": "catalog"
@@ -6175,7 +6210,7 @@
       "expert": true,
       "step": 1,
       "number_step": 1,
-      "settings_group": "sensors",
+      "settings_group": "recognition",
       "order": 47,
       "settings_subgroup": null,
       "configuration_surface": "catalog"
@@ -6195,7 +6230,7 @@
       "expert": true,
       "step": 1,
       "number_step": 1,
-      "settings_group": "sensors",
+      "settings_group": "recognition",
       "order": 49,
       "settings_subgroup": "ventilation",
       "multiple_of_parameters": [
@@ -6218,7 +6253,7 @@
       "expert": true,
       "step": "any",
       "number_step": 0.01,
-      "settings_group": "sensors",
+      "settings_group": "recognition",
       "order": 50,
       "settings_subgroup": "ventilation",
       "configuration_surface": "catalog"
@@ -6238,7 +6273,7 @@
       "expert": true,
       "step": "any",
       "number_step": 0.01,
-      "settings_group": "sensors",
+      "settings_group": "recognition",
       "order": 51,
       "settings_subgroup": "ventilation",
       "configuration_surface": "catalog"
@@ -6258,7 +6293,7 @@
       "expert": true,
       "step": "any",
       "number_step": 0.01,
-      "settings_group": "sensors",
+      "settings_group": "recognition",
       "order": 52,
       "settings_subgroup": "ventilation",
       "configuration_surface": "catalog"
@@ -6278,7 +6313,7 @@
       "expert": true,
       "step": 1,
       "number_step": 1,
-      "settings_group": "sensors",
+      "settings_group": "recognition",
       "order": 53,
       "settings_subgroup": "ventilation",
       "configuration_surface": "catalog"
@@ -6298,7 +6333,7 @@
       "expert": true,
       "step": 1,
       "number_step": 1,
-      "settings_group": "sensors",
+      "settings_group": "recognition",
       "order": 23,
       "settings_subgroup": "signals",
       "configuration_surface": "catalog"
@@ -6318,7 +6353,7 @@
       "expert": true,
       "step": 1,
       "number_step": 1,
-      "settings_group": "sensors",
+      "settings_group": "recognition",
       "order": 24,
       "settings_subgroup": "signals",
       "configuration_surface": "catalog"
@@ -6338,7 +6373,7 @@
       "expert": true,
       "step": 1,
       "number_step": 1,
-      "settings_group": "sensors",
+      "settings_group": "recognition",
       "order": 25,
       "settings_subgroup": null,
       "configuration_surface": "catalog"
@@ -6358,7 +6393,7 @@
       "expert": true,
       "step": 1,
       "number_step": 1,
-      "settings_group": "sensors",
+      "settings_group": "recognition",
       "order": 26,
       "settings_subgroup": null,
       "configuration_surface": "catalog"
@@ -6378,7 +6413,7 @@
       "expert": true,
       "step": 1,
       "number_step": 1,
-      "settings_group": "sensors",
+      "settings_group": "recognition",
       "order": 36,
       "settings_subgroup": "presence_evaluation",
       "configuration_surface": "catalog"
@@ -6398,7 +6433,7 @@
       "expert": true,
       "step": 1,
       "number_step": 1,
-      "settings_group": "sensors",
+      "settings_group": "recognition",
       "order": 37,
       "settings_subgroup": "presence_evaluation",
       "configuration_surface": "catalog"
@@ -6418,7 +6453,7 @@
       "expert": true,
       "step": "any",
       "number_step": 0.01,
-      "settings_group": "sensors",
+      "settings_group": "recognition",
       "order": 39,
       "settings_subgroup": null,
       "configuration_surface": "catalog"
@@ -6438,7 +6473,7 @@
       "expert": true,
       "step": "any",
       "number_step": 0.01,
-      "settings_group": "sensors",
+      "settings_group": "recognition",
       "order": 40,
       "settings_subgroup": null,
       "configuration_surface": "catalog"
@@ -6458,7 +6493,7 @@
       "expert": true,
       "step": 1,
       "number_step": 1,
-      "settings_group": "sensors",
+      "settings_group": "recognition",
       "order": 41,
       "settings_subgroup": null,
       "configuration_surface": "catalog"
@@ -6478,7 +6513,7 @@
       "expert": true,
       "step": 1,
       "number_step": 1,
-      "settings_group": "sensors",
+      "settings_group": "recognition",
       "order": 38,
       "settings_subgroup": "presence_evaluation",
       "configuration_surface": "catalog"
@@ -6498,7 +6533,7 @@
       "expert": true,
       "step": "any",
       "number_step": 0.01,
-      "settings_group": "sensors",
+      "settings_group": "recognition",
       "order": 42,
       "settings_subgroup": null,
       "configuration_surface": "catalog"
@@ -6518,7 +6553,7 @@
       "expert": true,
       "step": "any",
       "number_step": 0.01,
-      "settings_group": "sensors",
+      "settings_group": "recognition",
       "order": 43,
       "settings_subgroup": null,
       "configuration_surface": "catalog"
@@ -6538,7 +6573,7 @@
       "expert": true,
       "step": 1,
       "number_step": 1,
-      "settings_group": "sensors",
+      "settings_group": "recognition",
       "order": 44,
       "settings_subgroup": null,
       "configuration_surface": "catalog"
@@ -6558,7 +6593,7 @@
       "expert": true,
       "step": 1,
       "number_step": 1,
-      "settings_group": "sensors",
+      "settings_group": "recognition",
       "order": 45,
       "settings_subgroup": null,
       "configuration_surface": "catalog"
@@ -6578,7 +6613,7 @@
       "expert": true,
       "step": "any",
       "number_step": 0.01,
-      "settings_group": "runtime",
+      "settings_group": "technical",
       "settings_subgroup": "numerics",
       "order": 114,
       "configuration_surface": "catalog"
@@ -6598,7 +6633,7 @@
       "expert": true,
       "step": 1,
       "number_step": 1,
-      "settings_group": "sensors",
+      "settings_group": "recognition",
       "settings_subgroup": "signals",
       "order": 187,
       "configuration_surface": "catalog"
@@ -6618,7 +6653,7 @@
       "expert": true,
       "step": 1,
       "number_step": 1,
-      "settings_group": "sensors",
+      "settings_group": "recognition",
       "settings_subgroup": "signals",
       "order": 188,
       "configuration_surface": "catalog"
@@ -6638,7 +6673,7 @@
       "expert": true,
       "step": 1,
       "number_step": 1,
-      "settings_group": "sensors",
+      "settings_group": "recognition",
       "settings_subgroup": "signals",
       "order": 189,
       "configuration_surface": "catalog"
@@ -6658,7 +6693,7 @@
       "expert": true,
       "step": 1,
       "number_step": 1,
-      "settings_group": "sensors",
+      "settings_group": "recognition",
       "settings_subgroup": "signals",
       "order": 190,
       "configuration_surface": "catalog"
@@ -6678,7 +6713,7 @@
       "expert": true,
       "step": 1,
       "number_step": 1,
-      "settings_group": "sensors",
+      "settings_group": "recognition",
       "settings_subgroup": "signals",
       "order": 191,
       "configuration_surface": "catalog"
@@ -6698,7 +6733,7 @@
       "expert": true,
       "step": "any",
       "number_step": 0.001,
-      "settings_group": "sensors",
+      "settings_group": "recognition",
       "settings_subgroup": "signals",
       "order": 192,
       "configuration_surface": "catalog"
@@ -6718,7 +6753,7 @@
       "expert": true,
       "step": 1,
       "number_step": 1,
-      "settings_group": "sensors",
+      "settings_group": "recognition",
       "settings_subgroup": "signals",
       "order": 193,
       "configuration_surface": "catalog"
@@ -6738,7 +6773,7 @@
       "expert": true,
       "step": "any",
       "number_step": 0.01,
-      "settings_group": "sensors",
+      "settings_group": "recognition",
       "settings_subgroup": "signals",
       "order": 194,
       "configuration_surface": "catalog"
@@ -6758,7 +6793,7 @@
       "expert": true,
       "step": "any",
       "number_step": 0.01,
-      "settings_group": "sensors",
+      "settings_group": "recognition",
       "settings_subgroup": "signals",
       "order": 195,
       "configuration_surface": "catalog"
@@ -6778,7 +6813,7 @@
       "expert": true,
       "step": "any",
       "number_step": 0.01,
-      "settings_group": "sensors",
+      "settings_group": "recognition",
       "settings_subgroup": "signals",
       "order": 196,
       "configuration_surface": "catalog"
@@ -6798,7 +6833,7 @@
       "expert": true,
       "step": "any",
       "number_step": 0.01,
-      "settings_group": "sensors",
+      "settings_group": "recognition",
       "settings_subgroup": "signals",
       "order": 197,
       "configuration_surface": "catalog"
@@ -6818,7 +6853,7 @@
       "expert": true,
       "step": "any",
       "number_step": 0.01,
-      "settings_group": "sensors",
+      "settings_group": "recognition",
       "settings_subgroup": "signals",
       "order": 198,
       "configuration_surface": "catalog"
@@ -6838,7 +6873,7 @@
       "expert": true,
       "step": "any",
       "number_step": 0.01,
-      "settings_group": "sensors",
+      "settings_group": "recognition",
       "settings_subgroup": "signals",
       "order": 199,
       "configuration_surface": "catalog"
@@ -6858,7 +6893,7 @@
       "expert": true,
       "step": "any",
       "number_step": 1e-06,
-      "settings_group": "sensors",
+      "settings_group": "recognition",
       "settings_subgroup": "signals",
       "order": 200,
       "configuration_surface": "catalog"
@@ -6878,7 +6913,7 @@
       "expert": true,
       "step": "any",
       "number_step": 1e-06,
-      "settings_group": "sensors",
+      "settings_group": "recognition",
       "settings_subgroup": "signals",
       "order": 201,
       "configuration_surface": "catalog"
@@ -6898,7 +6933,7 @@
       "expert": true,
       "step": "any",
       "number_step": 1e-06,
-      "settings_group": "sensors",
+      "settings_group": "recognition",
       "settings_subgroup": "signals",
       "order": 202,
       "configuration_surface": "catalog"
@@ -6918,7 +6953,7 @@
       "expert": true,
       "step": "any",
       "number_step": 1e-06,
-      "settings_group": "sensors",
+      "settings_group": "recognition",
       "settings_subgroup": "signals",
       "order": 203,
       "configuration_surface": "catalog"
@@ -6938,7 +6973,7 @@
       "expert": true,
       "step": "any",
       "number_step": 1e-06,
-      "settings_group": "sensors",
+      "settings_group": "recognition",
       "settings_subgroup": "signals",
       "order": 204,
       "configuration_surface": "catalog"
@@ -6958,7 +6993,7 @@
       "expert": true,
       "step": "any",
       "number_step": 1e-06,
-      "settings_group": "sensors",
+      "settings_group": "recognition",
       "settings_subgroup": "signals",
       "order": 205,
       "configuration_surface": "catalog"
@@ -6978,7 +7013,7 @@
       "expert": true,
       "step": "any",
       "number_step": 1e-06,
-      "settings_group": "sensors",
+      "settings_group": "recognition",
       "settings_subgroup": "signals",
       "order": 206,
       "configuration_surface": "catalog"
@@ -6998,7 +7033,7 @@
       "expert": true,
       "step": "any",
       "number_step": 1e-06,
-      "settings_group": "sensors",
+      "settings_group": "recognition",
       "settings_subgroup": "signals",
       "order": 207,
       "configuration_surface": "catalog"
@@ -7018,7 +7053,7 @@
       "expert": true,
       "step": "any",
       "number_step": 0.01,
-      "settings_group": "sensors",
+      "settings_group": "recognition",
       "settings_subgroup": "signals",
       "order": 208,
       "configuration_surface": "catalog"
@@ -7038,7 +7073,7 @@
       "expert": true,
       "step": 1,
       "number_step": 1,
-      "settings_group": "sensors",
+      "settings_group": "recognition",
       "settings_subgroup": "signals",
       "order": 209,
       "configuration_surface": "catalog"

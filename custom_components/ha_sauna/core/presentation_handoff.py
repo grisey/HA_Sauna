@@ -251,6 +251,8 @@ class PanelSnapshot(CommonPanelFields):
     archive_error: str | None
     detection_channels: tuple[str, ...]
     detector_trace: FrozenMap | None
+    # E2: Werkseinstellung, Standard und aktiver Wert je dauerhaftem Feld.
+    field_states: FrozenMap
 
     @classmethod
     def from_result(cls, result: Mapping):

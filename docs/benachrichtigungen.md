@@ -98,7 +98,10 @@ und führt die Werte:
 | Übertemperatur | 105 °C | Grenze der Sicherheitsmeldung |
 
 Änderungen wirken sofort, auch während einer Sitzung, und benötigen
-Administratorrechte. Die Testnachricht steht allen Benutzern mit
+Administratorrechte. Weicht ein gespeicherter Wert oder Anlass von der Vorgabe ab,
+steht darunter **Abweichend von der Werkseinstellung**; einen gespeicherten
+Standard gibt es für diese Einstellungen nicht
+([Werkseinstellungen](parameter.md#werkseinstellungen)). Die Testnachricht steht allen Benutzern mit
 Steuerberechtigung offen; angezeigt werden Versand, Übergabe an Home Assistant
 und die Antwort mit Uhrzeit und Benutzer.
 

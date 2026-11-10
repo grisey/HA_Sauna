@@ -691,6 +691,7 @@ class Preview:
                            "live_editable":d.key in LIVE_TEMPERATURE_KEYS,
                            "applicable":configuration_model.parameter_applicable(d)}
                           for d in EDITABLE_DEFINITIONS],
+            "field_states":configuration.field_states(),
             "configuration_locked":session is not None,
             "control_mode_change_allowed":c.control_mode_change_allowed and not self.runtime.reconfiguring,
             "operation_enabled":bool(session and session.operation_enabled),
@@ -918,9 +919,12 @@ class Preview:
         elif path.endswith("/parameters"):
             if not self.admin:
                 raise ValueError("Administratorrechte erforderlich")
+            # Fields owned by the panel settings (E2: Temperaturtasten under
+            # Programme und Start); installation values belong to HA options.
             display_keys = {
                 definition.key for definition in EDITABLE_DEFINITIONS
-                if definition.settings_group == "appearance"
+                if definition.configuration_surface == "panel"
+                and definition.key not in LIVE_TEMPERATURE_KEYS
             }
             if not isinstance(body, dict) or not body or set(body) - display_keys:
                 raise ValueError("Ungültige Darstellungseinstellungen")

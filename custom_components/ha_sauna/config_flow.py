@@ -79,6 +79,30 @@ def field_standard_preview_rows(preview):
     return "\n".join(rows)
 
 
+def field_standard_deviations(configuration, definitions) -> str:
+    """List form fields whose active value differs from its standard or factory value."""
+    states = configuration.field_states()
+
+    def text(value, unit):
+        if value is None:
+            return "leer"
+        number = f"{value:g}" if isinstance(value, float) else str(value)
+        return f"{number.replace('.', ',')} {unit}".strip()
+
+    lines = []
+    for definition in definitions:
+        state = states.get(f"parameters.{definition.key}")
+        if state is None or not state["differs"]:
+            continue
+        reference = "Standard" if state["reference"] == "standard" else "Werkseinstellung"
+        active = configuration.parameters.values[definition.key]
+        lines.append(
+            f"- {definition.label}: {text(active, definition.unit)} "
+            f"({reference} {text(state['reference_value'], definition.unit)})"
+        )
+    return "Abweichend:\n" + "\n".join(lines) if lines else ""
+
+
 def internal_control_source(hass: HomeAssistant, key: str, entity_id: str) -> bool:
     """Logical sauna controls cannot serve as hardware actors or feedback."""
     if key not in {
@@ -741,7 +765,8 @@ class SaunaOptionsFlow(NotificationOptionsMixin, MaintenanceOptionsMixin, Option
         placeholders = {
             "description": group.get("descriptions", {}).get(
                 current.presence_source, group.get("description", "")
-            )
+            ),
+            "standards": field_standard_deviations(current, definitions),
         }
         if user_input is not None and not errors:
             try:

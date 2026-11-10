@@ -57,16 +57,21 @@ Türöffnung mit anschließendem Türschluss. Das Ende belegt in beiden Verfahre
 das bestätigte Lüften einer erneuten Öffnung. Die [Gangerkennung](gangmodell.md) beschreibt die
 Bedingungen beider Verfahren.
 
-## Betrieb, Erkennung und Licht einstellen
+## Temperatur, Licht, Anlage und Steuerung einstellen
 
-Die Integrationskonfiguration gliedert die dauerhaften Einstellungen in
-**Betrieb und Ofen**, **Sensoren und Erkennung** sowie **Licht**. Die jeweiligen
-Untergruppen enthalten Regelung, Erkennung und Lichtautomatik.
-Änderungen erfordern Administratorrechte und eine vollständig beendete Sitzung.
+Die Integrationskonfiguration gliedert die dauerhaften Einstellungen nach
+Funktion in **Temperatur und Bedienung**, **Licht**, **Anlage und Energie**,
+**Steuerung**, **Überwachung**, **Präsenz und Erkennung** und zuletzt
+**Technik**. Jeder Bereich ist in Formulare für zusammengehörige Werte
+unterteilt. Änderungen erfordern Administratorrechte und eine vollständig
+beendete Sitzung.
 
-Programme, Taster- und Startvorgaben sowie Darstellung bleiben unter
-**Einstellungen** im Sauna-Panel. Die aktuelle Temperaturwahl und vorübergehende
-Ofen- oder Lichtwahl werden in der Steuerungsansicht bedient.
+Das Sauna-Panel zeigt unter **Einstellungen** dieselben Bereiche in derselben
+Reihenfolge mit den aktiven Werten; geändert werden sie in der
+Integrationskonfiguration. Programme, Start über Taster oder Betriebsschalter,
+Temperaturtasten, Benachrichtigungen und Darstellung werden im Panel eingestellt. Die aktuelle
+Temperaturwahl und vorübergehende Ofen- oder Lichtwahl werden in der
+Steuerungsansicht bedient.
 
 [Einstellungen und Rücksetzungen](parameter.md) ·
 [Sitzung starten und bedienen](bedienung.md)

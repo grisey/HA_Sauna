@@ -241,12 +241,12 @@ class ParameterConsumptionTests(unittest.TestCase):
                 True,
                 "any",
                 "integration",
-                "operation",
+                "installation",
                 "heater_accounting",
             ),
         )
-        self.assertEqual(Configuration.standard_field_groups()[field], "operation")
-        self.assertIn(field, Configuration.standard_fields(group="operation"))
+        self.assertEqual(Configuration.standard_field_groups()[field], "installation")
+        self.assertIn(field, Configuration.standard_fields(group="installation"))
         self.assertIn(field, Configuration.standard_fields())
         active = definition.number_step * 1.5
         standard = definition.number_step * 2.5

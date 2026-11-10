@@ -498,9 +498,11 @@ class AdapterTests(unittest.IsolatedAsyncioTestCase):
         flow = self.module.SaunaOptionsFlow()
         flow.hass = self.hass
         groups = {
-            "temperature_control": ("operation", {"standard_temperature_c", "warmup_estimation_minutes"}),
-            "signals": ("sensors", {"sensor_timeout_seconds"}),
-            "presence_evaluation": ("sensors", {"confirmation_minutes"}),
+            "temperature_defaults": ("temperature", {"standard_temperature_c", "sauna_min_temperature_c"}),
+            "temperature_control": ("control", {"readiness_offset_c", "minimum_heating_minutes"}),
+            "warmup": ("technical", {"warmup_estimation_minutes"}),
+            "signals": ("monitoring", {"sensor_timeout_seconds"}),
+            "presence_evaluation": ("recognition", {"confirmation_minutes"}),
             "light_transitions": ("light", {"light_brightness_scale", "light_transition_seconds"}),
         }
         with (
@@ -521,6 +523,29 @@ class AdapterTests(unittest.IsolatedAsyncioTestCase):
                     result = await step(values)
                     self.assertEqual((result["type"], result["step_id"]), ("menu", area))
             update.assert_not_called()
+
+    async def test_parameter_forms_name_deviations_from_standard_or_factory(self):
+        # E2: the three value levels are visible in every installation form.
+        flow = self.module.SaunaOptionsFlow()
+        flow.hass = self.hass
+        self.entry.options = {
+            **self.entry.options,
+            "parameters": {
+                **self.entry.options["parameters"],
+                "minimum_heating_minutes": 12,
+                "thermostat_cooldown_minutes": 7,
+            },
+            "field_standards": {"parameters.minimum_heating_minutes": 15},
+        }
+        with patch.object(type(flow), "config_entry", new_callable=PropertyMock, return_value=self.entry):
+            form = await flow.async_step_parameters_temperature_control()
+            unchanged = await flow.async_step_parameters_oven_cooling()
+        self.assertEqual(
+            form["description_placeholders"]["standards"],
+            "Abweichend:\n- Mindestheizzeit: 12 min (Standard 15 min)\n"
+            "- Heizpause nach Abschalten: 7 min (Werkseinstellung 5 min)",
+        )
+        self.assertEqual(unchanged["description_placeholders"]["standards"], "")
 
     async def test_installation_save_preserves_concurrent_panel_options(self):
         from custom_components.ha_sauna.runtime import Configuration
@@ -572,7 +597,7 @@ class AdapterTests(unittest.IsolatedAsyncioTestCase):
                     )
             self.assertEqual(
                 [(area, step_id) for area, step_id, _, _ in occurrences],
-                [("operation", "parameters_heater_accounting")],
+                [("installation", "parameters_heater_accounting")],
             )
             _, _, marker, selector = occurrences[0]
             self.assertIsInstance(marker, self.module.vol.Optional)
@@ -604,7 +629,7 @@ class AdapterTests(unittest.IsolatedAsyncioTestCase):
                     submitted[key] = value
                     result = await step(form["data_schema"](submitted))
                     self.assertEqual(
-                        (result["type"], result["step_id"]), ("menu", "operation"),
+                        (result["type"], result["step_id"]), ("menu", "installation"),
                     )
                     self.assertEqual(self.entry.options["parameters"][key], value)
                     form = await step()
@@ -616,7 +641,7 @@ class AdapterTests(unittest.IsolatedAsyncioTestCase):
                     submitted.pop(key)
                     result = await step(form["data_schema"](submitted))
                     self.assertEqual(
-                        (result["type"], result["step_id"]), ("menu", "operation"),
+                        (result["type"], result["step_id"]), ("menu", "installation"),
                     )
                     self.assertIn(key, self.entry.options["parameters"])
                     self.assertIsNone(self.entry.options["parameters"][key])
@@ -635,7 +660,7 @@ class AdapterTests(unittest.IsolatedAsyncioTestCase):
             with patch.object(self.hass.config_entries, "async_update_entry") as update:
                 result = await step(submitted)
                 self.assertEqual(
-                    (result["type"], result["step_id"]), ("menu", "operation"),
+                    (result["type"], result["step_id"]), ("menu", "installation"),
                 )
                 update.assert_not_called()
             self.assertIs(self.entry.options, before)
@@ -668,11 +693,11 @@ class AdapterTests(unittest.IsolatedAsyncioTestCase):
             patch.object(self.hass.config_entries, "async_update_entry") as update,
         ):
             await flow.async_step_init()
-            await flow.async_step_operation()
+            await flow.async_step_control()
             await flow.async_step_parameters_temperature_control()
             values = {d.key: self.values[d.key] for d in flow._definitions("temperature_control")}
             result = await flow.async_step_parameters_temperature_control(values)
-            self.assertEqual(result["step_id"], "operation")
+            self.assertEqual(result["step_id"], "control")
             await flow.async_step_init()
             update.assert_not_called()
         self.assertIs(self.entry.options, before)
@@ -703,11 +728,11 @@ class AdapterTests(unittest.IsolatedAsyncioTestCase):
         flow = self.module.SaunaOptionsFlow()
         flow.hass = self.hass
         with patch.object(type(flow), "config_entry", new_callable=PropertyMock, return_value=self.entry):
-            await flow.async_step_parameters_temperature_control()
-            submitted = {d.key: self.values[d.key] for d in flow._definitions("temperature_control")}
+            await flow.async_step_parameters_temperature_defaults()
+            submitted = {d.key: self.values[d.key] for d in flow._definitions("temperature_defaults")}
             submitted["sauna_min_temperature_c"] = 100
             before = self.entry.options
-            result = await flow.async_step_parameters_temperature_control(submitted)
+            result = await flow.async_step_parameters_temperature_defaults(submitted)
         self.assertEqual(result["type"], "form")
         self.assertTrue(result["errors"])
         self.assertIs(self.entry.options, before)
@@ -725,7 +750,7 @@ class AdapterTests(unittest.IsolatedAsyncioTestCase):
         before = self.entry.options
         with patch.object(type(flow), "config_entry", new_callable=PropertyMock, return_value=self.entry):
             self.assertEqual((await flow.async_step_init())["type"], "menu")
-            self.assertEqual((await flow.async_step_operation())["type"], "menu")
+            self.assertEqual((await flow.async_step_control())["type"], "menu")
             await flow.async_step_parameters_temperature_control()
             values = {d.key: self.values[d.key] for d in flow._definitions("temperature_control")}
             definition = next(d for d in flow._definitions("temperature_control") if d.key == "readiness_offset_c")
@@ -760,7 +785,7 @@ class AdapterTests(unittest.IsolatedAsyncioTestCase):
         flow.hass = self.hass
         self.entry.options["presence_source"] = "ha_presence"
         with patch.object(type(flow), "config_entry", new_callable=PropertyMock, return_value=self.entry):
-            menu = await flow.async_step_sensors()
+            menu = await flow.async_step_recognition()
             # Door and person-signal thresholds have no settings group since 5eba4cf.
             self.assertNotIn("parameters_presence_evaluation", menu["menu_options"])
             self.assertIn("parameters_presence_direct", menu["menu_options"])

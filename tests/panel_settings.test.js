@@ -31,6 +31,14 @@ const values = Object.fromEntries(
       : d.default,
   ]),
 );
+// Values the API marks as live temperature choice (edited through programs).
+const live = new Set([
+  "target_temperature_c",
+  "final_temperature_c",
+  "temperature_gangs",
+]);
+const panelOwned = (d) =>
+  d.configuration_surface === "panel" && !live.has(d.key) && !!d.settings_subgroup;
 const makePanel = (admin) => {
   const container = { innerHTML: "" },
     controls = new Map(),
@@ -45,7 +53,8 @@ const makePanel = (admin) => {
       configuration: { parameters: { ...values }, presence_source: "proxy" },
       parameters: catalog.parameters.map((definition) => ({
         ...definition,
-        applicable: definition.settings_group === "appearance",
+        live_editable: live.has(definition.key),
+        applicable: true,
       })),
       configuration_model: { presence: { source: "proxy" } },
       frontend_defaults: catalog.frontend,
@@ -79,16 +88,24 @@ const makePanel = (admin) => {
 const installation = catalog.frontend.settings_groups.filter(
   (group) => group.surface === "integration",
 );
-const display = catalog.parameters.filter((d) => d.settings_group === "appearance");
+const display = catalog.parameters.filter(panelOwned);
 const { panel, container, inputs, save } = makePanel(true);
-for (const group of installation)
-  assert.equal(panel.settingsParameterGroup(group), "", group.id);
-assert.equal(panel.settingsParameterGroup({ id: "programs" }), "");
-const appearance = panel.settingsParameterGroup({ id: "appearance" });
+// E2: installation areas are read-only overviews; their values keep their
+// editing place in the integration configuration.
+for (const group of installation) {
+  const markup = panel.settingsParameterGroup(group);
+  assert.doesNotMatch(markup, /<input/, group.id);
+  assert.match(markup, /Ändern unter Sauna konfigurieren/, group.id);
+  assert.match(markup, new RegExp(`standards-open:group:${group.id}"`), group.id);
+}
+const programs = panel.settingsParameterGroup(
+  catalog.frontend.settings_groups.find((group) => group.id === "programs"),
+);
+assert.equal(panel.settingsParameterGroup({ id: "appearance" }), "");
 for (const definition of catalog.parameters) {
   assert.equal(
-    appearance.includes(`name="${definition.key}"`),
-    definition.settings_group === "appearance",
+    programs.includes(`name="${definition.key}"`),
+    panelOwned(definition),
     definition.key,
   );
 }
@@ -99,7 +116,7 @@ assert.match(
   /href="\/config\/integrations\/integration\/ha_sauna"/,
 );
 for (const group of installation)
-  assert.ok(!container.innerHTML.includes(`settings-section:${group.id}`));
+  assert.ok(container.innerHTML.includes(`settings-section:${group.id}`), group.id);
 for (const definition of display) {
   inputs.set(definition.key, {
     name: definition.key,
@@ -131,9 +148,7 @@ panel.updateParameters = async (parameters, start, partial, method) => {
 (async () => {
   await panel.saveSettings();
   assert.equal(saved.preset_step_c, 7);
-  for (const definition of catalog.parameters.filter(
-    (d) => d.settings_group !== "appearance",
-  ))
+  for (const definition of catalog.parameters.filter((d) => !panelOwned(d)))
     assert.ok(
       !Object.hasOwn(saved, definition.key),
       `must not overwrite ${definition.key}`,

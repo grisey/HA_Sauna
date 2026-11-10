@@ -253,6 +253,8 @@ class StateView(HomeAssistantView):
                             }
                             for d in EDITABLE_DEFINITIONS
                         ],
+                        # E2: Werkseinstellung, Standard und aktiver Wert je dauerhaftem Feld.
+                        "field_states": runtime.configuration.field_states(),
                         "configuration_locked": session is not None,
                         "control_mode_change_allowed": (
                             controller.control_mode_change_allowed and not runtime.reconfiguring

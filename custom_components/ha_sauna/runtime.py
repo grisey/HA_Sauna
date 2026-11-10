@@ -58,6 +58,7 @@ from .core.parameters import (
     BY_KEY,
     CATALOG_PARAMETER_KEYS,
     EDITABLE_DEFINITIONS,
+    LIVE_TEMPERATURE_KEYS,
     Parameters,
 )
 from .core.presence import PresenceProjection, PresenceSourceSelection, ProxyPresenceSource
@@ -169,7 +170,7 @@ class Configuration:
             f"parameters.{definition.key}": definition.settings_group
             for definition in EDITABLE_DEFINITIONS
             if definition.configuration_surface != "catalog"
-            and definition.settings_group != "programs"
+            and definition.key not in LIVE_TEMPERATURE_KEYS
         } | {
             f"appearance.colors.{definition['id']}": "appearance"
             for definition in APPEARANCE_CATALOG["colors"]
@@ -260,6 +261,22 @@ class Configuration:
         ):
             raise ValueError("Feldstandard liegt außerhalb des zulässigen Bereichs")
         return value
+
+    def field_states(self) -> dict[str, dict]:
+        """Project the three value levels of every permanent field for display.
+
+        ``reference`` names the level the active value is compared with: the
+        saved standard (S) or, without one, the factory value (W).
+        """
+        result = {}
+        for name in self.standard_field_groups():
+            reference = self.field_value(name, source="standard")
+            result[name] = {
+                "reference": "standard" if name in self.field_standards else "factory",
+                "reference_value": reference,
+                "differs": self.field_value(name) != reference,
+            }
+        return result
 
     def field_value(self, name, *, source="active"):
         """Read A, catalog W or independent S with its W fallback for one field."""
@@ -2660,6 +2677,7 @@ class SaunaRuntime:
             return None
         return {
             "settings": self.notifier.settings.as_dict(),
+            "factory_deviations": notification_rules.factory_deviations(self.notifier.settings),
             "test": dict(self.notifier.tests[user_id]) if user_id in self.notifier.tests else None,
             "targets": len(self._user_targets(user_id)),
             "timer": self.notifier.timer,

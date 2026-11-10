@@ -869,9 +869,9 @@ class ProgramConfigurationTests(unittest.TestCase):
         parameters = Parameters({"standard_temperature_c": 86.5})
         self.assertEqual(parameters.values["standard_temperature_c"], 87)
         self.assertEqual(parameters.minimum_for("standard_temperature_c"), minimum)
-        self.assertEqual(BY_KEY["standard_temperature_c"].settings_group, "operation")
+        self.assertEqual(BY_KEY["standard_temperature_c"].settings_group, "temperature")
         self.assertEqual(
-            BY_KEY["standard_temperature_c"].settings_subgroup, "temperature_control"
+            BY_KEY["standard_temperature_c"].settings_subgroup, "temperature_defaults"
         )
 
     def test_catalog_program_supplies_existing_controller_values(self):

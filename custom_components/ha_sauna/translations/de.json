@@ -187,7 +187,7 @@
       "entity_id_in_use": "Diese Entitäts-ID ist bereits vergeben.",
       "preview_changed": "Die Liste hat sich geändert. Bitte die neue Vorschau prüfen und erneut bestätigen.",
       "reload_failed": "Eine betroffene Sauna konnte nicht neu geladen werden. Die aktuellen Entitäts-IDs und Zuordnungen bleiben gespeichert.",
-      "catalog_only": "Dieser Standardwert wird ausschließlich aus dem Parameterkatalog gelesen.",
+      "catalog_only": "Dieser Wert ist fest vorgegeben und nicht einstellbar.",
       "invalid_notification_user": "Bitte einen angebotenen aktiven Home-Assistant-Benutzer auswählen.",
       "invalid_notification_targets": "Die Empfänger sind nicht mehr auswählbar. Auswahl prüfen."
     },
@@ -204,14 +204,17 @@
         "menu_options": {
           "name": "Saunaname",
           "bindings": "Geräte und Erkennungsverfahren",
-          "operation": "Betrieb und Ofen",
-          "sensors": "Sensoren und Erkennung",
+          "notification_user": "Benachrichtigungsempfänger",
+          "temperature": "Temperatur und Bedienung",
           "light": "Licht",
-          "rename_entity": "Entität umbenennen",
-          "cleanup_entities": "Entitäten bereinigen",
-          "runtime": "Daten und Laufzeit",
+          "installation": "Anlage und Energie",
+          "control": "Steuerung",
+          "monitoring": "Überwachung",
+          "recognition": "Präsenz und Erkennung",
+          "technical": "Technik",
           "field_standards": "Standards und Werkseinstellungen",
-          "notification_user": "Benachrichtigungsempfänger"
+          "rename_entity": "Entität umbenennen",
+          "cleanup_entities": "Entitäten bereinigen"
         }
       },
       "bindings": {
@@ -228,162 +231,54 @@
         },
         "submit": "Weiter"
       },
-      "operation": {
-        "title": "Betrieb und Ofen",
+      "temperature": {
+        "title": "Temperatur und Bedienung",
         "menu_options": {
-          "parameters_session_controls": "Sitzung und Taster",
-          "parameters_temperature_control": "Temperaturregelung und Aufheizen",
-          "parameters_heater_feedback": "Schaltbestätigung und Schutz",
-          "parameters_oven_cooling": "Ofenkühlung",
-          "parameters_heater_accounting": "Heizzeit und Verbrauch",
+          "parameters_temperature_defaults": "Temperaturvorgaben",
+          "parameters_session_controls": "Taster und Handbedienung",
           "init": "Zurück zur Übersicht"
         }
       },
+      "parameters_temperature_defaults": {
+        "title": "Temperaturvorgaben",
+        "description": "{standards}",
+        "data": {
+          "standard_temperature_c": "Standardtemperatur",
+          "sauna_min_temperature_c": "Mindesttemperatur",
+          "settings_action": "Aktion"
+        },
+        "data_description": {
+          "standard_temperature_c": "Solltemperatur beim Wechsel zu Konstant oder Manuell und beim Start über Taster oder Schalter mit konstanter Temperatur. Eine danach gewählte Temperatur gilt weiter; Programme verwenden ihre eigenen Temperaturen.",
+          "sauna_min_temperature_c": "Niedrigste wählbare Solltemperatur, auch für Programme und Temperaturtasten. Ein Saunagang kann erst beginnen, wenn eine gültige Temperaturmessung diesen Wert erreicht."
+        },
+        "submit": "Weiter"
+      },
       "parameters_session_controls": {
-        "title": "Sitzung und Taster",
+        "title": "Taster und Handbedienung",
+        "description": "{standards}",
         "data": {
           "button_hold_seconds": "Haltezeit des Tasters",
-          "session_gap_minutes": "Sitzung nach Ausschalten fortsetzen",
           "manual_override_minutes": "Dauer manueller Ofen- und Lichtwahl",
           "settings_action": "Aktion"
         },
         "data_description": {
-          "button_hold_seconds": "Erforderliche Haltezeit für einen Taster, der nur Drücken und Loslassen meldet. Vom Gerät erkannte Gesten werden direkt übernommen.",
-          "session_gap_minutes": "Innerhalb dieser Pause mit Lichtnachlauf setzt erneutes Einschalten dieselbe Sitzung fort.",
+          "button_hold_seconds": "Nur für Taster, die lediglich Drücken und Loslassen melden: So lange muss der Taster für die Haltegeste gedrückt bleiben. Vom Gerät erkannte Gesten werden direkt übernommen.",
           "manual_override_minutes": "In Automatik endet eine manuelle Ofen- oder Lichtwahl spätestens nach dieser Zeit, bei einem passenden Zustandswechsel früher. Die Betriebsart Manuell ist davon unabhängig."
         },
         "submit": "Weiter"
       },
-      "parameters_temperature_control": {
-        "title": "Temperaturregelung und Aufheizen",
-        "data": {
-          "sauna_min_temperature_c": "Mindesttemperatur",
-          "readiness_offset_c": "Heizung aus bei Solltemperatur plus",
-          "readiness_hysteresis_c": "Heizung ein bei Solltemperatur minus",
-          "minimum_heating_minutes": "Mindestheizzeit",
-          "thermostat_cooldown_minutes": "Heizpause nach Abschalten",
-          "standard_temperature_c": "Standardtemperatur",
-          "warmup_estimation_minutes": "Beobachtungszeit für das Aufheizen",
-          "settings_action": "Aktion"
-        },
-        "data_description": {
-          "sauna_min_temperature_c": "Untergrenze für die Solltemperatur. Ein neuer Saunagang kann erst beginnen, wenn eine gültige Temperaturmessung diesen Wert erreicht.",
-          "readiness_offset_c": "Die Temperaturregelung schaltet bei Solltemperatur plus diesem Abstand ab. In Automatik haben Mindestheizzeit und Heizen während eines Saunagangs Vorrang.",
-          "readiness_hysteresis_c": "Die Temperaturregelung schaltet bei Solltemperatur minus diesem Abstand wieder ein. In Automatik muss zusätzlich die Heizpause abgelaufen sein.",
-          "minimum_heating_minutes": "In Automatik bleibt der Ofen nach bestätigtem Heizbeginn mindestens so lange an. Ofenkühlung, Ausschalten und Schutzabschaltung haben Vorrang.",
-          "thermostat_cooldown_minutes": "In Automatik wartet die Temperaturregelung nach Erreichen der Abschalttemperatur so lange vor dem erneuten Einschalten.",
-          "standard_temperature_c": "Solltemperatur beim Wechsel zu Konstant oder Manuell. Eine danach gewählte Temperatur gilt weiter; Programme verwenden ihre eigenen Temperaturen.",
-          "warmup_estimation_minutes": "Zeitfenster für die Aufheizprognose und den Hinweis auf fehlenden Temperaturanstieg."
-        },
-        "submit": "Weiter"
-      },
-      "parameters_heater_feedback": {
-        "title": "Schaltbestätigung und Schutz",
-        "data": {
-          "feedback_timeout_seconds": "Wartezeit auf Schaltbestätigung",
-          "fault_confirmation_seconds": "Schutzabschaltung nach anhaltender Störung",
-          "settings_action": "Aktion"
-        },
-        "data_description": {
-          "feedback_timeout_seconds": "So lange wird auf den Abschluss eines Schaltbefehls oder die Rückmeldung des angeforderten Schützzustands gewartet.",
-          "fault_confirmation_seconds": "Ein zentraler technischer Fehler verriegelt nach dieser Dauer die Schutzabschaltung; ungültige Regeltemperatur stoppt das Heizen schon vorher."
-        },
-        "submit": "Weiter"
-      },
-      "parameters_oven_cooling": {
-        "title": "Ofenkühlung",
-        "data": {
-          "after_run_minutes": "Mindestdauer der Ofenkühlung",
-          "oven_cooling_max_minutes": "Höchstdauer der Ofenkühlung",
-          "oven_cooling_heat_idle_ratio": "Heizminuten je zusätzlicher Kühlminute",
-          "oven_cooling_half_life_minutes": "Nachwirkung früherer Heizzeiten",
-          "settings_action": "Aktion"
-        },
-        "data_description": {
-          "after_run_minutes": "Kürzeste Ofenkühlung nach einem bestätigten Saunagang.",
-          "oven_cooling_max_minutes": "Begrenzt die berechnete Kühlzeit. Sie läuft nur ab, solange das Schütz nachweislich ausgeschaltet ist.",
-          "oven_cooling_heat_idle_ratio": "Die gewichtete Heizzeit wird durch diesen Wert geteilt, bevor Bereitschaftspausen abgezogen werden.",
-          "oven_cooling_half_life_minutes": "Nach dieser Zeit zählen frühere Heizzeiten und Bereitschaftspausen nur noch halb so stark für die Kühlzeit."
-        },
-        "submit": "Weiter"
-      },
-      "parameters_heater_accounting": {
-        "title": "Heizzeit und Verbrauch",
-        "data": {
-          "power_heating_threshold_w": "Mindestleistung für gezählte Heizzeit",
-          "nominal_power_kw": "Ofenleistung",
-          "heat_reset_minutes": "Heizzeitzähler nach Heizpause zurücksetzen",
-          "electricity_price_eur_per_kwh": "Strompreis",
-          "cabin_volume_m3": "Kabinenvolumen",
-          "settings_action": "Aktion"
-        },
-        "data_description": {
-          "power_heating_threshold_w": "Erst oberhalb dieser gemessenen Leistung zählt Heizzeit; kleinere Leistungen bleiben im Energieverbrauch enthalten.",
-          "nominal_power_kw": "Ohne nutzbare Leistungsmessung wird die Energie aus dieser Leistung und der gemeldeten Heizzeit berechnet.",
-          "heat_reset_minutes": "Nach dieser durchgehend bestätigten Zeit ohne Heizen beginnt der Heizzeitzähler wieder bei null.",
-          "electricity_price_eur_per_kwh": "Optionaler Strompreis pro Kilowattstunde.",
-          "cabin_volume_m3": "Optionales Luftvolumen der Kabine für die Wassermenge je Aufguss in der Statistik."
-        },
-        "submit": "Weiter"
-      },
-      "sensors": {
-        "title": "Sensoren und Erkennung",
-        "menu_options": {
-          "parameters_signals": "Messwerte",
-          "parameters_presence_direct": "Präsenzsensor",
-          "parameters_presence_evaluation": "Personenerkennung und Gangbestätigung",
-          "init": "Zurück zur Übersicht"
-        }
-      },
-      "parameters_signals": {
-        "title": "Messwerte",
-        "data": {
-          "sensor_timeout_seconds": "Höchstalter der Messwerte",
-          "settings_action": "Aktion"
-        },
-        "data_description": {
-          "sensor_timeout_seconds": "Ältere Messwerte werden nicht mehr verwendet. Fehlt dadurch die Temperatur für die Regelung, pausiert die Heizung."
-        },
-        "description": "{description}",
-        "submit": "Weiter"
-      },
-      "parameters_presence_direct": {
-        "title": "Präsenzsensor",
-        "data": {
-          "presence_fallback_delay_seconds": "Wartezeit bis zur Proxy-Erkennung",
-          "presence_recovery_delay_seconds": "Wartezeit bis zum Präsenzsensor",
-          "settings_action": "Aktion"
-        },
-        "data_description": {
-          "presence_fallback_delay_seconds": "Nach dieser durchgehenden Nichtverfügbarkeit des konfigurierten Präsenzsensors übernimmt die Proxy-Erkennung aus Temperatur und Feuchte.",
-          "presence_recovery_delay_seconds": "Nach dieser durchgehenden Verfügbarkeit eines gültigen Ein-/Aus-Zustands übernimmt wieder der konfigurierte Präsenzsensor."
-        },
-        "description": "{description}",
-        "submit": "Weiter"
-      },
-      "parameters_presence_evaluation": {
-        "title": "Personenerkennung und Gangbestätigung",
-        "data": {
-          "confirmation_minutes": "Frist für Personenhinweis und Aufguss",
-          "settings_action": "Aktion"
-        },
-        "data_description": {
-          "confirmation_minutes": "Die gemeinsame Frist für Personenhinweise und die Bestätigung durch einen Aufguss beginnt mit dem möglichen Gangbeginn: nach vollständigem Eintritt, frühestens bei erreichter Mindesttemperatur."
-        },
-        "submit": "Weiter",
-        "description": "{description}"
-      },
       "light": {
         "title": "Licht",
         "menu_options": {
-          "parameters_light_curve": "Licht nach Temperatur und Tageslicht",
-          "parameters_light_phases": "Ofenkühlung und Lichtnachlauf",
-          "parameters_light_transitions": "Lichtgerät und Lichtwechsel",
+          "parameters_light_curve": "Helligkeit nach Temperatur und Tageszeit",
+          "parameters_light_phases": "Einschalten, Nachlauf und Ofenkühlung",
+          "parameters_light_transitions": "Lichtgerät und Überblendung",
           "init": "Zurück zur Übersicht"
         }
       },
       "parameters_light_curve": {
-        "title": "Licht nach Temperatur und Tageslicht",
+        "title": "Helligkeit nach Temperatur und Tageszeit",
+        "description": "{description}\n\n{standards}",
         "data": {
           "light_reference_temperature_c": "Kaltpunkt der Lichtkurve",
           "cooling_brightness_percent": "Helligkeit am Kaltpunkt",
@@ -401,11 +296,11 @@
           "light_night_elevation_degrees": "Unter dieser Sonnenhöhe gilt die Nachthelligkeit; dazwischen wird bis zur Tagesgrenze linear überblendet.",
           "light_day_elevation_degrees": "Ab dieser Sonnenhöhe gilt die Betriebshelligkeit. Muss größer als die Nachtgrenze sein."
         },
-        "description": "{description}",
         "submit": "Weiter"
       },
       "parameters_light_phases": {
-        "title": "Ofenkühlung und Lichtnachlauf",
+        "title": "Einschalten, Nachlauf und Ofenkühlung",
+        "description": "{standards}",
         "data": {
           "after_run_brightness_percent": "Dimmhelligkeit bei Ofenkühlung",
           "session_light_brightness_percent": "Helligkeit beim Einschalten und im Nachlauf",
@@ -418,17 +313,213 @@
         "submit": "Weiter"
       },
       "parameters_light_transitions": {
-        "title": "Lichtgerät und Lichtwechsel",
+        "title": "Lichtgerät und Überblendung",
+        "description": "{standards}",
         "data": {
+          "light_brightness_scale": "Höchste Helligkeitsstufe des Lichtgeräts",
           "light_transition_seconds": "Dauer automatischer Lichtwechsel",
           "light_output_hysteresis_percent": "Toleranz für Helligkeitsschwankungen",
-          "light_brightness_scale": "Höchste Helligkeitsstufe des Lichtgeräts",
           "settings_action": "Aktion"
         },
         "data_description": {
+          "light_brightness_scale": "Höchster Helligkeitswert, den das Lichtgerät meldet und annimmt, zum Beispiel 255. Lichtbefehle und Rückmeldungen werden damit abgeglichen.",
           "light_transition_seconds": "Dauer der Überblendung bei automatischen Helligkeitswechseln; ohne Dauer wechselt das Licht unmittelbar.",
-          "light_output_hysteresis_percent": "Hält die bisherige Helligkeitsstufe bei kleinen Änderungen. Der Wert erweitert die Rundungsgrenze um diese Prozentpunkte; eine manuelle Wahl und Ausschalten wirken sofort.",
-          "light_brightness_scale": "Berücksichtigt die Helligkeitsstufen des Geräts beim Abgleich eines Lichtbefehls mit seiner Rückmeldung."
+          "light_output_hysteresis_percent": "Hält die bisherige Helligkeitsstufe bei kleinen Änderungen. Der Wert erweitert die Rundungsgrenze um diese Prozentpunkte; eine manuelle Wahl und Ausschalten wirken sofort."
+        },
+        "submit": "Weiter"
+      },
+      "installation": {
+        "title": "Anlage und Energie",
+        "menu_options": {
+          "parameters_heater_accounting": "Ofen, Strompreis und Kabine",
+          "parameters_heating_count": "Gezählte Heizzeit",
+          "init": "Zurück zur Übersicht"
+        }
+      },
+      "parameters_heater_accounting": {
+        "title": "Ofen, Strompreis und Kabine",
+        "description": "{standards}",
+        "data": {
+          "nominal_power_kw": "Ofenleistung",
+          "electricity_price_eur_per_kwh": "Strompreis",
+          "cabin_volume_m3": "Kabinenvolumen",
+          "settings_action": "Aktion"
+        },
+        "data_description": {
+          "nominal_power_kw": "Nennleistung des Ofens. Ohne nutzbare Leistungsmessung wird der Energieverbrauch aus dieser Leistung und der gemeldeten Heizzeit berechnet.",
+          "electricity_price_eur_per_kwh": "Optionaler Strompreis je Kilowattstunde für die Stromkosten in den Kennzahlen. Ohne Wert entfallen die Kosten.",
+          "cabin_volume_m3": "Optionales Luftvolumen der Kabine für die Wassermenge je Aufguss in den Kennzahlen. Ohne Wert entfällt die Wassermenge."
+        },
+        "submit": "Weiter"
+      },
+      "parameters_heating_count": {
+        "title": "Gezählte Heizzeit",
+        "description": "{description}\n\n{standards}",
+        "data": {
+          "power_heating_threshold_w": "Mindestleistung für gezählte Heizzeit",
+          "heat_reset_minutes": "Heizzeitzähler zurücksetzen nach",
+          "settings_action": "Aktion"
+        },
+        "data_description": {
+          "power_heating_threshold_w": "Nur mit Leistungsmessung: Erst oberhalb dieser gemessenen Leistung zählt Heizzeit. Kleinere Leistungen bleiben im Energieverbrauch enthalten.",
+          "heat_reset_minutes": "Ist der Ofen laut Rückmeldung so lange ununterbrochen aus, beginnt die gezählte Heizzeit wieder bei null."
+        },
+        "submit": "Weiter"
+      },
+      "control": {
+        "title": "Steuerung",
+        "menu_options": {
+          "parameters_temperature_control": "Heizregelung",
+          "parameters_oven_cooling": "Ofenkühlung",
+          "parameters_session_resume": "Sitzung fortsetzen",
+          "init": "Zurück zur Übersicht"
+        }
+      },
+      "parameters_temperature_control": {
+        "title": "Heizregelung",
+        "description": "{standards}",
+        "data": {
+          "readiness_offset_c": "Heizung aus bei Solltemperatur plus",
+          "readiness_hysteresis_c": "Heizung ein bei Solltemperatur minus",
+          "minimum_heating_minutes": "Mindestheizzeit",
+          "thermostat_cooldown_minutes": "Heizpause nach Abschalten",
+          "settings_action": "Aktion"
+        },
+        "data_description": {
+          "readiness_offset_c": "Die Temperaturregelung schaltet bei Solltemperatur plus diesem Abstand ab. In Automatik haben Mindestheizzeit und Heizen während eines Saunagangs Vorrang.",
+          "readiness_hysteresis_c": "Die Temperaturregelung schaltet bei Solltemperatur minus diesem Abstand wieder ein. In Automatik muss zusätzlich die Heizpause abgelaufen sein.",
+          "minimum_heating_minutes": "In Automatik bleibt der Ofen nach bestätigtem Heizbeginn mindestens so lange an. Ofenkühlung, Ausschalten und Schutzabschaltung haben Vorrang.",
+          "thermostat_cooldown_minutes": "In Automatik wartet die Temperaturregelung nach Erreichen der Abschalttemperatur so lange vor dem erneuten Einschalten."
+        },
+        "submit": "Weiter"
+      },
+      "parameters_oven_cooling": {
+        "title": "Ofenkühlung",
+        "description": "{standards}",
+        "data": {
+          "after_run_minutes": "Mindestdauer der Ofenkühlung",
+          "oven_cooling_max_minutes": "Höchstdauer der Ofenkühlung",
+          "oven_cooling_heat_idle_ratio": "Heizminuten je zusätzlicher Kühlminute",
+          "oven_cooling_half_life_minutes": "Nachwirkung früherer Heizzeiten",
+          "settings_action": "Aktion"
+        },
+        "data_description": {
+          "after_run_minutes": "Kürzeste Ofenkühlung nach einem bestätigten Saunagang.",
+          "oven_cooling_max_minutes": "Begrenzt die berechnete Kühlzeit. Sie läuft nur ab, solange das Schütz nachweislich ausgeschaltet ist.",
+          "oven_cooling_heat_idle_ratio": "Je so viele gewichtete Heizminuten verlängern die Ofenkühlung über die Mindestdauer hinaus um eine Minute; Bereitschaftspausen werden davon abgezogen.",
+          "oven_cooling_half_life_minutes": "Nach dieser Zeit zählen frühere Heizzeiten und Bereitschaftspausen nur noch halb so stark für die Kühlzeit."
+        },
+        "submit": "Weiter"
+      },
+      "parameters_session_resume": {
+        "title": "Sitzung fortsetzen",
+        "description": "{standards}",
+        "data": {
+          "session_gap_minutes": "Sitzung nach Ausschalten fortsetzen",
+          "settings_action": "Aktion"
+        },
+        "data_description": {
+          "session_gap_minutes": "Erneutes Einschalten innerhalb dieser Zeit nach dem Ausschalten setzt dieselbe Sitzung fort, auch während des Lichtnachlaufs. Danach beginnt eine neue Sitzung."
+        },
+        "submit": "Weiter"
+      },
+      "monitoring": {
+        "title": "Überwachung",
+        "menu_options": {
+          "parameters_signals": "Messwerte",
+          "parameters_heater_feedback": "Schaltbestätigung und Schutzabschaltung",
+          "init": "Zurück zur Übersicht"
+        }
+      },
+      "parameters_signals": {
+        "title": "Messwerte",
+        "description": "{description}\n\n{standards}",
+        "data": {
+          "sensor_timeout_seconds": "Höchstalter der Messwerte",
+          "settings_action": "Aktion"
+        },
+        "data_description": {
+          "sensor_timeout_seconds": "Ältere Messwerte werden nicht mehr verwendet. Fehlt dadurch die Temperatur für die Regelung, pausiert die Heizung."
+        },
+        "submit": "Weiter"
+      },
+      "parameters_heater_feedback": {
+        "title": "Schaltbestätigung und Schutzabschaltung",
+        "description": "{standards}",
+        "data": {
+          "feedback_timeout_seconds": "Wartezeit auf Schaltbestätigung",
+          "fault_confirmation_seconds": "Dauer bis zur Schutzabschaltung",
+          "settings_action": "Aktion"
+        },
+        "data_description": {
+          "feedback_timeout_seconds": "So lange wird nach einem Schaltbefehl auf dessen Abschluss und die Rückmeldung des angeforderten Schützzustands gewartet. Bleibt sie aus, gilt das als Störung.",
+          "fault_confirmation_seconds": "Hält eine technische Störung so lange an, etwa eine fehlende Schaltbestätigung, ein nach dem Ausschalten weiter heizender Ofen oder ein nicht erreichbarer Schaltdienst, schaltet die Schutzabschaltung ab und bleibt verriegelt. Ohne gültige Regeltemperatur stoppt das Heizen schon vorher."
+        },
+        "submit": "Weiter"
+      },
+      "recognition": {
+        "title": "Präsenz und Erkennung",
+        "menu_options": {
+          "parameters_presence_direct": "Präsenzsensor",
+          "parameters_presence_evaluation": "Gangbestätigung",
+          "init": "Zurück zur Übersicht"
+        }
+      },
+      "parameters_presence_direct": {
+        "title": "Präsenzsensor",
+        "description": "{description}\n\n{standards}",
+        "data": {
+          "presence_fallback_delay_seconds": "Wartezeit bis zur Ersatzerkennung",
+          "presence_recovery_delay_seconds": "Wartezeit bis zur Rückkehr zum Präsenzsensor",
+          "settings_action": "Aktion"
+        },
+        "data_description": {
+          "presence_fallback_delay_seconds": "Ist der Präsenzsensor so lange durchgehend nicht verfügbar, übernimmt die Erkennung aus Temperatur und Feuchte.",
+          "presence_recovery_delay_seconds": "Meldet der Präsenzsensor so lange durchgehend einen gültigen Zustand „anwesend“ oder „abwesend“, übernimmt er wieder."
+        },
+        "submit": "Weiter"
+      },
+      "parameters_presence_evaluation": {
+        "title": "Gangbestätigung",
+        "description": "{description}\n\n{standards}",
+        "data": {
+          "confirmation_minutes": "Frist für die Gangbestätigung",
+          "settings_action": "Aktion"
+        },
+        "data_description": {
+          "confirmation_minutes": "Die gemeinsame Frist für Personenhinweise und die Bestätigung durch einen Aufguss beginnt mit dem möglichen Gangbeginn: nach vollständigem Eintritt, frühestens bei erreichter Mindesttemperatur."
+        },
+        "submit": "Weiter"
+      },
+      "technical": {
+        "title": "Technik",
+        "menu_options": {
+          "parameters_warmup": "Aufheizschätzung",
+          "parameters_archive": "Archiv und Übertragung",
+          "init": "Zurück zur Übersicht"
+        }
+      },
+      "parameters_warmup": {
+        "title": "Aufheizschätzung",
+        "description": "{standards}",
+        "data": {
+          "warmup_estimation_minutes": "Beobachtungszeit für das Aufheizen",
+          "settings_action": "Aktion"
+        },
+        "data_description": {
+          "warmup_estimation_minutes": "Zeitraum, über den der Temperaturanstieg für die Aufheizprognose und den Hinweis auf fehlenden Anstieg ausgewertet wird."
+        },
+        "submit": "Weiter"
+      },
+      "parameters_archive": {
+        "title": "Archiv und Übertragung",
+        "description": "{standards}",
+        "data": {
+          "history_context_seconds": "Messwerte vor und nach Sitzungen",
+          "settings_action": "Aktion"
+        },
+        "data_description": {
+          "history_context_seconds": "Zeitraum vor Beginn und nach Ende einer Sitzung, der mit ihr gespeichert und angezeigt wird. Eine archivierte Sitzung behält den bei ihr gespeicherten Wert."
         },
         "submit": "Weiter"
       },
@@ -584,23 +675,21 @@
           "init": "Zurück zur Übersicht"
         }
       },
-      "runtime": {
-        "title": "Daten und Laufzeit",
-        "menu_options": {
-          "parameters_archive": "Archiv und Übertragung",
-          "init": "Zurück zur Übersicht"
-        }
-      },
-      "parameters_archive": {
-        "title": "Archiv und Übertragung",
+      "notification_user": {
+        "title": "Benachrichtigungsempfänger",
+        "description": "Explizite Zuordnung zu einem Home-Assistant-Benutzer. Gerätebesitz wird nicht automatisch abgeleitet.",
         "data": {
-          "history_context_seconds": "Messwerte vor und nach Sitzungen",
-          "settings_action": "Aktion"
+          "user_id": "Home-Assistant-Benutzer"
         },
-        "data_description": {
-          "history_context_seconds": "Zeitlicher Kontext der Sitzungsansicht. Die gespeicherte Vorgabe einer Sitzung bestimmt ihren Archivbereich."
+        "submit": "Empfänger auswählen"
+      },
+      "notification_targets": {
+        "title": "Empfänger zuordnen",
+        "description": "Nur Nachricht: einfacher Versand. Companion: offene Daten und Antworten über die vorhandene App-Anbindung; Funktionen hängen von Plattform, App-Version und Berechtigungen ab. Die Auswahl belegt keine Erreichbarkeit. Eine leere Auswahl entfernt die Zuordnung dieses Benutzers.",
+        "data": {
+          "recipients": "Registrierte Benachrichtigungsziele"
         },
-        "submit": "Weiter"
+        "submit": "Speichern und zurück"
       },
       "field_standards": {
         "title": "Standards und Werkseinstellungen",
@@ -620,27 +709,11 @@
       },
       "field_standard_confirm": {
         "title": "Änderung prüfen und bestätigen",
-        "description": "{action}\n\n| Einstellung | Werkswert | Standard (sonst Werkswert) | Standard nach Bestätigung | Aktueller Wert | Wert nach Bestätigung | Eigener Standard vorher → nachher |\n| --- | --- | --- | --- | --- | --- | --- |\n{preview}\n\nEigener Standard: ✓ gespeichert, — nicht gespeichert.\n\nBestätigen übernimmt die oben gezeigte Änderung.",
+        "description": "{action}\n\n| Einstellung | Werkseinstellung | Standard (sonst Werkseinstellung) | Standard nach Bestätigung | Aktueller Wert | Wert nach Bestätigung | Standard gespeichert vorher → nachher |\n| --- | --- | --- | --- | --- | --- | --- |\n{preview}\n\nStandard gespeichert: ✓ ja, — nein, es gilt die Werkseinstellung.\n\nBestätigen übernimmt die oben gezeigte Änderung.",
         "data": {
           "decision": "Entscheidung"
         },
         "submit": "Ausführen"
-      },
-      "notification_user": {
-        "title": "Benachrichtigungsempfänger",
-        "description": "Explizite Zuordnung zu einem Home-Assistant-Benutzer. Gerätebesitz wird nicht automatisch abgeleitet.",
-        "data": {
-          "user_id": "Home-Assistant-Benutzer"
-        },
-        "submit": "Empfänger auswählen"
-      },
-      "notification_targets": {
-        "title": "Empfänger zuordnen",
-        "description": "Nur Nachricht: einfacher Versand. Companion: offene Daten und Antworten über die vorhandene App-Anbindung; Funktionen hängen von Plattform, App-Version und Berechtigungen ab. Die Auswahl belegt keine Erreichbarkeit. Eine leere Auswahl entfernt die Zuordnung dieses Benutzers.",
-        "data": {
-          "recipients": "Registrierte Benachrichtigungsziele"
-        },
-        "submit": "Speichern und zurück"
       }
     }
   },

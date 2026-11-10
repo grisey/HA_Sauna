@@ -3341,7 +3341,7 @@ class SaunaPanel extends HTMLElement {
   }
   standardMenuButton(scope, label = "Standards") {
     const [kind, value] = Object.entries(scope)[0];
-    return `<button type="button" class="field-standard-menu" data-action="standards-open:${kind}:${esc(encodeURIComponent(value))}" aria-label="${esc(label)}">${scope.field ? "⋯" : esc(label)}</button>`;
+    return `<button type="button" class="field-standard-menu" data-standard-scope="${esc(kind)}" data-action="standards-open:${kind}:${esc(encodeURIComponent(value))}" aria-label="${esc(label)}">${scope.field ? "⋯" : esc(label)}</button>`;
   }
   standardFieldValue(state, id) {
     return (
@@ -3409,7 +3409,7 @@ class SaunaPanel extends HTMLElement {
       : context.scope.group
         ? "Standards für diesen Bereich"
         : "Standards für alle Bereiche";
-    dialog.innerHTML = `<h2 id="standards-title">${esc(preview ? labels[preview.action] : scopeLabel)}</h2><p>${preview?.action === "overwrite_standard" ? "Der geprüfte Entwurf wird als Standard gespeichert. Der aktive Wert und weitere Entwürfe bleiben erhalten." : "Wiederherstellen übernimmt die Vorschau unmittelbar in die aktiven Werte und die betroffenen Entwürfe. Werkseinstellung entfernt außerdem die betroffenen gespeicherten Standards."}</p><p>Bereiche und Gesamtumfang schließen ausgeblendete Felder ein. Programmbibliothek und Gerätezuordnung haben eigene Einstellungen.</p><div class="standard-values"><table><thead><tr><th>Feld</th><th>Werkseinstellung</th><th>Gespeicherter Standard</th><th>Aktiv</th><th>Entwurf</th>${preview ? `<th>${preview.action === "overwrite_standard" ? "Neuer Standard" : "Neuer aktiver Wert"}</th>` : ""}</tr></thead><tbody>${rows.map((row) => `<tr><th>${esc(row.id.startsWith("appearance.scales.") ? { temperature: "Temperatur", humidity: "Luftfeuchte" }[row.id.split(".")[2]] || row.label : row.label)}${row.bound ? ` · ${row.bound === "minimum" ? "Minimum" : "Maximum"}` : ""}${row.applicable === false ? "<small>Derzeit ausgeblendet</small>" : ""}</th><td>${esc(value(row, row.factory))}</td><td>${esc(value(row, row.standard))}${row.has_standard ? "" : "<small>Werkseinstellung</small>"}</td><td>${esc(value(row, row.active))}</td><td>${esc(value(row, this.standardDraftValue(row)))}</td>${preview ? `<td>${esc(value(row, preview.action === "overwrite_standard" ? row.target_standard : row.target))}</td>` : ""}</tr>`).join("")}</tbody></table></div><p role="status">${esc(context.message || preview?.validation_error || (context.busy ? "Wird geladen …" : ""))}</p><div class="row">${preview ? `<button type="button" class="confirm" data-action="standards-confirm" ${context.busy || !preview.confirmation ? "disabled" : ""}>Vorschau bestätigen</button><button type="button" data-action="standards-back" ${context.busy ? "disabled" : ""}>Zurück</button>` : `${context.scope.field ? `<button type="button" data-action="standards-preview:overwrite_standard" ${context.busy || !rows.length ? "disabled" : ""}>Standard überschreiben</button>` : ""}<button type="button" data-action="standards-preview:restore_standard" ${context.busy || !rows.length ? "disabled" : ""}>Standard wiederherstellen</button><button type="button" data-action="standards-preview:restore_factory" ${context.busy || !rows.length ? "disabled" : ""}>Werkseinstellung</button>`}<button type="button" data-action="standards-close" ${context.busy ? "disabled" : ""}>Schließen</button></div>`;
+    dialog.innerHTML = `<h2 id="standards-title">${esc(preview ? labels[preview.action] : scopeLabel)}</h2><p>${preview?.action === "overwrite_standard" ? "Der geprüfte Entwurf wird als Standard gespeichert. Der aktive Wert und weitere Entwürfe bleiben erhalten." : "Wiederherstellen übernimmt die Vorschau unmittelbar in die aktiven Werte und die betroffenen Entwürfe. Werkseinstellung entfernt außerdem die betroffenen gespeicherten Standards."}</p><p>Bereiche und Gesamtumfang schließen ausgeblendete Felder ein. Programmbibliothek, Start über Taster oder Betriebsschalter, Protokollierung und Gerätezuordnung haben keine Standards.</p><div class="standard-values"><table><thead><tr><th>Feld</th><th>Werkseinstellung</th><th>Gespeicherter Standard</th><th>Aktiv</th><th>Entwurf</th>${preview ? `<th>${preview.action === "overwrite_standard" ? "Neuer Standard" : "Neuer aktiver Wert"}</th>` : ""}</tr></thead><tbody>${rows.map((row) => `<tr><th>${esc(row.id.startsWith("appearance.scales.") ? { temperature: "Temperatur", humidity: "Luftfeuchte" }[row.id.split(".")[2]] || row.label : row.label)}${row.bound ? ` · ${row.bound === "minimum" ? "Minimum" : "Maximum"}` : ""}${row.applicable === false ? "<small>Derzeit ausgeblendet</small>" : ""}</th><td>${esc(value(row, row.factory))}</td><td>${esc(value(row, row.standard))}${row.has_standard ? "" : "<small>Werkseinstellung</small>"}</td><td>${esc(value(row, row.active))}</td><td>${esc(value(row, this.standardDraftValue(row)))}</td>${preview ? `<td>${esc(value(row, preview.action === "overwrite_standard" ? row.target_standard : row.target))}</td>` : ""}</tr>`).join("")}</tbody></table></div><p role="status">${esc(context.message || preview?.validation_error || (context.busy ? "Wird geladen …" : ""))}</p><div class="row">${preview ? `<button type="button" class="confirm" data-action="standards-confirm" ${context.busy || !preview.confirmation ? "disabled" : ""}>Vorschau bestätigen</button><button type="button" data-action="standards-back" ${context.busy ? "disabled" : ""}>Zurück</button>` : `${context.scope.field ? `<button type="button" data-action="standards-preview:overwrite_standard" ${context.busy || !rows.length ? "disabled" : ""}>Standard überschreiben</button>` : ""}<button type="button" data-action="standards-preview:restore_standard" ${context.busy || !rows.length ? "disabled" : ""}>Standard wiederherstellen</button><button type="button" data-action="standards-preview:restore_factory" ${context.busy || !rows.length ? "disabled" : ""}>Werkseinstellung</button>`}<button type="button" data-action="standards-close" ${context.busy ? "disabled" : ""}>Schließen</button></div>`;
     if (restoreFocus) {
       const previous =
         focusedAction &&
@@ -3606,7 +3606,7 @@ class SaunaPanel extends HTMLElement {
             this.appearanceValue().colors?.[item.id] ??
             item.default ??
             "";
-          return `<div class="appearance-color-row"><label for="appearance-${esc(item.id)}">${esc(item.label)}</label><input type="color" data-appearance-picker="${esc(item.id)}" aria-label="${esc(item.label)} wählen" value="${esc(value)}"><input id="appearance-${esc(item.id)}" data-appearance-color="${esc(item.id)}" aria-label="${esc(item.label)} als Hexwert" inputmode="text" maxlength="7" placeholder="HA-Standard" value="${esc(shown)}">${this.standardMenuButton({ field: `appearance.colors.${item.id}` }, `${item.label}: Standards`)}</div>`;
+          return `<div class="appearance-color-row"><label for="appearance-${esc(item.id)}">${esc(item.label)}</label><input type="color" data-appearance-picker="${esc(item.id)}" aria-label="${esc(item.label)} wählen" value="${esc(value)}"><input id="appearance-${esc(item.id)}" data-appearance-color="${esc(item.id)}" aria-label="${esc(item.label)} als Hexwert" inputmode="text" maxlength="7" placeholder="HA-Standard" value="${esc(shown)}">${this.standardMenuButton({ field: `appearance.colors.${item.id}` }, `${item.label}: Standards`)}${this.fieldStateMarkup(`appearance.colors.${item.id}`)}</div>`;
         })
         .join("");
     const scaleFields = ["temperature", "humidity"]
@@ -3615,13 +3615,13 @@ class SaunaPanel extends HTMLElement {
           unit = name === "temperature" ? "°C" : "%";
         const scale =
           this.appearanceScale(name) || catalog.scales?.[name]?.default || {};
-        return `<fieldset class="appearance-scale"><legend>${label}</legend>${["minimum", "maximum"].map((end) => `<label>${end === "minimum" ? "Minimum" : "Maximum"}${unitInput(`<input type="number" aria-label="${label} ${end === "minimum" ? "Minimum" : "Maximum"} (${unit})" step="any" data-appearance-scale="${name}.${end}" value="${esc(this.appearanceRaw?.[`${name}.${end}`] ?? scale[end] ?? "")}">`, unit)}${this.standardMenuButton({ field: `appearance.scales.${name}.${end}` }, `${label} ${end === "minimum" ? "Minimum" : "Maximum"}: Standards`)}</label>`).join("")}</fieldset>`;
+        return `<fieldset class="appearance-scale"><legend>${label}</legend>${["minimum", "maximum"].map((end) => `<label>${end === "minimum" ? "Minimum" : "Maximum"}${unitInput(`<input type="number" aria-label="${label} ${end === "minimum" ? "Minimum" : "Maximum"} (${unit})" step="any" data-appearance-scale="${name}.${end}" value="${esc(this.appearanceRaw?.[`${name}.${end}`] ?? scale[end] ?? "")}">`, unit)}${this.standardMenuButton({ field: `appearance.scales.${name}.${end}` }, `${label} ${end === "minimum" ? "Minimum" : "Maximum"}: Standards`)}${this.fieldStateMarkup(`appearance.scales.${name}.${end}`, unit)}</label>`).join("")}</fieldset>`;
       })
       .join("");
     const instrumentFields = Object.entries(catalog.instruments || {})
       .map(
         ([name, definition]) =>
-          `<label>${esc(definition.label)}<select data-appearance-instrument="${esc(name)}">${definition.options.map((option) => `<option value="${esc(option)}" ${this.instrumentSelection(name) === option ? "selected" : ""}>${{ round: "Rund", linear: "Gerade", inherit: "Gemeinsame Vorgabe" }[option]}</option>`).join("")}</select>${this.standardMenuButton({ field: `appearance.instruments.${name}` }, `${definition.label}: Standards`)}</label>`,
+          `<label>${esc(definition.label)}<select data-appearance-instrument="${esc(name)}">${definition.options.map((option) => `<option value="${esc(option)}" ${this.instrumentSelection(name) === option ? "selected" : ""}>${{ round: "Rund", linear: "Gerade", inherit: "Gemeinsame Vorgabe" }[option]}</option>`).join("")}</select>${this.standardMenuButton({ field: `appearance.instruments.${name}` }, `${definition.label}: Standards`)}${this.fieldStateMarkup(`appearance.instruments.${name}`)}</label>`,
       )
       .join("");
     const preferenceGroups = [
@@ -3644,12 +3644,12 @@ class SaunaPanel extends HTMLElement {
             )
             .map(
               ([key, definition]) =>
-                `<label>${esc(definition.label)}${unitInput(`<input type="number" data-appearance-preference="${esc(key)}" aria-label="${esc(definition.label)}" min="${definition.minimum}" max="${definition.maximum}" step="${definition.step}" value="${esc(this.appearanceRaw?.[`preference.${key}`] ?? this.preference(key))}">`, definition.unit)}${this.standardMenuButton({ field: `appearance.preferences.${key}` }, `${definition.label}: Standards`)}<small>${esc(definition.description)}</small></label>`,
+                `<label>${esc(definition.label)}${unitInput(`<input type="number" data-appearance-preference="${esc(key)}" aria-label="${esc(definition.label)}" min="${definition.minimum}" max="${definition.maximum}" step="${definition.step}" value="${esc(this.appearanceRaw?.[`preference.${key}`] ?? this.preference(key))}">`, definition.unit)}${this.standardMenuButton({ field: `appearance.preferences.${key}` }, `${definition.label}: Standards`)}${this.fieldStateMarkup(`appearance.preferences.${key}`, definition.unit)}<small>${esc(definition.description)}</small></label>`,
             )
             .join("")}</div></details>`,
       )
       .join("");
-    return `<div class="card appearance-settings" id="appearance-settings"><h2>Darstellung und Bedienung</h2><div class="appearance-instruments">${instrumentFields}</div><h3>Messgrößen</h3><div class="appearance-colors">${rows(true)}</div><h3>Anzeigeskalen</h3><div class="appearance-scales">${scaleFields}</div><details class="settings-group appearance-advanced"><summary>Erweiterte Farben</summary>${groups.map((group) => `<details class="expert-group"><summary>${esc(group)}</summary><div class="appearance-colors">${rows(false, group)}</div></details>`).join("")}</details>${preferences}<div class="row"><button type="button" class="confirm" data-action="appearance-save">Darstellung speichern</button><button type="button" data-action="appearance-discard">Änderungen verwerfen</button>${this.standardMenuButton({ group: "appearance" }, "Standards für Darstellung und Bedienung")}</div><p id="appearance-status" role="status" class="muted"></p></div>`;
+    return `<div class="card appearance-settings" id="appearance-settings"><h2>Darstellung und Bedienung</h2><div class="appearance-instruments">${instrumentFields}</div><h3>Messgrößen</h3><div class="appearance-colors">${rows(true)}</div><h3>Anzeigeskalen</h3><div class="appearance-scales">${scaleFields}</div><details class="settings-group appearance-advanced"><summary>Erweiterte Farben</summary>${groups.map((group) => `<details class="expert-group"><summary>${esc(group)}</summary><div class="appearance-colors">${rows(false, group)}</div></details>`).join("")}</details>${preferences}<div class="row"><button type="button" class="confirm" data-action="appearance-save">Darstellung speichern</button><button type="button" data-action="appearance-discard">Änderungen verwerfen</button>${this.standardMenuButton({ group: "appearance" }, "Standards für diesen Bereich")}</div><p id="appearance-status" role="status" class="muted"></p></div>`;
   }
   updateAppearanceField(input) {
     if (!this.state?.permissions?.admin || this.appearanceRequest) return;
@@ -6013,6 +6013,44 @@ class SaunaPanel extends HTMLElement {
       .calibration-run-choice label { font-size: ${this.preference("font_size_small_px")}px; color: var(--sauna-card-muted-text); }
       .calibration-run-choice select { max-width: 100%; }
       .calibration-run-state { margin: 0 0 ${this.preference("layout_space_13_px")}px; }
+      /* E2: Einstellungen nach Funktion: flache Karten wie Verlauf und Details, Übersicht der Anlagenwerte mit Hinweis auf Abweichungen, Technik eingeklappt. */
+      .settings-content > section:not([hidden]) { display: grid; gap: var(--sauna-surface-gap); align-content: start; }
+      .settings-content .card { margin: 0; padding: ${this.preference("layout_space_24_px")}px ${this.preference("surface_padding_px")}px; border-radius: var(--sauna-control-radius); box-shadow: none; }
+      .settings-content .card h2 { margin: 0 0 ${this.preference("layout_space_13_px")}px; font-size: ${this.preference("font_size_body_emphasis_px")}px; font-weight: ${this.preference("font_weight_500_0_ratio")}; }
+      .settings-content .card > .row:last-child, .settings-content .card > p:last-child { margin-bottom: 0; }
+      .settings-content .settings-group { border-radius: var(--sauna-control-radius); box-shadow: none; }
+      .settings-intro { margin: 0; font-size: ${this.preference("font_size_compact_px")}px; }
+      .settings-cards { display: grid; gap: var(--sauna-surface-gap); align-items: start; }
+      .settings-cards[data-settings-layout="overview"] { grid-template-columns: repeat(auto-fill, minmax(min(100%, ${this.preference("size_400_0_px")}px), 1fr)); }
+      .settings-rows { display: grid; }
+      .settings-row { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; align-items: center; gap: ${this.preference("layout_space_07_px")}px ${this.preference("layout_space_13_px")}px; min-height: ${this.preference("size_40_0_px")}px; padding: ${this.preference("layout_space_09_px")}px 0; border-top: ${this.preference("border_1_0_px")}px solid var(--sauna-color-border, var(--divider-color)); font-size: ${this.preference("font_size_compact_px")}px; }
+      .settings-rows > .settings-row:first-child, .settings-fixed > h3 + .settings-row { border-top: 0; }
+      .settings-row-value { text-align: end; white-space: nowrap; font-variant-numeric: tabular-nums; }
+      .settings-row .field-standard-menu { grid-column: 3; }
+      .settings-row .settings-field-state, .appearance-color-row .settings-field-state { grid-column: 1 / -1; }
+      .settings-field-state { display: flex; align-items: baseline; gap: ${this.preference("layout_space_09_px")}px; font-size: ${this.preference("font_size_small_px")}px; color: var(--sauna-card-muted-text); }
+      .settings-field-state::before { content: ""; flex: none; width: ${this.preference("size_8_0_px")}px; height: ${this.preference("size_8_0_px")}px; border-radius: 50%; background: var(--accent); }
+      .settings-fixed { margin-top: ${this.preference("layout_space_13_px")}px; padding-top: ${this.preference("layout_space_13_px")}px; border-top: ${this.preference("border_1_0_px")}px solid var(--sauna-color-border, var(--divider-color)); }
+      .settings-fixed > h3 { margin: 0; font-size: ${this.preference("font_size_small_px")}px; font-weight: ${this.preference("font_weight_500_0_ratio")}; color: var(--sauna-card-muted-text); }
+      .settings-fixed .settings-row-value { color: var(--sauna-card-muted-text); }
+      .settings-fixed .settings-row { grid-template-columns: minmax(0, 1fr) auto; }
+      details.settings-card > summary { margin: 0; }
+      details.settings-card > summary h2 { display: inline; margin: 0; }
+      details.settings-card[open] > summary { margin-bottom: ${this.preference("layout_space_13_px")}px; }
+      .settings-card-text { margin: 0 0 ${this.preference("layout_space_13_px")}px; font-size: ${this.preference("font_size_compact_px")}px; }
+      .settings-actions { display: flex; flex-wrap: wrap; align-items: center; gap: var(--sauna-control-gap); }
+      .settings-actions .field-standard-menu { align-self: center; margin: 0; }
+      .settings-edit-link { color: inherit; font-size: ${this.preference("font_size_compact_px")}px; }
+      .settings-drafts { margin: 0; font-size: ${this.preference("font_size_compact_px")}px; }
+      .settings-drafts:empty { display: none; }
+      .settings-content [data-standard-scope="field"] { justify-self: start; align-self: center; min-height: 0; margin: 0; padding: ${this.preference("size_2_0_px")}px ${this.preference("layout_space_13_px")}px; }
+      .settings-content .field { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; column-gap: ${this.preference("layout_space_13_px")}px; }
+      .settings-content .field > :not(.number-input, [data-standard-scope="field"]) { grid-column: 1 / -1; }
+      .settings-navigation { grid-auto-rows: max-content; }
+      .notification-values label { align-content: start; }
+      @container (max-width: ${this.preference("breakpoint_700_0_px")}px) { .settings-navigation { gap: ${this.preference("layout_space_09_px")}px; } }
+      .settings-navigation button[data-settings-collapsed] { margin-top: ${this.preference("layout_space_13_px")}px; }
+      .settings-navigation button[data-settings-collapsed]:not([aria-current]) { color: var(--sauna-card-muted-text); }
       .calibration-totals { display: grid; grid-template-columns: repeat(auto-fit, minmax(${this.preference("size_150_0_px")}px, 1fr)); gap: ${this.preference("layout_space_13_px")}px; margin-bottom: ${this.preference("layout_space_13_px")}px; }
       .calibration-total p { margin: 0; }
       .calibration-total .stat-value { margin: ${this.preference("size_4_0_px")}px 0 ${this.preference("size_2_0_px")}px; }
@@ -6322,8 +6360,10 @@ class SaunaPanel extends HTMLElement {
       )
         this.updateAppearanceField(e.target);
       if (e.target.matches("#parameters input[name]")) e.target.dataset.edited = "true";
-      if (e.target.matches("#parameters input[name]"))
+      if (e.target.matches("#parameters input[name]")) {
         this.settingsEditRevision = (this.settingsEditRevision || 0) + 1;
+        this.drawSettingsDrafts();
+      }
       if (
         e.target.matches(
           "#progression-start,#progression-end,#progression-gangs,[data-free-step-count]",
@@ -17255,52 +17295,132 @@ class SaunaPanel extends HTMLElement {
       this.highlightEvent(this.highlightedEventId, false);
     this.revealEventTarget("marker");
   }
-  settingsParameterGroup({ id }) {
+  settingsValueText(value, unit) {
+    // Display only: the configured value with German decimal comma and its unit.
+    if (value == null || value === "") return "leer";
+    const text =
+      typeof value === "number"
+        ? value.toLocaleString("de-DE", {
+            maximumFractionDigits: 12,
+            useGrouping: false,
+          })
+        : String(value);
+    return unit && unit !== "Anzahl" ? `${text} ${unit}` : text;
+  }
+  fieldStateText(id, unit = "") {
+    // E2: The backend compares the active value with the saved standard or,
+    // without one, with the factory value. The panel only names the result.
+    const state = this.state?.field_states?.[id];
+    if (!state?.differs) return "";
+    const value = id.startsWith("appearance.instruments.")
+      ? { round: "Rund", linear: "Gerade", inherit: "Gemeinsame Vorgabe" }[
+          state.reference_value
+        ] || state.reference_value
+      : this.settingsValueText(state.reference_value, unit);
+    return `${state.reference === "standard" ? "Abweichend vom Standard" : "Abweichend von der Werkseinstellung"}: ${value}`;
+  }
+  fieldStateMarkup(id, unit = "") {
+    const text = this.fieldStateText(id, unit);
+    return `<small class="settings-field-state" data-field-state="${esc(id)}" data-field-unit="${esc(unit)}" ${text ? "" : "hidden"}>${esc(text)}</small>`;
+  }
+  settingsFieldState(definition) {
+    return this.fieldStateText(`parameters.${definition.key}`, definition.unit);
+  }
+  settingsOverviewRow(definition, fixed = false) {
+    return `<div class="settings-row" data-setting="${esc(definition.key)}"><span class="settings-row-label">${esc(definition.label)} ${this.infoButton(`parameter:${definition.key}`, `${definition.label} erklären`, definition.description, `help-${definition.key}`)}</span><span class="settings-row-value" data-setting-value="${esc(definition.key)}">${esc(this.settingsValueText(this.state.configuration.parameters[definition.key], definition.unit))}</span>${fixed ? "" : `${this.standardMenuButton({ field: `parameters.${definition.key}` }, `${definition.label}: Standards`)}${this.fieldStateMarkup(`parameters.${definition.key}`, definition.unit)}`}</div>`;
+  }
+  settingsParameterGroup(group) {
     const state = this.state;
+    if (!state.permissions?.admin) return "";
     // Program values are edited through the catalog or the temperature choice.
-    const group = state.frontend_defaults.settings_groups.find(
-      (group) => group.id === id,
-    );
-    if (
-      !state.permissions?.admin ||
-      id === "programs" ||
-      group?.surface === "integration"
-    )
-      return "";
+    const members = state.parameters
+      .filter((d) => d.settings_group === group.id && d.applicable && !d.live_editable)
+      .sort((a, b) => a.order - b.order);
+    if (!members.length) return "";
     const source = state.configuration_model?.presence?.source;
     const subgroups = state.frontend_defaults.settings_subgroups || [];
-    const entries = state.parameters
-      .filter(
-        (d) =>
-          d.settings_group === id &&
-          d.applicable &&
-          d.configuration_surface !== "catalog",
-      )
-      .sort((a, b) => a.order - b.order);
-    if (!entries.length) return "";
+    // Panel-owned fields are edited here; installation values keep their
+    // editing place in the integration configuration and are shown read-only.
+    const editable = group.surface !== "integration";
     const field = (d) =>
-      `<div class="field"><span><label for="parameter-${esc(d.key)}">${esc(d.label)}</label> ${this.infoButton(`parameter:${d.key}`, `${d.label} erklären`, d.description, `help-${d.key}`)}</span>${unitInput(`<input id="parameter-${esc(d.key)}" form="settings-parameters" type="number" aria-label="${esc(d.label)} (${esc(d.unit)})" name="${esc(d.key)}" aria-describedby="help-${esc(d.key)}" step="${d.step}" min="${d.minimum ?? ""}" max="${d.maximum ?? ""}" value="${esc(state.configuration.parameters[d.key] ?? "")}" ${d.optional ? "" : "required"}>`, d.unit)}${this.standardMenuButton({ field: `parameters.${d.key}` }, `${d.label}: Standards`)}</div>`;
-    const groupFields = (members) => {
-      const grouped = subgroups
-        .map((group) => {
-          const fields = members.filter((d) => d.settings_subgroup === group.id);
-          if (!fields.length) return "";
-          const description = group.descriptions?.[source] || group.description;
-          const heading = `${esc(group.label)}${description ? ` ${this.infoButton(`parameter-group:${group.id}`, `${group.label} erklären`, description)}` : ""}`;
-          return `<section class="parameter-section" aria-labelledby="parameter-group-${esc(group.id)}"><h3 id="parameter-group-${esc(group.id)}">${heading}</h3><div class="forms">${fields.map(field).join("")}</div></section>`;
-        })
-        .join("");
-      const ungrouped = members.filter(
-        (d) => !subgroups.some((group) => group.id === d.settings_subgroup),
-      );
-      return (
-        grouped +
-        (ungrouped.length
-          ? `<div class="forms parameter-section">${ungrouped.map(field).join("")}</div>`
-          : "")
-      );
+      `<div class="field"><span><label for="parameter-${esc(d.key)}">${esc(d.label)}</label> ${this.infoButton(`parameter:${d.key}`, `${d.label} erklären`, d.description, `help-${d.key}`)}</span>${unitInput(`<input id="parameter-${esc(d.key)}" form="settings-parameters" type="number" aria-label="${esc(d.label)} (${esc(d.unit)})" name="${esc(d.key)}" aria-describedby="help-${esc(d.key)}" step="${d.step}" min="${d.minimum ?? ""}" max="${d.maximum ?? ""}" value="${esc(state.configuration.parameters[d.key] ?? "")}" ${d.optional ? "" : "required"}>`, d.unit)}${this.standardMenuButton({ field: `parameters.${d.key}` }, `${d.label}: Standards`)}${this.fieldStateMarkup(`parameters.${d.key}`, d.unit)}</div>`;
+    const body = (fields) => {
+      const settable = fields.filter((d) => d.configuration_surface !== "catalog"),
+        fixed = fields.filter((d) => d.configuration_surface === "catalog");
+      return `${settable.length ? (editable ? `<div class="forms">${settable.map(field).join("")}</div>` : `<div class="settings-rows">${settable.map((d) => this.settingsOverviewRow(d)).join("")}</div>`) : ""}${fixed.length ? `<div class="settings-rows settings-fixed"><h3>Fest vorgegeben</h3>${fixed.map((d) => this.settingsOverviewRow(d, true)).join("")}</div>` : ""}`;
     };
-    return `<div class="card settings-parameters-card">${groupFields(entries)}<button type="submit" form="settings-parameters" class="confirm">Einstellungen speichern</button>${this.standardMenuButton({ group: id }, "Standards für diesen Bereich")}</div>`;
+    const card = (subgroup, fields) => {
+      const description = subgroup
+        ? subgroup.descriptions?.[source] || subgroup.description
+        : "";
+      const id = subgroup ? subgroup.id : `${group.id}-other`;
+      if (group.collapsed)
+        return `<details class="card settings-card" data-settings-subgroup="${esc(id)}"><summary><h2>${esc(subgroup?.label || group.label)}</h2></summary>${description ? `<p class="muted settings-card-text">${esc(description)}</p>` : ""}${body(fields)}</details>`;
+      const heading = subgroup
+        ? `<h2 id="parameter-group-${esc(id)}">${esc(subgroup.label)}${description ? ` ${this.infoButton(`parameter-group:${id}`, `${subgroup.label} erklären`, description)}` : ""}</h2>`
+        : "";
+      return `<section class="card settings-card" data-settings-subgroup="${esc(id)}" ${subgroup ? `aria-labelledby="parameter-group-${esc(id)}"` : `aria-label="${esc(group.label)}"`}>${heading}${body(fields)}</section>`;
+    };
+    const cards =
+      subgroups
+        .map((subgroup) => {
+          const fields = members.filter((d) => d.settings_subgroup === subgroup.id);
+          return fields.length ? card(subgroup, fields) : "";
+        })
+        .join("") +
+      (() => {
+        const other = members.filter(
+          (d) => !subgroups.some((subgroup) => subgroup.id === d.settings_subgroup),
+        );
+        return other.length ? card(null, other) : "";
+      })();
+    const settable = members.some((d) => d.configuration_surface !== "catalog");
+    const levels = this.infoButton(
+      `settings-levels:${group.id}`,
+      "Werkseinstellung, Standard und aktiver Wert",
+      "Jeder Wert hat eine Werkseinstellung und kann einen gespeicherten Standard haben. Ein Hinweis erscheint, wenn der aktive Wert vom Standard oder, ohne Standard, von der Werkseinstellung abweicht. ⋯ zeigt alle drei Stufen eines Feldes.",
+    );
+    const actions = !settable
+      ? ""
+      : editable
+        ? `<div class="settings-actions"><button type="submit" form="settings-parameters" class="confirm">Einstellungen speichern</button><button type="button" form="settings-parameters" data-action="settings-discard">Änderungen verwerfen</button>${this.standardMenuButton({ group: group.id }, "Standards für diesen Bereich")}${levels}</div><p class="muted settings-drafts" role="status" data-settings-drafts></p>`
+        : `<div class="settings-actions">${this.standardMenuButton({ group: group.id }, "Standards für diesen Bereich")}${levels}<a class="settings-edit-link" href="/config/integrations/integration/ha_sauna">Ändern unter Sauna konfigurieren › ${esc(group.label)} <span aria-hidden="true">↗</span></a></div>`;
+    return `<div class="settings-cards" data-settings-layout="${group.collapsed ? "collapsed" : editable ? "form" : "overview"}">${cards}</div>${actions}`;
+  }
+  settingsLayoutSignature() {
+    const state = this.state;
+    return JSON.stringify([
+      !!state.permissions?.admin,
+      state.configuration_model?.presence?.source || null,
+      (state.parameters || []).filter((d) => d.applicable).map((d) => d.key),
+    ]);
+  }
+  drawSettingsDrafts() {
+    // Unsaved drafts of all panel-owned fields; one save takes them together.
+    const labels = [
+      ...(this.shadowRoot?.querySelectorAll?.("#parameters input[data-edited]") || []),
+    ]
+      .map((input) => this.state?.parameters?.find((d) => d.key === input.name)?.label)
+      .filter(Boolean);
+    for (const status of this.shadowRoot?.querySelectorAll?.(
+      "[data-settings-drafts]",
+    ) || [])
+      if (status.dataset?.settingsDrafts !== undefined)
+        status.textContent = labels.length
+          ? `Nicht gespeichert: ${labels.join(", ")}`
+          : "";
+  }
+  discardSettingsDrafts() {
+    if (!this.state?.permissions?.admin) return;
+    for (const input of this.shadowRoot?.querySelectorAll?.(
+      "#parameters input[data-edited]",
+    ) || []) {
+      if (!input.dataset) continue;
+      input.value = this.state.configuration.parameters[input.name] ?? "";
+      delete input.dataset.edited;
+    }
+    this.settingsEditRevision = (this.settingsEditRevision || 0) + 1;
+    this.drawSettingsDrafts();
   }
   drawSettings() {
     if (!this.state) {
@@ -17308,23 +17428,41 @@ class SaunaPanel extends HTMLElement {
       return;
     }
     const state = this.state,
-      admin = !!state.permissions?.admin;
-    if (this.settingsEntry !== this.entry || this.settingsAdmin !== admin) {
+      admin = !!state.permissions?.admin,
+      layout = this.settingsLayoutSignature();
+    if (
+      this.settingsEntry !== this.entry ||
+      this.settingsAdmin !== admin ||
+      this.settingsLayout !== layout
+    ) {
       const groups = state.frontend_defaults.settings_groups.filter(
-        ({ id, surface }) =>
-          surface !== "integration" &&
-          (admin || ["programs", "notifications", "personal"].includes(id)),
+        ({ id }) => admin || ["programs", "notifications", "personal"].includes(id),
       );
-      const parameterGroup = (group) => this.settingsParameterGroup(group);
       const contents = {
-        programs: `<div class="card"><h2>Start über Taster oder Betriebsschalter</h2><div id="button-settings"></div></div><div class="card settings-programs"><h2>Programme</h2><div id="program-library"></div></div>`,
+        programs: `<div class="card settings-card"><h2>Start über Taster oder Betriebsschalter</h2><div id="button-settings"></div></div><div class="card settings-card settings-programs"><h2>Programme</h2><div id="program-library"></div></div>`,
         appearance: admin ? this.appearanceSettingsMarkup() : "",
-        maintenance: `<div class="card"><h2>Sitzungsarchiv ${this.infoButton("archive-retention", "Gespeicherte Sitzungen", "Nur Sitzungen mit bestätigtem Saunagang oder mit Kalibrierprotokoll bleiben im Archiv.")}</h2><button class="confirm" data-action="export">Archiv als ZIP herunterladen</button><div id="archive-management"></div></div><div class="card"><h2>Lernsitzungen ${this.infoButton("recognition-learning", "Freigabe für das Nachlernen", "Nach jeder Sitzung werden Lernbelege der Erkennung gespeichert, zunächst nicht freigegeben. Nur freigegebene Sitzungen gehen in die Aktion „Erkennung nachlernen“ ein.")}</h2><div id="recognition-learning"></div></div><div class="card"><h2>Protokollierung ${this.infoButton("logging", "Protokollumfang", "Home-Assistant-Protokoll, unabhängig vom Sitzungsarchiv. Betriebsereignisse enthalten auch Fehler und Warnungen; Diagnose ergänzt Messwerte und Erkennungsprüfungen.")}</h2><div class="row"><label for="log-level">Umfang</label><select id="log-level"><option value="ERROR">Fehler</option><option value="INFO">Betriebsereignisse</option><option value="DEBUG">Detaillierte Diagnose</option></select><button data-action="logging" class="confirm">Übernehmen</button></div><a href="/config/logs">Home-Assistant-Protokoll öffnen</a></div><div class="card"><h2>Standards und Werkseinstellungen</h2><p>Vorschau für alle gespeicherten Felder einschließlich ausgeblendeter Einstellungen. Programmbibliothek und Gerätezuordnung werden in ihren eigenen Bereichen verwaltet.</p>${this.standardMenuButton({ all: true }, "Standards für alle Bereiche")}</div>`,
-        notifications: `<div class="card notification-settings" id="notification-settings"></div>`,
-        personal: `<div class="card"><h2>Persönliche Startseite ${this.infoButton("start-page", "Gültigkeit der Startseite", "Gilt nur für das aktuelle Home-Assistant-Profil.")}</h2><button data-action="default-page" class="confirm">Als Startseite festlegen</button><p id="start-page-status" class="muted" role="status"></p></div>`,
+        maintenance: `<div class="card settings-card"><h2>Sitzungsarchiv ${this.infoButton("archive-retention", "Gespeicherte Sitzungen", "Nur Sitzungen mit bestätigtem Saunagang oder mit Kalibrierprotokoll bleiben im Archiv.")}</h2><button class="confirm" data-action="export">Archiv als ZIP herunterladen</button><div id="archive-management"></div></div><div class="card settings-card"><h2>Lernsitzungen ${this.infoButton("recognition-learning", "Freigabe für das Nachlernen", "Nach jeder Sitzung werden Lernbelege der Erkennung gespeichert, zunächst nicht freigegeben. Nur freigegebene Sitzungen gehen in die Aktion „Erkennung nachlernen“ ein.")}</h2><div id="recognition-learning"></div></div><div class="card settings-card"><h2>Protokollierung ${this.infoButton("logging", "Protokollumfang", "Home-Assistant-Protokoll, unabhängig vom Sitzungsarchiv. Betriebsereignisse enthalten auch Fehler und Warnungen; Diagnose ergänzt Messwerte und Erkennungsprüfungen.")}</h2><div class="row"><label for="log-level">Umfang</label><select id="log-level"><option value="ERROR">Fehler</option><option value="INFO">Betriebsereignisse</option><option value="DEBUG">Detaillierte Diagnose</option></select><button data-action="logging" class="confirm">Übernehmen</button></div><a href="/config/logs">Home-Assistant-Protokoll öffnen</a></div><div class="card settings-card"><h2>Standards und Werkseinstellungen</h2><p>Werkseinstellung, gespeicherter Standard und aktiver Wert aller dauerhaften Einstellungen, auch derzeit ausgeblendeter. Programmbibliothek, Start über Taster oder Betriebsschalter, Protokollierung und Gerätezuordnung haben keine Standards.</p>${this.standardMenuButton({ all: true }, "Standards für alle Bereiche")}</div>`,
+        notifications: `<div class="card settings-card notification-settings" id="notification-settings"></div>`,
+        personal: `<div class="card settings-card"><h2>Persönliche Startseite ${this.infoButton("start-page", "Gültigkeit der Startseite", "Gilt nur für das aktuelle Home-Assistant-Profil.")}</h2><button data-action="default-page" class="confirm">Als Startseite festlegen</button><p id="start-page-status" class="muted" role="status"></p></div>`,
       };
+      // Each area shows its own content first, then its settings; empty areas
+      // (for example one without applicable fields) are left out.
+      const sections = groups
+        .map((group) => ({
+          group,
+          markup:
+            (group.description
+              ? `<p class="muted settings-intro">${esc(group.description)}</p>`
+              : "") +
+            (contents[group.id] || "") +
+            this.settingsParameterGroup(group),
+        }))
+        .filter(
+          ({ group, markup }) =>
+            markup && (contents[group.id] || markup.includes("settings-cards")),
+        );
       this.$("#settings").innerHTML =
-        `<div class="settings-layout"><button type="button" class="settings-menu-toggle" data-action="settings-menu" aria-label="Einstellungsbereiche öffnen" aria-expanded="false" aria-controls="settings-navigation"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h16M4 12h16M4 18h16"/></svg><span data-settings-current></span></button><button type="button" class="settings-menu-backdrop" data-action="settings-menu-close" tabindex="-1" aria-label="Einstellungsbereiche schließen"></button><nav id="settings-navigation" class="settings-navigation" aria-label="Einstellungsbereiche">${groups.map(({ id, label }) => `<button type="button" data-action="settings-section:${esc(id)}" aria-controls="settings-${esc(id)}">${esc(label)}</button>`).join("")}${admin ? '<a class="settings-configuration-link" href="/config/integrations/integration/ha_sauna">Sauna konfigurieren <span aria-hidden="true">↗</span></a>' : ""}</nav><div class="settings-content" ${admin ? 'id="parameters"' : ""}>${admin ? '<form id="settings-parameters"></form>' : ""}${groups.map((group) => `<section id="settings-${esc(group.id)}" data-settings-section="${esc(group.id)}" aria-label="${esc(group.label)}">${group.id === "appearance" ? parameterGroup(group) + (contents[group.id] || "") : (contents[group.id] || "") + parameterGroup(group)}</section>`).join("")}</div></div><dialog id="standards-dialog" tabindex="-1" aria-labelledby="standards-title"></dialog>`;
+        `<div class="settings-layout"><button type="button" class="settings-menu-toggle" data-action="settings-menu" aria-label="Einstellungsbereiche öffnen" aria-expanded="false" aria-controls="settings-navigation"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h16M4 12h16M4 18h16"/></svg><span data-settings-current></span></button><button type="button" class="settings-menu-backdrop" data-action="settings-menu-close" tabindex="-1" aria-label="Einstellungsbereiche schließen"></button><nav id="settings-navigation" class="settings-navigation" aria-label="Einstellungsbereiche">${sections.map(({ group }) => `<button type="button" data-action="settings-section:${esc(group.id)}" aria-controls="settings-${esc(group.id)}" ${group.collapsed ? "data-settings-collapsed" : ""}>${esc(group.label)}</button>`).join("")}${admin ? '<a class="settings-configuration-link" href="/config/integrations/integration/ha_sauna">Sauna konfigurieren <span aria-hidden="true">↗</span></a>' : ""}</nav><div class="settings-content" ${admin ? 'id="parameters"' : ""}>${admin ? '<form id="settings-parameters"></form>' : ""}${sections.map(({ group, markup }) => `<section id="settings-${esc(group.id)}" data-settings-section="${esc(group.id)}" aria-label="${esc(group.label)}">${markup}</section>`).join("")}</div></div><dialog id="standards-dialog" tabindex="-1" aria-labelledby="standards-title"></dialog>`;
       this.$("#standards-dialog").addEventListener("cancel", (event) => {
         if (this.standardContext?.busy) event.preventDefault();
         else this.standardContext = null;
@@ -17333,12 +17471,19 @@ class SaunaPanel extends HTMLElement {
       if (admin) this.$("#log-level").value = state.configuration.log_level;
       this.settingsEntry = this.entry;
       this.settingsAdmin = admin;
+      this.settingsLayout = layout;
       this.programDraft = null;
       this.programEditor = null;
       this.programLibraryNeedsRender = true;
     }
     this.selectSettingsSection(this.settingsSection);
     for (const d of state.parameters) {
+      const shown = this.$(`#parameters [data-setting-value="${d.key}"]`);
+      if (shown)
+        shown.textContent = this.settingsValueText(
+          state.configuration.parameters[d.key],
+          d.unit,
+        );
       const input = this.$(`#parameters input[name="${d.key}"]`);
       if (!input) continue;
       input.disabled = !admin || state.configuration_locked;
@@ -17353,6 +17498,15 @@ class SaunaPanel extends HTMLElement {
       'button[form="settings-parameters"]',
     ))
       button.disabled = !admin || state.configuration_locked;
+    for (const note of this.shadowRoot.querySelectorAll?.("[data-field-state]") || []) {
+      if (!note.dataset?.fieldState) continue;
+      note.textContent = this.fieldStateText(
+        note.dataset.fieldState,
+        note.dataset.fieldUnit,
+      );
+      note.hidden = !note.textContent;
+    }
+    this.drawSettingsDrafts();
     if (admin) {
       this.drawAppearanceStatus();
       this.syncAppearanceEditor();
@@ -17978,16 +18132,21 @@ class SaunaPanel extends HTMLElement {
       disabled = editable ? "" : "disabled",
       testDisabled =
         !data.can_test || !data.targets || this.notificationBusy ? "disabled" : "";
+    // E2: Benachrichtigungen haben keinen gespeicherten Standard; die Integration
+    // nennt Abweichungen von der Werkseinstellung, das Panel benennt sie nur.
+    const deviations = data.factory_deviations || {},
+      factory = (text) =>
+        `<small class="settings-field-state">Abweichend von der Werkseinstellung: ${esc(text)}</small>`;
     const occasions = (data.occasions || [])
       .map(
         (item) =>
-          `<label><input type="checkbox" data-notification-occasion="${esc(item.id)}" ${settings.occasions?.[item.id] ? "checked" : ""} ${disabled}><span><strong>${esc(item.label)}</strong><small>${esc(item.description)}</small></span></label>`,
+          `<label><input type="checkbox" data-notification-occasion="${esc(item.id)}" ${settings.occasions?.[item.id] ? "checked" : ""} ${disabled}><span><strong>${esc(item.label)}</strong><small>${esc(item.description)}</small>${item.id in (deviations.occasions || {}) ? factory(deviations.occasions[item.id] ? "ein" : "aus") : ""}</span></label>`,
       )
       .join("");
     const values = (data.values || [])
       .map(
         (item) =>
-          `<label><span>${esc(item.label)} ${this.infoButton(`notification:${item.key}`, `${item.label} erklären`, item.description)}</span>${unitInput(`<input type="number" step="any" min="0" data-notification-value="${esc(item.key)}" aria-label="${esc(item.label)} (${esc(item.unit)})" value="${esc(settings[item.key] ?? "")}" ${disabled}>`, item.unit)}</label>`,
+          `<label><span>${esc(item.label)} ${this.infoButton(`notification:${item.key}`, `${item.label} erklären`, item.description)}</span>${unitInput(`<input type="number" step="any" min="0" data-notification-value="${esc(item.key)}" aria-label="${esc(item.label)} (${esc(item.unit)})" value="${esc(settings[item.key] ?? "")}" ${disabled}>`, item.unit)}${item.key in deviations ? factory(this.settingsValueText(deviations[item.key], item.unit)) : ""}</label>`,
       )
       .join("");
     const message = this.notificationMessage
@@ -19218,6 +19377,7 @@ class SaunaPanel extends HTMLElement {
         (!permissions.control || !action.startsWith("end-phase:after_run:"))) ||
       (action.startsWith("standards-") && !permissions.admin) ||
       (action.startsWith("appearance-") && !permissions.admin) ||
+      (action === "settings-discard" && !permissions.admin) ||
       ((action === "details" ||
         action === "detail" ||
         action === "detail-history" ||
@@ -19252,6 +19412,7 @@ class SaunaPanel extends HTMLElement {
     }
     if (action === "appearance-save") return this.saveAppearance();
     if (action === "appearance-discard") return this.resetAppearanceDraft();
+    if (action === "settings-discard") return this.discardSettingsDrafts();
 
     if (action === "program-toggle") {
       if (this.programDirty() || this.programRequest) return;

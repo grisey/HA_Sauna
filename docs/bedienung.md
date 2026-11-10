@@ -159,12 +159,13 @@ er benötigt ausdrückliches Einschalten. Die unterbrochene Sitzung bleibt im
 | Änderung | Besonderheit |
 | --- | --- |
 | Programmbibliothek | **Fertig** ändert nur den Entwurf; erst **Programme speichern** übernimmt den gesamten Katalog. Nach Sitzungsende auch ohne Administratorrechte. |
+| Temperaturtasten | **Einstellungen speichern** übernimmt die Entwürfe als aktive Werte; **Änderungen verwerfen** lädt die aktiven Werte. **Nicht gespeichert** nennt Felder mit Entwurf. Administratorrechte und vollständiges Sitzungsende erforderlich. |
 | Darstellung | Eingaben erscheinen als Vorschau. **Darstellung speichern** übernimmt sie für alle Benutzer der Sauna; **Änderungen verwerfen** lädt die aktiven Werte. |
 | Anlagenwerte und Gerätezuordnungen in der Integrationskonfiguration | Administratorrechte und vollständiges Sitzungsende erforderlich. Die aktuelle Temperaturwahl bleibt erhalten. |
 
 Die gemeinsame Instrumentenform kann für Temperatur, Luftfeuchte und Licht
 einzeln überschrieben werden. Die konstanten Temperaturen der Schnellwahl werden
-ebenfalls unter **Darstellung** eingestellt.
+unter **Programme und Start → Temperaturtasten** eingestellt.
 Bei gespeicherten Programmen bleiben Name sowie Anfangs- und Endtemperatur
 sichtbar. Die Zwischenstufen entfalten sich beim Darüberfahren oder Fokussieren;
 bei reduzierter Bewegung entfällt die Animation.

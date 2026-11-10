@@ -135,7 +135,8 @@ class DefaultsTests(unittest.TestCase):
         }
         self.assertEqual(
             {key for key, owner in groups.items() if owner == "integration"},
-            {"operation", "sensors", "light", "runtime"},
+            {"temperature", "light", "installation", "control", "monitoring",
+             "recognition", "technical"},
         )
         for definition in EDITABLE_DEFINITIONS:
             with self.subTest(key=definition.key):
@@ -235,7 +236,7 @@ class DefaultsTests(unittest.TestCase):
         )
         door = BY_KEY["door_open_drop_c"]
         self.assertTrue(door.expert)
-        self.assertEqual(door.settings_group, "sensors")
+        self.assertEqual(door.settings_group, "recognition")
         self.assertEqual(door.step, "any")
         self.assertNotIn(
             "Manuelle Lichtänderungen",

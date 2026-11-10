@@ -153,6 +153,39 @@ class PanelAPITests(unittest.IsolatedAsyncioTestCase):
         self.assertIsInstance(body["recorded"], bool)
         self.assertIsInstance(body["events"], list)
 
+    async def test_state_field_states_follow_standards_for_administrators_only(self):
+        # E2: Werkseinstellung, Standard und aktiver Wert je dauerhaftem Feld (G19).
+        key = "minimum_heating_minutes"
+        definition = BY_KEY[key]
+        active = definition.default + definition.number_step
+        standard = definition.default + 2 * definition.number_step
+        self.hass.config_entries.async_update_entry(self.entry, options={
+            **self.entry.options,
+            "parameters": {**self.entry.options["parameters"], key: active},
+            "field_standards": {f"parameters.{key}": standard},
+        })
+        await self.hass.async_block_till_done()
+        url = self.base + "/" + self.entry.entry_id + "/state"
+        async with ClientSession(headers=self.headers) as client, client.get(url) as response:
+            self.assertEqual(response.status, 200, await response.text())
+            state = await response.json()
+        self.assertEqual(
+            state["field_states"][f"parameters.{key}"],
+            {"reference": "standard", "reference_value": standard, "differs": True},
+        )
+        self.assertEqual(
+            set(state["field_states"]),
+            set(self.entry.runtime_data.configuration.standard_field_groups()),
+        )
+        price = state["field_states"]["parameters.electricity_price_eur_per_kwh"]
+        self.assertEqual(price["reference"], "factory")
+        user = await self.hass.auth.async_create_user("Settings reader", group_ids=[GROUP_ID_USER])
+        token = await self.hass.auth.async_create_refresh_token(user, client_id="http://localhost/")
+        headers = {"Authorization": "Bearer " + self.hass.auth.async_create_access_token(token)}
+        async with ClientSession(headers=headers) as client, client.get(url) as response:
+            self.assertEqual(response.status, 200, await response.text())
+            self.assertNotIn("field_states", await response.json())
+
     async def test_detail_overview_permissions_and_running_session(self):
         # B4c: Archiv und Start sowie K-Z2 (Details · Zustand) nur für Administratoren.
         runtime = self.entry.runtime_data
@@ -243,6 +276,7 @@ class PanelAPITests(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(body["settings"]["timer_lead_minutes"], 15)
                 self.assertEqual(body["settings"]["overtemperature_c"], 105)
                 self.assertTrue(all(body["settings"]["occasions"].values()))
+                self.assertEqual(body["factory_deviations"], {})
                 self.assertEqual(body["test"], None)
                 self.assertTrue(body["can_edit"])
             for invalid in ([], {"timer_lead_minutes": 240}, {"occasions": {"x": True}}):
@@ -254,6 +288,12 @@ class PanelAPITests(unittest.IsolatedAsyncioTestCase):
                 saved = (await response.json())["settings"]
                 self.assertFalse(saved["occasions"]["idle"])
                 self.assertEqual(saved["timer_repeat_minutes"], 5)
+            async with client.get(url) as response:
+                # E2: deviations from the factory values (no saved standard).
+                self.assertEqual(
+                    (await response.json())["factory_deviations"],
+                    {"timer_repeat_minutes": 10, "occasions": {"idle": True}},
+                )
             async with client.post(url + "/test", json={"x": 1}) as response:
                 self.assertEqual(response.status, 400)
             async with client.post(url + "/test", json={}) as response:
@@ -742,6 +782,7 @@ class PanelAPITests(unittest.IsolatedAsyncioTestCase):
                 self.assertNotIn("bindings", state["configuration"])
                 self.assertNotIn("sensor_timeout_seconds", state["configuration"]["parameters"])
                 self.assertNotIn("detector_trace", state)
+                self.assertNotIn("field_states", state)
                 self.assertIn("target_temperature_c", {item["key"] for item in state["parameters"]})
                 self.assertNotIn("sensor_timeout_seconds", {item["key"] for item in state["parameters"]})
                 self.assertTrue(all("source" not in item for item in state["measurements"]))
@@ -2638,7 +2679,7 @@ class PanelAPITests(unittest.IsolatedAsyncioTestCase):
                     self.assertEqual(self.entry.options["parameters"][key], positive)
                     baseline = deepcopy(dict(self.entry.options))
                     for scope in (
-                        {"field": field}, {"group": "operation"}, {"all": True},
+                        {"field": field}, {"group": "installation"}, {"all": True},
                     ):
                         self.hass.config_entries.async_update_entry(
                             self.entry, options=deepcopy(baseline),
@@ -2768,13 +2809,13 @@ class PanelAPITests(unittest.IsolatedAsyncioTestCase):
             },
         }
         sensor_fields = {"parameters." + spec["key"] for spec in section("parameters")
-                         if spec["settings_group"] == "sensors" and spec["configuration_surface"] != "catalog"}
+                         if spec["settings_group"] == "recognition" and spec["configuration_surface"] != "catalog"}
         excluded = ("bindings", "temperature_programs", "selected_program_id", "button_program",
                     "temperature_steps", "presence_source", "program_mode", "control_mode")
         url = self.base + "/" + self.entry.entry_id + "/standards"
         async with ClientSession(headers=self.headers) as client:
             for action in ("restore_standard", "restore_factory"):
-                for scope in ({"field": hidden}, {"group": "sensors"}, {"all": True}):
+                for scope in ({"field": hidden}, {"group": "recognition"}, {"all": True}):
                     with self.subTest(action=action, scope=scope):
                         self.hass.config_entries.async_update_entry(self.entry, options=deepcopy(baseline))
                         await self.hass.async_block_till_done()
@@ -2962,8 +3003,8 @@ class PanelAPITests(unittest.IsolatedAsyncioTestCase):
             {**request, "value": BY_KEY["nominal_power_kw"].maximum + 1},
             {"action": "missing", "field": field},
             {"action": "overwrite_standard", "field": field},
-            {**request, "group": "operation"}, {**request, "all": True},
-            {"action": "overwrite_standard", "group": "operation", "value": value},
+            {**request, "group": "installation"}, {**request, "all": True},
+            {"action": "overwrite_standard", "group": "installation", "value": value},
             {"action": "restore_standard", "field": field, "value": value},
             {"action": "restore_factory", "group": "missing"},
             {"action": "restore_standard", "field": "bindings.heater"},

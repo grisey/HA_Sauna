@@ -167,7 +167,7 @@ def parameter_error(error):
         "integer_required": "Bitte eine ganze Zahl eingeben.",
         "reduction_too_large": "Die Verkürzung muss kleiner als die erste Heizzeit sein.",
         "window_not_divisible": "Das Zeitfenster muss durch sein Erkennungsraster und den jeweiligen Prüfabstand teilbar sein.",
-        "catalog_only": "Dieser Standardwert wird ausschließlich aus dem Parameterkatalog gelesen.",
+        "catalog_only": "Dieser Wert ist fest vorgegeben und nicht einstellbar.",
         "program_catalog_invalid": "Die Mindesttemperatur passt nicht zu den gespeicherten Temperaturprogrammen.",
         "not_applicable": "Diese Einstellung wird mit den zugeordneten Geräten und dem gewählten Erkennungsverfahren nicht verwendet.",
     }.get(error.code, "Bitte die eingegebenen Werte prüfen.")
@@ -303,6 +303,7 @@ def public_state(result):
         # The control hint is public; results stay with the protocol (administrators).
         result["calibration"] = {"active": result["calibration"]["active"]}
     for key in ("rule_inputs", "heating_observation", "decision", "faults", "protection",
-                "inhibits", "archive_error", "detection_channels", "detector_trace", "presence"):
+                "inhibits", "archive_error", "detection_channels", "detector_trace", "presence",
+                "field_states"):
         result.pop(key, None)
     return result

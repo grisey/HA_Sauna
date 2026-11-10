@@ -11,10 +11,11 @@ Heizanforderungen, Ofenkühlung und Temperaturstufen wirken nur in Automatik.
 ## Wirksame Präsenzquelle
 
 Ein gewählter Präsenzsensor führt die Gangerkennung. Bei durchgehender
-Nichtverfügbarkeit übernimmt nach der **Wartezeit bis zur Proxy-Erkennung** das
+Nichtverfügbarkeit übernimmt nach der **Wartezeit bis zur Ersatzerkennung** das
 Proxyverfahren. Nach durchgehend gültigen Zuständen `on` oder `off` übernimmt
-nach der **Wartezeit bis zum Präsenzsensor** wieder der Sensor. Beide Wartezeiten
-sind unter **Sensoren und Erkennung** einstellbar; ihre Vorgaben stehen im
+nach der **Wartezeit bis zur Rückkehr zum Präsenzsensor** wieder der Sensor.
+Beide Wartezeiten sind unter **Präsenz und Erkennung → Präsenzsensor**
+einstellbar; ihre Vorgaben stehen im
 [Parameterkatalog](../custom_components/ha_sauna/defaults.json).
 Ein gültiger, unveränderter Zustand verfällt nicht durch sein Alter. Ein Wechsel
 zwischen `on` und `off` unterbricht die Verfügbarkeit nicht. Ist das Proxyverfahren

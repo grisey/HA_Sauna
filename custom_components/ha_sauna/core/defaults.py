@@ -573,7 +573,7 @@ def _groups(groups, name):
         _object(
             group, {"id", "label"}, name,
             optional=("description", "descriptions", "presence_sources")
-            if name == "settings_subgroups" else ("surface",),
+            if name == "settings_subgroups" else ("surface", "description", "collapsed"),
         )
         if any(
             not isinstance(group[key], str) or not group[key].strip()
@@ -582,6 +582,8 @@ def _groups(groups, name):
             raise ValueError(f"defaults.json: invalid {name}")
         if "surface" in group and group["surface"] not in ("panel", "integration"):
             raise ValueError(f"defaults.json: invalid {name} surface")
+        if "collapsed" in group and not isinstance(group["collapsed"], bool):
+            raise ValueError(f"defaults.json: invalid {name} collapsed")
         sources = group.get("presence_sources")
         if sources is not None and (
             not isinstance(sources, list)
@@ -773,12 +775,16 @@ def validate_catalog(catalog):
     if (
         not {
             "programs",
-            "operation",
-            "sensors",
+            "temperature",
             "light",
+            "installation",
+            "control",
+            "monitoring",
+            "recognition",
             "appearance",
-            "maintenance",
             "personal",
+            "maintenance",
+            "technical",
         }
         <= group_ids
     ):

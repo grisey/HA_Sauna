@@ -361,8 +361,9 @@ class OptionsFlowStandardsTests(unittest.IsolatedAsyncioTestCase):
             },
         )
         values = {**self._suggested(form), key: draft}
-        sibling = "heat_reset_minutes"
-        values[sibling] += BY_KEY[sibling].number_step
+        # E2: same form as the key (Anlage und Energie › Ofen, Strompreis und Kabine).
+        sibling = "cabin_volume_m3"
+        values[sibling] = round((values[sibling] or 0) + 1, 2)
         navigation = {**values, "settings_action": "field_standards"}
         form = await self._submit(form, navigation)
         targets = self._targets("overwrite_standard", [field], draft)
@@ -427,7 +428,7 @@ class OptionsFlowStandardsTests(unittest.IsolatedAsyncioTestCase):
             "settings_action": "save",
         }
         result = await self._submit(form, save_input)
-        self.assertEqual((result["type"], result["step_id"]), ("menu", "operation"))
+        self.assertEqual((result["type"], result["step_id"]), ("menu", "installation"))
         await self.hass.async_block_till_done()
         self.assertEqual(self.entry.options["parameters"][key], later_active)
         self.assertEqual(self.entry.options["parameters"][sibling], values[sibling])
@@ -514,7 +515,7 @@ class OptionsFlowStandardsTests(unittest.IsolatedAsyncioTestCase):
                     save_input.pop(key, None)
                 result = await self._submit(form, save_input)
                 self.assertEqual(
-                    (result["type"], result["step_id"]), ("menu", "operation")
+                    (result["type"], result["step_id"]), ("menu", "installation")
                 )
                 await self.hass.async_block_till_done()
                 for configuration in (
@@ -535,7 +536,7 @@ class OptionsFlowStandardsTests(unittest.IsolatedAsyncioTestCase):
     async def test_field_restores_update_only_affected_draft_and_use_factory_fallback(
         self,
     ):
-        key, sibling = "nominal_power_kw", "heat_reset_minutes"
+        key, sibling = "nominal_power_kw", "cabin_volume_m3"
         field = f"parameters.{key}"
         definition = BY_KEY[key]
         active = definition.default + definition.number_step
@@ -553,7 +554,7 @@ class OptionsFlowStandardsTests(unittest.IsolatedAsyncioTestCase):
                 form = await self._open("heater_accounting")
                 values = self._suggested(form)
                 values[key] = round(active + 3 * definition.number_step, 6)
-                values[sibling] += BY_KEY[sibling].number_step
+                values[sibling] = round((values[sibling] or 0) + 1, 2)
                 navigation = {**values, "settings_action": "field_standards"}
                 form = await self._submit(form, navigation)
                 targets = self._targets(action, [field])
@@ -621,10 +622,10 @@ class OptionsFlowStandardsTests(unittest.IsolatedAsyncioTestCase):
                 values["nominal_power_kw"] += BY_KEY["nominal_power_kw"].number_step
                 navigation = {**values, "settings_action": "field_standards"}
                 form = await self._submit(form, navigation)
-                fields = before["configuration"].standard_fields(group="sensors")
+                fields = before["configuration"].standard_fields(group="recognition")
                 self.assertIn(hidden, fields)
                 targets = self._targets(action, fields)
-                form = await self._preview(form, action, "group:sensors")
+                form = await self._preview(form, action, "group:recognition")
                 preview = self._assert_preview(form, targets)
                 self._assert_unchanged(before)
                 form = await self._submit(form, {"decision": "confirm"})
@@ -639,7 +640,7 @@ class OptionsFlowStandardsTests(unittest.IsolatedAsyncioTestCase):
                     [
                         navigation,
                         {"action": action},
-                        {"scope": "group:sensors"},
+                        {"scope": "group:recognition"},
                         {"decision": "confirm"},
                     ],
                     preview,

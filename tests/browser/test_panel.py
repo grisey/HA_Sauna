@@ -896,7 +896,7 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
         editor = self.panel.locator("#appearance-settings")
         for name, value in selected.items():
             await expect(editor.locator(f'[data-appearance-instrument="{name}"]')).to_have_value(value)
-        await editor.get_by_role("button", name="Standards für Darstellung und Bedienung", exact=True).click()
+        await editor.get_by_role("button", name="Standards für diesen Bereich", exact=True).click()
         dialog = self.panel.locator("#standards-dialog")
         await dialog.get_by_role("button", name="Werkseinstellung", exact=True).click()
         await expect(dialog.get_by_text("Neuer aktiver Wert", exact=True)).to_be_visible()
@@ -2461,8 +2461,11 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
         await self.panel.locator('.main-tabs [data-action="settings"]').click()
         link = self.panel.get_by_role("link", name="Sauna konfigurieren", exact=True)
         await expect(link).to_have_attribute("href", "/config/integrations/integration/ha_sauna")
-        for group in ("operation", "sensors", "light"):
-            await expect(self.panel.locator(f'[data-action="settings-section:{group}"]')).to_have_count(0)
+        # E2: installation areas appear in the panel as read-only overviews; their
+        # values are edited only in the integration configuration.
+        for group in ("temperature", "light", "installation", "control", "monitoring", "recognition"):
+            await expect(self.panel.locator(f'[data-action="settings-section:{group}"]')).to_have_count(1)
+            await expect(self.panel.locator(f'#settings-{group} input')).to_have_count(0)
         # A stored field hidden in sensor operation: the deadline applies to the
         # proxy method only (E-02). The values of the former curve recognition
         # are catalog-bound since 5eba4cf and cannot be stored.
@@ -2472,7 +2475,7 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
         self.runtime = await PresenceRuntimeIntegrationTests.configure(self)
         flow = await self.hass.config_entries.options.async_init(self.entry.entry_id)
         flow = await self.hass.config_entries.options.async_configure(
-            flow["flow_id"], {"next_step_id": "sensors"})
+            flow["flow_id"], {"next_step_id": "recognition"})
         self.assertNotIn("parameters_presence_strong", flow["menu_options"])
         self.assertIn("parameters_presence_direct", flow["menu_options"])
         flow = await self.hass.config_entries.options.async_configure(
@@ -2486,7 +2489,7 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
         changed = values[parameter_key] + 1
         result = await self.hass.config_entries.options.async_configure(
             flow["flow_id"], {**values, parameter_key: changed})
-        self.assertEqual((result["type"], result["step_id"], result["flow_id"]), ("menu", "sensors", flow["flow_id"]))
+        self.assertEqual((result["type"], result["step_id"], result["flow_id"]), ("menu", "recognition", flow["flow_id"]))
         await self.hass.async_block_till_done()
         self.runtime = self.entry.runtime_data
         self.assertEqual(self.entry.options["parameters"][parameter_key], changed)
@@ -2512,7 +2515,7 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(await self.panel.locator('[data-settings-section]:visible').count(), 1)
         self.assertEqual(await self.panel.evaluate("""p => p.state.parameters.filter(d => {
           const fields=p.shadowRoot.querySelectorAll(`#parameters input[name="${d.key}"]`);
-          if (d.settings_group !== "appearance") return fields.length !== 0;
+          if (d.configuration_surface !== "panel" || d.live_editable || !d.applicable) return fields.length !== 0;
           return fields.length!==1 || fields[0].form?.id!=="settings-parameters";
         }).map(d=>d.key)"""), [])
         await editor.locator('[data-appearance-color="series_temperature"]').fill("#E64AEB")
