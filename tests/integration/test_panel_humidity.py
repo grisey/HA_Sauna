@@ -14,6 +14,7 @@ import test_archive as archive_fixture
 import test_panel_detail_projection as panel_fixture
 from climate_fixtures import measurement
 from test_foundation import T0
+from test_history_columns import expand
 
 from custom_components.ha_sauna.core.models import Position, Quantity, Session
 from custom_components.ha_sauna.core.moisture import current_absolute_humidity
@@ -22,11 +23,16 @@ from custom_components.ha_sauna.history_humidity import project_absolute_humidit
 
 
 def _measurements(result):
-    return [
-        record
-        for record in result["records"]
-        if record["kind"] in {"measurement", "source_snapshot"}
-    ]
+    # LZ1: Die Verlaufsprojektion liefert Messungen spaltenweise.
+    columns = result.get("measurement_columns")
+    return sorted(
+        (
+            record
+            for record in result["records"] + (expand(columns) if columns else [])
+            if record["kind"] in {"measurement", "source_snapshot"}
+        ),
+        key=lambda record: record["id"],
+    )
 
 
 def _display(record):

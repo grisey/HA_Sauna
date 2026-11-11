@@ -7,6 +7,7 @@ from collections.abc import Iterable, Mapping
 from datetime import datetime, timedelta
 from itertools import chain
 from math import isfinite
+from operator import itemgetter
 
 from .core.models import Measurement, Position, Quantity
 from .core.moisture import current_absolute_humidity
@@ -14,6 +15,17 @@ from .core.timeline import utc
 
 
 MEASUREMENT_KINDS = {"measurement", "source_snapshot"}
+# Role names in Quantity order, built once instead of for every original.
+_ROLES = {
+    position: tuple(f"{position.value}_{quantity.value}" for quantity in Quantity)
+    for position in Position
+}
+_ROLE = {
+    (position, quantity): f"{position.value}_{quantity.value}"
+    for position in Position
+    for quantity in Quantity
+}
+_ORDER = itemgetter(0, 1)
 
 
 def _received_at(payload):
@@ -122,22 +134,38 @@ def project_absolute_humidity(
             inputs[identity] = record
     observations = []
     source_ids = {}
+    # Each original is read once: a page record is also the input with its ID.
+    read = {}
     for identity, record in inputs.items():
-        measurement = _measurement(record, bindings)
+        measurement = read[identity] = _measurement(record, bindings)
         if measurement is None:
             continue
-        role = f"{measurement.position.value}_{measurement.quantity.value}"
+        role = _ROLE[measurement.position, measurement.quantity]
         observations.append((measurement.received_at, identity, role, measurement))
         source_ids.setdefault(role, []).append(identity)
-    observations.sort(key=lambda item: item[:2])
+    observations.sort(key=_ORDER)
     sources = {
         role: _SourceIndex(identities) for role, identities in source_ids.items()
     }
     targets = []
     display = []
     for index, record in enumerate(records):
-        payload = record.get("payload")
-        received_at = _received_at(payload) if isinstance(payload, Mapping) else None
+        identity = _record_id(record)
+        measurement = (
+            read[identity]
+            if identity is not None and inputs[identity] is record
+            else _measurement(record, bindings)
+        )
+        if record.get("kind") not in MEASUREMENT_KINDS:
+            # Only measurement kinds receive a display value below.
+            display.append(None)
+            continue
+        if measurement is not None:
+            # The same original reception time, already read for the input.
+            received_at = measurement.received_at
+        else:
+            payload = record.get("payload")
+            received_at = _received_at(payload) if isinstance(payload, Mapping) else None
         display.append(
             {
                 "value": None,
@@ -147,8 +175,6 @@ def project_absolute_humidity(
                 "valid_until": None,
             }
         )
-        measurement = _measurement(record, bindings)
-        identity = _record_id(record)
         if measurement is not None and identity is not None:
             targets.append(
                 (
@@ -158,7 +184,7 @@ def project_absolute_humidity(
                     measurement.position,
                 )
             )
-    targets.sort(key=lambda item: item[:2])
+    targets.sort(key=_ORDER)
     cursor = 0
     for received_at, identity, index, position in targets:
         while cursor < len(observations) and observations[cursor][0] <= received_at:
@@ -166,8 +192,7 @@ def project_absolute_humidity(
             sources[role].add(source_id, measurement)
             cursor += 1
         measurements = {}
-        for quantity in Quantity:
-            role = f"{position.value}_{quantity.value}"
+        for role in _ROLES[position]:
             source = sources.get(role)
             if source is not None:
                 measurement = source.latest(identity)

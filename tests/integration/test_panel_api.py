@@ -834,6 +834,8 @@ class PanelAPITests(unittest.IsolatedAsyncioTestCase):
                         for record in resumed["records"]
                     ],
                 )
+                # LZ1: Die ältere Messform ohne Quelle bleibt ein einzelner Datensatz.
+                self.assertEqual(projected["measurement_columns"]["id"], [])
                 self.assertNotIn("configuration", projected["session"])
                 self.assertIsNone(projected["next_after"])
 
@@ -842,6 +844,7 @@ class PanelAPITests(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(response.status, 200)
                 projected = await response.json()
                 kinds = {record["kind"] for record in projected["records"]}
+                kinds |= {role["kind"] for role in projected["measurement_columns"]["roles"]}
                 self.assertIn("measurement", kinds)
                 self.assertIn("detector_trace", kinds)
                 self.assertIn("session", kinds)
@@ -1665,6 +1668,101 @@ class PanelAPITests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(runtime.session.timeline.gang_count, 2)
             self.assertEqual(runtime.controller.target_temperature, 91)
             self.assertEqual(runtime.configuration.temperature_steps, (76, 83, 91))
+
+    async def test_history_projection_sends_measurement_columns_and_keeps_originals(self):
+        # LZ1: Messungen der Verlaufsprojektion spaltenweise; Originalfelder ohne Projektion.
+        import json
+        from dataclasses import replace
+        from datetime import timedelta
+
+        from climate_fixtures import measurement
+        from test_history_columns import expand
+
+        from custom_components.ha_sauna.core.models import Position, Quantity
+
+        runtime = self.entry.runtime_data
+        await runtime.set_operation(True)
+        session_id = runtime.session.session_id
+        at = runtime._clock()
+        bound = runtime.configuration.bindings.values
+        for second in range(3):
+            for quantity, value in ((Quantity.TEMPERATURE, 70 + second),
+                                    (Quantity.HUMIDITY, 20 + second)):
+                runtime.archive.append("measurement", at, replace(
+                    measurement(Position.UPPER, quantity, value, 0,
+                                source=bound[f"upper_{quantity.value}"]),
+                    received_at=at + timedelta(seconds=second),
+                ), session_id)
+        await runtime.archive.flush()
+        url = self.base + "/" + self.entry.entry_id + "/archive"
+
+        async def pages(client, **params):
+            result, after = [], 0
+            while True:
+                async with client.get(url, params={
+                    "session_id": session_id, "after": str(after), **params,
+                }) as response:
+                    self.assertEqual(response.status, 200, await response.text())
+                    page = await response.json()
+                result.append(page)
+                if page["next_after"] is None:
+                    return result
+                after = page["next_after"]
+
+        async with ClientSession(headers=self.headers) as client:
+            shown = await pages(client, projection="history")
+            originals = {
+                record["id"]: record
+                for page in await pages(client) for record in page["records"]
+            }
+        columns = [record for page in shown for record in expand(page["measurement_columns"])]
+        records = [record for page in shown for record in page["records"]]
+        self.assertGreaterEqual(len(columns), 6)
+        self.assertFalse(any(record["kind"] in {"measurement", "source_snapshot"}
+                             and "source" in record["payload"] for record in records))
+        shown_ids = sorted(record["id"] for record in columns + records)
+        self.assertEqual(len(shown_ids), len(set(shown_ids)))
+        for record in columns:
+            original = originals[record["id"]]
+            self.assertEqual(record["kind"], original["kind"])
+            self.assertEqual(record["received_at"], original["received_at"])
+            self.assertEqual(record["payload"], {
+                key: original["payload"][key]
+                for key in ("position", "quantity", "source", "value", "received_at")
+            })
+            self.assertIn("raw_value", original["payload"])
+            self.assertEqual(set(record["display"]["absolute_humidity"]),
+                             {"value", "received_at", "valid_until"})
+        self.assertTrue(any(record["display"]["absolute_humidity"]["value"] is not None
+                            for record in columns))
+        archived = runtime.archive.read(session_id, humidity_display=True, now=runtime._clock())
+        displays = {record["id"]: record["display"] for record in archived["records"]
+                    if record["kind"] == "measurement"}
+        for record in columns:
+            if record["id"] in displays:
+                self.assertEqual(
+                    {key: value for key, value in record["display"]["absolute_humidity"].items()
+                     if key != "received_at"},
+                    {key: value for key, value in displays[record["id"]]["absolute_humidity"].items()
+                     if key != "received_at"},
+                )
+
+        normal = await self.hass.auth.async_create_user("Spalten lesen", group_ids=[GROUP_ID_USER])
+        token = await self.hass.auth.async_create_refresh_token(normal, client_id="http://localhost/")
+        headers = {"Authorization": "Bearer " + self.hass.auth.async_create_access_token(token)}
+        async with ClientSession(headers=headers) as client:
+            public = await pages(client, projection="history")
+        roles = [role for page in public for role in page["measurement_columns"]["roles"]]
+        self.assertTrue(roles)
+        self.assertTrue(all("source" not in role and "source_matches_binding" in role
+                            for role in roles))
+        self.assertTrue(any(role["source_matches_binding"] for role in roles))
+        self.assertNotIn(bound["upper_temperature"],
+                         json.dumps([page["measurement_columns"] for page in public]))
+        self.assertEqual(
+            sorted(record["id"] for page in public for record in expand(page["measurement_columns"])),
+            sorted(record["id"] for record in columns),
+        )
 
     async def test_archive_cursor_rejects_sqlite_overflow(self):
         runtime = self.entry.runtime_data

@@ -12,6 +12,53 @@ const equalPresetColumns = (count, maximum) => {
   return 1;
 };
 const stamp = (v) => (v ? new Date(v).getTime() : null);
+// LZ1: Verlaufsseiten liefern Messungen spaltenweise (`measurement_columns`).
+// Daraus entstehen wieder Datensätze in Archivreihenfolge mit den Feldern, die der
+// Verlauf liest; die übrigen Originalfelder liefert die Abfrage ohne Projektion.
+const historyColumnRecords = new WeakSet();
+const historyPageRecords = (page) => {
+  const records = Array.isArray(page?.records) ? page.records : [],
+    columns = page?.measurement_columns,
+    ids = Array.isArray(columns?.id) ? columns.id : [];
+  if (!ids.length) return records;
+  const roles = (columns.roles || []).map(({ kind, ...fields }) => ({ kind, fields })),
+    recordTimes = new Map(columns.record_received_at || []),
+    measured = ids.map((id, index) => {
+      const role = roles[columns.role[index]],
+        receivedAt = columns.received_at[index],
+        record = {
+          id,
+          kind: role.kind,
+          received_at: recordTimes.get(id) ?? receivedAt,
+          payload: {
+            ...role.fields,
+            value: columns.value[index],
+            received_at: receivedAt,
+          },
+          display: {
+            absolute_humidity: {
+              value: columns.absolute_humidity[index],
+              received_at: receivedAt,
+              valid_until: columns.absolute_humidity_valid_until[index],
+            },
+          },
+        };
+      historyColumnRecords.add(record);
+      return record;
+    }),
+    merged = [];
+  // Both lists follow the archive order of record IDs.
+  let left = 0,
+    right = 0;
+  while (left < records.length || right < measured.length)
+    merged.push(
+      right >= measured.length ||
+        (left < records.length && !(records[left].id > measured[right].id))
+        ? records[left++]
+        : measured[right++],
+    );
+  return merged;
+};
 const energyIntervalTransports = new WeakMap();
 // Date alone drops the owner's microseconds. Compare whole seconds and the
 // original fraction separately, retaining the wire strings at every boundary.
@@ -7295,7 +7342,8 @@ class SaunaPanel extends HTMLElement {
         load.sessionId = id;
         const cache = this.historyCache(id);
         if (this.historyCacheNeedsFetch(cache)) {
-          let more;
+          let more,
+            first = true;
           do {
             const after = cache.after,
               transport = energyIntervalTransport(cache.energy),
@@ -7309,7 +7357,7 @@ class SaunaPanel extends HTMLElement {
             if (!currentFor(id)) return;
             // Persist each complete page before the next request. A failed
             // later page retries at this cursor and cannot duplicate records.
-            const records = Array.isArray(page.records) ? page.records : [],
+            const records = historyPageRecords(page),
               continuation = page.next_after;
             if (
               continuation != null &&
@@ -7341,7 +7389,11 @@ class SaunaPanel extends HTMLElement {
               (cache.measurement_window?.complete ?? true);
             load.count = cache.records.length;
             this.showHistoryCache();
-            if (!this.$("#history")?.hidden) this.drawHistory("archive");
+            // LZ1: Zeichnen nach der ersten und der letzten Seite eines Laufs; die
+            // Seiten dazwischen werden nur gesammelt und zusammen gezeichnet.
+            if ((first || !more) && !this.$("#history")?.hidden)
+              this.drawHistory("archive");
+            first = false;
             // Let input, paint and the independent status poll run between pages.
             if (more) await new Promise((resolve) => setTimeout(resolve, 0));
           } while (more && current());
@@ -7354,6 +7406,8 @@ class SaunaPanel extends HTMLElement {
         if (current()) {
           this.message(error, "history");
           if (!this.shown) this.clearHistoryDisplay();
+          // Bereits gesammelte Seiten bleiben sichtbar wie nach jeder Seite zuvor.
+          else if (!this.$("#history")?.hidden) this.drawHistory("archive");
         }
       } finally {
         if (this.historyLoad === load) {
@@ -11808,7 +11862,62 @@ class SaunaPanel extends HTMLElement {
       pages = Math.max(1, Math.ceil(records.length / size));
     const page = Math.max(0, Math.min(pages - 1, this.detailRecordPage || 0));
     const slice = records.slice(page * size, (page + 1) * size);
-    return `<p class="muted">Archivfelder nach Empfangsreihenfolge. Sitzungszustände sind kompakte Auszüge; der Archivexport enthält die vollständigen Originale.</p><div class="row"><button data-action="detail-record-page:${page - 1}" ${page ? "" : "disabled"}>Zurück</button><span>Seite ${page + 1} von ${pages}</span><button data-action="detail-record-page:${page + 1}" ${page + 1 < pages ? "" : "disabled"}>Weiter</button></div><div class="detail-record-list" id="detail-records">${slice.map((record, index) => `<details data-record-id="${record.id ?? page * size + index}"><summary>${this.clock(record.received_at)} · ${esc(this.historyRecordLabel(record.kind))}${record.projection ? " · Auszug" : ""}</summary>${this.detailFields(record.payload, `record-${record.id ?? index}`)}</details>`).join("")}</div>`;
+    const originals = this.historyRecordOriginals(slice);
+    return `<p class="muted">Archivfelder nach Empfangsreihenfolge. Sitzungszustände sind kompakte Auszüge; der Archivexport enthält die vollständigen Originale.</p><div class="row"><button data-action="detail-record-page:${page - 1}" ${page ? "" : "disabled"}>Zurück</button><span>Seite ${page + 1} von ${pages}</span><button data-action="detail-record-page:${page + 1}" ${page + 1 < pages ? "" : "disabled"}>Weiter</button></div><div class="detail-record-list" id="detail-records">${slice
+      .map((item, index) => {
+        const record = historyColumnRecords.has(item)
+          ? originals.records.get(item.id)
+          : item;
+        return `<details data-record-id="${item.id ?? page * size + index}"><summary>${this.clock((record || item).received_at)} · ${esc(this.historyRecordLabel(item.kind))}${record?.projection ? " · Auszug" : ""}</summary>${record ? this.detailFields(record.payload, `record-${item.id ?? index}`) : `<p class="muted">${originals.error ? "Originalfelder konnten nicht geladen werden." : "Originalfelder werden geladen …"}</p>`}</details>`;
+      })
+      .join("")}</div>`;
+  }
+  // LZ1: Originalfelder spaltenweise übertragener Messungen für die gezeigte Seite
+  // der Einzelbelege, aus der Archivabfrage ohne Projektion (wie der Archivexport).
+  historyRecordOriginals(slice) {
+    const sessionId = this.shown?.session?.timeline?.session_id,
+      identity = `${this.entry}:${sessionId}`;
+    if (this.historyOriginals?.identity !== identity)
+      this.historyOriginals = { identity, records: new Map(), failed: new Set() };
+    const state = this.historyOriginals,
+      missing = slice
+        .filter(
+          (record) => historyColumnRecords.has(record) && !state.records.has(record.id),
+        )
+        .map((record) => record.id),
+      key = missing.join(",");
+    const result = {
+      records: state.records,
+      error: missing.some((id) => state.failed.has(id)),
+    };
+    if (!missing.length || !sessionId || state.loading === key || result.error)
+      return result;
+    state.loading = key;
+    const entry = this.entry,
+      wanted = new Set(missing);
+    (async () => {
+      try {
+        let after = Math.min(...missing) - 1;
+        while (wanted.size) {
+          const page = await this.api(
+            `/${entry}/archive?session_id=${encodeURIComponent(sessionId)}&after=${after}`,
+          );
+          for (const record of Array.isArray(page.records) ? page.records : [])
+            if (wanted.delete(record.id)) state.records.set(record.id, record);
+          const next = page.next_after;
+          if (!Number.isSafeInteger(next) || next <= after) break;
+          after = next;
+        }
+      } catch (_error) {
+        // Nicht geladene Datensätze zeigen den Fehler; ein Seitenwechsel versucht es erneut.
+      }
+      for (const id of wanted) state.failed.add(id);
+      if (state.loading === key) state.loading = null;
+      if (this.historyOriginals !== state) return;
+      this.historyOriginalsRevision = (this.historyOriginalsRevision || 0) + 1;
+      this.scheduleHistoryRender("records");
+    })();
+    return result;
   }
   renderHeatingCycles(session) {
     if (!Array.isArray(session.heating?.intervals))
@@ -12053,6 +12162,7 @@ class SaunaPanel extends HTMLElement {
       cursor,
       latest > end,
       this.detailRecordPage || 0,
+      this.historyOriginalsRevision || 0,
       this.detailEventPage || 0,
       this.historyValueSelection,
       this.appearanceValue(),
@@ -19294,7 +19404,10 @@ class SaunaPanel extends HTMLElement {
         if (!Number.isInteger(page)) return;
         if (action.startsWith("detail-event-page:"))
           this.detailEventPage = Math.max(0, page);
-        else this.detailRecordPage = Math.max(0, page);
+        else {
+          this.detailRecordPage = Math.max(0, page);
+          this.historyOriginals?.failed.clear();
+        }
       }
       this.renderControlHistory();
       return;

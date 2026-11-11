@@ -37,6 +37,7 @@ from .presentation import (
     decision_message,
     fault_message,
     historical_measurement_context,
+    history_measurement_columns,
     issues,
     parameter_error,
     public_measurement,
@@ -1046,9 +1047,24 @@ class ArchiveView(HomeAssistantView):
                                 for key, value in energy.items()
                                 if key != "interval_delta"
                             }
+                if projection == "history":
+                    # LZ1: Messungen spaltenweise; Originale ohne Projektion.
+                    result["records"], result["measurement_columns"] = (
+                        history_measurement_columns(
+                            result["records"], configuration=session.get("configuration"),
+                        )
+                    )
             else:
                 result["session"] = public_session(session)
                 result["phase_projection"] = public_phase_projection(result["phase_projection"])
+                records = [
+                    record for record in result["records"]
+                    if record["kind"] in {"measurement", "source_snapshot", "phase"}
+                ]
+                if projection == "history":
+                    records, result["measurement_columns"] = history_measurement_columns(
+                        records, configuration=session.get("configuration"), public=True,
+                    )
                 result["records"] = [
                     {
                         **record,
@@ -1058,8 +1074,7 @@ class ArchiveView(HomeAssistantView):
                     }
                     if record["kind"] in {"measurement", "source_snapshot"}
                     else record
-                    for record in result["records"]
-                    if record["kind"] in {"measurement", "source_snapshot", "phase"}
+                    for record in records
                 ]
         return self.json(result)
 

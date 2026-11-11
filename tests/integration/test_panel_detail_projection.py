@@ -138,6 +138,13 @@ class PanelDetailProjectionTests(unittest.IsolatedAsyncioTestCase):
                 self.assertTrue(
                     all(item["id"] > after for item in continued["records"])
                 )
+                # LZ1: Spaltenweise Messungen folgen demselben Seitenzeiger.
+                self.assertTrue(
+                    all(
+                        identity > after
+                        for identity in continued["measurement_columns"]["id"]
+                    )
+                )
             async with client.get(
                 self.base + "/archive", params={"session_id": identity}
             ) as response:

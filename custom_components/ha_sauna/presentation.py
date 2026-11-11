@@ -244,6 +244,93 @@ def public_measurement(measurement, *, configuration=None):
     return result
 
 
+_COLUMN_RECORD_KEYS = frozenset({"id", "entry_id", "session_id", "kind", "received_at",
+                                 "payload", "display"})
+_COLUMN_DISPLAY_KEYS = frozenset({"value", "received_at", "valid_until"})
+
+
+def _finite_or_none(value):
+    return value is None or (
+        type(value) in (int, float) and isfinite(value)
+    )
+
+
+def history_measurement_columns(records, *, configuration=None, public=False):
+    """Verlaufsprojektion: Messungen spaltenweise statt als einzelne Datensätze.
+
+    Übertragen wird nur, was der Verlauf aus einer Messung liest: Art, Position,
+    Größe, Quelle (Administratoren) oder deren Übereinstimmung mit der Zuordnung
+    (sonst), Wert, Empfangszeit und die absolute Feuchte mit ihrer Gültigkeit.
+    Messungen in anderer Form bleiben unverändert unter ``records``; die
+    Originalfelder liefern die Abfrage ohne Projektion und der Export.
+    Gibt die übrigen Datensätze und die Spalten zurück; die Reihenfolge der
+    Spalten ist die der Datensätze.
+    """
+    columns = {
+        "roles": [], "role": [], "id": [], "received_at": [], "value": [],
+        "absolute_humidity": [], "absolute_humidity_valid_until": [],
+        "record_received_at": [],
+    }
+    roles = {}
+    remaining = []
+    for record in records:
+        payload = record.get("payload")
+        display = record.get("display")
+        humidity = display.get("absolute_humidity") if type(display) is dict else None
+        if (
+            record.get("kind") not in {"measurement", "source_snapshot"}
+            or type(record.get("id")) is not int
+            or not _COLUMN_RECORD_KEYS.issuperset(record)
+            or type(record.get("received_at")) is not str
+            or type(payload) is not dict
+            or type(payload.get("position")) is not str
+            or type(payload.get("quantity")) is not str
+            or type(payload.get("received_at")) is not str
+            or "value" not in payload
+            or not _finite_or_none(payload["value"])
+            or not (type(payload.get("source")) is str
+                    or (public and payload.get("source") is None))
+            or type(humidity) is not dict
+            or len(display) != 1
+            or set(humidity) != _COLUMN_DISPLAY_KEYS
+            or type(humidity["received_at"]) is not str
+            or not _finite_or_none(humidity["value"])
+            or not (humidity["valid_until"] is None
+                    or type(humidity["valid_until"]) is str)
+        ):
+            remaining.append(record)
+            continue
+        key = (record["kind"], payload["position"], payload["quantity"], payload.get("source"))
+        index = roles.get(key)
+        if index is None:
+            role = {"kind": key[0], "position": key[1], "quantity": key[2]}
+            if public:
+                role.update({
+                    name: value for name, value in public_measurement(
+                        {"position": key[1], "quantity": key[2], "source": key[3]},
+                        configuration=configuration,
+                    ).items() if name == "source_matches_binding"
+                })
+            else:
+                role["source"] = key[3]
+            # Sources that project identically share one public role.
+            index = roles[key] = next(
+                (number for number, known in enumerate(columns["roles"]) if known == role),
+                len(columns["roles"]),
+            )
+            if index == len(columns["roles"]):
+                columns["roles"].append(role)
+        columns["role"].append(index)
+        columns["id"].append(record["id"])
+        columns["received_at"].append(payload["received_at"])
+        columns["value"].append(payload["value"])
+        columns["absolute_humidity"].append(humidity["value"])
+        columns["absolute_humidity_valid_until"].append(humidity["valid_until"])
+        if record["received_at"] != payload["received_at"]:
+            columns["record_received_at"].append([record["id"], record["received_at"]])
+    return remaining, columns
+
+
 def _public_references(value):
     """Keep direct-presence references stable without their embedded source."""
     if isinstance(value, dict):

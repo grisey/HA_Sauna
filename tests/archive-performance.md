@@ -14,7 +14,8 @@ JSON-Zeilen mit getrennten Messbereichen:
   Laufzeiten werden ohne maschinenabhängige Zeitgrenze ausgegeben.
 - `HISTORY_VOLUME_BENCHMARK`: Der produktive Panel-Lader durchläuft zehn
   JSON-Seiten derselben synthetischen Mengengröße. Indexierung und
-  Kurvenvorbereitung laufen nach jeder Seite. Jeder Originalpunkt darf genau
+  Kurvenvorbereitung laufen nach der ersten und der letzten Seite eines
+  Seitenlaufs. Jeder Originalpunkt darf genau
   einmal indexiert und einmal in die Darstellungsbins aufgenommen werden.
   Ein erneuter Aufruf verwendet dieselben vorbereiteten Serien ohne neue
   Anfrage oder erneute Indexierung. Netzübertragung, DOM und Browserzeichnung

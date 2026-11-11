@@ -250,8 +250,10 @@ oder Entwarnungen.
 Laufende Aufzeichnungen werden im Hintergrund in größeren Abständen ergänzt.
 Zeitfenster, Zoom, Markierungen und offene Abschnitte bleiben dabei erhalten.
 **Pos1** im Diagramm übernimmt den inzwischen erweiterten gesamten Zeitraum.
-**Wird geladen** kennzeichnet den ersten Datenabruf. Bei einer fehlgeschlagenen
-Aktualisierung bleibt der vorhandene Stand mit einem Fehlerhinweis sichtbar.
+**Wird geladen** kennzeichnet den ersten Datenabruf. Eine Sitzung wird in Seiten
+geladen; das Diagramm erscheint nach der ersten Seite und vollständig nach der
+letzten. Bei einer fehlgeschlagenen Aktualisierung bleibt der vorhandene Stand mit
+einem Fehlerhinweis sichtbar.
 
 **Details** (Administratoren) hat vier Unteransichten. **Zustand** zeigt in einer
 Statuszeile, ob alle Messwerte gültig sind, die Zahl aktueller Fehler und den
@@ -291,7 +293,8 @@ Hinweise); ein Klick auf die Uhrzeit setzt den Zeitpunkt. Kalibrierzeilen stehen
 unter **Kalibrierung**. Die Rohdaten der Sitzung (Heizzeit und Energie,
 Ofenkühlung und Fristen, Temperaturprogramm, Gänge und Präsenz, gespeicherte
 Konfiguration, Messwerte und Lichtverlauf, Einzelbelege) werden erst beim Öffnen
-aufbereitet.
+aufbereitet. Die Originalfelder der Messungen (Originalwert, Messzeit,
+Sensorkennung) lädt **Einzelbelege** für die gezeigte Seite nach.
 
 Die Details zeigen gespeicherte Werte mit ihrer Herkunft. Nicht aufgezeichnete
 Messverläufe lassen sich rückwirkend nicht ergänzen; fehlende Angaben erscheinen
@@ -360,6 +363,19 @@ Archivseiten werden mit `after` abgefragt. Maßgeblich ist der zurückgegebene
 Zeiger `next_after`, auch wenn eine Seite durch Rechtefilterung leer ist.
 `projection=history` beschränkt die Antwort auf Verlaufsdaten; die vollständige
 Abfrage und der Export behalten alle Originaldatensätze.
+
+In der Verlaufsprojektion stehen Messungen und Anfangsmessungen spaltenweise unter
+`measurement_columns`, alle übrigen Datensätze unter `records`:
+
+| Feld | Inhalt |
+| --- | --- |
+| `roles` | Art, Position und Größe, dazu die Quelle (Administratoren) oder `source_matches_binding` (sonst). |
+| `role`, `id`, `received_at`, `value` | Je Messung in Archivreihenfolge: Rolle, Datensatz-ID, Empfangszeit und Wert. |
+| `absolute_humidity`, `absolute_humidity_valid_until` | Je Messung die absolute Feuchte und ihre Gültigkeit, sonst `null`. |
+| `record_received_at` | Paare aus Datensatz-ID und Archivzeit, wo diese von der Empfangszeit abweicht (Anfangsmessungen). |
+
+Originalwert, Messzeit und Sensorkennung liefert die Abfrage ohne Projektion.
+Messungen anderer Form bleiben einzelne Datensätze unter `records`.
 
 Normale Benutzer erhalten Messwerte, Quellenzustände und Phasen.
 Quellen-IDs, Konfiguration und Diagnosedaten sind Administratoren vorbehalten.
