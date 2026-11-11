@@ -144,10 +144,24 @@ Nachträge des Nutzers (`--nachtraege`, je Sitzung etwa
 `{"name": "end_gang", "at": "…"}` für einen Gang, der von Hand hätte beendet
 werden sollen) gehen wie Bedienungen ein. Jede Sitzung behält ihre Kennung und
 erhält einen internen Herkunftseintrag `rebuild` mit dem Stand; das Panel zeigt
-ihn nicht. Die neue Datei ersetzt das Archiv; einen Umschalter auf das Original
+ihn nicht.
+
+Endet eine Sitzung mit einer Unterbrechung durch Entladen oder Neustart der
+Integration und beginnt die nächste Sitzung innerhalb der Wiederaufnahmefrist
+nach Betrieb AUS, führt das Werkzeug beide zusammen. Maßgeblich ist die
+gespeicherte Frist der ersten Sitzung, ohne sie die Werkseinstellung. Die
+Eingaben beider Teile laufen als eine Sitzung mit der Kennung der ersten; die
+Lücke gilt wie Betrieb AUS und erneutes EIN innerhalb der Frist. Übernommene
+Einträge beider Teile und sitzungslose Messwerte in der Lücke gehören zur
+zusammengeführten Sitzung, ebenso Kennzeichnung Testbetrieb und Nachträge. Der
+Herkunftseintrag nennt die zusammengeführten Kennungen.
+
+Die neue Datei ersetzt das Archiv; einen Umschalter auf das Original
 gibt es nicht, die alte Datei bleibt nur als Sicherung. Die Archivrevision liegt
-über der Quelle, damit geöffnete Ansichten neu laden. Ausgetauscht wird die
-Datei wie beim Bereinigen bei angehaltenem Home Assistant Core.
+über der Quelle und mindestens bei `--mindestrevision`, damit geöffnete
+Ansichten neu laden, auch wenn das ersetzte Archiv seit der Kopie weitergezählt
+hat. Ausgetauscht wird die Datei wie beim Bereinigen bei angehaltenem Home
+Assistant Core.
 
 ## Sitzungen löschen
 

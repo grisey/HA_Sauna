@@ -13,7 +13,11 @@ Schützstellung und neu gerechneter Steuerung sind gewollt (Nutzer 10.11.2026).
 Das Original wird nur gelesen; das Ziel darf nicht existieren. Jede Sitzung erhält einen Vermerk
 ``rebuild`` mit Softwarestand und Zeitpunkt.
 
+Sitzungen, die ein Neustart der Integration getrennt hat, werden zusammengeführt (KZ2,
+``restart_groups``).
+
 Aufruf: python3 tools/archive_rebuild.py QUELLE.sqlite ZIEL.sqlite [--nachtraege N.json] [--sitzung ID]
+        [--mindestrevision N]
 """
 
 from __future__ import annotations
@@ -52,6 +56,8 @@ COPIED = ("measurement", "source_snapshot", "source_state", "heating_observation
           "light_command", "manual_light", "illuminance", "environment", "notice", "session_label",
           "calibration")
 LIVE_KEYS = ("target_temperature_c", "temperature_increase_c", "final_temperature_c")
+# Unterbrechungen, nach denen erneutes EIN innerhalb der Wiederaufnahmefrist dieselbe Sitzung fortsetzt (KZ2)
+RESTART_REASONS = ("integration_unloaded",)
 CONTEXT_SECONDS = 1
 
 
@@ -60,62 +66,162 @@ def utc(value):
     return moment.astimezone(UTC)
 
 
-class SessionSource:
-    """Eingaben einer Sitzung aus der Archivkopie."""
+def stored_configuration(db, payload, configuration_id):
+    """Gespeicherte Konfiguration einer Sitzung, im Sitzungsstand oder als Version."""
+    configuration = payload.get("configuration")
+    if configuration is None and configuration_id is not None:
+        stored = db.execute("SELECT payload FROM configuration_versions WHERE id=?",
+                            (configuration_id,)).fetchone()
+        configuration = json.loads(stored[0]) if stored else None
+    return configuration or {}
 
-    def __init__(self, db, entry_id, row):
+
+def resume_window(configuration):
+    """Wiederaufnahmefrist der Sitzung (``session_gap_minutes``), sonst die Werkseinstellung."""
+    stored = (configuration.get("parameters") or {}).get("session_gap_minutes")
+    try:
+        parameters = Parameters({} if stored is None else {"session_gap_minutes": stored})
+    except (TypeError, ValueError):
+        parameters = Parameters({})
+    return timedelta(seconds=parameters.seconds("session_gap_minutes"))
+
+
+def restart_end(db, entry_id, session_id):
+    """Zeit der Unterbrechung durch Entladen oder Neustart, mit der die Sitzung endet, sonst None."""
+    row = db.execute(
+        "SELECT received_at,payload FROM records WHERE entry_id=? AND session_id=? "
+        "AND kind='interruption' ORDER BY id DESC LIMIT 1", (entry_id, session_id)).fetchone()
+    if row is None or json.loads(row[1]).get("reason") not in RESTART_REASONS:
+        return None
+    last = db.execute("SELECT MAX(received_at) FROM records WHERE entry_id=? AND session_id=?",
+                      (entry_id, session_id)).fetchone()[0]
+    at = utc(row[0])
+    return at if utc(last) <= at else None
+
+
+def restart_groups(db, entry_id, rows):
+    """KZ2: Sitzungen, die ein Neustart der Integration getrennt hat, als eine Gruppe.
+
+    Endet eine Sitzung mit einer Unterbrechung durch Entladen oder Neustart der Integration und
+    beginnt die nächste innerhalb der gespeicherten Wiederaufnahmefrist nach Betrieb AUS, gehören
+    beide zusammen; im Betrieb setzt erneutes EIN innerhalb dieser Frist dieselbe Sitzung fort.
+    Liefert je Gruppe die Zeilen und je Übergang (Ende, Beginn, Frist).
+    """
+    groups, resume = [], None
+    for row in rows:
+        start = utc(row[1])
+        if resume is not None and resume[0] <= start <= resume[0] + resume[1]:
+            groups[-1][0].append(row)
+            groups[-1][1].append((resume[2], start, resume[1]))
+        else:
+            groups.append(([row], []))
+        resume = None
+        interrupted = restart_end(db, entry_id, row[0])
+        if interrupted is not None:
+            payload = json.loads(row[3])
+            off = payload.get("operation_off_at")
+            off = utc(off) if off and utc(off) <= interrupted else interrupted
+            end = utc(row[2]) if row[2] else interrupted
+            resume = (off, resume_window(stored_configuration(db, payload, row[4])), end)
+    return groups
+
+
+class SessionSource:
+    """Eingaben einer Sitzung aus der Archivkopie.
+
+    Nach einem Neustart getrennte Teile (KZ2, ``following``) bilden eine Sitzung mit der Kennung
+    des ersten Teils: Ihre Einträge und sitzungslose Messwerte in der Lücke gehen gemeinsam ein,
+    die Lücke wie Betrieb AUS und erneutes EIN innerhalb der Wiederaufnahmefrist.
+    """
+
+    def __init__(self, db, entry_id, row, following=()):
         self.session_id, self.started_at, self.ended_at, payload, configuration_id = row
         self.payload = json.loads(payload)
-        configuration = self.payload.get("configuration")
-        if configuration is None and configuration_id is not None:
-            stored = db.execute("SELECT payload FROM configuration_versions WHERE id=?",
-                                (configuration_id,)).fetchone()
-            configuration = json.loads(stored[0]) if stored else None
-        self.configuration = configuration or {}
-        self.records = [
+        self.configuration = stored_configuration(db, self.payload, configuration_id)
+        self.session_ids = [self.session_id]
+        self.parts = [(self.payload, self.configuration, self._records(db, entry_id, self.session_id))]
+        self.records = list(self.parts[0][2])
+        previous_end = self.ended_at or self._last(self.records, self.started_at)
+        self.part_ends = []
+        last_end = self.ended_at
+        for later_id, later_start, later_end, later_payload, later_configuration_id in following:
+            self.part_ends.append(utc(previous_end))
+            gap = [(kind, utc(received_at), json.loads(raw)) for kind, received_at, raw in db.execute(
+                "SELECT kind,received_at,payload FROM records WHERE entry_id=? AND session_id IS NULL "
+                "AND kind='measurement' AND received_at>? AND received_at<? ORDER BY id",
+                (entry_id, previous_end, later_start))]
+            later_records = self._records(db, entry_id, later_id)
+            later_payload = json.loads(later_payload)
+            self.parts.append((later_payload, stored_configuration(db, later_payload, later_configuration_id),
+                               later_records))
+            self.records += gap + later_records
+            self.session_ids.append(later_id)
+            previous_end = later_end or self._last(later_records, later_start)
+            last_end = later_end
+        timeline = self.payload.get("timeline") or {}
+        self.start = utc(timeline.get("session_started_at") or self.started_at)
+        self.end = utc(last_end) if last_end else None
+
+    @staticmethod
+    def _last(records, default):
+        """Zeit des letzten Eintrags einer Sitzung ohne gespeichertes Ende (Neustart in b6)."""
+        return max(at for _, at, _ in records).isoformat() if records else default
+
+    @staticmethod
+    def _records(db, entry_id, session_id):
+        return [
             (kind, utc(received_at), json.loads(raw))
             for kind, received_at, raw in db.execute(
                 "SELECT kind,received_at,payload FROM records WHERE entry_id=? AND session_id=? "
-                "ORDER BY id", (entry_id, self.session_id))
+                "ORDER BY id", (entry_id, session_id))
         ]
-        timeline = self.payload.get("timeline") or {}
-        self.start = utc(timeline.get("session_started_at") or self.started_at)
-        self.end = utc(self.ended_at) if self.ended_at else None
 
     def of(self, kind):
         return [(at, payload) for k, at, payload in self.records if k == kind]
 
     def operation(self):
-        """Betrieb an und aus aus den Sitzungsständen: (Zeit, an)."""
+        """Betrieb an und aus aus den Sitzungsständen: (Zeit, an).
+
+        Endet ein Teil vor einem Neustart ohne Betrieb AUS, gilt sein Ende als Betrieb AUS.
+        """
         changes, last = [], None
-        for at, payload in self.of("session"):
-            enabled = payload.get("operation_enabled")
-            if isinstance(enabled, bool) and enabled != last:
-                changes.append((at, enabled))
-                last = enabled
+        for index, (_payload, _configuration, records) in enumerate(self.parts):
+            for _kind, at, payload in (item for item in records if item[0] == "session"):
+                enabled = payload.get("operation_enabled")
+                if isinstance(enabled, bool) and enabled != last:
+                    changes.append((at, enabled))
+                    last = enabled
+            if index < len(self.part_ends) and last:
+                changes.append((self.part_ends[index], False))
+                last = False
         return changes
 
     def contactor(self):
-        """Schützrückmeldung (KZ1): die Schützgeschichte der Sitzung.
+        """Schützrückmeldung (KZ1): die Schützgeschichte der Sitzung, je Teil.
 
         Ältere Sitzungen (bis 22.09.2026) speichern keine Schützgeschichte. Dort gelten die
         aufgezeichneten Zustände des Ofenschalters (``source_state`` der Rolle ``heater``), wie beim
         Lesen des Archivs in ``Archive.heating_response_history``. Ohne Rückmeldung bliebe die
         Ofenkühlung bis zum Sitzungsende ohne Beginn, und Heizzeit und Energie fehlten.
         """
-        history = self.payload.get("contactor_history")
-        if history:
-            return sorted((utc(item["at"]), item["state"]) for item in history
-                          if isinstance(item.get("state"), bool))
-        heater = (self.configuration.get("bindings") or {}).get("heater")
-        states = []
-        for at, payload in self.of("source_state"):
-            if payload.get("role") != "heater" or (heater and payload.get("source") != heater):
+        out = []
+        for payload, configuration, records in self.parts:
+            history = payload.get("contactor_history")
+            if history:
+                out += sorted((utc(item["at"]), item["state"]) for item in history
+                              if isinstance(item.get("state"), bool))
                 continue
-            state = {"on": True, "off": False}.get(payload.get("state"))
-            if state is not None:
-                states.append((at, state))
-        return sorted(states, key=lambda item: item[0])
+            heater = (configuration.get("bindings") or {}).get("heater")
+            states = []
+            for kind, at, record in records:
+                if kind != "source_state" or record.get("role") != "heater" or (
+                        heater and record.get("source") != heater):
+                    continue
+                state = {"on": True, "off": False}.get(record.get("state"))
+                if state is not None:
+                    states.append((at, state))
+            out += sorted(states, key=lambda item: item[0])
+        return out
 
     def presence(self):
         out = []
@@ -202,7 +308,7 @@ async def rebuild_session(source, target, entry_id, corrections, stamp, log):
                    if key in LIVE_KEYS}
         if changes:
             inputs.append((at, 2, "parameters", changes))
-    for item in corrections.get(source.session_id, ()):
+    for item in (item for session_id in source.session_ids for item in corrections.get(session_id, ())):
         inputs.append((utc(item["at"]), 3, item["name"], item))
     copied = [(at, 0, kind, payload) for kind, at, payload in source.records if kind in COPIED]
     inputs.sort(key=lambda item: (item[0], item[1]))
@@ -309,16 +415,22 @@ async def rebuild_session(source, target, entry_id, corrections, stamp, log):
         if c.session is not None and contactor[0] is not None:
             replay.report_feedback(c, contactor[0], contactor_at[0], second)
         second += timedelta(seconds=1)
+    # Übernommene Einträge nach dem letzten Sekundenschritt gehören ebenfalls zur Sitzung (KZ2).
+    for at, _, kind, payload in copied[copy_index:]:
+        runtime.archive.append(kind, at, payload, source.session_id)
     if c.session is not None and c.session.session_id == source.session_id:
         c.finish_session(end, light_after_run=False)
     runtime.persist_completed_sessions()
+    if len(source.session_ids) > 1:
+        stamp = {**stamp, "merged_session_ids": source.session_ids}
     runtime.archive.append("rebuild", end, stamp, source.session_id)
     await runtime.close()
     sessions = [s for s in c.completed_sessions if s.session_id == source.session_id]
     return sessions[-1] if sessions else None
 
 
-async def rebuild(source_path, target_path, *, corrections=None, only=None, stamp=None):
+async def rebuild(source_path, target_path, *, corrections=None, only=None, stamp=None,
+                  minimum_revision=0):
     target_path = Path(target_path)
     if target_path.exists():
         raise FileExistsError(f"Ziel existiert bereits: {target_path}")
@@ -328,21 +440,29 @@ async def rebuild(source_path, target_path, *, corrections=None, only=None, stam
             "SELECT session_id,started_at,ended_at,payload,configuration_id FROM sessions "
             "WHERE entry_id=? ORDER BY started_at", (entry_id,)).fetchall()
         revision = db.execute("SELECT value FROM metadata WHERE key='revision'").fetchone()
+        groups = restart_groups(db, entry_id, rows)
     log, result = [], []
-    for row in rows:
-        if only is not None and not row[0].startswith(only):
+    for group, transitions in groups:
+        if only is not None and not any(row[0].startswith(only) for row in group):
             continue
+        for row, (ended, resumed, window) in zip(group[1:], transitions):
+            gap = (resumed - ended).total_seconds()
+            log.append((group[0][0], ended.isoformat(), "merge",
+                        (f"{row[0]} nach Neustart fortgesetzt; Lücke {gap:.0f} s, "
+                         f"Wiederaufnahmefrist {window.total_seconds() / 60:g} min")))
         # Je Sitzung frisch gelesen: nur eine Sitzung liegt im Speicher.
         with closing(sqlite3.connect(f"file:{source_path}?mode=ro", uri=True)) as db:
-            source = SessionSource(db, entry_id, row)
+            source = SessionSource(db, entry_id, group[0], group[1:])
         session = await rebuild_session(source, target_path, entry_id, corrections or {},
                                         stamp or {}, log)
         result.append((source.session_id, session))
     if target_path.exists():
-        # Revision über der Quelle, damit geöffnete Ansichten nach dem Austausch neu laden.
+        # Revision über der Quelle und mindestens ``minimum_revision``, damit geöffnete Ansichten
+        # nach dem Austausch neu laden, auch wenn das ersetzte Archiv seit der Kopie weitergezählt hat.
         with closing(sqlite3.connect(target_path)) as db, db:
             own = db.execute("SELECT value FROM metadata WHERE key='revision'").fetchone()
             value = max(int(revision[0]) if revision else 0, int(own[0]) if own else 0) + 1
+            value = max(value, minimum_revision)
             db.execute("INSERT OR REPLACE INTO metadata VALUES ('revision', ?)", (str(value),))
     return result, log
 
@@ -354,12 +474,14 @@ def main():
     parser.add_argument("--nachtraege")
     parser.add_argument("--sitzung")
     parser.add_argument("--stand", default="0.9.0b6")
+    parser.add_argument("--mindestrevision", type=int, default=0)
     args = parser.parse_args()
     corrections = json.loads(Path(args.nachtraege).read_text()) if args.nachtraege else {}
     stamp = {"software": args.stand, "at": datetime.now(UTC).isoformat(),
              "source": str(Path(args.source).name)}
     result, log = asyncio.run(rebuild(args.source, args.target, corrections=corrections,
-                                      only=args.sitzung, stamp=stamp))
+                                      only=args.sitzung, stamp=stamp,
+                                      minimum_revision=args.mindestrevision))
     for session_id, session in result:
         gangs = [g for g in (session.timeline.completed if session else ())]
         print(session_id[:8], "Gänge", len(gangs), [

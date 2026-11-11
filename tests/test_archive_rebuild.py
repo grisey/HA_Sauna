@@ -135,6 +135,91 @@ class ArchiveRebuildTests(unittest.TestCase):
         _result, log = asyncio.run(archive_rebuild.rebuild(self.source, self.target))
         self.assertEqual(log, [("s1", at(500), "finish_cooling", "keine laufende Ofenkühlung")])
 
+    def add_restart(self, *, gap_seconds=180, interrupted=True, session_gap_minutes=None):
+        """KZ2: s1 endet mit einem Neustart, s2 beginnt ``gap_seconds`` danach."""
+        def change(payload):
+            if session_gap_minutes is not None:
+                payload["configuration"]["parameters"]["session_gap_minutes"] = session_gap_minutes
+        end = MINUTES * 60
+        self.rewrite_source(change, [("interruption", at(end), {"reason": "integration_unloaded"})]
+                            if interrupted else [])
+        start = end + gap_seconds
+        payload = {
+            "timeline": {"session_id": "s2", "session_started_at": at(start), "completed": [],
+                         "active": None, "retracted": [], "processed": []},
+            "configuration": {"control_mode": "automatic", "presence_source": "proxy",
+                              "parameters": {"target_temperature_c": 80}},
+            "contactor_history": [{"at": at(start), "state": True}],
+            "operation_off_at": at(start + MINUTES * 60 - 120),
+        }
+        rows = [("session", at(start), {"operation_enabled": True}),
+                ("session", at(start + MINUTES * 60 - 120), {"operation_enabled": False})]
+        rows += [("measurement", at(t), {"position": p, "quantity": q, "value": v, "raw_value": str(v),
+                                         "source": f"sensor.{p}_{q}", "received_at": at(t)})
+                 for t in range(start, start + MINUTES * 60, 2)
+                 for p, q, v in (("upper", "temperature", 72.0), ("lower", "temperature", 50.0),
+                                 ("upper", "humidity", 10.0), ("lower", "humidity", 12.0))]
+        with closing(sqlite3.connect(self.source)) as db, db:
+            # Ende zwischen zwei Sekundenschritten; ein Messwert davor und einer danach gehören dazu.
+            ended = start + MINUTES * 60 + 0.5
+            rows += [("measurement", at(t), {"position": "upper", "quantity": "temperature", "value": 72.0,
+                                             "raw_value": "72.0", "source": "sensor.upper_temperature",
+                                             "received_at": at(t)}) for t in (ended - 0.2, ended + 0.3)]
+            db.execute("INSERT INTO sessions(session_id,entry_id,started_at,updated_at,ended_at,payload) "
+                       "VALUES('s2','entry',?,?,?,?)", (at(start), at(ended), at(ended), json.dumps(payload)))
+            db.executemany("INSERT INTO records(entry_id,session_id,kind,received_at,payload) "
+                           "VALUES('entry','s2',?,?,?)",
+                           [(kind, moment, json.dumps(data)) for kind, moment, data in rows])
+            # Sitzungsloser Messwert in der Lücke
+            db.execute("INSERT INTO records(entry_id,session_id,kind,received_at,payload) "
+                       "VALUES('entry',NULL,'measurement',?,?)",
+                       (at(end + 60), json.dumps({"position": "upper", "quantity": "temperature",
+                                                  "value": 71.0, "raw_value": "71.0",
+                                                  "source": "sensor.upper_temperature",
+                                                  "received_at": at(end + 60)})))
+        return start
+
+    def test_sessions_split_by_a_restart_are_merged(self):
+        # KZ2: erneutes EIN nach einem Neustart innerhalb der Wiederaufnahmefrist setzt die Sitzung fort.
+        start = self.add_restart()
+        source = self.kinds(self.source)
+        result, log = asyncio.run(archive_rebuild.rebuild(self.source, self.target,
+                                                          stamp={"software": "0.9.0b6"}))
+        self.assertEqual([session_id for session_id, _ in result], ["s1"])
+        self.assertEqual(log[0][:3], ("s1", at(MINUTES * 60), "merge"))
+        with closing(sqlite3.connect(self.target)) as db:
+            sessions = db.execute("SELECT session_id,started_at,ended_at FROM sessions").fetchall()
+            measurements = db.execute(
+                "SELECT session_id,count(*) FROM records WHERE kind='measurement' GROUP BY session_id").fetchall()
+            stamp = json.loads(db.execute("SELECT payload FROM records WHERE kind='rebuild'").fetchone()[0])
+        self.assertEqual(sessions, [("s1", at(0), at(start + MINUTES * 60 + 0.5))])
+        # Alle Messwerte beider Teile und der Messwert in der Lücke gehören zur Sitzung s1.
+        self.assertEqual(measurements, [("s1", source["measurement"])])
+        self.assertEqual(self.kinds(self.target)["session_label"], 1)
+        self.assertEqual(stamp["merged_session_ids"], ["s1", "s2"])
+        # Die Lücke gilt wie Betrieb AUS und erneutes EIN.
+        phases = [(item["at"], item["phase"]) for item in self.rebuilt_session()["base_phases"]]
+        self.assertIn((at(MINUTES * 60 - 120), "aus"), phases)
+        self.assertTrue(any(moment == at(start) and phase != "aus" for moment, phase in phases))
+
+    def test_restart_pairs_outside_the_rule_stay_separate(self):
+        for name, options in (("ohne Neustart", {"interrupted": False}),
+                              ("nach der Frist", {"gap_seconds": 16 * 60}),
+                              ("Frist der Sitzung", {"session_gap_minutes": 4})):
+            with self.subTest(name):
+                self.tearDown()
+                self.setUp()
+                self.add_restart(**options)
+                result, log = asyncio.run(archive_rebuild.rebuild(self.source, self.target))
+                self.assertEqual([session_id for session_id, _ in result], ["s1", "s2"])
+                self.assertFalse([item for item in log if item[2] == "merge"])
+
+    def test_minimum_revision(self):
+        asyncio.run(archive_rebuild.rebuild(self.source, self.target, minimum_revision=1000))
+        with closing(sqlite3.connect(self.target)) as db:
+            revision = db.execute("SELECT value FROM metadata WHERE key='revision'").fetchone()
+        self.assertEqual(revision[0], "1000")
+
     def test_existing_target_is_not_overwritten(self):
         self.target.write_bytes(b"x")
         with self.assertRaises(FileExistsError):
