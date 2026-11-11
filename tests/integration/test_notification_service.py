@@ -402,7 +402,7 @@ class NotificationServiceLifecycleTests(unittest.IsolatedAsyncioTestCase):
                 data={
                     const.ATTR_APP_DATA: {const.ATTR_PUSH_WEBSOCKET_CHANNEL: True},
                     **(
-                        {const.ATTR_MANUFACTURER: "Apple", const.ATTR_OS_NAME: "iOS"}
+                        {"manufacturer": "Apple", "os_name": "iOS"}
                         if index in apple
                         else {}
                     ),
