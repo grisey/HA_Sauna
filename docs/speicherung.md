@@ -128,7 +128,11 @@ Das Werkzeug [`tools/archive_rebuild.py`](../tools/archive_rebuild.py) rechnet
 alle Sitzungen einer Archivkopie mit dem aktuellen Stand nach und schreibt ein
 neues Archiv; die Quelle bleibt unverändert. Je Sitzung läuft die Laufzeit auf
 den aufgezeichneten Eingaben: Messwerte oben und unten, Präsenz,
-Schützrückmeldung, Betrieb an und aus, manuelle Ofenwahl und Solländerungen.
+Schützrückmeldung, Betrieb an und aus, manuelle Ofenwahl, **Ofenkühlung beenden**
+und Solländerungen. Die Schützrückmeldung stammt aus der Schützgeschichte der
+Sitzung; ältere Sitzungen ohne diese Geschichte verwenden die aufgezeichneten
+Zustände des Ofenschalters. Ein beendetes Kühlen von Hand gilt der Kühlung, die
+im nachgerechneten Ablauf zu dieser Zeit läuft.
 Neu entstehen Erkennung, Gänge, Phasen, Entscheidungen, Sitzungsstände,
 Zustandsverlauf und verworfene Kandidaten; Heizzeit und Energie folgen der
 aufgezeichneten Schützrückmeldung. Messwerte, Quellzustände,

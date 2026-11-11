@@ -3,7 +3,8 @@
 Je Sitzung läuft die Laufzeit dieses Stands mit ihrem Archivschreiber auf den aufgezeichneten Eingaben,
 wie im Replay-Werkzeug (``recognition_replay.py``): Messwerte oben und unten im Sekundentakt, Präsenz,
 Schützrückmeldung aus der Aufzeichnung (Heizzeit und Energie bleiben physikalisch), Bedienung (Betrieb
-an und aus, manuelle Ofen- und Lichtwahl, Soll) und Nachträge des Nutzers (``--nachtraege``). Neu
+an und aus, manuelle Ofen- und Lichtwahl, Ofenkühlung beenden, Soll) und Nachträge des Nutzers
+(``--nachtraege``). Neu
 entstehen damit Erkennung, Gänge, Phasen, Entscheidungen, Sitzungsstände sowie Zustandsverlauf und
 verworfene Kandidaten (B2). Unverändert übernommen werden Messwerte, Quellzustände, Heizbeobachtungen,
 Schaltbefehle, Umgebung und die Kennzeichnung Testbetrieb. Widersprüche zwischen aufgezeichneter
@@ -95,8 +96,26 @@ class SessionSource:
         return changes
 
     def contactor(self):
-        return sorted((utc(item["at"]), item["state"]) for item in self.payload.get("contactor_history") or ()
-                      if isinstance(item.get("state"), bool))
+        """Schützrückmeldung (KZ1): die Schützgeschichte der Sitzung.
+
+        Ältere Sitzungen (bis 22.09.2026) speichern keine Schützgeschichte. Dort gelten die
+        aufgezeichneten Zustände des Ofenschalters (``source_state`` der Rolle ``heater``), wie beim
+        Lesen des Archivs in ``Archive.heating_response_history``. Ohne Rückmeldung bliebe die
+        Ofenkühlung bis zum Sitzungsende ohne Beginn, und Heizzeit und Energie fehlten.
+        """
+        history = self.payload.get("contactor_history")
+        if history:
+            return sorted((utc(item["at"]), item["state"]) for item in history
+                          if isinstance(item.get("state"), bool))
+        heater = (self.configuration.get("bindings") or {}).get("heater")
+        states = []
+        for at, payload in self.of("source_state"):
+            if payload.get("role") != "heater" or (heater and payload.get("source") != heater):
+                continue
+            state = {"on": True, "off": False}.get(payload.get("state"))
+            if state is not None:
+                states.append((at, state))
+        return sorted(states, key=lambda item: item[0])
 
     def presence(self):
         out = []
@@ -174,6 +193,10 @@ async def rebuild_session(source, target, entry_id, corrections, stamp, log):
     for at, payload in source.of("manual_heater"):
         if "value" in payload and not payload.get("ends_previous_only"):
             inputs.append((at, 2, "heater", payload["value"]))
+    for at, payload in source.of("manual_phase_end"):
+        # „Ofenkühlung beenden“ von Hand (KZ1); gilt der zu dieser Zeit laufenden Kühlung.
+        if payload.get("purpose") == "after_run":
+            inputs.append((at, 2, "finish_cooling", payload))
     for at, payload in source.of("parameter_change"):
         changes = {key: change.get("after") for key, change in (payload.get("changes") or {}).items()
                    if key in LIVE_KEYS}
@@ -258,6 +281,16 @@ async def rebuild_session(source, target, entry_id, corrections, stamp, log):
                     await async_set_parameters(hass, entry, value, partial=True)
                 except (ValueError, TypeError, KeyError) as error:
                     log.append((source.session_id, second.isoformat(), "parameters", str(error)))
+            elif kind == "finish_cooling":
+                phase = c.session.after_run if c.session else None
+                if phase is None:
+                    log.append((source.session_id, second.isoformat(), "finish_cooling",
+                                "keine laufende Ofenkühlung"))
+                else:
+                    try:
+                        await runtime.finish_phase("after_run", phase.phase_id)
+                    except ValueError as error:
+                        log.append((source.session_id, second.isoformat(), "finish_cooling", str(error)))
             elif kind == "end_gang":
                 active = c.session.timeline.active if c.session else None
                 if active is None:

@@ -90,6 +90,51 @@ class ArchiveRebuildTests(unittest.TestCase):
         self.assertTrue(archive.session_key_figures("s1")["test"])
         self.assertTrue(archive.recognition_control("s1")["recorded"])
 
+    def rewrite_source(self, change, rows=()):
+        """Sitzungsstand der Quelle ändern und Einträge ergänzen."""
+        with closing(sqlite3.connect(self.source)) as db, db:
+            payload = json.loads(db.execute("SELECT payload FROM sessions").fetchone()[0])
+            change(payload)
+            db.execute("UPDATE sessions SET payload=?", (json.dumps(payload),))
+            db.executemany("INSERT INTO records(entry_id,session_id,kind,received_at,payload) "
+                           "VALUES('entry','s1',?,?,?)",
+                           [(kind, moment, json.dumps(data)) for kind, moment, data in rows])
+
+    def rebuilt_session(self):
+        with closing(sqlite3.connect(self.target)) as db:
+            return json.loads(db.execute("SELECT payload FROM sessions").fetchone()[0])
+
+    def test_contactor_from_heater_states_without_contactor_history(self):
+        # KZ1: Sitzungen bis 22.09. haben keine Schützgeschichte, nur die Zustände des Ofenschalters.
+        # Ohne sie blieb die Ofenkühlung ohne Beginn bis zum Sitzungsende stehen.
+        def without_history(payload):
+            payload.pop("contactor_history")
+            payload["configuration"]["bindings"] = {"heater": "switch.ofen"}
+        self.rewrite_source(without_history, [
+            ("source_state", at(0), {"role": "heater", "source": "switch.ofen", "state": "on"}),
+            ("source_state", at(200), {"role": "heater", "source": "switch.anderer", "state": "off"}),
+            ("source_state", at(300), {"role": "heater", "source": "switch.ofen", "state": "unavailable"}),
+            ("source_state", at(400), {"role": "heater", "source": "switch.ofen", "state": "off"}),
+            ("source_state", at(410), {"role": "light", "source": "light.kabine", "state": "on"}),
+        ])
+        asyncio.run(archive_rebuild.rebuild(self.source, self.target))
+        session = self.rebuilt_session()
+        self.assertEqual([(mark["at"], mark["state"]) for mark in session["contactor_history"]],
+                         [(at(0), None), (at(0), True), (at(400), False)])
+        # Heizzeit und Energie folgen der aufgezeichneten Rückmeldung statt „unbekannt“.
+        self.assertEqual(session["energy"]["unknown_seconds"], 0.0)
+        self.assertEqual([(item["started_at"], item["ended_at"]) for item in session["heating"]["intervals"]],
+                         [(at(0), at(400))])
+
+    def test_manual_cooling_end_is_replayed(self):
+        # KZ1: „Ofenkühlung beenden“ von Hand geht wie eine Bedienung ein.
+        self.rewrite_source(lambda payload: None, [
+            ("manual_phase_end", at(500), {"purpose": "after_run", "token": "alt",
+                                           "planned_ends_at": at(900), "ended_at": at(500)}),
+        ])
+        _result, log = asyncio.run(archive_rebuild.rebuild(self.source, self.target))
+        self.assertEqual(log, [("s1", at(500), "finish_cooling", "keine laufende Ofenkühlung")])
+
     def test_existing_target_is_not_overwritten(self):
         self.target.write_bytes(b"x")
         with self.assertRaises(FileExistsError):
