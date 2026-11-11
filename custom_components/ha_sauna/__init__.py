@@ -142,6 +142,11 @@ async def async_setup_entry(
 
         runtime.on_close(hass.bus.async_listen("homeassistant_stop", stopped))
         entry.async_on_unload(entry.add_update_listener(async_options_updated))
+        from homeassistant.helpers.start import async_at_started
+
+        # LZ2: Kennzahlen der abgeschlossenen Sitzungen nach dem HA-Start vorrechnen,
+        # damit Statistik und Verlauf beim ersten Abruf nicht alle Sitzungen rechnen.
+        runtime.on_close(async_at_started(hass, runtime.prepare_key_figures))
         return True
     except BaseException as setup_error:
         cleanup_errors = []

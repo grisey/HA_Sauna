@@ -1079,15 +1079,6 @@ class ArchiveView(HomeAssistantView):
         return self.json(result)
 
 
-def key_figure_settings(runtime):
-    """User settings of the key figure catalogue (Q-N): cabin volume and price."""
-    values = runtime.configuration.parameters.values
-    return {
-        "volume_m3": values["cabin_volume_m3"],
-        "price_eur_per_kwh": values["electricity_price_eur_per_kwh"],
-    }
-
-
 class KeyFiguresView(HomeAssistantView):
     """Key figures of one finished session (catalogue K-S and K-G)."""
 
@@ -1103,7 +1094,7 @@ class KeyFiguresView(HomeAssistantView):
         runtime = runtime_for(request.app[KEY_HASS], entry_id)
         await runtime.archive.flush()
         result = await asyncio.to_thread(
-            runtime.archive.session_key_figures, session_id, **key_figure_settings(runtime)
+            runtime.archive.session_key_figures, session_id, **runtime.key_figure_settings()
         )
         if result is None:
             raise web.HTTPNotFound()
@@ -1141,7 +1132,7 @@ class StatisticsView(HomeAssistantView):
         result = await asyncio.to_thread(
             runtime.archive.key_figure_statistics,
             dt_util.get_time_zone(hass.config.time_zone),
-            season=season, part=part, summer=summer, **key_figure_settings(runtime),
+            season=season, part=part, summer=summer, **runtime.key_figure_settings(),
         )
         return self.json(result)
 

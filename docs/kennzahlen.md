@@ -157,4 +157,6 @@ abweichen.
 
 Die Ergebnisse einer Sitzung werden zwischengespeichert, bis eine neue
 Sitzungsrevision geschrieben wird oder sich Kabinenvolumen oder Strompreis
-ändern. [API-Zugriff](speicherung.md#technische-referenz-api-zugriff)
+ändern. Nach dem Start von Home Assistant werden die Kennzahlen aller
+abgeschlossenen Sitzungen im Hintergrund vorab berechnet; ein Abruf während
+dieser Berechnung wartet auf ihr Ergebnis. [API-Zugriff](speicherung.md#technische-referenz-api-zugriff)

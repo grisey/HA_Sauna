@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import sqlite3
 from collections import deque
 from collections.abc import Callable, Mapping
 from contextlib import asynccontextmanager
@@ -3023,6 +3024,29 @@ class SaunaRuntime:
             result = self._process_event(event)
             await self._cycle()
             return result
+
+    def key_figure_settings(self) -> dict:
+        """Nutzereinstellungen des Kennzahlenkatalogs (Q-N): Kabinenvolumen und Strompreis."""
+        values = self.configuration.parameters.values
+        return {
+            "volume_m3": values["cabin_volume_m3"],
+            "price_eur_per_kwh": values["electricity_price_eur_per_kwh"],
+        }
+
+    async def prepare_key_figures(self, _hass=None) -> None:
+        """LZ2: Kennzahlen der abgeschlossenen Sitzungen nach dem Start vorrechnen.
+
+        Der Zwischenspeicher ist derselbe wie für Statistik und Sitzungskennzahlen;
+        ein Fehler hier ändert nichts an deren späterer Berechnung auf Anfrage.
+        """
+        archive = self.archive
+        if archive is None or self.closed:
+            return
+        try:
+            await asyncio.to_thread(archive.prepare_key_figures, **self.key_figure_settings())
+        except (sqlite3.Error, OSError, RuntimeError, ValueError) as error:
+            # Anfragen rechnen dann selbst; der Fehler wird nur protokolliert.
+            self.log.error("key_figures", message=f"Kennzahlen nicht vorbereitet: {error}")
 
     def on_close(self, unsubscribe: Callable[[], None]) -> None:
         self._require_open()

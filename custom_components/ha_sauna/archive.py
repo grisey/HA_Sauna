@@ -386,6 +386,9 @@ class Archive:
         # One evaluated revision per finished session; removed with the session.
         self._figure_cache = {}
         self._figure_lock = threading.Lock()
+        # LZ2: Kennzahlen werden nacheinander gerechnet. Eine Anfrage während der
+        # Vorbereitung nach dem Start wartet auf deren Ergebnis, statt es zu wiederholen.
+        self._figure_compute_lock = threading.Lock()
         self.revision = 0
         self._context_pruned_before = None
         # At most one export holds a read transaction; the backup stops it.
@@ -1539,15 +1542,17 @@ class Archive:
         ).fetchone() is not None
         return {"test": calibrated, "test_source": "calibration" if calibrated else None}
 
-    def key_figures(self, *, volume_m3=None, price_eur_per_kwh=None):
+    def key_figures(self, *, volume_m3=None, price_eur_per_kwh=None, stop=None):
         """Raw key figures of all finished sessions, oldest first.
 
         Each session's result is cached until its revision or the user settings
         for volume and electricity price change. A session whose archived data
         cannot be evaluated is returned with ``figures`` set to ``None``.
+        ``stop`` ends the evaluation before the next uncached session (LZ2,
+        preparation); the result then covers only the sessions before it.
         """
         settings = (volume_m3, price_eur_per_kwh)
-        with closing(sqlite3.connect(self.path)) as db:
+        with self._figure_compute_lock, closing(sqlite3.connect(self.path)) as db:
             db.execute("BEGIN")
             entries = self._key_figure_sessions(db)
             result = []
@@ -1557,6 +1562,8 @@ class Archive:
                     cached = self._figure_cache.get(entry["session_id"])
                 if cached is not None and cached[0] == identity:
                     figures, label = cached[1], cached[2]
+                elif stop is not None and stop():
+                    break
                 else:
                     try:
                         figures = session_figures(self._key_figure_input(
@@ -1578,6 +1585,17 @@ class Archive:
             for session_id in set(self._figure_cache) - current:
                 del self._figure_cache[session_id]
         return result
+
+    def prepare_key_figures(self, *, volume_m3=None, price_eur_per_kwh=None):
+        """LZ2: Kennzahlen aller abgeschlossenen Sitzungen in den Zwischenspeicher rechnen.
+
+        Läuft nach dem Start im Hintergrund, damit der erste Abruf von Statistik oder
+        Sitzungskennzahlen nicht alle Sitzungen rechnen muss. Endet vor der nächsten
+        Sitzung, sobald das Archiv geschlossen oder für ein Backup angehalten wird; ihr
+        Lesevorgang hält den Backup-Checkpoint dann höchstens eine Sitzung lang auf.
+        """
+        self.key_figures(volume_m3=volume_m3, price_eur_per_kwh=price_eur_per_kwh,
+                         stop=lambda: self.closed or not self.resume.is_set())
 
     def session_key_figures(self, session_id, *, volume_m3=None, price_eur_per_kwh=None):
         """Key figures of one finished session with display values, else ``None``."""

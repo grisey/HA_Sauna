@@ -965,6 +965,90 @@ class ArchiveInputTests(unittest.TestCase):
         self.assertEqual(entries["s1"]["parameter_session"], "s2")
         self.assertEqual(entries["s1"]["figures"]["parameter_origin"], "next_session")
 
+    def second(self):
+        later = self.payload()
+        later["timeline"] = {**later["timeline"], "session_id": "s2"}
+        self.write("s2", later, started=(T0 + timedelta(days=1)).isoformat())
+
+    def test_prepared_figures_make_the_first_statistics_request_warm(self):
+        # LZ2: Vorbereitung nach dem Start; derselbe Zwischenspeicher wie auf Anfrage.
+        self.write()
+        self.second()
+        cold = Archive(self.path, "entry").key_figure_statistics(
+            BERLIN, volume_m3=6.0, price_eur_per_kwh=0.3)
+        self.archive.prepare_key_figures(volume_m3=6.0, price_eur_per_kwh=0.3)
+        with patch.object(archive_module, "session_figures",
+                          wraps=archive_module.session_figures) as compute:
+            warm = self.archive.key_figure_statistics(
+                BERLIN, volume_m3=6.0, price_eur_per_kwh=0.3)
+            self.archive.session_key_figures("s1", volume_m3=6.0, price_eur_per_kwh=0.3)
+            self.assertEqual(compute.call_count, 0)
+            # Andere Einstellungen gelten nicht als vorbereitet.
+            self.archive.key_figure_statistics(BERLIN, volume_m3=7.0, price_eur_per_kwh=0.3)
+            self.assertEqual(compute.call_count, 2)
+        self.assertEqual(warm, cold)
+
+    def test_preparation_stops_when_the_archive_closes_or_pauses_for_a_backup(self):
+        self.write()
+        self.second()
+        original = archive_module.session_figures
+        for stop in ("close", "backup"):
+            with self.subTest(stop=stop):
+                self.archive._figure_cache.clear()
+                self.archive.closed = False
+                self.archive.resume.set()
+                calls = []
+
+                def compute(value, calls=calls, stop=stop):
+                    calls.append(value)
+                    if stop == "close":
+                        self.archive.closed = True
+                    else:
+                        self.archive.resume.clear()
+                    return original(value)
+
+                with patch.object(archive_module, "session_figures", side_effect=compute):
+                    self.archive.prepare_key_figures(volume_m3=6.0, price_eur_per_kwh=0.3)
+                self.assertEqual(len(calls), 1)
+                self.assertEqual(list(self.archive._figure_cache), ["s1"])
+        # Eine Anfrage rechnet den Rest wie bisher.
+        self.archive.resume.set()
+        self.archive.closed = False
+        with patch.object(archive_module, "session_figures",
+                          wraps=archive_module.session_figures) as compute:
+            self.archive.key_figures(volume_m3=6.0, price_eur_per_kwh=0.3)
+            self.assertEqual(compute.call_count, 1)
+
+    def test_request_during_preparation_waits_instead_of_computing_again(self):
+        import threading
+
+        self.write()
+        started, release = threading.Event(), threading.Event()
+        calls = []
+        original = archive_module.session_figures
+
+        def compute(value):
+            calls.append(value)
+            started.set()
+            release.wait(5)
+            return original(value)
+
+        with patch.object(archive_module, "session_figures", side_effect=compute):
+            preparing = threading.Thread(target=self.archive.prepare_key_figures)
+            preparing.start()
+            self.assertTrue(started.wait(5))
+            answers = []
+            request = threading.Thread(target=lambda: answers.append(
+                self.archive.session_key_figures("s1")))
+            request.start()
+            request.join(0.2)
+            self.assertTrue(request.is_alive(), "die Anfrage wartet auf die Vorbereitung")
+            release.set()
+            preparing.join(5)
+            request.join(5)
+        self.assertEqual(len(calls), 1)
+        self.assertEqual(answers[0]["session_id"], "s1")
+
     def test_session_and_statistics_results(self):
         self.write()
         result = self.archive.session_key_figures("s1", volume_m3=6.0)

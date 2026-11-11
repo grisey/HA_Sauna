@@ -1734,3 +1734,31 @@ class StreamedExportTests(unittest.IsolatedAsyncioTestCase):
         with self.assertRaisesRegex(sqlite3.OperationalError, "WAL"):
             await self.archive.export(check_only=True).start()
         self.assertIsNone(self.archive._running_export)
+
+
+class KeyFigurePreparationTests(unittest.IsolatedAsyncioTestCase):
+    """LZ2: Die Laufzeit rechnet die Kennzahlen nach dem Start im Hintergrund vor."""
+
+    async def test_runtime_prepares_with_instance_settings_and_survives_errors(self):
+        runtime = SaunaRuntime(Configuration(bindings(), parameters()), lambda: T0)
+        calls = []
+
+        class Prepared:
+            def prepare_key_figures(self, **settings):
+                calls.append(settings)
+                if len(calls) == 2:
+                    raise sqlite3.OperationalError("database is locked")
+
+        values = runtime.configuration.parameters.values
+        expected = {"volume_m3": values["cabin_volume_m3"],
+                    "price_eur_per_kwh": values["electricity_price_eur_per_kwh"]}
+        self.assertEqual(runtime.key_figure_settings(), expected)
+        await runtime.prepare_key_figures()
+        self.assertEqual(calls, [])
+        runtime.archive = Prepared()
+        await runtime.prepare_key_figures(object())
+        await runtime.prepare_key_figures()
+        self.assertEqual(calls, [expected, expected])
+        runtime.closed = True
+        await runtime.prepare_key_figures()
+        self.assertEqual(len(calls), 2)
