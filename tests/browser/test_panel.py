@@ -2177,10 +2177,21 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
             print("NATIVE_OPTIONS_ERRORS", self.errors, self.console_errors, self.ws_errors, flush=True)
             raise
         await self.page.screenshot(path=str(screenshots / "options_menu.png"), full_page=True)
-        area = next(group for group in groups if group["id"] == "operation")
+
+        # E2: Bereiche nach Funktion. Der Katalog legt fest, in welchem Bereich eine
+        # Untergruppe steht (Heizregelung unter „Steuerung“, Taster und
+        # Handbedienung unter „Temperatur und Bedienung“).
+        def area_of(subgroup_id):
+            area_id = next(
+                item["settings_group"] for item in section("parameters")
+                if item.get("settings_subgroup") == subgroup_id
+                and item["configuration_surface"] == "integration"
+            )
+            return next(group for group in groups if group["id"] == area_id)
+
+        area = area_of("temperature_control")
         flow_id = await dialog.evaluate("dialog => dialog._step.flow_id")
-        for area_id in ("operation", "sensors", "light"):
-            visited = next(group for group in groups if group["id"] == area_id)
+        for visited in [group for group in groups if group.get("surface") == "integration"]:
             await menu.get_by_text(visited["label"], exact=True).click()
             await expect(menu.get_by_text("Zurück zur Übersicht", exact=True)).to_be_visible()
             await menu.get_by_text("Zurück zur Übersicht", exact=True).click()
@@ -2221,7 +2232,7 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
         saved = await response.value
         self.assertTrue(saved.ok)
         result = await saved.json()
-        self.assertEqual((result["type"], result["step_id"], result["flow_id"]), ("menu", "operation", flow_id))
+        self.assertEqual((result["type"], result["step_id"], result["flow_id"]), ("menu", area["id"], flow_id))
         await self.hass.async_block_till_done()
         self.runtime = self.entry.runtime_data
         before["parameters"][definition["key"]] = changed
@@ -2241,12 +2252,15 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
                 and response.request.method == "POST") as response:
             await dialog.get_by_role("button", name=submit, exact=True).click()
         result = await (await response.value).json()
-        self.assertEqual((result["type"], result["step_id"], result["flow_id"]), ("menu", "operation", flow_id))
+        self.assertEqual((result["type"], result["step_id"], result["flow_id"]), ("menu", area["id"], flow_id))
         await self.hass.async_block_till_done()
         self.assertIs(self.entry.runtime_data, unchanged_runtime)
         self.assertEqual(self.runtime.configuration.as_options(), before)
         controls = next(group for group in section("frontend")["settings_subgroups"]
                         if group["id"] == "session_controls")
+        controls_area = area_of("session_controls")
+        await menu.get_by_text("Zurück zur Übersicht", exact=True).click()
+        await menu.get_by_text(controls_area["label"], exact=True).click()
         await menu.get_by_text(controls["label"], exact=True).click()
         await expect(dialog.locator("step-flow-form")).to_be_visible()
         async with self.page.expect_response(lambda response:
@@ -2254,7 +2268,7 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
                 and response.request.method == "POST") as response:
             await dialog.get_by_role("button", name="Weiter", exact=True).click()
         result = await (await response.value).json()
-        self.assertEqual((result["type"], result["step_id"], result["flow_id"]), ("menu", "operation", flow_id))
+        self.assertEqual((result["type"], result["step_id"], result["flow_id"]), ("menu", controls_area["id"], flow_id))
         await self.hass.async_block_till_done()
         self.assertIs(self.entry.runtime_data, unchanged_runtime)
         self.assertEqual(self.runtime.configuration.as_options(), before)
@@ -2656,8 +2670,12 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_settings_metadata_refresh_preserves_drafts_and_native_validity(self):
         await self.panel.locator('.main-tabs [data-action="settings"]').click()
+        # Programmwerte bearbeitet der Programmeditor, nicht ein allgemeines Feld. E2 legt
+        # die Temperaturtasten (Untergruppe temperature_choices) als Felder in denselben
+        # Bereich „Programme und Start“.
         self.assertEqual(await self.panel.evaluate("""panel => panel.state.parameters
           .filter(definition => definition.settings_group === 'programs')
+          .filter(definition => definition.settings_subgroup !== 'temperature_choices')
           .filter(definition => panel.shadowRoot.querySelector(`#parameters input[name="${definition.key}"]`))
           .map(definition => definition.key)"""), [])
         target = self.panel.locator('#parameters input[name="preset_step_c"]')
@@ -3806,7 +3824,9 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
         await self.open_settings_section("appearance")
         await expect(self.panel.locator('input[name="session_light_minutes"]')).to_have_count(0)
         await expect(self.panel.locator("#details [data-door-status]")).to_have_text("Erkennung ruht")
-        await expect(self.panel.locator("#details")).to_contain_text("die Erkennung ruht außerhalb einer Sitzung")
+        # Veraltete Messwerte: ohne Regeltemperatur steht der Erkennungsstand allein (B4c, BF-17).
+        await expect(self.panel.locator("#details")).to_contain_text(
+            re.compile(r"[Dd]ie Erkennung ruht außerhalb einer Sitzung"))
         await expect(self.panel.locator('input[name="session_light_brightness_percent"]')).to_have_count(0)
         self.assertLessEqual(await self.panel.evaluate("p=>p.shadowRoot.querySelector('main').scrollWidth"),390)
         bindings = dict(self.entry.options["bindings"])

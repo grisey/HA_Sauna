@@ -1494,8 +1494,9 @@ class PanelAPITests(unittest.IsolatedAsyncioTestCase):
             # BN „Sauna aus“: die Nachricht wird nach dem Sitzungsende in einer eigenen
             # Aufgabe aus den Kennzahlen gebildet und archiviert. Sie gehört zum Stand
             # vor den Antworten, die das Archiv nicht verändern dürfen.
-            while runtime._bn_tasks:
-                await asyncio.gather(*tuple(runtime._bn_tasks))
+            async with asyncio.timeout(async_timeout("reload")):
+                while runtime._bn_tasks:
+                    await asyncio.gather(*tuple(runtime._bn_tasks))
             await runtime.archive.flush()
             completed_session = runtime.controller.completed_sessions[-1]
             original_completed = plain(completed_session)

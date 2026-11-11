@@ -12,6 +12,7 @@ from aiohttp import ClientSession
 from homeassistant.auth.const import GROUP_ID_USER
 from homeassistant.core import Context
 from homeassistant.exceptions import HomeAssistantError, Unauthorized
+from test_settings import async_timeout
 
 Lifecycle = notification_service.NotificationServiceLifecycleTests
 
@@ -24,7 +25,8 @@ class CalibrationServiceTests(unittest.IsolatedAsyncioTestCase):
     start_session = Lifecycle.start_session
     mobile_references = Lifecycle.mobile_references
     prepare_native_session = Lifecycle.prepare_native_session
-    settle_occasions = Lifecycle.settle_occasions
+    pending_occasions = Lifecycle.pending_occasions
+    await_sink_calls = Lifecycle.await_sink_calls
     observe_replies = Lifecycle.observe_replies
 
     def assert_timer_occasion(self, calls, references):
@@ -37,10 +39,21 @@ class CalibrationServiceTests(unittest.IsolatedAsyncioTestCase):
         calls.clear()
 
     async def settle(self):
-        while self.runtime._calibration_tasks:
-            await asyncio.gather(*tuple(self.runtime._calibration_tasks))
-            await asyncio.sleep(0)
-        await self.hass.async_block_till_done()
+        deadline = async_timeout("reload")
+        try:
+            async with asyncio.timeout(deadline):
+                while self.runtime._calibration_tasks:
+                    await asyncio.gather(*tuple(self.runtime._calibration_tasks))
+                    await asyncio.sleep(0)
+                await self.hass.async_block_till_done()
+        except TimeoutError:
+            format_graph = getattr(asyncio, "format_call_graph", None)
+            pending = [task for task in self.runtime._calibration_tasks if not task.done()]
+            self.fail(
+                f"Kalibrierübergaben nach {deadline} s offen:\n"
+                + ("\n".join(format_graph(task) if format_graph else repr(task)
+                             for task in pending) or "keine (HA-Aufgaben)")
+            )
 
     async def calibrate(self, service, user, **data):
         return await self.hass.services.async_call(
@@ -105,7 +118,8 @@ class CalibrationServiceTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(self.runtime.session.operation_enabled)
         await self.calibrate("cancel_calibration", users[0])
         await self.settle()
-        self.assertEqual(run.phase, "invalid")
+        # W-3: ein abgebrochener Lauf ist beendet; ungültig ist der laufende Teil.
+        self.assertEqual((run.phase, run.end_reason, run.valid), ("ended", "cancelled", False))
         self.assertTrue(self.runtime.session.operation_enabled)
         # Only the notice of invalidity follows the cancellation.
         self.assertEqual(
@@ -266,7 +280,8 @@ class CalibrationServiceTests(unittest.IsolatedAsyncioTestCase):
                              [(run.run_id, False, "abgebrochen")])
             async with client.post(url + "/calibration/cancel", json={}) as response:
                 self.assertEqual(response.status, 409)
-        self.assertEqual((run.phase, run.end_reason), ("invalid", "cancelled"))
+        # W-3: ein abgebrochener Lauf ist beendet; ungültig ist der laufende Teil.
+        self.assertEqual((run.phase, run.end_reason, run.valid), ("ended", "cancelled", False))
         self.assertEqual(run.steps[-1]["user_id"], users[0].id)
         self.assertEqual(
             calls[-1]["message"],

@@ -2,6 +2,7 @@
 
 import argparse
 import ast
+import faulthandler
 import json
 import os
 from pathlib import Path
@@ -131,6 +132,25 @@ def run_core():
     raise SystemExit(0 if successful else 1)
 
 
+class StallGuard(unittest.TextTestResult):
+    """End a stalled test with the stacks of all threads.
+
+    An await without a deadline would otherwise hold the job until GitHub's job
+    limit, with the test name only in the final log. The dump goes to the real
+    standard error of the process (also when ``sys.stderr`` is redirected).
+    """
+
+    def startTest(self, test):
+        super().startTest(test)
+        faulthandler.dump_traceback_later(
+            setting("runner.test_stall_seconds"), exit=True, file=sys.__stderr__
+        )
+
+    def stopTest(self, test):
+        faulthandler.cancel_dump_traceback_later()
+        super().stopTest(test)
+
+
 def run_ha():
     names = select_ha_tests(os.environ.get("SAUNA_HA_TESTS", ""))
     # Named tests need the same module priority as HA adapter discovery.
@@ -139,7 +159,7 @@ def run_ha():
     print("HA_TESTS", json.dumps(names or ["all"]), flush=True)
     loader = unittest.defaultTestLoader
     suite = loader.loadTestsFromNames(names) if names else loader.discover(str(HA_ROOT))
-    result = unittest.TextTestRunner(verbosity=2).run(suite)
+    result = unittest.TextTestRunner(verbosity=2, resultclass=StallGuard).run(suite)
     successful = result.wasSuccessful() and result.testsRun > 0
     if os.environ.get("HA_TEST_REQUIRED") and result.skipped:
         print("Required HA adapter tests were skipped", flush=True)
@@ -159,7 +179,7 @@ def run_integration():
         if names
         else loader.discover(str(INTEGRATION_ROOT))
     )
-    result = unittest.TextTestRunner(verbosity=2).run(suite)
+    result = unittest.TextTestRunner(verbosity=2, resultclass=StallGuard).run(suite)
     successful = result.wasSuccessful() and result.testsRun > 0
     if os.environ.get("HA_TEST_REQUIRED") and result.skipped:
         print("Required HA integration tests were skipped", flush=True)

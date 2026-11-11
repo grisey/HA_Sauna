@@ -65,11 +65,19 @@ def main():
             },
         },
     )
-    with (folder / "process.log").open("w", encoding="utf-8") as log:
-        process = subprocess.run(
-            command, stdout=log, stderr=subprocess.STDOUT, check=False
+    # The output goes to the log and, line by line, to the job log, so that a
+    # stalled process stays visible there and not only in the artifact.
+    environment = {**os.environ, "PYTHONUNBUFFERED": "1"}
+    with (folder / "process.log").open("wb") as log:
+        process = subprocess.Popen(
+            command, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, env=environment
         )
-    result = process.returncode
+        for line in process.stdout:
+            log.write(line)
+            log.flush()
+            sys.stdout.buffer.write(line)
+            sys.stdout.buffer.flush()
+        result = process.wait()
     (folder / "exit-code.txt").write_text(str(result) + "\n", encoding="utf-8")
     write_json(
         folder / "process-completion.json",
@@ -79,9 +87,6 @@ def main():
             "job_conclusion": "Recorded separately by GitHub Actions after artifact upload",
         },
     )
-    with (folder / "process.log").open(encoding="utf-8", errors="replace") as log:
-        for line in log:
-            print(line, end="")
     return result if result >= 0 else 128 - result
 
 

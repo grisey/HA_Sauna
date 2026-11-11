@@ -10,7 +10,10 @@ stehen in [`settings.json`](settings.json), die Python-Abhängigkeiten in
 Alle folgenden Befehle werden in diesen GitHub-Jobs vom Repository-Hauptverzeichnis
 aus und jeweils als eigener Prozess ausgeführt. Lokale oder per Remote-Shell
 gestartete Tests sind nicht vorgesehen.
-Für jeden Prozess wird sein tatsächlicher Exitcode festgehalten.
+Für jeden Prozess wird sein tatsächlicher Exitcode festgehalten. `ci_process.py`
+gibt die Ausgabe zeilenweise in das Joblog und in `process.log` aus. In den
+HA-Adapter- und Integrationsläufen beendet ein Test, der länger als
+`runner.test_stall_seconds` läuft, den Prozess mit den Stapeln aller Threads.
 
 ## Prüfebenen
 

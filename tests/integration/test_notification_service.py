@@ -30,7 +30,7 @@ from custom_components.ha_sauna.core.notification_recipients import (
     TargetIdentity,
 )
 from harness import create_sauna, start_hass
-from test_settings import async_timeout
+from test_settings import async_timeout, setting
 
 NATIVE_MESSAGE = "Synthetic native session notification"
 # BN „Zeitschaltuhr beim Start“: der Sitzungsbeginn sendet an die Ziele des
@@ -38,9 +38,14 @@ NATIVE_MESSAGE = "Synthetic native session notification"
 TIMER_START = "Sauna gestartet – Zeitschaltuhr aufziehen"
 
 
+def message_of(call):
+    """Message of a recorded sink call: ``{"data": call.data}`` or ``call.data`` itself."""
+    return call["message"] if "message" in call else call["data"]["message"]
+
+
 def sent(calls, message):
     """Calls of one message through the shared synthetic notify sink."""
-    return [call for call in calls if call["data"]["message"] == message]
+    return [call for call in calls if message_of(call) == message]
 
 
 class NotificationServiceTests(unittest.IsolatedAsyncioTestCase):
@@ -422,18 +427,45 @@ class NotificationServiceLifecycleTests(unittest.IsolatedAsyncioTestCase):
         }
         return tuple(references), registrations, targets
 
-    async def settle_occasions(self):
-        """BN: occasions hand off in their own tasks outside the control lock."""
-        while self.runtime._bn_tasks:
-            await asyncio.gather(*tuple(self.runtime._bn_tasks), return_exceptions=True)
-        await self.hass.async_block_till_done()
+    def pending_occasions(self):
+        """Open BN handoffs with their await chain, for a deadline message."""
+        format_graph = getattr(asyncio, "format_call_graph", None)
+        tasks = [task for task in self.runtime._bn_tasks if not task.done()]
+        return "\n".join(
+            format_graph(task) if format_graph else repr(task) for task in tasks
+        ) or "keine"
+
+    async def await_sink_calls(self, calls, message, count):
+        """Wait, with a deadline, until ``count`` sink calls of ``message`` arrived.
+
+        BN occasions hand off in their own tasks outside the control lock; the
+        test waits for the observable call, never for the tasks themselves.
+        """
+        deadline = async_timeout("reload")
+        try:
+            async with asyncio.timeout(deadline):
+                while len(sent(calls, message)) < count:
+                    await asyncio.sleep(setting("asyncio.scheduler_grace_s"))
+        except TimeoutError:
+            self.fail(
+                f"{len(sent(calls, message))} von {count} Aufrufen „{message}“ nach "
+                f"{deadline} s; offene BN-Übergaben:\n{self.pending_occasions()}"
+            )
 
     async def prepare_native_session(self, terminal_sink, *, participants=1):
         references, registrations, targets = await self.mobile_references(
             max(2, participants)
         )
+        timer = []
+
+        async def sink(call):
+            result = await terminal_sink(call)
+            if call.data.get("message") == TIMER_START:
+                timer.append({"data": dict(call.data)})
+            return result
+
         for service in registrations:
-            self.hass.services.async_register("notify", service, terminal_sink)
+            self.hass.services.async_register("notify", service, sink)
         users = [
             await self.hass.auth.async_create_user(
                 f"Synthetic mapped user {index}", group_ids=[GROUP_ID_USER]
@@ -450,7 +482,10 @@ class NotificationServiceLifecycleTests(unittest.IsolatedAsyncioTestCase):
         )
         await self.configure_recipients(assignments)
         await self.start_session(users[0])
-        await self.settle_occasions()
+        # BN: the start sends the timer occasion to every target of the starting user.
+        await self.await_sink_calls(
+            timer, TIMER_START, len(references) if participants == 1 else 1
+        )
         return users, references, targets
 
     def start_native_send(self, user):
@@ -985,7 +1020,7 @@ class NotificationServiceLifecycleTests(unittest.IsolatedAsyncioTestCase):
             context=context,
         )
         await self.hass.async_block_till_done()
-        await self.settle_occasions()
+        await self.await_sink_calls(calls, TIMER_START, 1)
         source = self.hass.states.get("input_boolean.synthetic_notification_control")
         derived = self.hass.states.get(control_input)
         self.assertEqual(source.context.user_id, user.id)

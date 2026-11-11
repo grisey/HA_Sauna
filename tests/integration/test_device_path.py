@@ -4009,8 +4009,9 @@ class DevicePathTests(unittest.IsolatedAsyncioTestCase):
         ]
         self.assertTrue(automatic_commands, "real automatic after-run output remains archived")
         self.assertTrue(all(record["session_id"] == identity for record in automatic_commands))
-        async with self.runtime.archive.export() as stream:
-            zip_bytes = b"".join([block async for block in stream])
+        async with asyncio.timeout(async_timeout("reload")):
+            async with self.runtime.archive.export() as stream:
+                zip_bytes = b"".join([block async for block in stream])
         await self.runtime.close()
         await self.hass.async_block_till_done()
         with zipfile.ZipFile(io.BytesIO(zip_bytes)) as archive:

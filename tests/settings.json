@@ -8,6 +8,7 @@
     "prettier": "3.6.2",
     "ruff": "0.17.0",
     "artifact_retention_days": 7,
+    "test_stall_seconds": 600,
     "ui_base_ref": "origin/codex/sauna-development"
   },
   "browser": {
