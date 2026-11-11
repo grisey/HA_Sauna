@@ -7219,18 +7219,20 @@ class SaunaPanel extends HTMLElement {
   syncHistorySessions() {
     const select = this.$("#session");
     if (!select || !this.sessions || !this.state) return;
+    // „Letzte Sitzung“ steht für die laufende, sonst für die neueste archivierte
+    // Sitzung (wie historySelectionId bei „live“). Diese Sitzung erscheint nur einmal.
     const liveId = this.state.session?.timeline.session_id,
+      latestId =
+        liveId || this.historyPendingFinalId || this.sessions[0]?.session_id,
       timeZone = localTimeZone(),
       latest =
         this.state.session ||
-        this.sessions.find(
-          (session) => session.session_id === this.historySelectionId(),
-        ),
+        this.sessions.find((session) => session.session_id === latestId),
       liveLabel = latest ? this.sessionLabel(latest, timeZone) : "Letzte Sitzung",
       options =
         `<option value="live">${liveLabel}</option>` +
         this.sessions
-          .filter((session) => session.session_id !== liveId)
+          .filter((session) => session.session_id !== latestId)
           .map(
             (session) =>
               `<option value="${esc(session.session_id)}">${esc(this.sessionLabel(session, timeZone))}</option>`,
@@ -7240,7 +7242,8 @@ class SaunaPanel extends HTMLElement {
       select.innerHTML = options;
       this.historyOptionsSignature = options;
     }
-    if (select.value !== this.selected) select.value = this.selected;
+    const shown = this.selected === latestId ? "live" : this.selected;
+    if (select.value !== shown) select.value = shown;
     this.selectMenu?.syncAttributes(select);
   }
   syncHistoryLoading() {
