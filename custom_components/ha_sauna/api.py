@@ -939,7 +939,8 @@ class ArchiveView(HomeAssistantView):
             read_options["now"] = clock()
         if projection == "history":
             read_options.update(
-                humidity_display=True,
+                # LZ4: Feuchtewerte neben den Datensätzen; die Spalten setzen sie ein.
+                humidity_values=True,
                 limit=runtime.configuration.parameters.values["archive_history_page_records"],
                 kinds=(
                     "measurement", "source_snapshot", "phase", "diagnostic",
@@ -957,6 +958,7 @@ class ArchiveView(HomeAssistantView):
         if result is None:
             raise web.HTTPNotFound()
         if session_id:
+            displays = result.pop("humidity_displays", None)
             session = result["session"]
             session["door_cycles"] = plain(
                 project_door_cycles(session.get("timeline", {}))
@@ -1052,18 +1054,21 @@ class ArchiveView(HomeAssistantView):
                     result["records"], result["measurement_columns"] = (
                         history_measurement_columns(
                             result["records"], configuration=session.get("configuration"),
+                            displays=displays,
                         )
                     )
             else:
                 result["session"] = public_session(session)
                 result["phase_projection"] = public_phase_projection(result["phase_projection"])
-                records = [
-                    record for record in result["records"]
+                shown = [
+                    index for index, record in enumerate(result["records"])
                     if record["kind"] in {"measurement", "source_snapshot", "phase"}
                 ]
+                records = [result["records"][index] for index in shown]
                 if projection == "history":
                     records, result["measurement_columns"] = history_measurement_columns(
                         records, configuration=session.get("configuration"), public=True,
+                        displays=[displays[index] for index in shown],
                     )
                 result["records"] = [
                     {

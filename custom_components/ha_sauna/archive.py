@@ -38,11 +38,13 @@ from .core.models import Energy, Position, Quantity, TimedPhase
 from .core.parameters import BY_KEY, Parameters
 from .core.phases import project_archive, project_session
 from .core.recognition_control import recognition_control
-from .history_humidity import project_absolute_humidity
+from .history_humidity import project_absolute_humidity, read_originals
 from .key_figure_parameters import door_sensor_lag
 
 _LOGGER = logging.getLogger(__name__)
 _CONFIGURATION_READ_CACHE_ENTRIES = 64
+# IDs per context read of the history humidity, below every SQLite variable limit.
+_CONTEXT_IDS_PER_READ = 500
 
 
 def plain(value):
@@ -976,7 +978,7 @@ class Archive:
 
     def read(
         self, session_id=None, *, after=0, limit=None, kinds=None, now=None,
-        humidity_display=False, energy_after=None,
+        humidity_display=False, energy_after=None, humidity_values=False,
     ):
         if limit is None:
             limit = self.parameters.values["archive_read_page_records"]
@@ -1072,7 +1074,13 @@ class Archive:
                 self._decode_record(db, record, cache=configuration_cache)
                 for record in records
             ]
-            if humidity_display:
+            humidity = None
+            if humidity_values:
+                # LZ4: display values beside the unchanged page records.
+                humidity = self._humidity_display(
+                    db, session, page_records, sources, attach=False
+                )
+            elif humidity_display:
                 page_records = self._humidity_display(
                     db, session, page_records, sources
                 )
@@ -1082,13 +1090,17 @@ class Archive:
                 projection = self._legacy_projection(
                     db, session_id, session, row, generation=generation
                 )
-            return {
+            result = {
                 "session": session,
                 "measurement_window": window,
                 "phase_projection": plain(projection),
                 "records": page_records,
                 "next_after": records[-1]["id"] if len(records) == limit else None,
             }
+            if humidity is not None:
+                # Aligned with ``records``; ``None`` for kinds without a display.
+                result["humidity_displays"] = humidity
+            return result
 
     def _read_energy_delta(self, db, session_id, session, after=None):
         """Read only contributing deltas in the scalar row's SQLite snapshot."""
@@ -1177,8 +1189,13 @@ class Archive:
             "intervals": originals,
         }
 
-    def _humidity_display(self, db, session, records, sources):
-        """Read only this page's fresh source context in its SQLite snapshot."""
+    def _humidity_display(self, db, session, records, sources, *, attach=True):
+        """Read only this page's fresh source context in its SQLite snapshot.
+
+        Each page original is read once; the reads give the freshness windows
+        and the projection. Without ``attach`` the display values are returned
+        aligned with ``records`` instead of projected copies.
+        """
         configuration = session.get("configuration")
         configuration = configuration if isinstance(configuration, Mapping) else {}
         bindings = configuration.get("bindings", {})
@@ -1192,10 +1209,15 @@ class Archive:
             and isfinite(timeout)
             and timeout >= 0
         )
+        reads = read_originals(records, bindings)
         received = []
         if valid_timeout and sources:
             source_roles = set(sources)
-            for record in records:
+            for record, original in zip(records, reads):
+                if original is not None:
+                    # A read original has a bound source and its zoned UTC reception.
+                    received.append(original[0])
+                    continue
                 if record["kind"] not in {"measurement", "source_snapshot"}:
                     continue
                 payload = record["payload"]
@@ -1242,36 +1264,53 @@ class Archive:
             source_values = tuple(value for source in sources for value in source)
             # Merge only overlapping freshness windows. An old copied source
             # must not load the retained history between it and newer inputs.
+            # The time windows read only IDs from their indexes; payloads and
+            # the source test follow for originals outside this page, which in
+            # archive order are those before it.
+            candidates = {}
             for first, last in windows:
                 # Measurements use their actual received clock. Snapshots keep
                 # their original payload clock instead of refreshing a source.
                 queries = (
                     (
-                        "SELECT * FROM records INDEXED BY records_measurement_context "
-                        "WHERE entry_id=? AND kind='measurement' AND id<=? "
-                        "AND julianday(received_at) BETWEEN julianday(?) AND julianday(?)"
-                        + source_filter,
-                        (self.entry_id, last_id, first.isoformat(), last.isoformat(),
-                         *source_values),
+                        (
+                            "SELECT id FROM records INDEXED BY records_measurement_context "
+                            "WHERE entry_id=? AND kind='measurement' AND id<=? "
+                            "AND julianday(received_at) BETWEEN julianday(?) AND julianday(?)"
+                        ),
+                        (self.entry_id, last_id, first.isoformat(), last.isoformat()),
                     ),
                     (
                         # The partial payload-clock index bounds snapshot context
                         # without walking all prior diagnostic IDs on every page.
-                        "SELECT * FROM records INDEXED BY records_source_snapshot_context "
-                        "WHERE entry_id=? AND session_id=? AND kind='source_snapshot' "
-                        "AND id<=? AND julianday(json_extract(payload,'$.received_at')) "
-                        "BETWEEN julianday(?) AND julianday(?)" + source_filter,
+                        (
+                            "SELECT id FROM records INDEXED BY records_source_snapshot_context "
+                            "WHERE entry_id=? AND session_id=? AND kind='source_snapshot' "
+                            "AND id<=? AND julianday(json_extract(payload,'$.received_at')) "
+                            "BETWEEN julianday(?) AND julianday(?)"
+                        ),
                         (self.entry_id, session["timeline"]["session_id"], last_id,
-                         first.isoformat(), last.isoformat(), *source_values),
+                         first.isoformat(), last.isoformat()),
                     ),
                 )
                 for query, arguments in queries:
-                    for record in db.execute(query, arguments):
-                        if record["id"] not in page_ids and record["id"] not in context:
-                            context[record["id"]] = self._decode_record(db, record)
+                    for (identity,) in db.execute(query, arguments):
+                        if identity not in page_ids:
+                            candidates[identity] = None
+            identities = list(candidates)
+            for start in range(0, len(identities), _CONTEXT_IDS_PER_READ):
+                chunk = identities[start:start + _CONTEXT_IDS_PER_READ]
+                # NOT INDEXED keeps direct ID lookups; without statistics SQLite
+                # would otherwise walk every record of the entry for many IDs.
+                for record in db.execute(
+                    "SELECT * FROM records NOT INDEXED WHERE entry_id=? AND id IN ("
+                    + ",".join("?" for _ in chunk) + ")" + source_filter,
+                    (self.entry_id, *chunk, *source_values),
+                ):
+                    context[record["id"]] = self._decode_record(db, record)
         return project_absolute_humidity(
             records, context=context.values(), bindings=bindings,
-            timeout_seconds=timeout,
+            timeout_seconds=timeout, reads=reads, attach=attach,
         )
 
     def _legacy_projection(self, db, session_id, session, row, *, generation):

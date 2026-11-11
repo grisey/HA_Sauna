@@ -242,13 +242,25 @@ class _SourceIndex:
         return latest[2] if latest is not None else None
 
 
+def read_originals(records, bindings):
+    """The read original of each page record (``None`` without a usable one).
+
+    The archive uses these reads for the freshness windows of its context
+    query and passes them back to ``project_absolute_humidity``, so every page
+    original is read once.
+    """
+    return [_original(record, bindings) for record in records]
+
+
 def project_absolute_humidity(
     records: Iterable[Mapping],
     *,
     context: Iterable[Mapping] = (),
     bindings: Mapping,
     timeout_seconds: float | None,
-) -> list[dict]:
+    reads: list | None = None,
+    attach: bool = True,
+) -> list:
     """Add display values without changing originals or returning page context.
 
     Context uses the same record shape as the page and must contain its needed
@@ -258,32 +270,42 @@ def project_absolute_humidity(
     their copied input's reception time. The caller bounds context in SQLite;
     this projection sorts and indexes it once rather than replaying a session
     separately for every measurement.
+
+    ``reads`` are the page reads from ``read_originals``. Without ``attach``
+    the result is the display value of each record (``None`` for other kinds)
+    instead of projected copies, so a caller can place them without copying.
     """
     records = list(records)
+    page = read_originals(records, bindings) if reads is None else reads
     identities = [_record_id(record) for record in records]
+    # Each original is read once: a page record is also the input with its ID,
+    # and the last record with an ID is its input, as in archive order.
     inputs = {}
     for record in context:
         identity = _record_id(record)
         if identity is not None:
             inputs[identity] = record
-    for identity, record in zip(identities, records):
+    # A page record replaces a context record with its ID.
+    on_page = set(identities)
+    read = {
+        identity: _original(record, bindings)
+        for identity, record in inputs.items()
+        if identity not in on_page
+    }
+    last = {}
+    for index, identity in enumerate(identities):
         if identity is not None:
-            inputs[identity] = record
-    # Each original is read once: a page record is also the input with its ID.
-    read = {}
-    for identity, record in inputs.items():
-        read[identity] = _original(record, bindings)
+            read[identity] = page[index]
+            last[identity] = index
     targets = {}
     display = []
     linear = True
     for index, record in enumerate(records):
-        identity = identities[index]
-        own = identity is not None and inputs[identity] is record
-        original = read[identity] if own else _original(record, bindings)
         if record.get("kind") not in MEASUREMENT_KINDS:
             # Only measurement kinds receive a display value below.
             display.append(None)
             continue
+        original = page[index]
         if original is not None:
             # The same original reception time, already read for the input.
             received_at = original[_RECEIVED]
@@ -299,10 +321,11 @@ def project_absolute_humidity(
                 "valid_until": None,
             }
         )
+        identity = identities[index]
         if original is not None and identity is not None:
             targets[index] = (identity, original)
             # A second original with this ID is paired by the general search.
-            linear = linear and own
+            linear = linear and last[identity] == index
     timeout = _valid_timeout(timeout_seconds)
     if timeout is None or not targets:
         values = {}
@@ -321,17 +344,22 @@ def project_absolute_humidity(
             except OverflowError:
                 continue
             display[index].update(value=value, valid_until=valid_until.isoformat())
-    result = []
-    for index, record in enumerate(records):
-        projected = dict(record)
-        if record.get("kind") in MEASUREMENT_KINDS:
-            previous = record.get("display")
-            projected["display"] = {
-                **(previous if isinstance(previous, Mapping) else {}),
-                "absolute_humidity": display[index],
-            }
-        result.append(projected)
-    return result
+    if not attach:
+        return display
+    return [
+        {**record, "display": attach_display(record, display[index])}
+        if display[index] is not None else dict(record)
+        for index, record in enumerate(records)
+    ]
+
+
+def attach_display(record, value):
+    """The record's display with the absolute humidity, keeping other display values."""
+    previous = record.get("display")
+    return {
+        **(previous if isinstance(previous, Mapping) else {}),
+        "absolute_humidity": value,
+    }
 
 
 def _pairs(read, targets, timeout, linear):

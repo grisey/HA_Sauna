@@ -6,6 +6,7 @@ from math import isfinite
 
 from .bindings import Bindings
 from .core.parameters import BY_KEY, LIVE_TEMPERATURE_KEYS
+from .history_humidity import attach_display
 
 PHASES = {
     "aus": "Aus",
@@ -247,6 +248,10 @@ def public_measurement(measurement, *, configuration=None):
 _COLUMN_RECORD_KEYS = frozenset({"id", "entry_id", "session_id", "kind", "received_at",
                                  "payload", "display"})
 _COLUMN_DISPLAY_KEYS = frozenset({"value", "received_at", "valid_until"})
+_COLUMN_KINDS = frozenset({"measurement", "source_snapshot"})
+_NUMBERS = (int, float)
+_MISSING = object()
+_HUMIDITY_KEY = frozenset({"absolute_humidity"})
 
 
 def _finite_or_none(value):
@@ -255,7 +260,8 @@ def _finite_or_none(value):
     )
 
 
-def history_measurement_columns(records, *, configuration=None, public=False):
+def history_measurement_columns(records, *, configuration=None, public=False,
+                                displays=None):
     """Verlaufsprojektion: Messungen spaltenweise statt als einzelne Datensätze.
 
     Übertragen wird nur, was der Verlauf aus einer Messung liest: Art, Position,
@@ -265,69 +271,96 @@ def history_measurement_columns(records, *, configuration=None, public=False):
     Originalfelder liefern die Abfrage ohne Projektion und der Export.
     Gibt die übrigen Datensätze und die Spalten zurück; die Reihenfolge der
     Spalten ist die der Datensätze.
+
+    ``displays`` sind die Feuchtewerte je Datensatz (``Archive.read`` mit
+    ``humidity_values``). Dann entstehen Spalten und übrige Datensätze mit
+    ihrer Anzeige in einem Durchgang, ohne vorher jede Messung zu kopieren.
     """
     columns = {
         "roles": [], "role": [], "id": [], "received_at": [], "value": [],
         "absolute_humidity": [], "absolute_humidity_valid_until": [],
         "record_received_at": [],
     }
+    known_roles = columns["roles"]
+    add_role, add_id = columns["role"].append, columns["id"].append
+    add_received, add_value = columns["received_at"].append, columns["value"].append
+    add_humidity = columns["absolute_humidity"].append
+    add_valid_until = columns["absolute_humidity_valid_until"].append
+    add_record_received = columns["record_received_at"].append
     roles = {}
     remaining = []
-    for record in records:
+    append = remaining.append
+    for index, record in enumerate(records):
+        kind = record.get("kind")
+        if kind not in _COLUMN_KINDS:
+            append(record)
+            continue
+        if displays is None:
+            display = record.get("display")
+            humidity = display.get("absolute_humidity") if type(display) is dict else None
+            single = humidity is not None and len(display) == 1
+        else:
+            humidity = displays[index]
+            previous = record.get("display")
+            # The attached display would hold other values beside the humidity.
+            single = not isinstance(previous, Mapping) or previous.keys() <= _HUMIDITY_KEY
         payload = record.get("payload")
-        display = record.get("display")
-        humidity = display.get("absolute_humidity") if type(display) is dict else None
+        if type(payload) is dict:
+            position, quantity = payload.get("position"), payload.get("quantity")
+            received, value = payload.get("received_at"), payload.get("value", _MISSING)
+            source = payload.get("source")
+        else:
+            position = quantity = received = value = source = None
+        identity = record.get("id")
         if (
-            record.get("kind") not in {"measurement", "source_snapshot"}
-            or type(record.get("id")) is not int
-            or not _COLUMN_RECORD_KEYS.issuperset(record)
+            not single
+            or type(identity) is not int
+            or type(position) is not str
+            or type(quantity) is not str
+            or type(received) is not str
+            or not (value is None or (type(value) in _NUMBERS and isfinite(value)))
+            or not (type(source) is str or (public and source is None))
             or type(record.get("received_at")) is not str
-            or type(payload) is not dict
-            or type(payload.get("position")) is not str
-            or type(payload.get("quantity")) is not str
-            or type(payload.get("received_at")) is not str
-            or "value" not in payload
-            or not _finite_or_none(payload["value"])
-            or not (type(payload.get("source")) is str
-                    or (public and payload.get("source") is None))
+            or not _COLUMN_RECORD_KEYS.issuperset(record)
             or type(humidity) is not dict
-            or len(display) != 1
-            or set(humidity) != _COLUMN_DISPLAY_KEYS
+            or humidity.keys() != _COLUMN_DISPLAY_KEYS
             or type(humidity["received_at"]) is not str
             or not _finite_or_none(humidity["value"])
             or not (humidity["valid_until"] is None
                     or type(humidity["valid_until"]) is str)
         ):
-            remaining.append(record)
+            append(record if displays is None else {
+                **record, "display": attach_display(record, humidity),
+            })
             continue
-        key = (record["kind"], payload["position"], payload["quantity"], payload.get("source"))
-        index = roles.get(key)
-        if index is None:
-            role = {"kind": key[0], "position": key[1], "quantity": key[2]}
+        key = (kind, position, quantity, source)
+        number = roles.get(key)
+        if number is None:
+            role = {"kind": kind, "position": position, "quantity": quantity}
             if public:
                 role.update({
-                    name: value for name, value in public_measurement(
-                        {"position": key[1], "quantity": key[2], "source": key[3]},
+                    name: shown for name, shown in public_measurement(
+                        {"position": position, "quantity": quantity, "source": source},
                         configuration=configuration,
                     ).items() if name == "source_matches_binding"
                 })
             else:
-                role["source"] = key[3]
+                role["source"] = source
             # Sources that project identically share one public role.
-            index = roles[key] = next(
-                (number for number, known in enumerate(columns["roles"]) if known == role),
-                len(columns["roles"]),
+            number = roles[key] = next(
+                (known for known, other in enumerate(known_roles) if other == role),
+                len(known_roles),
             )
-            if index == len(columns["roles"]):
-                columns["roles"].append(role)
-        columns["role"].append(index)
-        columns["id"].append(record["id"])
-        columns["received_at"].append(payload["received_at"])
-        columns["value"].append(payload["value"])
-        columns["absolute_humidity"].append(humidity["value"])
-        columns["absolute_humidity_valid_until"].append(humidity["valid_until"])
-        if record["received_at"] != payload["received_at"]:
-            columns["record_received_at"].append([record["id"], record["received_at"]])
+            if number == len(known_roles):
+                known_roles.append(role)
+        add_role(number)
+        add_id(identity)
+        add_received(received)
+        add_value(value)
+        add_humidity(humidity["value"])
+        add_valid_until(humidity["valid_until"])
+        if record["received_at"] != received:
+            add_record_received([identity, record["received_at"]])
     return remaining, columns
 
 

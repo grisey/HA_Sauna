@@ -170,5 +170,69 @@ class HistoryColumnTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(identities, [record["id"] for record in page["records"]])
 
 
+    async def test_values_beside_records_give_the_same_pages_in_one_pass(self):
+        # LZ4: Feuchtewerte neben den Datensätzen, Spalten in einem Durchgang;
+        # Seitenweise gleich wie ungeteilt, auch mit Kontext ohne Sitzung dazwischen.
+        await self.fill()
+        # Feuchte ohne Sitzung mitten in der Sitzungszeit: nicht auf der Seite, aber
+        # Partner der folgenden Temperatur derselben Probe.
+        between = self.measurement(12, Quantity.HUMIDITY, 40.0, sample=12)
+        self.archive.append("measurement", T0 + timedelta(seconds=12), between, None)
+        self.archive.append("measurement", T0 + timedelta(seconds=12), self.measurement(
+            12, Quantity.TEMPERATURE, 75.0, sample=12), "columns")
+        await self.archive.flush()
+        options = {"kinds": HISTORY_KINDS, "now": T0 + timedelta(seconds=20)}
+        for public in (False, True):
+            whole = self.archive.read("columns", humidity_display=True, limit=1000, **options)
+            expected = history_measurement_columns(
+                whole["records"], configuration=self.configuration, public=public)
+            pages, after = [], 0
+            while True:
+                values = self.archive.read("columns", after=after, limit=3,
+                                           humidity_values=True, **options)
+                shown = self.archive.read("columns", after=after, limit=3,
+                                          humidity_display=True, **options)
+                displays = values.pop("humidity_displays")
+                self.assertEqual(len(displays), len(values["records"]))
+                self.assertTrue(all("display" not in record for record in values["records"]))
+                self.assertEqual(
+                    history_measurement_columns(values["records"], configuration=self.configuration,
+                                                public=public, displays=displays),
+                    history_measurement_columns(shown["records"], configuration=self.configuration,
+                                                public=public),
+                )
+                pages.append(history_measurement_columns(
+                    values["records"], configuration=self.configuration,
+                    public=public, displays=displays))
+                if values["next_after"] is None:
+                    break
+                after = values["next_after"]
+            self.assertGreater(len(pages), 3)
+            self.assertEqual(
+                [record for records, _ in pages for record in records], expected[0])
+            self.assertEqual(
+                [value for _, columns in pages for value in columns["absolute_humidity"]],
+                expected[1]["absolute_humidity"])
+            self.assertEqual(
+                [value for _, columns in pages for value in columns["id"]], expected[1]["id"])
+        self.assertTrue(any(value is not None for value in expected[1]["absolute_humidity"]))
+        # Die letzte Temperatur hat ihren Partner nur aus diesem Kontext.
+        self.assertIsNotNone(expected[1]["absolute_humidity"][-1])
+        self.assertEqual(expected[1]["value"][-1], 75.0)
+
+    async def test_a_previous_display_keeps_the_record_in_both_forms(self):
+        await self.fill()
+        page = self.archive.read("columns", humidity_values=True, kinds=HISTORY_KINDS,
+                                 now=T0 + timedelta(seconds=20))
+        displays = page.pop("humidity_displays")
+        target = next(record for record in page["records"] if record["kind"] == "measurement")
+        target["display"] = {"weiteres": 1}
+        records, columns = history_measurement_columns(page["records"], displays=displays)
+        self.assertNotIn(target["id"], columns["id"])
+        kept = next(record for record in records if record["id"] == target["id"])
+        self.assertEqual(set(kept["display"]), {"weiteres", "absolute_humidity"})
+        self.assertEqual(target["display"], {"weiteres": 1})
+
+
 if __name__ == "__main__":
     unittest.main()
