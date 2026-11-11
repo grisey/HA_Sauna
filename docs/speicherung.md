@@ -272,10 +272,18 @@ Zeitfenster, Zoom, Markierungen und offene Abschnitte bleiben dabei erhalten.
 **Wird geladen** kennzeichnet den ersten Datenabruf. Eine laufende Sitzung wird in
 Seiten geladen; das Diagramm erscheint nach der ersten Seite und vollständig nach der
 letzten. Eine abgeschlossene Sitzung kommt als [Übersicht](#verlaufsansicht-abgeschlossener-sitzungen)
-in einer Antwort. Beim Zoomen lädt der Verlauf die vollen Sekundenwerte des
-Ausschnitts nach, **Details · Erkennung** und **Steuerung** laden alle Werte der
-Sitzung; bis dahin zeichnet der Verlauf mit der Übersicht. Bei einer fehlgeschlagenen
-Aktualisierung bleibt der vorhandene Stand mit einem Fehlerhinweis sichtbar.
+in einer Antwort. Nach dem Zeichnen lädt das Panel im Hintergrund die vollen
+Sekundenwerte der Sitzung, Abschnitt für Abschnitt der gespeicherten Ansicht. Die
+Kurve bleibt dabei unverändert. Sobald alle Abschnitte da sind, gelten die Werte
+beim Zeigen mit der Maus, an Auswahlgrenzen, „–“ bei Ausfällen und die absolute
+Feuchte sekundengenau; vorher stammen sie aus der Übersicht. Beim Zoomen kommen die
+Abschnitte des Ausschnitts zuerst und bereits geladene ohne neuen Abruf zur Kurve.
+Wechselt die Sitzung oder ist der Verlauf ausgeblendet, ruht das Nachladen; geladene
+Abschnitte bleiben für die Rückkehr. **Details · Erkennung** und **Steuerung** zeigen
+alle Werte der Sitzung, aus den nachgeladenen Abschnitten oder mit einem eigenen
+Abruf; bis dahin zeichnet der Verlauf mit der Übersicht. Bei einer fehlgeschlagenen
+Aktualisierung bleibt der vorhandene Stand mit einem Fehlerhinweis sichtbar; ein
+Fehler beim Nachladen im Hintergrund lässt die Werte der Übersicht stehen.
 
 ### Verlaufsansicht abgeschlossener Sitzungen
 

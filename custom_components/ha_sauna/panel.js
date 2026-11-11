@@ -7052,13 +7052,15 @@ class SaunaPanel extends HTMLElement {
         this.state?.session?.timeline?.session_id,
         this.historyLoad?.sessionId,
       ]);
+    // LZ7: nachgeladene volle Werte zählen mit.
+    const size = (cache) => cache.records.length + (cache.full?.ids.size || 0);
     let count = 0;
-    for (const cache of this.cache.values()) count += cache.records.length;
+    for (const cache of this.cache.values()) count += size(cache);
     for (const [id, cache] of this.cache) {
       if (count <= budget) break;
       if (protectedIds.has(id)) continue;
       this.cache.delete(id);
-      count -= cache.records.length;
+      count -= size(cache);
       if (this.chartDataIndex?.records === cache.records) {
         this.chartDataIndex = null;
         this.historyNavigationCache = null;
@@ -7141,7 +7143,8 @@ class SaunaPanel extends HTMLElement {
   }
   updateHistoryResolution(cache, resolution) {
     if (!resolution || typeof resolution !== "object") return;
-    const bin = Number(resolution.bin_ms);
+    const bin = Number(resolution.bin_ms),
+      chunk = Number(resolution.chunk_ms);
     if (!resolution.overview || !Number.isSafeInteger(bin) || bin < 1) {
       // Die Antwort enthält alle Messwerte.
       if (cache.resolution) cache.resolution.all = true;
@@ -7154,10 +7157,75 @@ class SaunaPanel extends HTMLElement {
       binMs: current ? Math.min(current.binMs, bin) : bin,
       // Ausrichtung nachgeladener Ausschnitte: gröbste gelieferte Stufe.
       alignMs: current ? Math.max(current.alignMs, bin) : bin,
-      ranges: current?.ranges || [],
+      // LZ7: Zeitabschnitt der vollen Werte in der gespeicherten Ansicht.
+      chunkMs:
+        current?.chunkMs ??
+        (Number.isSafeInteger(chunk) && chunk >= 1 ? chunk : 2 ** 20),
       all: !!current?.all,
       failed: null,
     };
+  }
+  // LZ7: volle Sekundenwerte der abgeschlossenen Sitzung, abschnittsweise aus der
+  // gespeicherten Ansicht. Sie bilden einen eigenen Index für Werte beim Zeigen und
+  // an Auswahlgrenzen; die Kurve bleibt bei der Übersicht, bis gezoomt wird.
+  historyFullValues(cache) {
+    const resolution = cache?.resolution;
+    if (!resolution || resolution.all) return null;
+    if (!cache.full) {
+      const window = cache.measurement_window,
+        start = stamp(window?.started_at),
+        end = stamp(window?.ended_at),
+        size = resolution.chunkMs;
+      if (!Number.isFinite(start) || !Number.isFinite(end)) return null;
+      const first = Math.floor(start / size),
+        last = Math.floor(end / size),
+        names = [];
+      for (let key = first; key <= last; key++) names.push(key);
+      cache.full = {
+        size,
+        first,
+        last,
+        // Vor und nach dem Messfenster zuletzt; meist leer.
+        names: [...names, "before", "after"],
+        loaded: new Map(),
+        ids: new Set(),
+        index: {
+          series: new Map(),
+          curveSeries: new Map(),
+          display: new Map(),
+          seriesState: new Map(),
+        },
+        priority: [],
+        merged: new Set(),
+        complete: false,
+        running: null,
+        failed: null,
+      };
+    }
+    return cache.full;
+  }
+  historyFullQuery(full, name) {
+    if (name === "before") return `&to=${full.first * full.size}`;
+    if (name === "after") return `&from=${(full.last + 1) * full.size}`;
+    return `&from=${name * full.size}&to=${(name + 1) * full.size}`;
+  }
+  // Abschnitte, deren volle Werte einen Zeitraum [from, to) abdecken.
+  historyFullNames(full, from, to) {
+    const names = [];
+    if (Math.floor(from / full.size) < full.first) names.push("before");
+    for (
+      let key = Math.max(full.first, Math.floor(from / full.size));
+      key <= Math.min(full.last, Math.floor((to - 1) / full.size));
+      key++
+    )
+      names.push(key);
+    if (Math.floor((to - 1) / full.size) > full.last) names.push("after");
+    return names;
+  }
+  historyReadoutIndex() {
+    const id = this.shown?.session?.timeline?.session_id,
+      cache = id ? this.cache.get(id) : null;
+    return cache?.full?.complete && !cache.resolution?.all ? cache.full.index : null;
   }
   historyResolutionNeed(cache) {
     const resolution = cache?.resolution;
@@ -7182,20 +7250,44 @@ class SaunaPanel extends HTMLElement {
         ? { kind: "all", key: "all" }
         : { kind: "overview", key };
     }
+    const full = this.historyFullValues(cache);
+    if (!full) return null;
     const align = resolution.alignMs,
-      from = (Math.floor(start / align) - 1) * align,
-      to = (Math.floor(end / align) + 2) * align;
-    let covered = from;
-    for (const [left, right] of resolution.ranges)
-      if (left <= covered && right > covered) covered = right;
-    return covered >= to ? null : { kind: "range", from, to, key: `${from}:${to}` };
+      names = this.historyFullNames(
+        full,
+        (Math.floor(start / align) - 1) * align,
+        (Math.floor(end / align) + 2) * align,
+      );
+    return names.every((name) => full.merged.has(name))
+      ? null
+      : { kind: "range", names, key: names.join(",") };
   }
   ensureHistoryResolution() {
     const id = this.shown?.session?.timeline?.session_id,
       cache = id ? this.cache.get(id) : null,
       need = this.historyResolutionNeed(cache);
-    if (!need || this.historyMeasurementLoad || cache.resolution.failed === need.key)
+    if (!need) {
+      // Nach dem Zeichnen: volle Werte im Hintergrund nachladen.
+      if (this.historyFullValues(cache)) this.startHistoryFullLoad(cache);
       return;
+    }
+    const full = this.historyFullValues(cache);
+    if (need.kind === "range") {
+      // Zoom: geladene Abschnitte sofort, fehlende zuerst.
+      full.priority = need.names;
+      if (full.failed != null) full.failed = null;
+      if (!this.applyHistoryFullValues(cache)) this.startHistoryFullLoad(cache, true);
+      return;
+    }
+    if (full?.complete) {
+      // Alle vollen Werte sind schon da: kein weiterer Abruf.
+      this.mergeHistoryCacheRecords(cache, [...full.loaded.values()].flat());
+      cache.resolution.all = true;
+      this.showHistoryCache();
+      this.drawHistory("archive");
+      return;
+    }
+    if (this.historyMeasurementLoad || cache.resolution.failed === need.key) return;
     const entry = this.entry,
       projection = this.historyProjection(),
       load = { key: need.key, sessionId: id };
@@ -7213,23 +7305,15 @@ class SaunaPanel extends HTMLElement {
             if (cache.resolution) cache.resolution.overviewKey = need.key;
           }
         } else {
-          const bounds =
-              need.kind === "range" ? `&from=${need.from}&to=${need.to}` : "",
-            page = await this.api(
-              `/${entry}/archive/measurements?session_id=${encodeURIComponent(id)}${bounds}`,
-            );
+          const page = await this.api(
+            `/${entry}/archive/measurements?session_id=${encodeURIComponent(id)}`,
+          );
           records = historyPageRecords({
             records: [],
             measurement_columns: page.measurement_columns,
           });
-          if (entry === this.entry && cache.accessProjection === projection) {
-            if (need.kind === "all") cache.resolution.all = true;
-            else
-              cache.resolution.ranges = [
-                ...cache.resolution.ranges,
-                [need.from, need.to],
-              ].sort((left, right) => left[0] - right[0]);
-          }
+          if (entry === this.entry && cache.accessProjection === projection)
+            cache.resolution.all = true;
         }
         if (entry !== this.entry || cache.accessProjection !== projection) return;
         this.mergeHistoryCacheRecords(cache, records);
@@ -7243,6 +7327,91 @@ class SaunaPanel extends HTMLElement {
       if (this.shown?.session?.timeline?.session_id === id) this.showHistoryCache();
       // Auch für eine inzwischen gewählte Sitzung: ihr Bedarf folgt beim Zeichnen.
       if (this.shown && !this.$("#history")?.hidden) this.drawHistory("archive");
+    })();
+  }
+  // Zoom: sind alle Abschnitte des Ausschnitts geladen, kommen ihre Originale zur
+  // Kurve. Gibt an, ob der Ausschnitt damit vollständig ist.
+  applyHistoryFullValues(cache) {
+    const full = cache.full,
+      pending = full.priority.filter((name) => !full.merged.has(name));
+    if (!pending.length) return true;
+    if (!pending.every((name) => full.loaded.has(name))) return false;
+    this.mergeHistoryCacheRecords(
+      cache,
+      pending.flatMap((name) => full.loaded.get(name)),
+    );
+    for (const name of pending) full.merged.add(name);
+    if (this.shown?.session?.timeline?.session_id === cache.sessionId) {
+      this.showHistoryCache();
+      if (!this.$("#history")?.hidden) this.drawHistory("archive");
+    }
+    return true;
+  }
+  startHistoryFullLoad(cache, now = false) {
+    const full = cache.full;
+    if (!full || full.complete || full.running || full.failed != null) return;
+    const entry = this.entry,
+      projection = cache.accessProjection,
+      id = cache.sessionId,
+      run = (full.running = {});
+    const current = () =>
+      full.running === run &&
+      entry === this.entry &&
+      projection === this.historyProjection() &&
+      this.cache.get(id) === cache &&
+      !cache.resolution?.all &&
+      this.shown?.session?.timeline?.session_id === id &&
+      !this.$("#history")?.hidden &&
+      (typeof document === "undefined" || !document.hidden);
+    const pause = () =>
+      new Promise((resolve) =>
+        typeof requestAnimationFrame === "function" && !now
+          ? requestAnimationFrame(() => setTimeout(resolve, 0))
+          : setTimeout(resolve, 0),
+      );
+    run.promise = (async () => {
+      try {
+        // Erst nach dem Zeichnen der Übersicht; zwischen den Abschnitten frei.
+        await pause();
+        while (current()) {
+          const name =
+            full.priority.find((item) => !full.loaded.has(item)) ??
+            full.names.find((item) => !full.loaded.has(item));
+          if (name === undefined) {
+            full.complete = true;
+            break;
+          }
+          const page = await this.api(
+            `/${entry}/archive/measurements?session_id=${encodeURIComponent(id)}${this.historyFullQuery(full, name)}`,
+          );
+          if (entry !== this.entry || this.cache.get(id) !== cache) return;
+          const records = historyPageRecords({
+            records: [],
+            measurement_columns: page.measurement_columns,
+          }).sort((left, right) => left.id - right.id);
+          full.loaded.set(name, records);
+          for (const record of records)
+            if (record.id != null && !full.ids.has(record.id)) {
+              full.ids.add(record.id);
+              this.indexHistoryMeasurement(full.index, record, false);
+            }
+          this.applyHistoryFullValues(cache);
+          await pause();
+        }
+      } catch (error) {
+        full.failed = error;
+        if (
+          full.priority.some((name) => !full.loaded.has(name)) &&
+          this.shown?.session?.timeline?.session_id === id
+        )
+          this.message(error, "history");
+      } finally {
+        if (full.running === run) full.running = null;
+      }
+      if (full.complete) this.trimHistoryCaches();
+      // Werte beim Zeigen und an Auswahlgrenzen jetzt sekundengenau.
+      if (full.complete && this.shown?.session?.timeline?.session_id === id)
+        if (!this.$("#history")?.hidden) this.drawHistory("values");
     })();
   }
   mergeHistoryCacheRecords(cache, records) {
@@ -13610,75 +13779,79 @@ class SaunaPanel extends HTMLElement {
         index.diagnostics.revision++;
       }
       if (!["measurement", "source_snapshot"].includes(record.kind)) continue;
-      const source = record.payload,
-        time = stamp(source.received_at),
-        number = source.value == null ? NaN : Number(source.value),
-        value = Number.isFinite(number) ? number : null;
-      if (!Number.isFinite(time)) continue;
-      const observations = [{ quantity: source.quantity, time, value, source }],
-        absolute = record.display?.absolute_humidity,
-        absoluteTime = stamp(absolute?.received_at);
-      if (absolute && Number.isFinite(absoluteTime))
-        observations.push({
-          quantity: "absolute_humidity",
-          time: absoluteTime,
-          value:
-            typeof absolute.value === "number" && Number.isFinite(absolute.value)
-              ? absolute.value
-              : null,
-          source: absolute,
-          validUntil: stamp(absolute.valid_until),
-        });
-      for (const observation of observations) {
-        const { quantity, time, value, source: pointSource } = observation,
-          key = `${source.position}:${quantity}`,
-          values = index.series.get(key) || [],
-          point = { time, value, source: pointSource },
-          derived = quantity === "absolute_humidity";
-        if (derived) point.validUntil = observation.validUntil;
-        index.seriesState ??= new Map();
-        const state = index.seriesState.get(key) || { revision: 0 };
-        point.serial = ++state.revision;
-        if (value != null) state.hasValue = true;
-        index.seriesState.set(key, state);
-        // Raw observations retain nulls for truthful hover readouts. The
-        // curve index shares only valid point objects, making a valid neighbour
-        // across even a long missing interval available by binary search.
-        const curveValues = index.curveSeries.get(key) || [];
-        if (derived) {
-          // A pair can become complete on the second record at the same time.
-          // Keep its final projection in both the raw and curve indexes.
-          for (const target of [values, curveValues]) {
-            const at = lowerBoundHistory(target, time);
-            if (target[at]?.time === time) {
-              target.splice(at, 1);
-              index.display.delete(target);
-            }
-          }
-        }
-        const targets = [values];
-        if (value != null) {
-          index.curveSeries.set(key, curveValues);
-          targets.push(curveValues);
-        }
-        for (const target of targets) {
-          const display = index.display.get(target);
-          if ((!derived && rebuild) || !target.length || target.at(-1).time <= time) {
-            target.push(point);
-            if (display) this.appendHistoryDisplay(display, point, target.length - 1);
-          } else {
-            target.splice(lowerBoundHistory(target, time), 0, point);
-            index.display.delete(target);
-          }
-        }
-        index.series.set(key, values);
-      }
+      this.indexHistoryMeasurement(index, record, rebuild);
     }
     if (rebuild)
       for (const values of [...index.series.values(), ...index.curveSeries.values()])
         values.sort((a, b) => a.time - b.time);
     index.indexedCount = records.length;
     return (this.chartDataIndex = index);
+  }
+  // Messung und absolute Feuchte einer Archivzeile in die Reihen eines Index.
+  indexHistoryMeasurement(index, record, rebuild) {
+    const source = record.payload,
+      time = stamp(source.received_at),
+      number = source.value == null ? NaN : Number(source.value),
+      value = Number.isFinite(number) ? number : null;
+    if (!Number.isFinite(time)) return;
+    const observations = [{ quantity: source.quantity, time, value, source }],
+      absolute = record.display?.absolute_humidity,
+      absoluteTime = stamp(absolute?.received_at);
+    if (absolute && Number.isFinite(absoluteTime))
+      observations.push({
+        quantity: "absolute_humidity",
+        time: absoluteTime,
+        value:
+          typeof absolute.value === "number" && Number.isFinite(absolute.value)
+            ? absolute.value
+            : null,
+        source: absolute,
+        validUntil: stamp(absolute.valid_until),
+      });
+    for (const observation of observations) {
+      const { quantity, time, value, source: pointSource } = observation,
+        key = `${source.position}:${quantity}`,
+        values = index.series.get(key) || [],
+        point = { time, value, source: pointSource },
+        derived = quantity === "absolute_humidity";
+      if (derived) point.validUntil = observation.validUntil;
+      index.seriesState ??= new Map();
+      const state = index.seriesState.get(key) || { revision: 0 };
+      point.serial = ++state.revision;
+      if (value != null) state.hasValue = true;
+      index.seriesState.set(key, state);
+      // Raw observations retain nulls for truthful hover readouts. The
+      // curve index shares only valid point objects, making a valid neighbour
+      // across even a long missing interval available by binary search.
+      const curveValues = index.curveSeries.get(key) || [];
+      if (derived) {
+        // A pair can become complete on the second record at the same time.
+        // Keep its final projection in both the raw and curve indexes.
+        for (const target of [values, curveValues]) {
+          const at = lowerBoundHistory(target, time);
+          if (target[at]?.time === time) {
+            target.splice(at, 1);
+            index.display.delete(target);
+          }
+        }
+      }
+      const targets = [values];
+      if (value != null) {
+        index.curveSeries.set(key, curveValues);
+        targets.push(curveValues);
+      }
+      for (const target of targets) {
+        const display = index.display.get(target);
+        if ((!derived && rebuild) || !target.length || target.at(-1).time <= time) {
+          target.push(point);
+          if (display) this.appendHistoryDisplay(display, point, target.length - 1);
+        } else {
+          target.splice(lowerBoundHistory(target, time), 0, point);
+          index.display.delete(target);
+        }
+      }
+      index.series.set(key, values);
+    }
   }
   historyDisplay(values) {
     const key = values;
@@ -13957,7 +14130,12 @@ class SaunaPanel extends HTMLElement {
     return content;
   }
   series(position, quantity) {
-    return this.chartDataIndex?.series.get(`${position}:${quantity}`) || [];
+    // LZ7: Werte beim Zeigen aus den vollen Werten, sobald alle geladen sind.
+    return (
+      (this.historyReadoutIndex() || this.chartDataIndex)?.series.get(
+        `${position}:${quantity}`,
+      ) || []
+    );
   }
   historyPrimaryPosition(session = this.shown?.session) {
     const hasValues = (position) =>

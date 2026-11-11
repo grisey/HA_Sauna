@@ -2756,7 +2756,10 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
         requests = []
 
         def record_archive(request):
-            if f"/api/ha_sauna/{self.entry.entry_id}/archive" in request.url:
+            # LZ7: Volle Werte abgeschlossener Sitzungen kommen nach dem Zeichnen im
+            # Hintergrund (archive/measurements); geprüft werden hier Sitzungsseiten.
+            if (f"/api/ha_sauna/{self.entry.entry_id}/archive" in request.url
+                    and "/archive/measurements" not in request.url):
                 requests.append(request.url)
 
         self.page.on("request", record_archive)

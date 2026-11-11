@@ -260,6 +260,12 @@ class HistoryPerformanceTests(unittest.IsolatedAsyncioTestCase):
                         coldCache: pages[0]?.name.endsWith('after=0')
                     };
                 }""")
+            # LZ7: Die vollen Werte folgen nach dem Zeichnen im Hintergrund; vor dem
+            # nächsten Lauf abwarten, damit kein Abruf in dessen Messung fällt.
+            await self.panel.evaluate("""async p => {
+                const full = p.cache.get('volume')?.full;
+                while (full?.running) await full.running.promise;
+            }""")
             self.assertTrue(result["coldCache"])
             # LZ6: one overview response with a subset of the original records.
             self.assertEqual(result["indexedRecords"], result["records"])
