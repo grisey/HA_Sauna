@@ -535,7 +535,7 @@ def main():
     parser.add_argument("target")
     parser.add_argument("--nachtraege")
     parser.add_argument("--sitzung")
-    parser.add_argument("--stand", default="0.9.0b6")
+    parser.add_argument("--stand", default="0.9.0b8")
     parser.add_argument("--mindestrevision", type=int, default=0)
     args = parser.parse_args()
     corrections = json.loads(Path(args.nachtraege).read_text()) if args.nachtraege else {}
