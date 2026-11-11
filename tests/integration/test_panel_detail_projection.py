@@ -112,7 +112,12 @@ class PanelDetailProjectionTests(unittest.IsolatedAsyncioTestCase):
             )
             snapshots = [item for item in shown["records"] if item["kind"] == "session"]
             self.assertTrue(snapshots)
-            raw_by_id = {item["id"]: item for item in originals["records"]}
+            # Die laufende Sitzung kann nach dem ersten Lesen einen weiteren Stand
+            # schreiben (Ziel nach dem bestätigten Gang aus retain_session);
+            # verglichen wird mit dem Archiv nach der Antwort.
+            await runtime.archive.flush()
+            current = runtime.archive.read(identity, limit=5000, now=at)
+            raw_by_id = {item["id"]: item for item in current["records"]}
             for item in snapshots:
                 self.assertEqual(item["projection"], "session_state")
                 self.assertNotIn("timeline", item["payload"])
