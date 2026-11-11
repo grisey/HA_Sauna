@@ -149,7 +149,9 @@ class PanelAPITests(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(response.status, 200, await response.text())
                 body = await response.json()
         self.assertEqual(body["session_id"], identity)
-        self.assertEqual(body["summary"]["gangs"], 0)
+        # retain_session (harness) bestätigt einen Gang; die Zusammenfassung zählt
+        # bestätigte Gänge wie die Kennzahlen (B4b).
+        self.assertEqual(body["summary"]["gangs"], 1)
         self.assertIsInstance(body["recorded"], bool)
         self.assertIsInstance(body["events"], list)
 
@@ -1489,10 +1491,19 @@ class PanelAPITests(unittest.IsolatedAsyncioTestCase):
             await runtime.set_operation(False)
             runtime.controller.finish_session(clock[0], light_after_run=False)
             await runtime._cycle()
+            # BN „Sauna aus“: die Nachricht wird nach dem Sitzungsende in einer eigenen
+            # Aufgabe aus den Kennzahlen gebildet und archiviert. Sie gehört zum Stand
+            # vor den Antworten, die das Archiv nicht verändern dürfen.
+            while runtime._bn_tasks:
+                await asyncio.gather(*tuple(runtime._bn_tasks))
             await runtime.archive.flush()
             completed_session = runtime.controller.completed_sessions[-1]
             original_completed = plain(completed_session)
             original_archive = runtime.archive.read(session_id, now=clock[0], limit=10000)
+            self.assertIn("session_end", {
+                record["payload"].get("occasion") for record in original_archive["records"]
+                if record["kind"] == "notification"
+            })
             for client, expected_id in ((public, active["gang_id"]), (admin, raw_id)):
                 async with client.get(url + "/state") as response:
                     self.assertEqual(response.status, 200, await response.text())

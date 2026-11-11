@@ -35,11 +35,12 @@ vm.runInNewContext(
 );
 
 const zone = "Europe/Berlin";
-const inBerlin = (callback) => {
+// Die Zone gilt bis zum Ende des (auch asynchronen) Rückrufs; die Runner laufen in UTC.
+const inBerlin = async (callback) => {
   const previous = process.env.TZ;
   process.env.TZ = zone;
   try {
-    return callback();
+    return await callback();
   } finally {
     if (previous === undefined) delete process.env.TZ;
     else process.env.TZ = previous;
@@ -650,8 +651,8 @@ test("events are lanes with catalogue symbols; the navigation target is the lane
   assert.equal(panel.pendingEventFocus, null);
 });
 
-test("a running session names the selected gang's confirmation and documented start", () => {
-  inBerlin(() => {
+test("a running session names the selected gang's confirmation and documented start", async () => {
+  await inBerlin(() => {
     const { panel, node } = historyPanel({ ended: false });
     const session = panel.shown.session;
     session.timeline.completed = [];

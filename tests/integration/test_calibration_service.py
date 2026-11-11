@@ -24,7 +24,17 @@ class CalibrationServiceTests(unittest.IsolatedAsyncioTestCase):
     start_session = Lifecycle.start_session
     mobile_references = Lifecycle.mobile_references
     prepare_native_session = Lifecycle.prepare_native_session
+    settle_occasions = Lifecycle.settle_occasions
     observe_replies = Lifecycle.observe_replies
+
+    def assert_timer_occasion(self, calls, references):
+        """BN: the session start sends „Zeitschaltuhr aufziehen“ to every target of the
+        starting user before any calibration; only the calibration messages follow."""
+        self.assertEqual(
+            [call["message"] for call in calls],
+            [notification_service.TIMER_START] * len(references),
+        )
+        calls.clear()
 
     async def settle(self):
         while self.runtime._calibration_tasks:
@@ -58,6 +68,7 @@ class CalibrationServiceTests(unittest.IsolatedAsyncioTestCase):
             calls.append(dict(call.data))
 
         users, references, _ = await self.prepare_native_session(terminal_sink)
+        self.assert_timer_occasion(calls, references)
         stranger = await self.hass.auth.async_create_user(
             "Synthetic user without Companion target", group_ids=[GROUP_ID_USER]
         )
@@ -140,6 +151,7 @@ class CalibrationServiceTests(unittest.IsolatedAsyncioTestCase):
             calls.append(dict(call.data))
 
         users, references, _ = await self.prepare_native_session(terminal_sink)
+        self.assert_timer_occasion(calls, references)
         session_id = self.runtime.session.session_id
         url = (
             f"http://127.0.0.1:{self.hass.http.server_port}"

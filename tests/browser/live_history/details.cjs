@@ -410,6 +410,11 @@ fs.mkdirSync(output, { recursive: true });
       f.outer.querySelector("#scroll").scrollTop = 0;
       f.assertClean();
     });
+    // B4d: Messwerte und Lichtverlauf sowie die Einzelbelege stehen eingeklappt
+    // unter „Rohdaten der Sitzung“, die Lichtbefehle im eingeklappten Protokoll.
+    // Geöffnet wird über die Tasten der Ansicht.
+    for (const action of ["control-raw:values", "control-raw:records", "control-protocol"])
+      await panel.locator(`[data-action="${action}"]`).click();
     await panel.locator("#control-values").waitFor({ state: "visible" });
     const valueText = await panel.locator("#control-values").innerText();
     for (const term of ["Temperatur", "Luftfeuchte", "oben", "unten", "W", "lx"])
@@ -436,6 +441,12 @@ fs.mkdirSync(output, { recursive: true });
     await controlSlider.click({
       position: { x: sliderBox.width * 0.75, y: sliderBox.height / 2 },
     });
+    await page.evaluate(() => {
+      window.momentText = () =>
+        [".control-moment .stat-key", ".control-moment-title"]
+          .map((selector) => f.panel.$(selector).textContent)
+          .join(" · ");
+    });
     const controlState = await page.evaluate(() => {
       const p = f.panel;
       const slider = p.$("#control-history-cursor");
@@ -451,7 +462,8 @@ fs.mkdirSync(output, { recursive: true });
         start: f.origin,
         max: Number(slider.max),
         line: Number(p.$("#control-values svg line").getAttribute("x1")),
-        status: p.$(".control-history-inspection h3").textContent,
+        // B4d: der Zeitpunkt nennt die gewählte Zeit und die letzte Heizentscheidung.
+        status: momentText(),
       };
     });
     assert.equal(
@@ -488,10 +500,7 @@ fs.mkdirSync(output, { recursive: true });
       await page.evaluate(() => f.panel.controlHistoryCursor),
       controlState.cursor,
     );
-    assert.equal(
-      await panel.locator(".control-history-inspection h3").first().innerText(),
-      controlState.status,
-    );
+    assert.equal(await page.evaluate(() => momentText()), controlState.status);
     assert.match(await panel.locator("#control-values").innerText(), /6[.\s]000/);
     assert.ok(
       await page.evaluate(() => {
@@ -704,6 +713,10 @@ fs.mkdirSync(output, { recursive: true });
       f.panel.state.permissions = { admin: true };
       f.panel.setPanelView("detail-history");
       await f.refresh();
+      // B4d: die Wertediagramme stehen unter „Rohdaten der Sitzung“ und
+      // werden erst beim Öffnen aufbereitet.
+      f.panel.$('[data-action="control-raw:values"]').click();
+      await f.settle();
       // The first later status enables "Bis zum neuesten Stand". Measure
       // subsequent polls once that visible state transition has settled.
       f.state.now = f.iso(

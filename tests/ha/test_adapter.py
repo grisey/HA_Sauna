@@ -7,6 +7,7 @@ import asyncio
 import importlib.util
 import os
 from pathlib import Path
+import sys
 from types import SimpleNamespace
 import unittest
 import tempfile
@@ -16,6 +17,9 @@ from custom_components.ha_sauna.core.parameters import Parameters
 from custom_components.ha_sauna.core.defaults import instance_default
 from custom_components.ha_sauna.core.program_catalog import DEFAULT_PROGRAMS
 from custom_components.ha_sauna.bindings import ROLES
+
+sys.path.append(str(Path(__file__).resolve().parents[1]))
+from test_settings import fixture
 
 HA_AVAILABLE = importlib.util.find_spec("homeassistant") is not None
 if os.environ.get("HA_TEST_REQUIRED") and not HA_AVAILABLE:
@@ -63,7 +67,11 @@ class AdapterTests(unittest.IsolatedAsyncioTestCase):
         self.hass = SimpleNamespace(
             data={},
             http=SimpleNamespace(register_view=MagicMock(), async_register_static_paths=AsyncMock()),
-            bus=SimpleNamespace(async_listen=lambda *args: lambda: None, async_fire=MagicMock()),
+            # HA-Bus: async_listen nimmt auch event_filter und run_immediately an; die
+            # Verfolgung der gebundenen Umgebungsentitäten (B2) meldet sich mit event_filter an.
+            bus=SimpleNamespace(
+                async_listen=lambda *args, **kwargs: lambda: None, async_fire=MagicMock(),
+            ),
             states=SimpleNamespace(get=self.states.get, async_all=lambda: list(self.states.values())),
             config_entries=SimpleNamespace(
                 async_entries=lambda *a, **kw: self.entries,
@@ -86,9 +94,11 @@ class AdapterTests(unittest.IsolatedAsyncioTestCase):
         self.flow.handler = "ha_sauna"
         self.flow.context = {"source": "user"}
         self.temp = tempfile.TemporaryDirectory()
+        # HA führt time_zone immer (Config, Vorgabe "UTC"); die Einrichtung der
+        # Anlässe (BN) liest sie für Uhrzeiten in Ortszeit.
         self.hass.config = SimpleNamespace(
             path=lambda *parts: str(Path(self.temp.name).joinpath(*parts)), components=set(),
-            config_dir=self.temp.name,
+            config_dir=self.temp.name, time_zone=fixture("ha")["timezone"],
         )
         # Setup binds the recognition learning store (5eba4cf): HA storage,
         # executor jobs and background tasks of the real loop.

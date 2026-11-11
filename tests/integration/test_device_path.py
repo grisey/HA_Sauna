@@ -3989,8 +3989,9 @@ class DevicePathTests(unittest.IsolatedAsyncioTestCase):
         self.now += timedelta(seconds=1)
         self.assertLess(self.now, phase.ends_at)
         await self.expire_recording_gap()
-        await self.runtime.close()
-        await self.hass.async_block_till_done()
+        # X1: der Export liest das geöffnete Archiv selbst; nach dem Entladen ist er
+        # nicht mehr verfügbar. Gelesen und exportiert wird deshalb vor close().
+        await self.runtime.archive.flush()
         stored = self.runtime.archive.read(identity)
         self.assertEqual(stored["session"]["operation_off_at"], held_at.isoformat())
         self.assertEqual(stored["session"]["ended_at"], deadline.due_at.isoformat())
@@ -4010,6 +4011,8 @@ class DevicePathTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(all(record["session_id"] == identity for record in automatic_commands))
         async with self.runtime.archive.export() as stream:
             zip_bytes = b"".join([block async for block in stream])
+        await self.runtime.close()
+        await self.hass.async_block_till_done()
         with zipfile.ZipFile(io.BytesIO(zip_bytes)) as archive:
             exported = [json.loads(line) for line in archive.read("records.jsonl").splitlines()]
         self.assertTrue(all(record in exported for record in commands))

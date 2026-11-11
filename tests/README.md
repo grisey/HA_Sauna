@@ -56,7 +56,8 @@ HA-Antworteingang zum öffentlichen Event. Der Template-Pfad beginnt beim
 authentifizierten `input_boolean`-Dienst und übernimmt dessen Kontext über den
 echten Template-Binärsensor. Weitere Fälle prüfen Betrieb OFF bei noch laufender
 Notify-Übergabe sowie Sitzungsende und Entladen während des Versands an mehrere
-Ziele.
+Ziele. Die Fälle mit Companion-Zielen prüfen dabei, dass der Sitzungsbeginn den
+Anlass „Zeitschaltuhr beim Start“ an die Ziele des startenden Benutzers sendet.
 `NotificationServiceTests.test_explicit_forget_removes_sessionless_reply_association`
 verfolgt den registrierten Sendedienst über den nativen HA-Antworteingang zur
 gemeinsamen `ReplyAssociation`, zum optionalen Callback und zum öffentlichen

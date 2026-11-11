@@ -32,6 +32,16 @@ from custom_components.ha_sauna.core.notification_recipients import (
 from harness import create_sauna, start_hass
 from test_settings import async_timeout
 
+NATIVE_MESSAGE = "Synthetic native session notification"
+# BN „Zeitschaltuhr beim Start“: der Sitzungsbeginn sendet an die Ziele des
+# startenden Benutzers (docs/benachrichtigungen.md, Anlässe der Sauna).
+TIMER_START = "Sauna gestartet – Zeitschaltuhr aufziehen"
+
+
+def sent(calls, message):
+    """Calls of one message through the shared synthetic notify sink."""
+    return [call for call in calls if call["data"]["message"] == message]
+
 
 class NotificationServiceTests(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self):
@@ -412,6 +422,12 @@ class NotificationServiceLifecycleTests(unittest.IsolatedAsyncioTestCase):
         }
         return tuple(references), registrations, targets
 
+    async def settle_occasions(self):
+        """BN: occasions hand off in their own tasks outside the control lock."""
+        while self.runtime._bn_tasks:
+            await asyncio.gather(*tuple(self.runtime._bn_tasks), return_exceptions=True)
+        await self.hass.async_block_till_done()
+
     async def prepare_native_session(self, terminal_sink, *, participants=1):
         references, registrations, targets = await self.mobile_references(
             max(2, participants)
@@ -434,6 +450,7 @@ class NotificationServiceLifecycleTests(unittest.IsolatedAsyncioTestCase):
         )
         await self.configure_recipients(assignments)
         await self.start_session(users[0])
+        await self.settle_occasions()
         return users, references, targets
 
     def start_native_send(self, user):
@@ -443,7 +460,7 @@ class NotificationServiceLifecycleTests(unittest.IsolatedAsyncioTestCase):
                 "send_notification",
                 {
                     "entry_id": self.entry.entry_id,
-                    "message": "Synthetic native session notification",
+                    "message": NATIVE_MESSAGE,
                     "audience": "session",
                     "data": {
                         "actions": [{"action": "SYNTHETIC_REPLY", "title": "Reply"}]
@@ -584,7 +601,8 @@ class NotificationServiceLifecycleTests(unittest.IsolatedAsyncioTestCase):
 
         async def terminal_sink(call):
             calls.append({"service": call.service, "data": dict(call.data)})
-            if len(calls) == 1:
+            # BN: the session start and end also send their occasions here.
+            if len(sent(calls, NATIVE_MESSAGE)) == 1 and call.data["message"] == NATIVE_MESSAGE:
                 self.fire_native_reply()
                 await asyncio.wait_for(observed.wait(), async_timeout("service"))
                 trace.append("first_native_send_pending")
@@ -646,8 +664,12 @@ class NotificationServiceLifecycleTests(unittest.IsolatedAsyncioTestCase):
         )
         self.assertTrue(all(item["accepted"] for item in response["handoffs"]))
         self.assertEqual(
-            [call["data"]["target"] for call in calls],
+            [call["data"]["target"] for call in sent(calls, NATIVE_MESSAGE)],
             [targets[endpoint] for endpoint in expected],
+        )
+        self.assertEqual(
+            sorted(call["data"]["target"] for call in sent(calls, TIMER_START)),
+            sorted(targets[endpoint] for endpoint in expected),
         )
         self.assertEqual(len(wire), 1, "Ended-session reply registration reappeared")
         print(
@@ -678,6 +700,8 @@ class NotificationServiceLifecycleTests(unittest.IsolatedAsyncioTestCase):
 
         async def terminal_sink(call):
             calls.append({"service": call.service, "data": dict(call.data)})
+            if call.data["message"] != NATIVE_MESSAGE:
+                return  # BN: Zeitschaltuhr beim Sitzungsbeginn
             self.fire_native_reply()
             await asyncio.wait_for(observed.wait(), async_timeout("service"))
             trace.append("first_native_send_pending")
@@ -729,7 +753,8 @@ class NotificationServiceLifecycleTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(
             [item["accepted"] for item in response["handoffs"]], [True, False]
         )
-        self.assertEqual(len(calls), 1)
+        self.assertEqual(len(sent(calls, NATIVE_MESSAGE)), 1)
+        self.assertEqual(len(sent(calls, TIMER_START)), len(references))
         self.assertEqual(len(wire), 1)
         self.assertIsNone(transport._ingress)
         self.assertNotIn("ha_sauna_notification_reply_ingress", self.hass.data)
@@ -833,9 +858,15 @@ class NotificationServiceLifecycleTests(unittest.IsolatedAsyncioTestCase):
         )
         self.assertTrue(all(item["accepted"] for item in response["handoffs"]))
         self.assertEqual(
-            [call["data"]["target"] for call in calls],
+            [call["data"]["target"] for call in sent(calls, NATIVE_MESSAGE)],
             [targets[endpoint] for endpoint in expected],
         )
+        # BN: the timer occasion went to the starting user's target only.
+        self.assertEqual(
+            [call["data"]["target"] for call in sent(calls, TIMER_START)],
+            [targets[references[0].reference_id]],
+        )
+        self.assertEqual(len(calls), len(expected) + 1)
         # The same native identifier is ambiguous across actual target sends.
         self.fire_native_reply()
         await self.hass.async_block_till_done()
@@ -954,6 +985,7 @@ class NotificationServiceLifecycleTests(unittest.IsolatedAsyncioTestCase):
             context=context,
         )
         await self.hass.async_block_till_done()
+        await self.settle_occasions()
         source = self.hass.states.get("input_boolean.synthetic_notification_control")
         derived = self.hass.states.get(control_input)
         self.assertEqual(source.context.user_id, user.id)
@@ -993,9 +1025,16 @@ class NotificationServiceLifecycleTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(response["handoffs"]), 1)
         self.assertTrue(response["handoffs"][0]["accepted"])
         self.assertEqual(
-            [call["data"]["target"] for call in calls],
+            [call["data"]["target"] for call in sent(calls, NATIVE_MESSAGE)],
             [targets[references[0].reference_id]],
         )
+        # BN: the switch input carries the user context; the timer occasion goes
+        # to that starting user's target.
+        self.assertEqual(
+            [call["data"]["target"] for call in sent(calls, TIMER_START)],
+            [targets[references[0].reference_id]],
+        )
+        self.assertEqual(len(calls), 2)
         self.assertEqual(len(wire), 1)
         self.assertEqual(wire[0]["session_id"], self.runtime.session.session_id)
         self.assertEqual(wire[0]["message_id"], response["handoffs"][0]["message_id"])

@@ -3731,7 +3731,12 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(await self.panel.locator('#current [data-action^="preset:"]').count(), DEFAULT_PARAMETERS["preset_count"])
         await expect(self.panel.locator('#current [data-action^="preset:"]').first).to_be_enabled()
         await self.panel.locator('[data-action="details"]').click()
-        await expect(self.panel.locator('[data-readiness]')).to_be_visible()
+        # B4c: obere Regeltemperatur und Wiedereinschaltschwelle stehen in Details ·
+        # Zustand unter „Rohdaten › Entscheidung und Regelbedingungen“.
+        await self.panel.locator('#details [data-action="detail-raw:regulation"]').click()
+        await expect(
+            self.panel.locator('#detail-regulation [data-detail-key="live-regulation:thermostat_target"]')
+        ).to_contain_text("Obere Regeltemperatur")
         await self.panel.locator('[data-action="settings"]').click()
         settings = self.panel.locator("#settings")
         await expect(settings.locator("#program-library [data-program-id]").first).to_be_visible(timeout=browser_timeout("interaction"))
