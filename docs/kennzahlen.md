@@ -13,7 +13,7 @@ die Oberfläche setzt nur Einheit, Dezimalkomma und Zeitformat. Die Nummern
 | Quelle | Inhalt |
 | --- | --- |
 | Messwerte | Temperatur und relative Feuchte oben und unten der Sitzung mit ihrer Empfangszeit. Absolute Feuchte aus Temperatur und relativer Feuchte derselben Position. |
-| Erkennung | Türvorgänge und Aufgüsse aus den archivierten Erkennungen, Aufgussende aus `infusion_update`, Gänge aus der Gangprojektion der Zeitleiste ([Gangmodell](gangmodell.md)). |
+| Erkennung | Türvorgänge und Aufgüsse aus den archivierten Erkennungen, die Entscheidung „Abklingen abgeflacht“ aus `recognition_decay`, Gänge aus der Gangprojektion der Zeitleiste ([Gangmodell](gangmodell.md)). |
 | Steuerung | Letzter Sitzungsstand: Phasen, Bereitverlauf, Sollverlauf, Heizintervalle, Energie, Ofenkühlungen. |
 | Parameter | Gespeicherte Konfiguration der Sitzung. Fehlt sie, gilt die der nächsten späteren Sitzung; die Herkunft steht als `parameter_origin` dabei. Die heutige Einstellung gilt nicht rückwirkend. |
 | Einstellungen | **Kabinenvolumen** und **Strompreis** aus der aktuellen Integrationskonfiguration ([Einstellungen](parameter.md)). |
@@ -37,7 +37,7 @@ kommt. Fehlende Daten ergeben einen fehlenden Wert, nicht 0.
 
 | Bereich | Kennzahlen |
 | --- | --- |
-| Gänge (K-S2 bis K-S8, K-G1 bis K-G9) | Anzahl, Dauern, Saunazeit, Ruhe, Aufgüsse, Höchsttemperatur mit Einordnung und Soll, Eintritts- und Austrittstemperatur beim Öffnen der Tür, Feuchteanstieg und Wasser je Aufguss, höchste Feuchte, Soll und Sollabweichung im Gang. |
+| Gänge (K-S2 bis K-S8, K-G1 bis K-G9) | Anzahl, Dauern, Saunazeit, Ruhe, Aufgüsse, Höchsttemperatur mit Einordnung und Soll, Eintritts- und Austrittstemperatur beim Öffnen der Tür, Feuchtezuwachs und Wasser je Aufguss, höchste Feuchte, Soll und Sollabweichung im Gang. |
 | Aufheizen (K-S9 bis K-S11, K-S15, K-S16, K-S22, K-S23) | Vom ersten Heizintervall bis zum ersten Bereit oder zum Öffnen der Eintrittstür des ersten Gangs, je nachdem was früher kommt; Art, Temperatur und Soll am Ende, Energie davor und danach, Türöffnungen, Anstieg je kWh; „frühere Sitzungen“ als Median über frühere Sitzungen derselben Programmart (`earlier_warmup.program_kind`). |
 | Anlage (K-S12 bis K-S14, K-S17 bis K-S19, K-S24, K-S25) | Heizzeit und Heizanteil, Energie mit Gegenprobe und Kosten, die Nennleistung der Gegenprobe (`nominal_power_kw`, gespeicherte Konfiguration), Heizen in den Gängen, Ofenkühlungen mit auslösendem Gang, Regelung im Bereit, Sollwerte und Programmart. |
 | Türvorgänge (K-S21) | Alle Paare Öffnen → Schließen der Sitzung mit Klasse Eintritt, Austritt, Schlusslüften oder sonstige; offen, Verlust und Wiedererreichen mit der Zahl der darauf geprüften Vorgänge (`recovery_checked_count`, ohne Schlusslüften); Mittel des Verlusts über Ein- und Austritt (`door_loss_entry_exit_mean_c`, dieselbe Rechnung wie je Sitzung in der Statistik). |
@@ -58,11 +58,22 @@ des letzten Gangs. Ein [von Hand beendeter Gang](gangmodell.md#gang-von-hand-bee
 hat keinen Austritt: Seine Öffnungen zählen zu den Türvorgängen im Gang (K-G6),
 die Austrittstemperatur gilt am Gangende wie ohne erkannte Tür (K-G2). Fehlt einem Gang ein belegter Beginn oder ein belegtes Ende,
 fehlen seine Dauer und die davon abhängigen Summen, Mittel und Einordnungen;
-Türvorgänge, deren Klasse von dieser Grenze abhängt, bleiben ohne Klasse. Ein
-Aufguss ohne erkanntes Ende hat keinen Feuchteanstieg. Ohne Kabinenvolumen gibt
-es keine Wassermenge, ohne Strompreis keine Kosten. Die verworfenen Kandidaten
+Türvorgänge, deren Klasse von dieser Grenze abhängt, bleiben ohne Klasse. Ohne
+Kabinenvolumen gibt es keine Wassermenge, ohne Strompreis keine Kosten. Die verworfenen Kandidaten
 fehlen bei Sitzungen ohne archivierten Zustandsverlauf der Erkennung
 (`recognition_state`), also bei älteren Sitzungen.
+
+Der Feuchtezuwachs eines Aufgusses ist die absolute Feuchte „danach“ minus
+dem letzten Wert vor dem Guss, oben und unten getrennt. „Danach“ ist der
+Zeitpunkt, an dem die Erkennung das Abklingen als abgeflacht entscheidet
+(`recognition_decay`), spätestens der nächste Aufguss oder die nächste
+Türöffnung. Es gilt der Wert bei dieser Entscheidung, sonst der letzte Wert vor
+dem nächsten Aufguss bzw. vor der Öffnung; ein Zuwachs endet so, wo der nächste
+beginnt. Mehrere Güsse, die die Erkennung zu einem Aufguss zusammenfasst,
+zählen zusammen. Die Wassermenge ist der mittlere Zuwachs oben mal
+Kabinenvolumen; sie zählt nur das Wasser, das danach noch in der Kabinenluft
+ist. Sitzungen ohne archivierte Entscheidung, also vor dieser Aufzeichnung,
+haben keinen Zuwachs.
 
 Der Türverlust ist die Temperatur beim Öffnen minus der kleinsten Temperatur
 vom Öffnen bis zum Schließen plus Nachlauf des Fühlers. Der Nachlauf ist der

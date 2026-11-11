@@ -85,8 +85,8 @@ class ArchiveOverviewTests(unittest.TestCase):
         self.write()
         overview = self.archive.detail_overview("s1")
         self.assertEqual(overview["sessions"], 1)
-        # 721 Zeitpunkte × 4 Messungen, 5 Erkennungen, ein Aufgussende
-        self.assertEqual(overview["records"], 721 * 4 + 6)
+        # 721 Zeitpunkte × 4 Messungen, 5 Erkennungen, ein Aufgussende, ein abgeflachtes Abklingen (AF)
+        self.assertEqual(overview["records"], 721 * 4 + 7)
         self.assertGreater(overview["size_bytes"], 0)
         self.assertIsNone(overview["start_seconds"], "the archive was not started")
         self.assertEqual(len(overview["points"]), 721 * 2)

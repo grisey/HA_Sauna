@@ -50,6 +50,7 @@ enthalten sie nicht.
 | `recognition_state` | Bei jedem Wechsel des wahrscheinlichsten [Erkennungszustands](erkennung.md#zustandsmodell-der-kabine) | Messschritt, neuer Zustand (`closed`, `open`, `infusion`, `decay`, `recovery`, `shift`) und seine Wahrscheinlichkeit. Bei gleicher Wahrscheinlichkeit bleibt der bisherige Zustand. |
 | `recognition_rejected` | Wenn die Öffnungsform einen Öffnungskandidaten verwirft | Art (`door_open`), Zeitpunkt, Entscheidungszeit, Grund (`opening_form`) sowie Zustand, nächstbeste Erklärung und deren Verhältnis bei der Bestätigung des Kandidaten. |
 | `recognition_episode` | Wenn die Erkennung eine Episode verworfener Öffnungskandidaten meldet | Öffnen, Schließen, Schlusskandidat, Ende `E` und Meldung der Episode, ihre Kandidaten und das Ergebnis: `rejected` oder `door`, wenn das [Gangmodell](gangmodell.md#verworfene-öffnung-mit-präsenz) sie über die Anwesenheit als Türvorgang übernimmt. Der Türvorgang selbst steht als Erkennungsmeldung mit Herkunft `presence` im Archiv. |
+| `recognition_decay` | Wenn die Erkennung nach einem Aufguss entscheidet, dass das Abklingen abgeflacht ist | Zeitpunkt, Entscheidungszeit und Zeitpunkt der steilsten Abnahme. Begrenzt den [Feuchtezuwachs je Aufguss](kennzahlen.md). |
 
 Daraus stammen die Außentemperatur (K-S20) und die verworfenen Kandidaten
 (K-E2) der [Kennzahlen](kennzahlen.md).
@@ -201,7 +202,7 @@ Konfiguration unbekannt; vorhandene Messungen werden trotzdem angezeigt.
 Der Verlauf hat zwei Unteransichten. **Sitzung** zeigt oben das Sitzungsbild
 (Saunazeit, Aufgüsse, Höchsttemperatur, Ruhe zwischen den Gängen, Sitzung),
 darunter das Diagramm mit Temperatur und Feuchte und unten die Gänge im Vergleich
-(Soll und mittlere Abweichung davon, Eintritt, Austritt, Höchste, Feuchteanstieg
+(Soll und mittlere Abweichung davon, Eintritt, Austritt, Höchste, Feuchtezuwachs
 und Wasser je Aufguss, Ruhe)
 neben der Auswahl. **Anlage** zeigt Aufheizen, Regelung im Bereit, Heizen und
 Energie sowie den Wärmeverlust durch die Tür, darunter die Temperatur gegen die

@@ -475,10 +475,10 @@ test("statistics shows delivered display values only, missing values as missing"
   );
   assert.match(html, /<span class="stat-session-value">–\u0020·\u00206<\/span>/);
   assert.match(html, /<span class="stat-session-value">30,1\u00a0min · 1<\/span>/);
-  // Typischer Gang: fehlender Feuchteanstieg als fehlend, ohne Wassermenge.
+  // Typischer Gang: fehlender Feuchtezuwachs als fehlend, ohne Wassermenge.
   assert.match(
     html,
-    /Feuchte je Aufguss<\/p><p class="stat-value stat-value-small">–<\/p><p class="stat-line">mittlerer Anstieg der absoluten Feuchte<\/p>/,
+    /Feuchte je Aufguss<\/p><p class="stat-value stat-value-small">–<\/p><p class="stat-line">mittlerer Zuwachs der absoluten Feuchte nach dem Abklingen<\/p>/,
   );
   // Ruhe mit längster Pause und ihrer Sitzung.
   assert.match(html, /20,4 bis 20,4\u00a0min, längste am Mo 02\.11\.</);

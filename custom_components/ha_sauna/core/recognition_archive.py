@@ -14,6 +14,10 @@ Erkennung selbst bleibt unverändert.
 * ``recognition_episode``: Episode verworfener Öffnungskandidaten mit Beginn,
   Ende, Kandidaten und Ergebnis (``rejected`` oder ``door``: vom Gangmodell
   über die Anwesenheit als Türvorgang übernommen).
+* ``recognition_decay``: Entscheidung, dass das Abklingen nach einem Aufguss
+  abgeflacht ist (``infusion_decay_flattened``), mit Zeitpunkt,
+  Entscheidungszeit und Zeitpunkt der steilsten Abnahme. Sie begrenzt den
+  Feuchtezuwachs je Aufguss (AF).
 
 Zu einer übernommenen Erkennung (Tür auf, Tür zu, Aufguss) liefert
 ``decision`` dieselbe Größe wie für verworfene Kandidaten: Zustand, nächstbeste
@@ -28,6 +32,7 @@ from datetime import datetime
 STATE = "recognition_state"
 REJECTED_CANDIDATE = "recognition_rejected"
 EPISODE = "recognition_episode"
+DECAY = "recognition_decay"
 
 
 class RecognitionArchive:
@@ -36,6 +41,7 @@ class RecognitionArchive:
     def __init__(self) -> None:
         self._state: str | None = None
         self._decisions = 0
+        self._decays = 0
 
     def state_change(self, trace) -> dict | None:
         """Eintrag, wenn ein anderer Zustand als bisher am wahrscheinlichsten ist.
@@ -75,6 +81,20 @@ class RecognitionArchive:
                 "ratio": candidate.get("ratio"),
             })
         return out
+
+
+    def flattened_decays(self, decisions: Sequence[Mapping]) -> list[dict]:
+        """Seit dem letzten Aufruf entschiedene Abflachungen des Abklingens."""
+        start, self._decays = self._decays, len(decisions)
+        return [
+            {
+                "effective_at": decision["effective_at"],
+                "decided_at": decision["decided_at"],
+                "steepest_at": decision.get("steepest_at"),
+            }
+            for decision in decisions[start:]
+            if decision.get("event") == "infusion_decay_flattened"
+        ]
 
 
 _EXPLAINED = ("door_open", "door_close", "infusion")

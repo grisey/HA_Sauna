@@ -42,7 +42,7 @@ def trace(second, **probabilities):
             "state_probabilities": {**dict.fromkeys(STATES, 0.0), **probabilities}}
 
 
-async def stored(runtime, session_id, kinds=NEW_KINDS + ("detector_trace",)):
+async def stored(runtime, session_id, kinds=NEW_KINDS + ("detector_trace", "recognition_decay")):
     runtime.persist()
     await runtime.archive.flush()
     records = runtime.archive.read(session_id, limit=10000, now=runtime._clock())["records"]
@@ -99,6 +99,23 @@ class RecognitionRecordTests(unittest.IsolatedAsyncioTestCase):
                 "kind": "door_open", "effective_at": t(10).isoformat(), "decided_at": t(16).isoformat(),
                 "reason": "opening_form", "state": "open", "against": "recovery", "ratio": 293.2,
             }),
+        ])
+
+    async def test_flattened_decay_decision_is_archived_once(self):
+        # AF: die vorhandene Entscheidung „Abklingen abgeflacht“ wird archiviert, unverändert.
+        flattened = {"event": "infusion_decay_flattened", "effective_at": t(70).isoformat(),
+                     "decided_at": t(70).isoformat(), "steepest_at": t(40).isoformat(),
+                     "slope": -0.00012, "steepest": -0.00051, "ratio": 120.3}
+        decisions = [
+            (0, {"event": "infusion_pour", "effective_at": t(30).isoformat(),
+                 "decided_at": t(32).isoformat(), "joined": "…"}),
+            (1, flattened),
+        ]
+        records = await self.records("normal", [trace(32, infusion=.9), trace(70, decay=.9),
+                                                trace(71, decay=.9)], decisions)
+        self.assertEqual([item for item in records if item[0] == "recognition_decay"], [
+            ("recognition_decay", {"effective_at": t(70).isoformat(), "decided_at": t(70).isoformat(),
+                                   "steepest_at": t(40).isoformat()}),
         ])
 
     def test_rejected_candidates_from_the_decisions_of_the_recognizer(self):

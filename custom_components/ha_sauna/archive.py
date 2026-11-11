@@ -1548,7 +1548,8 @@ class Archive:
                 "ORDER BY id", (self.entry_id, session_id),
             ).fetchall(),
             detections=records("detection"),
-            infusion_updates=records("infusion_update"),
+            # AF: nur Sitzungen mit archivierten Entscheidungen „Abklingen abgeflacht“
+            decays=records("recognition_decay") or None,
             environment=[(received_at, json.loads(raw)) for received_at, raw in db.execute(
                 "SELECT received_at,payload FROM records WHERE entry_id=? AND session_id=? "
                 "AND kind='environment' ORDER BY id", (self.entry_id, session_id),

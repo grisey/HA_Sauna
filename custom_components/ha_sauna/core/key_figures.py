@@ -51,6 +51,11 @@ class Series:
             return self.values[0]
         return None
 
+    def before(self, t: float) -> float | None:
+        """Letzter Wert vor dem Zeitpunkt (ohne Wert genau zum Zeitpunkt)."""
+        index = bisect.bisect_left(self.times, t) - 1
+        return self.values[index] if index >= 0 else None
+
     def window(self, start: float, end: float) -> list[tuple[float, float]]:
         """Messpunkte von ``start`` bis ``end`` einschließlich."""
         first = bisect.bisect_left(self.times, start)
@@ -79,10 +84,11 @@ class GangInput:
 
 @dataclass(frozen=True)
 class InfusionInput:
-    """Erkannter Aufguss und Ende seines Anstiegs laut Erkennung, falls bekannt."""
+    """Erkannter Aufguss; ``flattened``: erste Entscheidung der Erkennung danach, dass das
+    Abklingen abgeflacht ist (``recognition_decay``), falls vorhanden."""
 
     at: float
-    rise_end: float | None = None
+    flattened: float | None = None
 
 
 @dataclass(frozen=True)
@@ -141,6 +147,8 @@ class SessionInput:
     # Episoden; None = nicht aufgezeichnet (Sitzung ohne Zustandsverlauf)
     rejected_candidates: tuple[float, ...] | None = None
     rejected_episodes: tuple[EpisodeInput, ...] = ()
+    # AF: Entscheidungen „Abklingen abgeflacht“ archiviert; False = nicht aufgezeichnet
+    infusion_decay_recorded: bool = False
     upper_absolute_humidity: Series = field(init=False)
     lower_absolute_humidity: Series = field(init=False)
 
@@ -417,25 +425,38 @@ def door_summary(operations: list[dict]) -> dict:
     return summary
 
 
-def infusion_rise_window(session: SessionInput, at: float):
-    """Vom Guss bis zum Ende seines Anstiegs laut Erkennung, höchstens bis zum nächsten Aufguss."""
+def infusion_settled_at(session: SessionInput, at: float) -> float | None:
+    """Zeitpunkt „danach“ eines Aufgusses (AF, Nutzer 11.11.).
+
+    Die Erkennung entscheidet, dass das Abklingen abgeflacht ist, spätestens beim nächsten
+    Aufguss oder bei der nächsten Türöffnung. Ohne archivierte Entscheidungen der Sitzung
+    gibt es keinen Zeitpunkt.
+    """
+    if not session.infusion_decay_recorded:
+        return None
     ordered = sorted(session.infusions, key=lambda item: item.at)
     for index, infusion in enumerate(ordered):
         if infusion.at != at:
             continue
-        if infusion.rise_end is None:
-            return None
-        following = ordered[index + 1].at if index + 1 < len(ordered) else inf
-        return at, min(infusion.rise_end, following)
+        following = ordered[index + 1].at if index + 1 < len(ordered) else None
+        opening = next((t for kind, t in session.doors if kind == "door_open" and t > at), None)
+        candidates = [t for t in (infusion.flattened, following, opening) if t is not None]
+        return min(candidates) if candidates else None
     return None
 
 
-def _rise(series: Series, window):
-    if window is None:
+def _increase(series: Series, infusion: InfusionInput | None, settled: float | None):
+    """Feuchtezuwachs: Niveau „danach“ minus letzter Wert vor dem Guss.
+
+    Niveau danach ist der Wert bei der Entscheidung „Abklingen abgeflacht“, sonst der letzte
+    Wert vor dem nächsten Aufguss bzw. vor der Türöffnung; so endet ein Zuwachs dort, wo der
+    nächste beginnt.
+    """
+    if infusion is None or settled is None:
         return None
-    base = series.at(window[0])
-    peak = [value for _, value in series.window(*window)]
-    return max(peak) - base if base is not None and peak else None
+    before = series.before(infusion.at)
+    after = series.at(settled) if settled == infusion.flattened else series.before(settled)
+    return after - before if before is not None and after is not None else None
 
 
 def gang_figures(session: SessionInput, gang: GangInput, number: int) -> dict:
@@ -443,9 +464,10 @@ def gang_figures(session: SessionInput, gang: GangInput, number: int) -> dict:
     bounded = start is not None and end is not None
     openings = [t for kind, t in session.doors if kind == "door_open"]
     inside = [t for t in openings if start < t < end] if bounded else None
-    windows = [infusion_rise_window(session, t) for t in gang.infusions]
-    rises = [_rise(session.upper_absolute_humidity, w) for w in windows]
-    rises_lower = [_rise(session.lower_absolute_humidity, w) for w in windows]
+    by_time = {infusion.at: infusion for infusion in session.infusions}
+    settled = [(by_time.get(t), infusion_settled_at(session, t)) for t in gang.infusions]
+    rises = [_increase(session.upper_absolute_humidity, i, after) for i, after in settled]
+    rises_lower = [_increase(session.lower_absolute_humidity, i, after) for i, after in settled]
     complete_rises = _complete(rises)
     rise_mean = _mean(complete_rises) if complete_rises is not None else None
     temperatures = session.upper_temperature.window(start, end) if bounded else []
@@ -1267,7 +1289,6 @@ def session_input_from_archive(
     ended_at: str,
     measurements: Iterable[tuple[str, str, str, float | None]],
     detections: Iterable[Mapping],
-    infusion_updates: Iterable[Mapping],
     configuration: Mapping | None,
     parameter_origin: str | None,
     volume_m3: float | None,
@@ -1276,12 +1297,14 @@ def session_input_from_archive(
     environment: Iterable[tuple[str, Mapping]] = (),
     rejected: Iterable[Mapping] | None = None,
     episodes: Iterable[Mapping] = (),
+    decays: Iterable[Mapping] | None = None,
 ) -> SessionInput:
     """Eingang einer abgeschlossenen archivierten Sitzung.
 
     ``measurements`` sind (Empfangszeit, Position, Größe, Wert) der Sitzung,
-    ``detections`` die archivierten Erkennungsereignisse, ``infusion_updates``
-    die Aufgussenden. Gänge stammen aus der Zeitleiste, Steuerung und Energie
+    ``detections`` die archivierten Erkennungsereignisse, ``decays`` die
+    archivierten Entscheidungen „Abklingen abgeflacht“ (``None``: nicht
+    aufgezeichnet). Gänge stammen aus der Zeitleiste, Steuerung und Energie
     aus dem letzten Sitzungsstand, Parameter aus ``configuration`` (Q-P).
     ``environment`` sind die Umgebungseinträge (Eintragszeit, Inhalt),
     ``rejected`` die verworfenen Kandidaten (``None``: nicht aufgezeichnet),
@@ -1308,15 +1331,17 @@ def session_input_from_archive(
          if e.get("kind") in (Kind.DOOR_OPEN, Kind.DOOR_CLOSE)),
         key=lambda item: item[1],
     ))
-    ends = {}
-    for update in infusion_updates:
-        end = update.get("end")
-        ends[update.get("source_event_id")] = (
-            _seconds(start, end["effective_at"]) if isinstance(end, Mapping) else None
-        )
+    flattened = sorted(
+        _seconds(start, d["effective_at"]) for d in decays or ()
+        if isinstance(d, Mapping) and d.get("effective_at")
+    )
+
+    def first_flattened(at):
+        return next((t for t in flattened if t > at), None)
+
     infusions = tuple(sorted(
-        (InfusionInput(_seconds(start, e["effective_at"]), ends.get(e["event_id"]))
-         for e in events if e.get("kind") == Kind.INFUSION),
+        (InfusionInput(at, first_flattened(at)) for at in (
+            _seconds(start, e["effective_at"]) for e in events if e.get("kind") == Kind.INFUSION)),
         key=lambda item: item.at,
     ))
     intervals = {item["gang_id"]: item for item in project_gang_intervals(timeline)}
@@ -1392,4 +1417,5 @@ def session_input_from_archive(
             )
             for episode in episodes
         ),
+        infusion_decay_recorded=decays is not None,
     )

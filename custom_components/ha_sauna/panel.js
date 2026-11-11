@@ -8261,7 +8261,7 @@ class SaunaPanel extends HTMLElement {
       item(
         "Feuchte je Aufguss",
         `${rise.mean_gm3?.display == null ? "–" : `+${esc(this.statisticNumber(rise.mean_gm3, false))}`}${unit(rise.mean_gm3)}`,
-        `mittlerer Anstieg der absoluten Feuchte${water?.display == null ? "" : `, etwa ${esc(this.statisticNumber(water))} Wasser in der Kabinenluft`}`,
+        `mittlerer Zuwachs der absoluten Feuchte nach dem Abklingen${water?.display == null ? "" : `, etwa ${esc(this.statisticNumber(water))} Wasser in der Kabinenluft`}`,
       ),
       item(
         "Ruhe danach",
@@ -8793,7 +8793,7 @@ class SaunaPanel extends HTMLElement {
     return text || button ? `<div class="history-test-row">${text}${button}</div>` : "";
   }
   // Gänge im Vergleich: je Gang Dauer, Aufgüsse, Soll, Eintritt, Austritt, Höchste,
-  // Feuchteanstieg und Wasser je Aufguss; dazwischen die Ruhe.
+  // Feuchtezuwachs und Wasser je Aufguss; dazwischen die Ruhe.
   historyGangsMarkup(f) {
     const gangs = f.gangs || [],
       selected = this.historySelectedGangNumber(),
@@ -8830,7 +8830,7 @@ class SaunaPanel extends HTMLElement {
         ],
       )}</article>${index < gangs.length - 1 ? `<div class="history-rest"><span>Ruhe</span><strong>${text(rests[index])}</strong></div>` : ""}`;
     });
-    return `${heading}<div class="history-gang-row">${cards.join("")}</div><p class="stat-line">Eintritt und Austritt: Temperatur beim Öffnen der Tür. „Je Aufguss“: mittlerer Anstieg der absoluten Feuchte oben bis zum Ende des Aufgusses und das Wasser, das dieser Anstieg in der Kabinenluft bedeutet.</p>`;
+    return `${heading}<div class="history-gang-row">${cards.join("")}</div><p class="stat-line">Eintritt und Austritt: Temperatur beim Öffnen der Tür. „Je Aufguss“: mittlerer Zuwachs der absoluten Feuchte oben vom Niveau vor dem Guss bis nach dem Abklingen und das Wasser, das dieser Zuwachs in der Kabinenluft bedeutet.</p>`;
   }
   // Anlagenbild (Brett „Verlauf · Anlage“): Aufheizen, Regelung im Bereit, Heizen
   // und Energie, Wärmeverlust durch die Tür.

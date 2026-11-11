@@ -844,6 +844,8 @@ class SaunaRuntime:
                     self._archive_recognition(
                         recognition_archive.REJECTED_CANDIDATE, candidate, session_id
                     )
+                for decay in recorder.flattened_decays(observed_recognizer[0].decisions):
+                    self._archive_recognition(recognition_archive.DECAY, decay, session_id)
 
         self.detector = (
             ClimateRecognizer(

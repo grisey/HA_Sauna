@@ -329,40 +329,68 @@ class GangFigureTests(unittest.TestCase):
                                           gangs=(kf.GangInput(1800.0, 2700.0),)))["gangs"][0]
         self.assertEqual((gang["inner_door_openings"], gang["exit_opening"]), (1, 2600.0))
 
-    def test_humidity_rise_until_the_detected_end_and_at_most_the_next_infusion(self):
-        humidity = series([(1990, 10), (2000, 10), (2010, 30), (2020, 40), (2030, 20),
-                           (2040, 60), (2100, 10)])
-        infusions = (kf.InfusionInput(2000.0, 2020.0), kf.InfusionInput(2030.0, 2090.0))
+    def test_humidity_increase_from_before_the_pour_to_the_flattened_decay(self):
+        # AF (Nutzer 11.11.): Niveau „danach“ minus letzter Wert vor dem Guss, nicht die Spitze.
+        humidity = series([(1990, 10), (2000, 12), (2010, 30), (2020, 40), (2030, 20),
+                           (2040, 25), (2050, 60), (2080, 35), (2100, 10)])
+        infusions = (kf.InfusionInput(2000.0, 2030.0), kf.InfusionInput(2040.0, None))
         figures = kf.session_figures(session(
             upper_humidity=humidity, infusions=infusions, volume_m3=6.0,
-            gangs=(kf.GangInput(1800.0, 2700.0, (2000.0, 2030.0)),),
+            doors=(("door_open", 2090.0), ("door_close", 2095.0)), infusion_decay_recorded=True,
+            gangs=(kf.GangInput(1800.0, 2700.0, (2000.0, 2040.0)),),
         ))
         gang = figures["gangs"][0]
-        rise = absolute_humidity(80, 40) - absolute_humidity(80, 10)
-        second = absolute_humidity(80, 60) - absolute_humidity(80, 20)
-        self.assertAlmostEqual(gang["humidity_rises_gm3"][0], rise)
+        # letzter Wert vor dem Guss (1990), Niveau bei der Entscheidung (2030), nicht die Spitze 40
+        first = absolute_humidity(80, 20) - absolute_humidity(80, 10)
+        # ohne Entscheidung: spätestens die nächste Türöffnung (2090, letzter Wert davor von 2080)
+        second = absolute_humidity(80, 35) - absolute_humidity(80, 20)
+        self.assertAlmostEqual(gang["humidity_rises_gm3"][0], first)
         self.assertAlmostEqual(gang["humidity_rises_gm3"][1], second)
-        self.assertAlmostEqual(gang["humidity_rise_mean_gm3"], (rise + second) / 2)
-        self.assertAlmostEqual(gang["water_mean_l"], (rise + second) / 2 * 6 / 1000)
-        capped = kf.infusion_rise_window(
-            session(infusions=(kf.InfusionInput(2000.0, 2100.0), kf.InfusionInput(2030.0))),
-            2000.0,
-        )
-        self.assertEqual(capped, (2000.0, 2030.0))
+        self.assertAlmostEqual(gang["humidity_rises_lower_gm3"][0], 0.0)
+        self.assertAlmostEqual(gang["humidity_rise_mean_gm3"], (first + second) / 2)
+        self.assertAlmostEqual(gang["water_mean_l"], (first + second) / 2 * 6 / 1000)
 
-    def test_infusion_without_detected_end_has_no_rise(self):
+    def test_increase_ends_where_the_next_one_begins(self):
+        # Ohne Abflachen vor dem nächsten Guss: Niveau danach = letzter Wert vor diesem Guss,
+        # derselbe Wert, mit dem der nächste Zuwachs beginnt.
+        humidity = series([(1990, 10), (2010, 30), (2030, 20), (2040, 50), (2060, 25), (2070, 24)])
         figures = kf.session_figures(session(
-            infusions=(kf.InfusionInput(2000.0, None),), volume_m3=6.0,
+            upper_humidity=humidity, infusion_decay_recorded=True,
+            infusions=(kf.InfusionInput(2000.0, 2065.0), kf.InfusionInput(2040.0, 2070.0)),
+            gangs=(kf.GangInput(1800.0, 2700.0, (2000.0, 2040.0)),),
+        ))
+        rises = figures["gangs"][0]["humidity_rises_gm3"]
+        self.assertAlmostEqual(rises[0], absolute_humidity(80, 20) - absolute_humidity(80, 10))
+        self.assertAlmostEqual(rises[1], absolute_humidity(80, 24) - absolute_humidity(80, 20))
+
+    def test_settled_time_is_at_latest_the_next_infusion_or_door_opening(self):
+        recorded = {"infusion_decay_recorded": True}
+        later = session(infusions=(kf.InfusionInput(2000.0, 2100.0), kf.InfusionInput(2030.0)), **recorded)
+        self.assertEqual(kf.infusion_settled_at(later, 2000.0), 2030.0)
+        door = session(infusions=(kf.InfusionInput(2000.0, 2100.0),),
+                       doors=(("door_close", 1990.0), ("door_open", 2060.0)), **recorded)
+        self.assertEqual(kf.infusion_settled_at(door, 2000.0), 2060.0)
+        self.assertEqual(kf.infusion_settled_at(
+            session(infusions=(kf.InfusionInput(2000.0, 2050.0),), **recorded), 2000.0), 2050.0)
+        self.assertIsNone(kf.infusion_settled_at(
+            session(infusions=(kf.InfusionInput(2000.0),), **recorded), 2000.0))
+
+    def test_without_recorded_decay_decisions_there_is_no_increase(self):
+        # Sitzungen ohne archivierte Entscheidung (vor AF): kein Wert, nicht geschätzt.
+        figures = kf.session_figures(session(
+            infusions=(kf.InfusionInput(2000.0, 2020.0),), volume_m3=6.0,
+            doors=(("door_open", 2090.0),),
             gangs=(kf.GangInput(1800.0, 2700.0, (2000.0,)),),
         ))
         gang = figures["gangs"][0]
         self.assertEqual(gang["humidity_rises_gm3"], [None])
+        self.assertEqual(gang["humidity_rises_lower_gm3"], [None])
         self.assertIsNone(gang["humidity_rise_mean_gm3"])
         self.assertIsNone(gang["water_mean_l"])
 
     def test_water_requires_the_cabin_volume(self):
         figures = kf.session_figures(session(
-            infusions=(kf.InfusionInput(2000.0, 2020.0),),
+            infusions=(kf.InfusionInput(2000.0, 2020.0),), infusion_decay_recorded=True,
             gangs=(kf.GangInput(1800.0, 2700.0, (2000.0,)),),
         ))
         self.assertIsNotNone(figures["gangs"][0]["humidity_rise_mean_gm3"])
@@ -817,6 +845,10 @@ class ArchiveInputTests(unittest.TestCase):
                 ("door_open", 2600), ("door_close", 2650))]
             rows.append(("infusion_update", self.at(2040), {
                 "source_event_id": "infusion:2000", "end": {"effective_at": self.at(2030)}}))
+            # AF: Entscheidung „Abklingen abgeflacht“ (die Feuchte ist dann noch bei 30 %)
+            rows.append(("recognition_decay", self.at(2021), {
+                "effective_at": self.at(2020), "decided_at": self.at(2020),
+                "steepest_at": self.at(2012)}))
             db.executemany(
                 "INSERT INTO records(entry_id,session_id,kind,received_at,payload) "
                 "VALUES('entry','s1',?,?,?)",
@@ -858,6 +890,15 @@ class ArchiveInputTests(unittest.TestCase):
         # recorded before B2: no environment and no recognition records
         self.assertIsNone(figures["outside_temperature_c"])
         self.assertIsNone(figures["rejected_candidates"])
+
+    def test_archived_increase_needs_the_recorded_decay_decision(self):
+        # AF: ohne archivierte Entscheidung (Sitzungen vor AF) bleibt der Zuwachs leer.
+        self.write()
+        with closing(sqlite3.connect(self.path)) as db, db:
+            db.execute("DELETE FROM records WHERE kind='recognition_decay'")
+        gang = self.archive.key_figures(volume_m3=6.0)[0]["figures"]["gangs"][0]
+        self.assertEqual(gang["humidity_rises_gm3"], [None])
+        self.assertIsNone(gang["water_mean_l"])
 
     def insert(self, rows):
         with closing(sqlite3.connect(self.path)) as db, db:
