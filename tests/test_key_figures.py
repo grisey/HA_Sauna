@@ -363,6 +363,43 @@ class GangFigureTests(unittest.TestCase):
         self.assertAlmostEqual(rises[0], absolute_humidity(80, 20) - absolute_humidity(80, 10))
         self.assertAlmostEqual(rises[1], absolute_humidity(80, 24) - absolute_humidity(80, 20))
 
+    def test_level_before_is_the_onset_of_the_steep_rise(self):
+        # AF2 (Nutzer 11.11.): rückwärts, solange ein Schritt mit 150:1 steiler ist als der langsame
+        # Anstieg davor; der langsame Anstieg selbst (hier 15 g/m³ in 8 min) zählt nicht dazu.
+        noise = (0.03, -0.02, 0.01, -0.03, 0.02)
+        slow = [(1500.0 + k, 20 + 15 * k / 480 + noise[k % 5]) for k in range(498)]
+        steep = [(1998.0, slow[-1][1] + 3.0), (1999.0, slow[-1][1] + 8.0), (2000.0, slow[-1][1] + 15.0)]
+        humidity = kf.Series(*map(tuple, zip(*(slow + steep), strict=True)))
+        self.assertEqual(kf.rise_onset(humidity, 2000.0, since=1490.0), slow[-1])
+        # ohne steilen Schritt bleibt es beim letzten Wert vor dem Guss
+        self.assertEqual(kf.rise_onset(humidity, 1900.0, since=1490.0), slow[399])
+        # ohne drei Werte nach dem letzten Ereignis gibt es keine Schätzung
+        self.assertEqual(kf.rise_onset(humidity, 2000.0, since=1997.5), steep[1])
+        # zwei steile Werte nach kurzer Vorgeschichte: der langsame Anstieg kommt aus den Werten
+        # vor dem geprüften Schritt, ohne den schon gestiegenen Wert
+        short = [(1000.0 + k, 30 + noise[k % 5]) for k in range(30)]
+        block = [(1030.0, 40.8), (1031.0, 46.5)]
+        humidity = kf.Series(*map(tuple, zip(*(short + block), strict=True)))
+        self.assertEqual(kf.rise_onset(humidity, 1032.0, since=990.0), short[-1])
+
+    def test_increase_from_the_onset_and_up_to_the_onset_of_the_next_pour(self):
+        noise = (0.2, -0.1, 0.0, -0.2, 0.1)
+        points = [(1000.0 + 10 * k, 10 + noise[k % 5]) for k in range(100)]          # bis 1990
+        points += [(1995.0, 20.0), (2005.0, 40.0), (2015.0, 30.0)]                     # Guss 2000
+        points += [(2015.0 + 10 * k, 25 + noise[k % 5]) for k in range(1, 30)]        # bis 2305
+        points += [(2308.0, 32.0), (2315.0, 45.0), (2330.0, 26.0)]                     # Guss 2310
+        humidity = series(points)
+        figures = kf.session_figures(session(
+            upper_humidity=humidity, infusion_decay_recorded=True,
+            infusions=(kf.InfusionInput(2000.0), kf.InfusionInput(2310.0, 2330.0)),
+            doors=(("door_close", 2030.0),),          # Ereignis nach dem Abklingen des ersten Gusses
+            gangs=(kf.GangInput(900.0, 2700.0, (2000.0, 2310.0)),),
+        ))
+        rises = figures["gangs"][0]["humidity_rises_gm3"]
+        # vorher: Wert bei 1990 (nicht 20 bei 1995); danach: Beginn des nächsten Anstiegs bei 2305
+        self.assertAlmostEqual(rises[0], absolute_humidity(80, 25 + noise[29 % 5]) - absolute_humidity(80, 10 + noise[99 % 5]))
+        self.assertAlmostEqual(rises[1], absolute_humidity(80, 26) - absolute_humidity(80, 25 + noise[29 % 5]))
+
     def test_settled_time_is_at_latest_the_next_infusion_or_door_opening(self):
         recorded = {"infusion_decay_recorded": True}
         later = session(infusions=(kf.InfusionInput(2000.0, 2100.0), kf.InfusionInput(2030.0)), **recorded)

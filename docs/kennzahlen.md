@@ -64,16 +64,26 @@ fehlen bei Sitzungen ohne archivierten Zustandsverlauf der Erkennung
 (`recognition_state`), also bei älteren Sitzungen.
 
 Der Feuchtezuwachs eines Aufgusses ist die absolute Feuchte „danach“ minus
-dem letzten Wert vor dem Guss, oben und unten getrennt. „Danach“ ist der
-Zeitpunkt, an dem die Erkennung das Abklingen als abgeflacht entscheidet
-(`recognition_decay`), spätestens der nächste Aufguss oder die nächste
-Türöffnung. Es gilt der Wert bei dieser Entscheidung, sonst der letzte Wert vor
-dem nächsten Aufguss bzw. vor der Öffnung; ein Zuwachs endet so, wo der nächste
-beginnt. Mehrere Güsse, die die Erkennung zu einem Aufguss zusammenfasst,
-zählen zusammen. Die Wassermenge ist der mittlere Zuwachs oben mal
-Kabinenvolumen; sie zählt nur das Wasser, das danach noch in der Kabinenluft
-ist. Sitzungen ohne archivierte Entscheidung, also vor dieser Aufzeichnung,
-haben keinen Zuwachs.
+dem Niveau vor dem Guss, oben und unten je in der eigenen Reihe.
+
+- **Vor dem Guss** ist der Beginn des steilen Anstiegs. Vom letzten Wert vor
+  dem erkannten Guss geht es rückwärts, solange der Schritt in einen Wert mit
+  dem Evidenzverhältnis der Erkennung (150:1) steiler ist als der langsame
+  Anstieg davor. Den langsamen Anstieg und seine Streuung schätzen die Werte
+  seit dem letzten Ereignis (Türvorgang, früherer Aufguss oder dessen Zeitpunkt
+  „danach“) bis vor den geprüften Schritt: Steigung der kleinsten Quadrate,
+  Restabweichung und deren Autokorrelation ersten Grades. Mit weniger als drei
+  solchen Werten endet der Weg zurück.
+- **Danach** ist der Zeitpunkt, an dem die Erkennung das Abklingen als
+  abgeflacht entscheidet (`recognition_decay`), spätestens der nächste Aufguss
+  oder die nächste Türöffnung. Es gilt der Wert bei dieser Entscheidung, beim
+  nächsten Aufguss dessen Niveau vor dem Guss, sonst der letzte Wert vor der
+  Öffnung; ein Zuwachs endet so, wo der nächste beginnt.
+
+Mehrere Güsse, die die Erkennung zu einem Aufguss zusammenfasst, zählen
+zusammen. Die Wassermenge ist der mittlere Zuwachs oben mal Kabinenvolumen; sie
+zählt nur das Wasser, das danach noch in der Kabinenluft ist. Sitzungen ohne
+archivierte Entscheidung, also vor dieser Aufzeichnung, haben keinen Zuwachs.
 
 Der Türverlust ist die Temperatur beim Öffnen minus der kleinsten Temperatur
 vom Öffnen bis zum Schließen plus Nachlauf des Fühlers. Der Nachlauf ist der

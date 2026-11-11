@@ -16,9 +16,10 @@ from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass, field
 from datetime import datetime, tzinfo
 from itertools import pairwise
-from math import inf, isfinite
+from math import erfc, inf, isfinite, sqrt
 
 from .moisture import absolute_humidity
+from .recognition import DecisionParameters
 from .seasons import PARTS, period_label, period_of, period_start
 from .temperature_program import evenly_distributed
 from .timeline import Kind, project_gang_intervals, utc
@@ -26,6 +27,9 @@ from .timeline import Kind, project_gang_intervals, utc
 # Zeitpunktregel des Katalogs: vor dem ersten Messwert gilt dieser, wenn er
 # höchstens so viel später kommt.
 FIRST_SAMPLE_GRACE_SECONDS = 5.0
+
+# V03: Evidenzverhältnis der Erkennung (nicht gelernt); AF2: steiler Anstieg vor dem Guss
+EVIDENCE_RATIO = DecisionParameters().evidence_ratio
 
 DOOR_CLASSES = ("entry", "exit", "final_ventilation", "other")
 PARAMETER_KEYS = (
@@ -445,17 +449,120 @@ def infusion_settled_at(session: SessionInput, at: float) -> float | None:
     return None
 
 
-def _increase(series: Series, infusion: InfusionInput | None, settled: float | None):
-    """Feuchtezuwachs: Niveau „danach“ minus letzter Wert vor dem Guss.
+def preceding_event(session: SessionInput, at: float) -> float:
+    """Letztes Ereignis vor ``at``: Türvorgang, früherer Aufguss oder dessen Zeitpunkt „danach“."""
+    times = [t for _, t in session.doors if t < at]
+    for infusion in session.infusions:
+        if infusion.at < at:
+            times.append(infusion.at)
+            settled = infusion_settled_at(session, infusion.at)
+            if settled is not None and settled < at:
+                times.append(settled)
+    return max(times, default=-inf)
 
-    Niveau danach ist der Wert bei der Entscheidung „Abklingen abgeflacht“, sonst der letzte
-    Wert vor dem nächsten Aufguss bzw. vor der Türöffnung; so endet ein Zuwachs dort, wo der
-    nächste beginnt.
+
+class _SlowRise:
+    """Langsamer Anstieg der Werte ``first`` bis ``k`` einer Reihe, für jedes ``k`` ohne Neurechnung.
+
+    Wie ``recognition._start_drift``: Steigung der kleinsten Quadrate und ihre Varianz aus der
+    Restabweichung; die Varianz eines Schritts berücksichtigt die Autokorrelation ersten Grades
+    der Restabweichung (wie ``recognition_model.opening_evident``).
+    """
+
+    def __init__(self, times, values, first: int, last: int):
+        self.first = first
+        base = times[first]
+        # laufende Summen: n, t, y, t², t·y, y², Nachbarprodukte y·y', t·y'+y·t', t·t', t+t', y+y'
+        self.sums = [(0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0)]
+        previous = None
+        for t, y in zip(times[first:last + 1], values[first:last + 1], strict=True):
+            t -= base
+            n, st, sy, stt, sty, syy, pyy, pty, ptt, pt, py = self.sums[-1]
+            if previous is not None:
+                u, v = previous
+                pyy, pty, ptt, pt, py = (pyy + y * v, pty + t * v + y * u, ptt + t * u,
+                                         pt + t + u, py + y + v)
+            self.sums.append((n + 1, st + t, sy + y, stt + t * t, sty + t * y, syy + y * y,
+                              pyy, pty, ptt, pt, py))
+            previous = (t, y)
+
+    def estimate(self, k: int):
+        """(Steigung, Varianz der Steigung, Varianz eines Schritts) der Werte ``first`` bis ``k``."""
+        if k < self.first:
+            return None
+        n, st, sy, stt, sty, syy, pyy, pty, ptt, pt, py = self.sums[k - self.first + 1]
+        if n < 3:
+            return None
+        mean_t, mean_y = st / n, sy / n
+        sxx, sxy = stt - n * mean_t * mean_t, sty - n * mean_t * mean_y
+        if sxx <= 0:
+            return None
+        slope = sxy / sxx
+        squares = max(syy - n * mean_y * mean_y - slope * sxy, 0.0)
+        variance = squares / (n - 2)
+        rho = 0.0
+        if n > 4 and squares > 0:
+            c = mean_y - slope * mean_t               # Restabweichung r = y − c − Steigung·t
+            lagged = (pyy - c * py - slope * pty + (n - 1) * c * c + c * slope * pt
+                      + slope * slope * ptt)
+            rho = lagged / squares
+        rho = min(max(rho, 0.0), 0.999)
+        return slope, variance / sxx, 2 * variance * (1 - rho)
+
+
+def rise_onset(series: Series, at: float, since: float = -inf,
+               ratio: float = EVIDENCE_RATIO) -> tuple[float, float] | None:
+    """Beginn des steilen Anstiegs vor einem Guss (AF2, Nutzer 11.11.): (Zeit, Wert).
+
+    Vom letzten Wert vor dem erkannten Guss geht es rückwärts, solange der Schritt in einen Wert
+    mit dem Evidenzverhältnis ``ratio`` steiler ist als der langsame Anstieg davor. Diesen und
+    seine Streuung schätzen die Werte nach ``since`` (letztes Ereignis) bis vor den geprüften
+    Schritt. Ohne drei solche Werte bleibt es beim erreichten Wert.
+    """
+    times, values = series.times, series.values
+    last = bisect.bisect_left(times, at) - 1
+    if last < 0:
+        return None
+    first = bisect.bisect_right(times, since)
+    need = ratio / (1 + ratio)
+    rise = _SlowRise(times, values, first, last) if last > first else None
+    k = last
+    while rise is not None and k - 1 >= first:
+        estimate = rise.estimate(k - 2)         # values before the step k−1 → k
+        if estimate is None:
+            break
+        slope, slope_variance, step_variance = estimate
+        dt = times[k] - times[k - 1]
+        spread = sqrt(max(step_variance + dt * dt * slope_variance, 1e-30))
+        z = (values[k] - values[k - 1] - slope * dt) / spread
+        if 0.5 * erfc(-z / sqrt(2)) < need:
+            break
+        k -= 1
+    return times[k], values[k]
+
+
+def _level_before(series: Series, session: SessionInput, at: float):
+    onset = rise_onset(series, at, preceding_event(session, at))
+    return onset[1] if onset is not None else None
+
+
+def _increase(series: Series, session: SessionInput, infusion: InfusionInput | None,
+              settled: float | None):
+    """Feuchtezuwachs: Niveau „danach“ minus Niveau vor dem Guss (Beginn des steilen Anstiegs).
+
+    Niveau danach ist der Wert bei der Entscheidung „Abklingen abgeflacht“, beim nächsten
+    Aufguss dessen Niveau vor dem Guss, sonst der letzte Wert vor der Türöffnung; so endet ein
+    Zuwachs dort, wo der nächste beginnt.
     """
     if infusion is None or settled is None:
         return None
-    before = series.before(infusion.at)
-    after = series.at(settled) if settled == infusion.flattened else series.before(settled)
+    before = _level_before(series, session, infusion.at)
+    if settled == infusion.flattened:
+        after = series.at(settled)
+    elif any(other.at == settled for other in session.infusions):
+        after = _level_before(series, session, settled)
+    else:
+        after = series.before(settled)
     return after - before if before is not None and after is not None else None
 
 
@@ -466,8 +573,9 @@ def gang_figures(session: SessionInput, gang: GangInput, number: int) -> dict:
     inside = [t for t in openings if start < t < end] if bounded else None
     by_time = {infusion.at: infusion for infusion in session.infusions}
     settled = [(by_time.get(t), infusion_settled_at(session, t)) for t in gang.infusions]
-    rises = [_increase(session.upper_absolute_humidity, i, after) for i, after in settled]
-    rises_lower = [_increase(session.lower_absolute_humidity, i, after) for i, after in settled]
+    rises = [_increase(session.upper_absolute_humidity, session, i, after) for i, after in settled]
+    rises_lower = [_increase(session.lower_absolute_humidity, session, i, after)
+                   for i, after in settled]
     complete_rises = _complete(rises)
     rise_mean = _mean(complete_rises) if complete_rises is not None else None
     temperatures = session.upper_temperature.window(start, end) if bounded else []
