@@ -2580,7 +2580,8 @@ class SaunaRuntime:
                 if instruction.actions:
                     payload["data"] = notification_rules.reply_data(
                         self.notification_entry_id, payload,
-                        run.native_actions(instruction, message_id))
+                        run.native_actions(instruction, message_id),
+                        apple=self._apple(target), token=message_id)
                 envelope = NotificationEnvelope(
                     message_id, f"calibration:{run.run_id}:{instruction.seq}",
                     self.notification_entry_id, target, payload, run.session_id,
@@ -2623,6 +2624,9 @@ class SaunaRuntime:
         self._bn_last_present = None
         # BN-a: session of the last cycle with an active calibration run
         self._bn_calibrating = None
+        # BN-c: callable(target) -> True für ein Apple-Gerät; callable() -> HA-Adresse
+        self.notification_apple = None
+        self.notification_base_url = None
 
     def enable_notifications(self, settings=None, zone=None):
         """Start the occasions with the loaded settings (HA setup, preview, tests)."""
@@ -2663,6 +2667,9 @@ class SaunaRuntime:
     def _assigned_targets(self):
         users = {assignment.user_id for assignment in self.configuration.notification_assignments}
         return frozenset().union(*(self._user_targets(user) for user in users)) if users else frozenset()
+
+    def _apple(self, target):
+        return bool(self.notification_apple and self.notification_apple(target))
 
     def _interactive(self, target):
         return any(
@@ -2891,19 +2898,28 @@ class SaunaRuntime:
         for target in sorted(targets, key=lambda item: (item.transport, item.endpoint)):
             message_id = uuid4().hex
             payload = {"title": message.title, "message": message.text}
-            if message.actions and self._interactive(target):
+            answers = [
+                {"action": f"{notification_rules.ACTION_PREFIX}{message_id}_{message.seq}_{kind.upper()}",
+                 "title": notification_rules.ACTION_LABELS[kind]}
+                for kind in message.actions
+            ]
+            linked = ()
+            if answers and self._interactive(target):
                 payload["data"] = notification_rules.reply_data(
-                    self.notification_entry_id, payload, [
-                        {"action": f"{notification_rules.ACTION_PREFIX}{message_id}_{message.seq}_{kind.upper()}",
-                         "title": notification_rules.ACTION_LABELS[kind]}
-                        for kind in message.actions
-                    ])
+                    self.notification_entry_id, payload, answers,
+                    apple=self._apple(target), token=message_id)
+            elif answers and (base := self.notification_base_url and self.notification_base_url()):
+                # BN-c: „Nur Nachricht“ trägt den Panellink im Text; seine Antworten
+                # werden wie die nativen Kennungen dieser Kopie zugeordnet.
+                payload["message"] = notification_rules.text_link(
+                    base, self.notification_entry_id, payload, answers)
+                linked = tuple(item["action"] for item in answers)
             envelope = NotificationEnvelope(
                 message_id, f"notification:{message.seq}", self.notification_entry_id,
                 target, payload, message.session_id,
             )
             try:
-                prepared = transport.prepare_handoff(envelope)
+                prepared = transport.prepare_handoff(envelope, answers=linked)
             except Exception as error:  # noqa: BLE001 - ein Ziel hindert die anderen nicht.
                 self.notifier.handed_off(message, {"transport": target.transport,
                                                    "endpoint": target.endpoint},

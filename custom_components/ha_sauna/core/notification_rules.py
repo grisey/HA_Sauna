@@ -131,26 +131,45 @@ def is_action(value: object) -> bool:
     return isinstance(value, str) and value.startswith(ACTION_PREFIX)
 
 
-# BN-b: Antippen einer Nachricht mit Antworten öffnet das Panel (frontend.py) mit
-# Titel, Text und den Aktionen wie in ``data.actions``, base64url-JSON im Link.
+# BN-b: Eine Nachricht mit Antworten führt in das Panel (frontend.py) mit Titel, Text
+# und den Aktionen wie in ``data.actions``, base64url-JSON im Link.
 PANEL_LINK = "/ha-sauna?nachricht="
+PANEL_LABEL = "Im Panel öffnen"
+# BN-c: Android zeigt höchstens drei Knöpfe (Companion-Doku); bei drei Antworten
+# entfällt der Panelknopf, die Antworten bleiben vollständig.
+ANDROID_ACTIONS = 3
 # Ergebnis einer Antwort aus dem Panel; jedes andere Ergebnis ist ``unknown``.
 ANSWER_RESULTS = {"effect": "applied", "received": "applied", "confirmed": "applied",
                   "accepted": "applied", "duplicate": "done", "late": "done",
                   "no_permission": "denied"}
 
 
-def reply_data(entry_id: str | None, payload: Mapping, actions: list[dict]) -> dict:
-    """Native ``data`` with the actions and the tap targets for the panel (BN-b).
-
-    iOS and macOS open ``url`` only on a plain tap (key ``_``), not after an
-    answer button; Android opens ``clickAction``.
-    """
+def panel_link(entry_id: str | None, payload: Mapping, actions: list[dict]) -> str:
     question = {"e": entry_id, "t": payload.get("title", ""), "m": payload["message"],
                 "a": actions}
     text = json.dumps(question, ensure_ascii=False, separators=(",", ":"))
-    link = PANEL_LINK + base64.urlsafe_b64encode(text.encode()).decode().rstrip("=")
-    return {"actions": actions, "url": {"_": link}, "clickAction": link}
+    return PANEL_LINK + base64.urlsafe_b64encode(text.encode()).decode().rstrip("=")
+
+
+def reply_data(entry_id: str | None, payload: Mapping, actions: list[dict], *,
+               apple: bool, token: str) -> dict:
+    """Native ``data`` of a Companion copy: answers, panel button, tap target (BN-c).
+
+    Apple devices get no ``url``, so the app's option „Show actions when tapped“
+    shows the answers on a tap. Android opens ``clickAction`` on a tap and needs
+    ``action: "URI"`` for a link button.
+    """
+    link = panel_link(entry_id, payload, actions)
+    panel = [{"action": f"HA_SAUNA_PANEL_{token}" if apple else "URI",
+              "title": PANEL_LABEL, "uri": link}] if len(actions) < ANDROID_ACTIONS else []
+    return {"actions": [*actions, *panel], **({} if apple else {"clickAction": link})}
+
+
+def text_link(base_url: str, entry_id: str | None, payload: Mapping,
+              actions: list[dict]) -> str:
+    """Text of a copy to a target without native data, with the panel link (BN-c)."""
+    link = base_url.rstrip("/") + panel_link(entry_id, payload, actions)
+    return f"{payload['message']}\n{PANEL_LABEL}: {link}"
 
 
 def decimal(value: float, places: int = 1) -> str:

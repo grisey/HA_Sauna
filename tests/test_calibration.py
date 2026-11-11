@@ -19,7 +19,7 @@ from datetime import UTC, datetime, timedelta
 from itertools import pairwise
 from types import SimpleNamespace
 
-from test_notification_occasions import panel_question
+from test_notification_occasions import panel_button, panel_question
 from test_presence_regressions import START, _runtime
 from test_program_configuration import _FakeHass
 
@@ -920,7 +920,7 @@ class CalibrationRuntimeTests(unittest.TestCase):
         def __init__(self):
             self.sent = []
 
-        def prepare_handoff(self, notification, *, correlate=True):
+        def prepare_handoff(self, notification, *, correlate=True, answers=()):
             return notification
 
         async def dispatch(self, prepared):
@@ -1014,6 +1014,7 @@ class CalibrationRuntimeTests(unittest.TestCase):
         async def exercise():
             clock = [START]
             runtime = self.runtime(clock)
+            runtime.notification_apple = lambda target: True
             runtime.controller.set_temperature(30, START)
             await runtime.accept_presence(binary_presence(
                 "binary_sensor.presence", "off", START, START))
@@ -1028,7 +1029,15 @@ class CalibrationRuntimeTests(unittest.TestCase):
             self.assertEqual([(item.payload["title"], item.payload["message"]) for item in sent],
                              [("Sauna-Kalibrierung", "Zeitschaltuhr aufziehen.")])
             self.assertEqual([a["title"] for a in sent[0].payload["data"]["actions"]],
-                             ["Uhr ist gestellt", "Abbrechen"])
+                             ["Uhr ist gestellt", "Abbrechen", "Im Panel öffnen"])
+            # BN-c: on an Apple device no tap target; the panel button opens the question.
+            data = sent[0].payload["data"]
+            self.assertEqual(set(data), {"actions"})
+            self.assertEqual(data["actions"][-1], panel_button(
+                data["actions"][-1]["uri"], f"HA_SAUNA_PANEL_{sent[0].message_id}"))
+            self.assertEqual(panel_question(data["actions"][-1]["uri"]), {
+                "e": "synthetic-entry", "t": "Sauna-Kalibrierung",
+                "m": "Zeitschaltuhr aufziehen.", "a": data["actions"][:2]})
             self.assertEqual(runtime.calibration_status["active"]["module"], "Zeitschaltuhr")
             self.assertEqual(await runtime.calibration_reply(
                 self.association(sent[0], "timer", START)), "accepted")
@@ -1041,11 +1050,8 @@ class CalibrationRuntimeTests(unittest.TestCase):
             self.assertEqual(sent[1].session_id, runtime.session.session_id)
             self.assertEqual([a["title"] for a in sent[1].payload["data"]["actions"]],
                              ["Kabine ist leer", "Abweichend", "Abbrechen"])
-            # BN-b: a tap opens the panel with this instruction and its native actions.
-            self.assertEqual(panel_question(sent[1].payload["data"]), {
-                "e": "synthetic-entry", "t": "Sauna-Kalibrierung P1",
-                "m": "Kabine leer, Tür zu, nicht an die Kabine.",
-                "a": sent[1].payload["data"]["actions"]})
+            # BN-c: three answers leave no room for the panel button (Android limit).
+            self.assertEqual(set(sent[1].payload["data"]), {"actions"})
             with self.assertRaisesRegex(ValueError, "bereits"):
                 await runtime.start_calibration(actor=ActorRef(USER, "ha_context"),
                                                 module="A2")

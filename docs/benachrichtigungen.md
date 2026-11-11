@@ -131,16 +131,31 @@ und **Empfangen** bedienen die Sauna nicht.
 
 ### Antworten im Panel
 
-Antippen einer Nachricht der Sauna mit Antwortknöpfen, auch einer Anweisung der
-[Kalibrierung](kalibrierung.md), öffnet das Sauna-Panel mit dieser Frage: unter
-iOS und macOS über `url` (nur das Antippen der Nachricht selbst, Schlüssel `_`;
-ein Antwortknopf der Nachricht öffnet nichts), unter Android über `clickAction`.
-Der Parameter `nachricht` des Links enthält Instanz, Titel, Text und die
-angebotenen Aktionen mit nativer Kennung und Beschriftung wie in `data.actions`
-als base64url-kodiertes JSON; gespeichert wird dafür nichts. Das Panel zeigt
+Jede Nachricht der Sauna mit Antwortknöpfen, auch eine Anweisung der
+[Kalibrierung](kalibrierung.md), führt in das Sauna-Panel. Der Link
+`/ha-sauna?nachricht=…` enthält Instanz, Titel, Text und die angebotenen
+Aktionen mit nativer Kennung und Beschriftung wie in `data.actions` als
+base64url-kodiertes JSON; gespeichert wird dafür nichts. Das Panel zeigt
 Titel, Text, die Antwortknöpfe und **Schließen** als Dialog über der aktuellen
 Seite und entfernt den Parameter aus der Adresse; beim Neuladen erscheint der
 Dialog nicht erneut.
+
+| Ziel | Antippen der Nachricht | Weg in das Panel |
+| --- | --- | --- |
+| Companion-App auf einem Apple-Gerät (iOS, iPadOS, macOS) | Die Nachricht trägt kein `url`. Mit der App-Einstellung **Show actions when tapped** (Einstellungen der App › Benachrichtigungen, ab App-Version 2026.9.3) zeigt das Antippen Titel, Text und die Antworten als Systemdialog; ohne sie öffnet es die App. | Knopf **Im Panel öffnen** (`uri`) |
+| Companion-App auf Android oder mit unbekanntem Betriebssystem | `clickAction` öffnet das Panel mit der Frage. | `clickAction` und Knopf **Im Panel öffnen** (`action: "URI"`) |
+| **Nur Nachricht** | – | Der Text endet mit „Im Panel öffnen: “ und der vollen Adresse; nach der Anmeldung an Home Assistant öffnet sich der Dialog. |
+
+Als Apple-Gerät gilt ein Ziel, dessen Registrierung der Companion-App den
+Hersteller „Apple“ nennt; danach richtet sich auch der Apple-Push von Home
+Assistant. Die App-Einstellung greift nur bei Nachrichten ohne `url`; deshalb
+kommen Nachrichten der Sauna für Apple-Geräte ohne `url`. Android zeigt höchstens
+drei Knöpfe; bei drei Antworten, etwa bei einem Schritt der Kalibrierung mit
+Aktion, entfällt **Im Panel öffnen**, die Antworten bleiben vollständig. Ein
+Antippen von **Im Panel öffnen** ist keine Antwort und wird nicht zugeordnet.
+Die Adresse im Text ist bevorzugt die externe Adresse von Home Assistant, sonst
+die interne; ist keine bekannt, enthält der Text keinen Link. Anweisungen der
+Kalibrierung gehen nur an Companion-Ziele mit Antworten.
 
 Ein Antwortknopf sendet die native Kennung an
 `POST /api/ha_sauna/{entry_id}/notifications/answer`. Angenommen werden nur

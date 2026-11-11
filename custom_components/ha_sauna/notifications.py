@@ -4,7 +4,7 @@ A completed call proves transport handoff only. Native data and action identifie
 are not rewritten; client rendering and permission remain client responsibilities.
 """
 
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Iterable, Mapping
 from copy import deepcopy
 from dataclasses import dataclass
 from types import MappingProxyType
@@ -33,6 +33,7 @@ from .core.notification_recipients import (
     ResolvedRecipient,
     TargetIdentity,
 )
+from .core.notification_rules import PANEL_LINK
 
 TRANSPORT = "home_assistant"
 EVENT_REPLY = "ha_sauna_notification_reply"
@@ -283,9 +284,14 @@ class HomeAssistantNotifications:
         return await self.dispatch(self.prepare_handoff(notification))
 
     def prepare_handoff(
-        self, notification: NotificationEnvelope, *, correlate: bool = True
+        self, notification: NotificationEnvelope, *, correlate: bool = True,
+        answers: Iterable[str] = (),
     ) -> _PreparedHandoff:
-        """Register at admission, before transport work can yield to lifecycle cleanup."""
+        """Register at admission, before transport work can yield to lifecycle cleanup.
+
+        ``answers``: further native identifiers of this copy, e.g. of the panel link
+        in a text (BN-c). A button that opens the panel link is no reply.
+        """
         self._start()
         ingress = self._ingress
         payload = notification.payload
@@ -296,12 +302,13 @@ class HomeAssistantNotifications:
                 value
                 for item in native_actions
                 if isinstance(item, Mapping)
+                and not str(item.get("uri", "")).startswith(PANEL_LINK)
                 for value in (item.get("action"), item.get("identifier"))
                 if isinstance(value, str)
             )
             if isinstance(native_actions, (list, tuple))
             else frozenset()
-        )
+        ) | frozenset(answers)
         registration = (
             ingress.correlator.register(
                 notification,
@@ -432,6 +439,24 @@ def present_targets(hass: HomeAssistant, targets) -> frozenset[TargetIdentity]:
     return frozenset(present)
 
 
+def is_apple(hass: HomeAssistant, target: TargetIdentity) -> bool:
+    """Companion registration of the target's device names Apple, as for HA's push (BN-c)."""
+    _, entry = dr.async_get_device_and_config_entry_for_domain(
+        hass, target.endpoint, domain="mobile_app"
+    )
+    return entry is not None and entry.data.get("manufacturer") == "Apple"
+
+
+def base_url(hass: HomeAssistant) -> str | None:
+    """Address of this HA for links in a text, the external one first (BN-c)."""
+    from homeassistant.helpers.network import NoURLAvailableError, get_url
+
+    try:
+        return get_url(hass, prefer_external=True)
+    except NoURLAvailableError:
+        return None
+
+
 async def async_can_control(hass: HomeAssistant, entry_id: str, user_id: str | None) -> bool:
     """Control permission of a replying user for this instance's operation entity."""
     from homeassistant.auth.permissions.const import POLICY_CONTROL
@@ -469,6 +494,8 @@ async def async_setup_sauna_notifications(hass: HomeAssistant, entry, runtime) -
         zone = None
     runtime.enable_notifications(settings, zone)
     runtime.notification_presence = lambda targets: present_targets(hass, targets)
+    runtime.notification_apple = lambda target: is_apple(hass, target)
+    runtime.notification_base_url = lambda: base_url(hass)
     runtime.save_notification_settings = lambda data: hass.async_create_task(
         store.async_save(data)
     )

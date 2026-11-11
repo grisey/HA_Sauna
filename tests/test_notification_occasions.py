@@ -281,25 +281,54 @@ class ReadyForecastTests(unittest.TestCase):
                                                   95.0))
 
 
-def panel_question(data):
-    """Question of the panel link in native ``data`` (BN-b); both tap targets agree."""
-    link = data["clickAction"]
-    assert data["url"] == {"_": link} and link.startswith(rules.PANEL_LINK)
-    token = link[len(rules.PANEL_LINK):]
+def panel_question(link):
+    """Question of a panel link (BN-b), as path or full address; URL-safe characters only."""
+    token = link[link.index(rules.PANEL_LINK) + len(rules.PANEL_LINK):]
     assert re.fullmatch(r"[A-Za-z0-9_-]+", token), token
     return json.loads(base64.urlsafe_b64decode(token + "=" * (-len(token) % 4)))
 
 
-class PanelLinkTests(unittest.TestCase):
-    """BN-b: Antippen öffnet das Panel mit Titel, Text und den nativen Aktionen."""
+def panel_button(link, action="URI"):
+    return {"action": action, "title": "Im Panel öffnen", "uri": link}
 
-    def test_link_carries_question_and_actions_with_umlauts(self):
-        actions = [{"action": f"{rules.ACTION_PREFIX}abc_3_END_GANG", "title": "Gang beenden"}]
-        payload = {"title": "Sauna", "message": "Gang 1 läuft laut Sauna noch – bist du draußen?"}
-        data = rules.reply_data("entry-ä", payload, actions)
-        self.assertEqual(data["actions"], actions)
-        self.assertEqual(panel_question(data), {"e": "entry-ä", "t": "Sauna",
-                                                "m": payload["message"], "a": actions})
+
+class PanelLinkTests(unittest.TestCase):
+    """BN-b/BN-c: Antworten, Panelknopf und Antippen je Gerät; Link im Text."""
+
+    def setUp(self):
+        self.actions = [{"action": f"{rules.ACTION_PREFIX}abc_3_END_GANG",
+                         "title": "Gang beenden"}]
+        self.payload = {"title": "Sauna",
+                        "message": "Gang 1 läuft laut Sauna noch – bist du draußen?"}
+
+    def test_android_and_unknown_get_click_action_and_uri_button(self):
+        data = rules.reply_data("entry-ä", self.payload, self.actions, apple=False, token="t")
+        link = data["clickAction"]
+        self.assertEqual(data, {"actions": [*self.actions, panel_button(link)],
+                                "clickAction": link})
+        self.assertEqual(panel_question(link), {"e": "entry-ä", "t": "Sauna",
+                                                "m": self.payload["message"], "a": self.actions})
+
+    def test_apple_gets_no_tap_target_so_the_native_option_applies(self):
+        data = rules.reply_data("entry", self.payload, self.actions, apple=True, token="t")
+        link = data["actions"][-1]["uri"]
+        self.assertEqual(data, {"actions": [*self.actions,
+                                            panel_button(link, "HA_SAUNA_PANEL_t")]})
+        self.assertEqual(panel_question(link)["a"], self.actions)
+
+    def test_three_answers_leave_no_room_for_the_panel_button(self):
+        three = [{"action": f"{rules.ACTION_PREFIX}abc_3_{n}", "title": n} for n in "ABC"]
+        android = rules.reply_data("entry", self.payload, three, apple=False, token="t")
+        apple = rules.reply_data("entry", self.payload, three, apple=True, token="t")
+        self.assertEqual((android["actions"], apple), (three, {"actions": three}))
+        self.assertEqual(panel_question(android["clickAction"])["a"], three)
+
+    def test_text_link_carries_the_full_address(self):
+        text = rules.text_link("https://ha.example/", "entry", self.payload, self.actions)
+        first, second = text.split("\n")
+        self.assertEqual(first, self.payload["message"])
+        self.assertTrue(second.startswith("Im Panel öffnen: https://ha.example/ha-sauna?nachricht="))
+        self.assertEqual(panel_question(second)["a"], self.actions)
 
     def test_answer_results(self):
         results = {outcome: rules.ANSWER_RESULTS.get(outcome, "unknown") for outcome in (
@@ -314,8 +343,10 @@ class PanelLinkTests(unittest.TestCase):
 class Transport:
     def __init__(self):
         self.sent = []
+        self.answers = {}
 
-    def prepare_handoff(self, notification, *, correlate=True):
+    def prepare_handoff(self, notification, *, correlate=True, answers=()):
+        self.answers[notification.message_id] = tuple(answers)
         return notification
 
     async def dispatch(self, prepared):
@@ -405,12 +436,14 @@ class RuntimeTests(unittest.TestCase):
             self.assertEqual(result["targets"], 1)
             self.assertEqual([n.target.endpoint for n in sent], ["phone-1"])
             self.assertEqual(sent[0].payload["message"], "Testnachricht der Sauna")
-            self.assertEqual([a["title"] for a in sent[0].payload["data"]["actions"]],
-                             ["Empfangen"])
-            # BN-b: a tap opens the panel with the same question and native actions.
-            self.assertEqual(panel_question(sent[0].payload["data"]), {
+            # BN-b/BN-c: the answer, the panel button and, outside Apple, the tap target.
+            data = sent[0].payload["data"]
+            self.assertEqual([a["title"] for a in data["actions"]],
+                             ["Empfangen", "Im Panel öffnen"])
+            self.assertEqual(data["actions"][-1], panel_button(data["clickAction"]))
+            self.assertEqual(panel_question(data["clickAction"]), {
                 "e": "entry", "t": "Sauna", "m": "Testnachricht der Sauna",
-                "a": sent[0].payload["data"]["actions"]})
+                "a": data["actions"][:1]})
             status = runtime.notification_status(USER)["test"]
             self.assertEqual((status["targets"], status["accepted"], status["replied_at"]),
                              (1, 1, None))
@@ -419,10 +452,24 @@ class RuntimeTests(unittest.TestCase):
                 self.answer(sent[0], rules.RECEIVED, clock[0]), permitted=False), "received")
             status = runtime.notification_status(USER)["test"]
             self.assertEqual((status["replied_at"], status["replied_by"]), (clock[0], USER))
-            # Send-only target: message without native actions.
+            # Send-only target: message without native actions; without a known
+            # address no link (BN-c).
             await runtime.send_test_notification(actor=ActorRef(OTHER, "ha"))
             await self.settle(runtime)
             self.assertNotIn("data", sent[-1].payload)
+            self.assertEqual(sent[-1].payload["message"], "Testnachricht der Sauna")
+            # BN-c: with an address the text carries the link; its answer is registered.
+            runtime.notification_base_url = lambda: "https://ha.example"
+            await runtime.send_test_notification(actor=ActorRef(OTHER, "ha"))
+            await self.settle(runtime)
+            text, link = sent[-1].payload["message"].split("\nIm Panel öffnen: ")
+            self.assertEqual((text, "data" in sent[-1].payload), ("Testnachricht der Sauna", False))
+            self.assertTrue(link.startswith("https://ha.example/ha-sauna?nachricht="))
+            answers = panel_question(link)["a"]
+            self.assertEqual([a["title"] for a in answers], ["Empfangen"])
+            self.assertEqual(runtime.notification_transport.answers[sent[-1].message_id],
+                             (answers[0]["action"],))
+            self.assertEqual(runtime.notification_transport.answers[sent[0].message_id], ())
             with self.assertRaisesRegex(ValueError, "kein Benachrichtigungsziel"):
                 await runtime.send_test_notification(actor=ActorRef("nobody", "ha"))
             await runtime.close()
@@ -737,7 +784,7 @@ class CalibrationTimerTests(unittest.TestCase):
             self.assertEqual(len(reminders), 1)
             self.assertEqual(reminders[0].payload["title"], "Sauna-Kalibrierung")
             self.assertEqual([a["title"] for a in reminders[0].payload["data"]["actions"]],
-                             ["Uhr ist gestellt"])
+                             ["Uhr ist gestellt", "Im Panel öffnen"])
             self.assertTrue(all(n.correlation_id.startswith("calibration:") for n in sent))
             later = clock[0] + timedelta(seconds=5)
             self.assertEqual(await runtime.calibration_reply(

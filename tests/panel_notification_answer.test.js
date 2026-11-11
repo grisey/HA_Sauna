@@ -159,4 +159,22 @@ function setup(href, reply = { outcome: "effect", result: "applied" }) {
   routed.panel.route = { prefix: "/ha-sauna", path: "" };
   assert.equal(routed.dialog.open, true);
   assert.deepEqual(routed.panel.route, { prefix: "/ha-sauna", path: "" });
+
+  // BN-c: Link aus dem Text einer Nachricht an „Nur Nachricht“, so wie Python ihn
+  // kodiert (notification_rules.text_link), nach der Anmeldung an Home Assistant.
+  const python =
+    "eyJlIjoiZW50cnktMiIsInQiOiJTYXVuYSIsIm0iOiJHYW5nIDEgbMOkdWZ0IGxhdXQgU2F1bmEgbm9jaCDigJMgYmlzdCBkdSBkcmF1w59lbj8iLCJhIjpbeyJhY3Rpb24iOiJIQV9TQVVOQV9OT1RJRllfYWJjXzNfRU5EX0dBTkciLCJ0aXRsZSI6IkdhbmcgYmVlbmRlbiJ9XX0";
+  const linked = setup(`https://sauna.example/ha-sauna?nachricht=${python}`);
+  linked.panel.openAnswerFromLocation();
+  assert.equal(linked.dialog.open, true);
+  assert.deepEqual(JSON.parse(JSON.stringify(linked.panel.answer)), {
+    entry: "entry-2",
+    title: "Sauna",
+    message: question.m,
+    actions: question.a,
+  });
+  await linked.panel.action("answer:0");
+  assert.deepEqual(JSON.parse(JSON.stringify(linked.calls)), [
+    ["/entry-2/notifications/answer", "POST", { action: ACTION }],
+  ]);
 })();

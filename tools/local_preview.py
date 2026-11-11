@@ -163,7 +163,7 @@ class PreviewTransport:
     def __init__(self):
         self.sent = []
 
-    def prepare_handoff(self, notification, *, correlate=True):
+    def prepare_handoff(self, notification, *, correlate=True, answers=()):
         return notification
 
     async def dispatch(self, prepared):

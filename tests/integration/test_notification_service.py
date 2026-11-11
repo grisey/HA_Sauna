@@ -369,8 +369,11 @@ class NotificationServiceLifecycleTests(unittest.IsolatedAsyncioTestCase):
         )
         return user, entity.entity_id, actor
 
-    async def mobile_references(self, count):
+    async def mobile_references(self, count, *, apple=()):
         """Reuse the native-registration contract from the HA transport fixture.
+
+        Indices in ``apple`` register like the Companion app on an Apple device
+        (manufacturer, os_name); the others leave the platform unknown (BN-c).
 
         Only final notify services are synthetic; HA loads and executes its
         actual mobile device action against these isolated registrations.
@@ -396,7 +399,14 @@ class NotificationServiceLifecycleTests(unittest.IsolatedAsyncioTestCase):
                 minor_version=1,
                 domain="mobile_app",
                 title=f"Synthetic phone {index}",
-                data={const.ATTR_APP_DATA: {const.ATTR_PUSH_WEBSOCKET_CHANNEL: True}},
+                data={
+                    const.ATTR_APP_DATA: {const.ATTR_PUSH_WEBSOCKET_CHANNEL: True},
+                    **(
+                        {const.ATTR_MANUFACTURER: "Apple", const.ATTR_OS_NAME: "iOS"}
+                        if index in apple
+                        else {}
+                    ),
+                },
                 source="user",
                 options={},
                 unique_id=name,
@@ -546,16 +556,22 @@ class NotificationServiceLifecycleTests(unittest.IsolatedAsyncioTestCase):
             return response.status, await response.json()
 
     @staticmethod
-    def panel_actions(calls, message):
-        """Native actions of each copy; the tap link carries the same question."""
+    def panel_question(link):
+        """Question of a panel link (BN-b), as path or full address."""
+        token = link[link.index(rules.PANEL_LINK) + len(rules.PANEL_LINK) :]
+        return json.loads(base64.urlsafe_b64decode(token + "=" * (-len(token) % 4)))
+
+    @classmethod
+    def panel_actions(cls, calls, message):
+        """Answers of each copy to a device of unknown platform (like Android, BN-c)."""
         actions = []
         for call in sent(calls, message):
             data = call["data"]["data"]
             link = data["clickAction"]
-            token = link[len(rules.PANEL_LINK) :]
-            question = json.loads(base64.urlsafe_b64decode(token + "=" * (-len(token) % 4)))
-            assert data["url"] == {"_": link}, data
-            assert (question["m"], question["a"]) == (message, data["actions"]), question
+            panel = {"action": "URI", "title": rules.PANEL_LABEL, "uri": link}
+            assert "url" not in data and data["actions"][-1] == panel, data
+            question = cls.panel_question(link)
+            assert (question["m"], question["a"]) == (message, data["actions"][:-1]), question
             actions.append(data["actions"][0]["action"])
         return actions
 
@@ -1205,3 +1221,71 @@ class NotificationServiceLifecycleTests(unittest.IsolatedAsyncioTestCase):
             replies,
             [(reader.id, "no_permission"), (owner.id, "effect"), (owner.id, "late")],
         )
+
+    async def test_platforms_and_message_only_target_lead_to_the_panel(self):
+        """BN-c: Apple without tap target, Android with clickAction, text link otherwise."""
+        from homeassistant.components.notify import NotifyEntityFeature
+
+        await self.hass.config.async_update(external_url="https://sauna.example")
+        calls = []
+
+        async def terminal_sink(call):
+            calls.append({"service": call.service, "data": dict(call.data)})
+
+        references, registrations, targets = await self.mobile_references(2, apple={0})
+        for service in (*registrations, "send_message"):
+            self.hass.services.async_register("notify", service, terminal_sink)
+        entity = er.async_get(self.hass).async_get_or_create(
+            "notify", "synthetic", "text", suggested_object_id="synthetic_text"
+        )
+        self.hass.states.async_set(
+            entity.entity_id, "unknown", {"supported_features": NotifyEntityFeature.TITLE}
+        )
+        owner = await self.hass.auth.async_create_user(
+            "Synthetic platform owner", group_ids=[GROUP_ID_USER]
+        )
+        text_reference = RecipientRef("entity", entity.entity_id, "home_assistant")
+        await self.configure_recipients(((owner, (*references, text_reference)),))
+        wire, _ = self.observe_replies()
+        await self.start_session(owner)
+        await self.await_sink_calls(calls, TIMER_START, 2)
+        deadline = async_timeout("reload")
+        async with asyncio.timeout(deadline):
+            while not (
+                texts := [
+                    call for call in calls
+                    if message_of(call).startswith(TIMER_START + "\n")
+                ]
+            ):
+                await asyncio.sleep(setting("asyncio.scheduler_grace_s"))
+        copies = {call["data"]["target"]: call["data"]["data"] for call in sent(calls, TIMER_START)}
+        apple = copies[targets[references[0].reference_id]]
+        android = copies[targets[references[1].reference_id]]
+        # Apple: no url, so the app's own option shows the answers; the button opens the panel.
+        self.assertEqual(set(apple), {"actions"})
+        self.assertTrue(apple["actions"][-1]["action"].startswith("HA_SAUNA_PANEL_"))
+        self.assertEqual(
+            self.panel_question(apple["actions"][-1]["uri"])["a"], apple["actions"][:1]
+        )
+        # Android (and unknown): tap target and URI button on the same link.
+        self.assertEqual(self.panel_actions(calls, TIMER_START), [android["actions"][0]["action"]])
+        # Message only: the full external address in the text; its answer is assigned.
+        text, link = message_of(texts[0]).split(f"\n{rules.PANEL_LABEL}: ")
+        self.assertEqual(text, TIMER_START)
+        self.assertTrue(link.startswith("https://sauna.example" + rules.PANEL_LINK))
+        answer = self.panel_question(link)["a"][0]["action"]
+        self.assertEqual(
+            await self.answer(owner, answer),
+            (200, {"outcome": "confirmed", "result": "applied"}),
+        )
+        self.assertEqual(self.runtime.notifier.timer["confirmed_by"], owner.id)
+        self.assertEqual(len(wire), 1)
+        # A tap on a panel button is no reply: neither identifier is assigned.
+        for action in (apple["actions"][-1]["action"], "URI"):
+            self.hass.bus.async_fire(
+                "mobile_app_notification_action",
+                {"action": action},
+                context=Context(user_id=owner.id),
+            )
+        await self.hass.async_block_till_done()
+        self.assertEqual(len(wire), 1)
