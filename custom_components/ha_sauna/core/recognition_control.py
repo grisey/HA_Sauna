@@ -109,6 +109,10 @@ def _gang_at(gangs: list[dict], moment: datetime | None, until: datetime | None)
     if moment is None:
         return None
     for gang in gangs:
+        if gang["started_at"] is None:
+            # Ohne eindeutig zugeordneten Eintritt hat der Gang keinen Beginn
+            # (project_gang_intervals); zeitlich wird ihm nichts zugeordnet.
+            continue
         end = gang["ended_at"] or until
         if gang["started_at"] <= moment and (end is None or moment <= end):
             return gang

@@ -4950,6 +4950,7 @@ class SaunaPanel extends HTMLElement {
         display: grid;
         --settings-navigation-width: ${this.preference("size_210_0_px")}px;
         grid-template-columns: var(--settings-navigation-width) minmax(0, 1fr);
+        grid-template-rows: minmax(0, 1fr);
         gap: ${this.preference("surface_gap_px")}px;
         align-items: start;
         height: 100%;
@@ -4962,6 +4963,8 @@ class SaunaPanel extends HTMLElement {
         display: grid;
         gap: ${this.preference("layout_space_13_px")}px;
         padding-top: ${this.preference("layout_space_09_px")}px;
+        max-height: 100%;
+        overflow: auto;
       }
       .settings-navigation button { text-align: left; }
       .settings-configuration-link { display: flex; justify-content: space-between; align-items: center; gap: ${this.preference("layout_space_13_px")}px; padding: ${this.preference("layout_space_18_px")}px; margin-top: ${this.preference("layout_space_13_px")}px; color: inherit; border-top: ${this.preference("border_1_0_px")}px solid var(--sauna-color-border); text-decoration: none; font-size: ${this.preference("font_size_compact_px")}px; }
@@ -9259,18 +9262,19 @@ class SaunaPanel extends HTMLElement {
           true,
         ),
       );
+    // Ohne aktuelle Regeltemperatur fehlt nur der Teil zur Regelung; der Stand der
+    // Erkennung bleibt sichtbar (BF-17).
     const channels = state.detection_channels || [],
+      recognition = !state.session
+        ? "ruht außerhalb einer Sitzung"
+        : channels.length > 1
+          ? "nutzt beide"
+          : channels.length
+            ? `nutzt ${name(channels[0])}`
+            : "nutzt noch keine",
       usage = regulation
-        ? `Regelung und Verlauf nutzen ${name(regulation)}; ${
-            !state.session
-              ? "die Erkennung ruht außerhalb einer Sitzung"
-              : channels.length > 1
-                ? "die Erkennung beide"
-                : channels.length
-                  ? `die Erkennung ${name(channels[0])}`
-                  : "die Erkennung noch keine"
-          }`
-        : "";
+        ? `Regelung und Verlauf nutzen ${name(regulation)}; die Erkennung ${recognition.replace(/^nutzt /, "")}`
+        : `Die Erkennung ${recognition}`;
     return `<section class="card detail-positions" aria-label="Messpositionen" data-position-values><div class="detail-card-head"><h2>Messpositionen</h2>${usage ? `<p class="muted">${usage}</p>` : ""}</div>${columns.length ? `<div class="detail-position-grid">${columns.join("")}</div>` : '<p class="muted">Keine Messwerte verfügbar.</p>'}</section>`;
   }
   // Geräte und Rückmeldungen: Ofen mit Quelle, Heizzeit, Leistung nur mit Sensor (W5),

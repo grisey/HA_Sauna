@@ -320,7 +320,8 @@ Kandidat und jede gemeldete Episode mit ihrem Ergebnis
   gespeicherten Zustandsverlauf: Ruhe, offen, Aufguss, Abklingen, Erholung,
   Heizwechsel.
 - Gewähltes Ereignis: Zeitpunkt, Bedeutung für das Gangmodell (etwa „Eintritt
-  Gang 2“, „Aufguss außerhalb eines Gangs“), Zeit bis zur Entscheidung,
+  Gang 2“, „Aufguss außerhalb eines Gangs“; einem bestätigten Gang ohne
+  eindeutig zugeordneten Eintritt wird zeitlich nichts zugeordnet), Zeit bis zur Entscheidung,
   Sicherheit und Herkunft. Sicherheit ist für Tür auf, Tür zu und Aufguss wie
   für verworfene Kandidaten das Verhältnis des Zustands zur nächstbesten
   Erklärung bei der Entscheidung, etwa „offen 512,3-mal so wahrscheinlich wie

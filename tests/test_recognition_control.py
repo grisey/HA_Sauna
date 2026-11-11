@@ -142,6 +142,27 @@ class RecognitionControlTimelineTests(unittest.TestCase):
         self.assertEqual({e["source"] for e in control["events"]},
                          {"verworfene Öffnung, über die Anwesenheit übernommen"})
 
+    def test_confirmed_gang_without_assigned_entry_takes_no_events(self):
+        # CI1/CI2: ein bestätigter Gang ohne eindeutig zugeordneten Eintritt hat in
+        # project_gang_intervals keinen Beginn. Er zählt, nimmt aber zeitlich keine
+        # Ereignisse auf; die Ansicht lädt (vorher TypeError, HTTP 500).
+        gang = {"gang_id": "g1", "started_at": self.at(10), "ended_at": self.at(600),
+                "recognition_kind": "door_close", "infusion_events": ["i"]}
+        session = {"timeline": {
+            "session_id": "s1", "session_started_at": self.at(0), "completed": [gang],
+            "active": None, "retracted": [], "processed": [
+                {"event_id": "recognition:s1:door_open:20", "session_id": "s1",
+                 "kind": "door_open", "effective_at": self.at(20), "detected_at": self.at(24)},
+                {"event_id": "recognition:s1:infusion:30", "session_id": "s1",
+                 "kind": "infusion", "effective_at": self.at(30), "detected_at": self.at(40)},
+            ],
+        }}
+        control = recognition_control(session, ended_at=self.at(900))
+        self.assertEqual(control["summary"]["gangs"], 1)
+        self.assertEqual(control["summary"]["infusions_in_gangs"], 0)
+        self.assertEqual([e["meaning"] for e in control["events"]],
+                         ["Türvorgang ohne Gang", "Aufguss außerhalb eines Gangs"])
+
     def test_rejected_summary_is_shared_with_the_key_figures(self):
         candidates, episodes = (1.0, 2.0, 3.0), ((True, (1.0,)), (False, (2.0,)))
         session = type("S", (), {

@@ -130,6 +130,11 @@ test("positions show the backend means of the same session only", () => {
   assert.doesNotMatch(p.renderPositionValues(), /im Mittel/);
   p.state.session = null;
   assert.match(p.renderPositionValues(), /die Erkennung ruht außerhalb einer Sitzung/);
+  // Ohne aktuelle Regeltemperatur (veraltete Messwerte) bleibt der Stand der Erkennung.
+  p.state.regulation_temperature_position = null;
+  assert.match(p.renderPositionValues(), /<p class="muted">Die Erkennung ruht außerhalb einer Sitzung<\/p>/);
+  p.state.session = { timeline: { session_id: "s1" } };
+  assert.match(p.renderPositionValues(), /<p class="muted">Die Erkennung nutzt beide<\/p>/);
 });
 
 test("devices name the feedback source, the light mode and power only with a sensor (W5)", () => {

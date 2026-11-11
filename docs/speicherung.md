@@ -240,7 +240,9 @@ Statuszeile, ob alle Messwerte gültig sind, die Zahl aktueller Fehler und den
 Stand. Darunter stehen die Werte je Messposition (Temperatur, relative und
 absolute Feuchte, Gültigkeit und Abstand der letzten beiden Messungen,
 Regelposition) mit der Differenz oben − unten und ihrem zeitgewichteten Mittel
-über die laufende Sitzung und ab dem ersten Bereit; dann Geräte und
+über die laufende Sitzung und ab dem ersten Bereit, dazu die von Regelung und
+Erkennung genutzten Positionen; ohne aktuelle Regeltemperatur steht nur der Stand
+der Erkennung. Dann folgen Geräte und
 Rückmeldungen (Ofen mit Rückmeldequelle, Heizzeit, gemessene Leistung nur mit
 Leistungssensor, Licht mit Modus, Präsenz, Tür, laufende Fristen), die Umgebung,
 Archiv und Start (Sitzungen und Datensätze im Archiv, Dateigröße, Startdauer des
