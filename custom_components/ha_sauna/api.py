@@ -1,8 +1,10 @@
 """Authentifizierte Archiv-/Exportansicht; keine Dateien unter www."""
 
 import asyncio
+import json
 import logging
 from dataclasses import asdict
+from hashlib import sha256
 
 from aiohttp import web
 from homeassistant.auth.permissions.const import POLICY_CONTROL, POLICY_READ
@@ -26,16 +28,17 @@ from .core.display import (
     start_availability,
 )
 from .core.parameters import EDITABLE_DEFINITIONS, LIVE_TEMPERATURE_KEYS, ParameterError
-from .core.power import watts
 from .core.seasons import PARTS as SEASON_PARTS
 from .core.timeline import active_gang_duration_seconds, project_door_cycles, project_gang_intervals
 from .environment import environment_snapshot
 from .log import LEVELS
 from .notifications import async_resolve_recipients
 from .runtime import Configuration
+from . import history_view
+from .history_view import HISTORY_KINDS, PUBLIC_HISTORY_KINDS
 from .presentation import (
+    archive_record_display,
     decision_message,
-    fault_message,
     historical_measurement_context,
     history_measurement_columns,
     issues,
@@ -931,30 +934,49 @@ class ArchiveView(HomeAssistantView):
         projection = request.query.get("projection")
         if projection not in (None, "history"):
             raise web.HTTPBadRequest(text="Unbekannte Archivansicht")
+        resolution = request.query.get("resolution")
+        if resolution not in (None, "overview") or (resolution and projection != "history"):
+            raise web.HTTPBadRequest(text="Unbekannte Auflösung")
+        columns = _bounded_int(request.query.get("columns"), 1, 100000)
+        admin = request["hass_user"].is_admin
         read_options = {"after": after}
         if "energy_after" in request.query:
             read_options["energy_after"] = request.query["energy_after"]
         clock = getattr(runtime, "_clock", None)
         if callable(clock):
             read_options["now"] = clock()
-        if projection == "history":
-            read_options.update(
-                # LZ4: Feuchtewerte neben den Datensätzen; die Spalten setzen sie ein.
-                humidity_values=True,
-                limit=runtime.configuration.parameters.values["archive_history_page_records"],
-                kinds=(
-                    "measurement", "source_snapshot", "phase", "diagnostic",
-                    "detector_trace", "detection", "presence", "presence_source",
-                    "decision", "command", "light_command", "consumer_event",
-                    "source_state", "heating_observation", "illuminance", "notice",
-                    "manual_light", "manual_heater", "heater_override_rejected",
-                    "manual_phase_end", "manual_gang_end", "manual_session_light_end",
-                    "interruption", "session", "calibration", "notification",
-                ) if request["hass_user"].is_admin else (
-                    "measurement", "source_snapshot", "phase",
-                ),
+        view = None
+        if (
+            resolution == "overview" and session_id and after == 0
+            and "energy_after" not in request.query
+        ):
+            # LZ6: abgeschlossene Sitzung aus der gespeicherten Verlaufsansicht, in
+            # einer Antwort; laufende Sitzungen und offene Messfenster lesen Seiten.
+            view = await asyncio.to_thread(
+                runtime.archive.history_view, session_id,
+                now=read_options.get("now"), columns=columns,
             )
-        result = await asyncio.to_thread(runtime.archive.read, session_id, **read_options)
+        if view is not None:
+            result = {
+                "session": view["session"],
+                "measurement_window": view["measurement_window"],
+                "phase_projection": view["phase_projection"],
+                "records": view["records"],
+                "next_after": None,
+            }
+        else:
+            if projection == "history":
+                read_options.update(
+                    # LZ4: Feuchtewerte neben den Datensätzen; die Spalten setzen sie ein.
+                    humidity_values=True,
+                    limit=runtime.configuration.parameters.values[
+                        "archive_history_page_records"
+                    ],
+                    kinds=HISTORY_KINDS if admin else PUBLIC_HISTORY_KINDS,
+                )
+            result = await asyncio.to_thread(
+                runtime.archive.read, session_id, **read_options
+            )
         if result is None:
             raise web.HTTPNotFound()
         if session_id:
@@ -970,12 +992,22 @@ class ArchiveView(HomeAssistantView):
                 session, runtime.configuration.parameters.values["sensor_timeout_seconds"]
             )
             session["measurement_context"] = historical_measurement_context(session)
-            if request["hass_user"].is_admin:
+            names = None
+            if admin:
                 # BN: Namen der Antwortenden zu den Benachrichtigungen der Sitzung.
                 names = await user_names(request.app[KEY_HASS], {
                     record["payload"].get("user_id") for record in result["records"]
                     if record["kind"] == "notification"
                 })
+            etag = None
+            if view is not None:
+                etag = _archive_etag(
+                    view["identity"], admin, view["measurement_resolution"]["bin_ms"],
+                    names,
+                )
+                if etag in request.headers.get("If-None-Match", ""):
+                    return web.Response(status=304, headers=_cache_headers(etag))
+            if admin:
                 for record in result["records"]:
                     if record["kind"] == "notification" and record["payload"].get("user_id"):
                         record["display"] = {"user": names.get(record["payload"]["user_id"])}
@@ -995,68 +1027,21 @@ class ArchiveView(HomeAssistantView):
                     # Their recorded observations remain available; current
                     # instance settings are not historical evidence.
                     session["configuration_model"] = None
-                for record in result["records"]:
-                    if record["kind"] == "diagnostic":
-                        record["payload"]["messages"] = [
-                            fault_message(k, v)
-                            for k, v in record["payload"].get("faults", {}).items()
-                        ]
-                    elif projection == "history" and record["kind"] == "source_state":
-                        payload = record["payload"]
-                        if payload.get("role") == "heater_power":
-                            attributes = payload.get("attributes", {})
-                            record["display"] = {
-                                "power_w": watts(
-                                    payload.get("state"),
-                                    attributes.get("unit_of_measurement"),
-                                )
-                                if attributes.get("device_class") == "power"
-                                else None
-                            }
-                    elif projection == "history" and record["kind"] == "calibration":
-                        record["display"] = {
-                            "reason_text": calibration.INTERRUPTIONS.get(
-                                record["payload"].get("reason")
+                if view is not None:
+                    # Die gespeicherte Ansicht trägt die Anzeige bereits.
+                    result["measurement_columns"] = view["measurement_columns"]
+                else:
+                    for record in result["records"]:
+                        archive_record_display(record, history=projection == "history")
+                    if projection == "history":
+                        # LZ1: Messungen spaltenweise; Originale ohne Projektion.
+                        result["records"], result["measurement_columns"] = (
+                            history_measurement_columns(
+                                result["records"],
+                                configuration=session.get("configuration"),
+                                displays=displays,
                             )
-                        }
-                    elif projection == "history" and record["kind"] == "session":
-                        # State history keeps the recorded values without
-                        # transferring a growing copy of the entire event
-                        # timeline for every snapshot. The unprojected archive
-                        # and authenticated export retain the full originals.
-                        record["projection"] = "session_state"
-                        record["payload"] = {
-                            key: value
-                            for key, value in record["payload"].items()
-                            if key.startswith("temperature_")
-                            or key in {
-                                "operation_enabled",
-                                "operation_off_at",
-                                "ended_at",
-                                "thermostat",
-                                "energy",
-                                "ready_at",
-                                "active_gang_temperature_c",
-                                "next_gang_temperature_c",
-                                "next_gang_temperature_blocked_by",
-                                "configuration",
-                            }
-                        }
-                        energy = record["payload"].get("energy")
-                        if isinstance(energy, dict):
-                            record["payload"]["energy"] = {
-                                key: value
-                                for key, value in energy.items()
-                                if key != "interval_delta"
-                            }
-                if projection == "history":
-                    # LZ1: Messungen spaltenweise; Originale ohne Projektion.
-                    result["records"], result["measurement_columns"] = (
-                        history_measurement_columns(
-                            result["records"], configuration=session.get("configuration"),
-                            displays=displays,
                         )
-                    )
             else:
                 result["session"] = public_session(session)
                 result["phase_projection"] = public_phase_projection(result["phase_projection"])
@@ -1065,7 +1050,14 @@ class ArchiveView(HomeAssistantView):
                     if record["kind"] in {"measurement", "source_snapshot", "phase"}
                 ]
                 records = [result["records"][index] for index in shown]
-                if projection == "history":
+                if view is not None:
+                    records, extra = history_measurement_columns(
+                        records, configuration=session.get("configuration"), public=True,
+                    )
+                    result["measurement_columns"] = public_columns(
+                        view["measurement_columns"], session.get("configuration"), extra,
+                    )
+                elif projection == "history":
                     records, result["measurement_columns"] = history_measurement_columns(
                         records, configuration=session.get("configuration"), public=True,
                         displays=[displays[index] for index in shown],
@@ -1081,7 +1073,94 @@ class ArchiveView(HomeAssistantView):
                     else record
                     for record in records
                 ]
+            if view is not None:
+                result["measurement_resolution"] = view["measurement_resolution"]
+                response = self.json(result)
+                response.headers.update(_cache_headers(etag))
+                return response
         return self.json(result)
+
+
+def _bounded_int(value, minimum, maximum):
+    """Ganzzahliger Abfrageparameter in Grenzen, fehlend ``None``, sonst 400."""
+    if value is None:
+        return None
+    try:
+        number = int(value)
+    except ValueError as error:
+        raise web.HTTPBadRequest() from error
+    if not minimum <= number <= maximum:
+        raise web.HTTPBadRequest()
+    return number
+
+
+def _archive_etag(identity, admin, *details):
+    """LZ6: Kennung einer gespeicherten Verlaufsansicht für den Browserzwischenspeicher.
+
+    Enthält Sitzungsrevision, Archivrevision, Rechenversion, Berechtigung und Stufe;
+    der Browser fragt jedes Mal nach (``no-cache``) und erhält bei Gleichheit 304.
+    """
+    digest = sha256(json.dumps(
+        [identity, bool(admin), *details], sort_keys=True, default=str,
+    ).encode()).hexdigest()
+    return f'"{digest[:32]}"'
+
+
+def _cache_headers(etag):
+    return {"ETag": etag, "Cache-Control": "private, no-cache"}
+
+
+def public_columns(columns, configuration, extra=None):
+    """Öffentliche Spalten der gespeicherten Ansicht; ``extra``: weitere Spalten
+    aus Messungen ohne Quelle, die nur öffentlich spaltenweise gehen."""
+    shown = history_view.public_columns(columns, configuration)
+    if extra and extra["id"]:
+        joined = history_view.join_columns([shown, extra])
+        shown = history_view.merge_columns([joined], joined["roles"])
+    return shown
+
+
+class ArchiveMeasurementsView(HomeAssistantView):
+    """LZ6: volle Messwerte einer abgeschlossenen Sitzung für einen Ausschnitt.
+
+    ``from`` und ``to`` in Millisekunden seit der Epoche (Ende ausgeschlossen);
+    ohne beide alle Messwerte der Sitzung. Format wie ``measurement_columns``.
+    """
+
+    url = "/api/ha_sauna/{entry_id}/archive/measurements"
+    name = "api:ha_sauna:archive_measurements"
+    requires_auth = True
+
+    async def get(self, request, entry_id):
+        require_read(request, entry_id)
+        runtime = runtime_for(request.app[KEY_HASS], entry_id)
+        session_id = request.query.get("session_id")
+        if not session_id or set(request.query) - {"session_id", "from", "to"}:
+            raise web.HTTPBadRequest()
+        start = _bounded_int(request.query.get("from"), -(2**53), 2**53)
+        end = _bounded_int(request.query.get("to"), -(2**53), 2**53)
+        clock = getattr(runtime, "_clock", None)
+        result = await asyncio.to_thread(
+            runtime.archive.history_view_measurements, session_id, start, end,
+            now=clock() if callable(clock) else None,
+        )
+        if result is None:
+            raise web.HTTPNotFound()
+        admin = request["hass_user"].is_admin
+        etag = _archive_etag(result["identity"], admin, start, end)
+        if etag in request.headers.get("If-None-Match", ""):
+            return web.Response(status=304, headers=_cache_headers(etag))
+        columns = result["measurement_columns"]
+        if not admin:
+            columns = public_columns(columns, result["session"].get("configuration"))
+        response = self.json({
+            "session_id": session_id,
+            "from": start,
+            "to": end,
+            "measurement_columns": columns,
+        })
+        response.headers.update(_cache_headers(etag))
+        return response
 
 
 class KeyFiguresView(HomeAssistantView):
@@ -1594,6 +1673,7 @@ def register(hass):
     if data.get("api_registered"):
         return
     hass.http.register_view(ArchiveView)
+    hass.http.register_view(ArchiveMeasurementsView)
     hass.http.register_view(EraseArchiveView)
     hass.http.register_view(ExportView)
     hass.http.register_view(KeyFiguresView)

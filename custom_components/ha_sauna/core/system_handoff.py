@@ -193,8 +193,9 @@ class ArchiveSessionOutput(WireValue):
     """Complete Archive.read session page, with open stored JSON preserved.
 
     ``measurement_columns`` is the column form of the measurements in the
-    history projection of the archive API (LZ1). Other reads carry no such
-    key; the wire value then omits it instead of adding ``None``.
+    history projection of the archive API (LZ1). ``measurement_resolution``
+    describes a stored overview of a finished session (LZ6). Other reads carry
+    no such keys; the wire value then omits them instead of adding ``None``.
     """
 
     session: FrozenMap
@@ -203,20 +204,21 @@ class ArchiveSessionOutput(WireValue):
     records: tuple[ArchiveRecord, ...]
     next_after: int | None
     measurement_columns: FrozenMap | None = None
+    measurement_resolution: FrozenMap | None = None
 
     def __post_init__(self):
         object.__setattr__(self, "session", frozen_map(self.session))
         object.__setattr__(self, "phase_projection", frozen_map(self.phase_projection))
         object.__setattr__(self, "records", tuple(self.records))
-        if self.measurement_columns is not None:
-            object.__setattr__(
-                self, "measurement_columns", frozen_map(self.measurement_columns)
-            )
+        for name in ("measurement_columns", "measurement_resolution"):
+            if getattr(self, name) is not None:
+                object.__setattr__(self, name, frozen_map(getattr(self, name)))
 
     def _wire_value(self):
         values = super()._wire_value()
-        if self.measurement_columns is None:
-            values.pop("measurement_columns")
+        for name in ("measurement_columns", "measurement_resolution"):
+            if values[name] is None:
+                values.pop(name)
         return values
 
     @classmethod

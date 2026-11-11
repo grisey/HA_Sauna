@@ -1,6 +1,7 @@
 """Chromium cold history load through the real authenticated HA archive API."""
 
 import asyncio
+from contextlib import closing
 from datetime import timedelta
 import json
 from pathlib import Path
@@ -20,9 +21,6 @@ from archive_performance_fixture import (
 )
 from harness import retain_session
 
-# Performance-fixture contract with ArchiveView's projection=history page size.
-# A full final page requires one additional empty page to close pagination.
-HISTORY_PAGE_LIMIT = panel_fixture.DEFAULT_PARAMETERS["archive_history_page_records"]
 
 
 class HistoryPerformanceTests(unittest.IsolatedAsyncioTestCase):
@@ -143,6 +141,12 @@ class HistoryPerformanceTests(unittest.IsolatedAsyncioTestCase):
 
         measurements = {}
         for mode in ("before", "after"):
+            # LZ6: The finished session comes as a stored overview. Each variant
+            # computes it from its own page query; the stored view of the other
+            # variant must not answer instead.
+            with closing(sqlite3.connect(self.runtime.archive.path)) as db, db:
+                db.execute("DELETE FROM history_views")
+            self.runtime.archive._view_pending.clear()
             # A document reload destroys the panel's cached records and Path2D
             # objects. Both variants use the same server/database and role.
             await self.page.reload()
@@ -188,7 +192,8 @@ class HistoryPerformanceTests(unittest.IsolatedAsyncioTestCase):
                             }
                             if (m.fullDrawAt == null && !this.historyLoad &&
                                 this.cache.get('volume')?.finalSynced &&
-                                this.chartDataIndex?.indexedCount === expectedRecords &&
+                                this.chartDataIndex?.indexedCount ===
+                                    this.cache.get('volume').records.length &&
                                 curves?.mainPaths.size > 0) {
                                 m.fullDrawAt = performance.now();
                                 requestAnimationFrame(() => requestAnimationFrame(() => {
@@ -251,13 +256,17 @@ class HistoryPerformanceTests(unittest.IsolatedAsyncioTestCase):
                         decodedBodyBytes: pages.reduce((n,e) => n + e.decodedBodySize, 0),
                         records: p.shown.records.length, digest, paintedPixels,
                         indexedRecords: p.chartDataIndex.indexedCount,
+                        overview: p.cache.get('volume').resolution || null,
                         coldCache: pages[0]?.name.endsWith('after=0')
                     };
                 }""")
             self.assertTrue(result["coldCache"])
-            self.assertEqual(result["records"], ORIGINAL_RECORD_COUNT)
-            self.assertEqual(result["indexedRecords"], ORIGINAL_RECORD_COUNT)
-            self.assertEqual(result["pages"], ORIGINAL_RECORD_COUNT // HISTORY_PAGE_LIMIT + 1)
+            # LZ6: one overview response with a subset of the original records.
+            self.assertEqual(result["indexedRecords"], result["records"])
+            self.assertGreater(result["records"], 0)
+            self.assertLess(result["records"], ORIGINAL_RECORD_COUNT)
+            self.assertEqual(result["pages"], 1)
+            self.assertIsNotNone(result["overview"])
             self.assertGreater(result["paintedPixels"], 100)
             self.assertGreater(result["curveCalls"], 0)
             self.assertGreater(result["decodedBodyBytes"], 1_000_000)

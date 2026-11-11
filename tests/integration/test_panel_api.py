@@ -1776,6 +1776,130 @@ class PanelAPITests(unittest.IsolatedAsyncioTestCase):
             sorted(record["id"] for record in columns),
         )
 
+    async def test_finished_session_overview_and_measurements_from_the_stored_view(self):
+        # LZ6: abgeschlossene Sitzung als Übersicht (M4) aus der gespeicherten Ansicht,
+        # volle Werte je Ausschnitt; laufende Fenster und Seitenabrufe wie bisher.
+        import json
+        from dataclasses import replace
+        from datetime import timedelta
+
+        from climate_fixtures import measurement
+        from harness import retain_session
+        from test_history_columns import expand
+
+        from custom_components.ha_sauna.core.history import HISTORY_CONTEXT_SECONDS
+        from custom_components.ha_sauna.core.models import Position, Quantity
+        from custom_components.ha_sauna.core.system_handoff import ArchiveSessionOutput
+        from custom_components.ha_sauna.history_view import epoch_ms
+
+        runtime = self.entry.runtime_data
+        base = runtime._clock()
+        clock = [base]
+        runtime._clock = lambda: clock[0]
+        await runtime.set_operation(True)
+        session_id = runtime.session.session_id
+        retain_session(runtime)
+        bound = runtime.configuration.bindings.values
+        for tenth in range(0, 2400, 5):
+            at = base + timedelta(milliseconds=100 * tenth)
+            for quantity, value in ((Quantity.TEMPERATURE, 70 + tenth % 37 / 4),
+                                    (Quantity.HUMIDITY, 20 + tenth % 23 / 3)):
+                runtime.archive.append("measurement", at, replace(
+                    measurement(Position.UPPER, quantity, value, 0,
+                                source=bound[f"upper_{quantity.value}"]),
+                    received_at=at, measured_at=at,
+                ), session_id)
+        clock[0] = base + timedelta(seconds=240)
+        await runtime.set_operation(False)
+        runtime.controller.finish_session(runtime._clock(), light_after_run=False)
+        await runtime._cycle()
+        self.assertIsNone(runtime.session)
+        await runtime.archive.flush()
+        url = self.base + "/" + self.entry.entry_id + "/archive"
+        overview = {"session_id": session_id, "projection": "history",
+                    "resolution": "overview", "columns": "50", "after": "0"}
+
+        async def read(client, path, params, status=200, headers=None):
+            async with client.get(path, params=params, headers=headers) as response:
+                self.assertEqual(response.status, status, await response.text())
+                return (await response.json() if status == 200 else None), response.headers
+
+        async def pages(client):
+            result, after = [], 0
+            while True:
+                page, _ = await read(client, url, {
+                    "session_id": session_id, "projection": "history", "after": str(after),
+                })
+                result.append(page)
+                if page["next_after"] is None:
+                    return result
+                after = page["next_after"]
+
+        async with ClientSession(headers=self.headers) as admin:
+            # Messfenster noch offen: dieselbe erste Seite wie ohne Übersicht.
+            early, _ = await read(admin, url, overview)
+            self.assertNotIn("measurement_resolution", early)
+            self.assertFalse(early["measurement_window"]["complete"])
+            clock[0] = base + timedelta(seconds=240 + HISTORY_CONTEXT_SECONDS)
+            full = await pages(admin)
+            shown, headers = await read(admin, url, overview)
+            self.assertIsNone(shown["next_after"])
+            resolution = shown["measurement_resolution"]
+            self.assertTrue(resolution["overview"])
+            self.assertEqual(headers["Cache-Control"], "private, no-cache")
+            self.assertEqual(ArchiveSessionOutput.from_result(shown).to_wire(), shown)
+            columns = [record for page in full for record in expand(page["measurement_columns"])]
+            reduced = expand(shown["measurement_columns"])
+            self.assertEqual(resolution["total_rows"], len(columns))
+            self.assertLess(len(reduced), len(columns))
+            by_id = {record["id"]: record for record in columns}
+            # Originalwerte vorhandener Messungen; Spitzen bleiben erhalten.
+            for record in reduced:
+                self.assertEqual(record, by_id[record["id"]])
+            for quantity in ("temperature", "humidity"):
+                values = [record["payload"]["value"] for record in columns
+                          if record["payload"]["quantity"] == quantity]
+                kept = [record["payload"]["value"] for record in reduced
+                        if record["payload"]["quantity"] == quantity]
+                self.assertEqual((min(kept), max(kept)), (min(values), max(values)))
+            self.assertEqual(shown["records"], [record for page in full for record in page["records"]])
+            # Folgeabruf: Browserzwischenspeicher bestätigt die Antwort.
+            _, again = await read(admin, url, overview, status=304,
+                                  headers={"If-None-Match": headers["ETag"]})
+            self.assertEqual(again["ETag"], headers["ETag"])
+            everything, _ = await read(admin, url + "/measurements", {"session_id": session_id})
+            self.assertEqual(expand(everything["measurement_columns"]), columns)
+            start = epoch_ms((base + timedelta(seconds=60)).isoformat())
+            end = epoch_ms((base + timedelta(seconds=90)).isoformat())
+            part, _ = await read(admin, url + "/measurements", {
+                "session_id": session_id, "from": str(start), "to": str(end),
+            })
+            self.assertEqual(
+                [record["id"] for record in expand(part["measurement_columns"])],
+                [record["id"] for record in columns
+                 if start <= epoch_ms(record["payload"]["received_at"]) < end],
+            )
+            for params in ({**overview, "resolution": "alles"}, {**overview, "columns": "0"},
+                           {**overview, "projection": ""}):
+                await read(admin, url, params, status=400)
+            await read(admin, url + "/measurements", {}, status=400)
+            await read(admin, url + "/measurements", {"session_id": "unbekannt"}, status=404)
+        normal = await self.hass.auth.async_create_user("Übersicht lesen", group_ids=[GROUP_ID_USER])
+        token = await self.hass.auth.async_create_refresh_token(normal, client_id="http://localhost/")
+        public_headers = {
+            "Authorization": "Bearer " + self.hass.auth.async_create_access_token(token)
+        }
+        async with ClientSession(headers=public_headers) as public:
+            published, public_cache = await read(public, url, overview)
+            self.assertNotEqual(public_cache["ETag"], headers["ETag"])
+            measured, _ = await read(public, url + "/measurements", {"session_id": session_id})
+        for page in (published, measured):
+            self.assertTrue(all("source" not in role for role in page["measurement_columns"]["roles"]))
+            self.assertNotIn(bound["upper_temperature"], json.dumps(page))
+        self.assertEqual(published["measurement_columns"]["id"], shown["measurement_columns"]["id"])
+        self.assertEqual(sorted(measured["measurement_columns"]["id"]),
+                         sorted(record["id"] for record in columns))
+
     async def test_archive_cursor_rejects_sqlite_overflow(self):
         runtime = self.entry.runtime_data
         await runtime.set_operation(True)

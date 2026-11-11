@@ -38,11 +38,14 @@ Für die zusätzliche Prüfung im echten Browser wird das Panel neu geladen und
 unter „Verlauf“ erstmals eine abgeschlossene Sitzung ausgewählt. Ein vorheriger
 Panelbesuch kann den Sitzungscache bereits gefüllt haben. Im Netzwerkprotokoll
 beginnt ein kalter Ladevorgang mit
-`/api/ha_sauna/<entry_id>/archive?session_id=<session_id>&projection=history&after=0`.
-Die folgenden Seiten verwenden den jeweils gelieferten Cursor. Der letzte
-Antwortwert `next_after: null` markiert das Ende des Seitenlaufs. Die
-Berechtigungsrolle beeinflusst den Umfang der übertragenen Datensatzarten und
-muss beim Vergleich gleich bleiben.
+`/api/ha_sauna/<entry_id>/archive?session_id=<session_id>&projection=history&resolution=overview&columns=<Pixel>&after=0`.
+Eine abgeschlossene Sitzung mit vollständigem Messfenster kommt als
+[Übersicht](../docs/speicherung.md#verlaufsansicht-abgeschlossener-sitzungen) in
+dieser einen Antwort; der erste Abruf rechnet und speichert sie, jeder weitere liest
+sie aus dem Archiv. Sonst verwenden die folgenden Seiten den jeweils gelieferten
+Cursor, und der letzte Antwortwert `next_after: null` markiert das Ende des
+Seitenlaufs. Die Berechtigungsrolle beeinflusst den Umfang der übertragenen
+Datensatzarten und muss beim Vergleich gleich bleiben.
 
 Die Browser-Aufzeichnung umfasst den Beginn dieser ersten Anfrage bis zur
 vollständigen Kurvenzeichnung nach der letzten Seite. Antwortwartezeit,
@@ -64,9 +67,11 @@ zwei Animationsframes. Die zweite Zeit ist keine Messung des Bildschirmscans.
 
 Zusätzlich erfasst der Browser die CPU-Zeit der Kurvenaktualisierung und des
 gesamten Verlaufsrenders, lange Hauptthread-Aufgaben, Seitenzahl sowie
-komprimierte und unkomprimierte Antwortbytes. Die Prüfung verlangt zehn Seiten,
-46.804 indexierte Originaldatensätze, tatsächlich gezeichnete Canvaspixel und
-denselben Datensatzhash vor und nach der Optimierung. Laufzeiten werden als
+komprimierte und unkomprimierte Antwortbytes. Die Prüfung verlangt eine Antwort
+mit Übersicht, weniger indexierte Datensätze als die 46.804 Originale, tatsächlich
+gezeichnete Canvaspixel und denselben Datensatzhash vor und nach der Optimierung;
+vor jeder Variante wird die gespeicherte Ansicht entfernt, damit jede sie mit ihrer
+eigenen Seitenabfrage rechnet. Laufzeiten werden als
 CI-Messwerte ausgegeben; ein physisches HA-Gerät und dessen Netzwerk sind nicht
 Teil dieses Vergleichs. Das Fixture übernimmt nur Setup/Cleanup der vorhandenen
 Browserprüfung und sammelt deren Tests nicht erneut.

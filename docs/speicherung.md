@@ -269,10 +269,42 @@ oder Entwarnungen.
 Laufende Aufzeichnungen werden im Hintergrund in größeren Abständen ergänzt.
 Zeitfenster, Zoom, Markierungen und offene Abschnitte bleiben dabei erhalten.
 **Pos1** im Diagramm übernimmt den inzwischen erweiterten gesamten Zeitraum.
-**Wird geladen** kennzeichnet den ersten Datenabruf. Eine Sitzung wird in Seiten
-geladen; das Diagramm erscheint nach der ersten Seite und vollständig nach der
-letzten. Bei einer fehlgeschlagenen Aktualisierung bleibt der vorhandene Stand mit
-einem Fehlerhinweis sichtbar.
+**Wird geladen** kennzeichnet den ersten Datenabruf. Eine laufende Sitzung wird in
+Seiten geladen; das Diagramm erscheint nach der ersten Seite und vollständig nach der
+letzten. Eine abgeschlossene Sitzung kommt als [Übersicht](#verlaufsansicht-abgeschlossener-sitzungen)
+in einer Antwort. Beim Zoomen lädt der Verlauf die vollen Sekundenwerte des
+Ausschnitts nach, **Details · Erkennung** und **Steuerung** laden alle Werte der
+Sitzung; bis dahin zeichnet der Verlauf mit der Übersicht. Bei einer fehlgeschlagenen
+Aktualisierung bleibt der vorhandene Stand mit einem Fehlerhinweis sichtbar.
+
+### Verlaufsansicht abgeschlossener Sitzungen
+
+Für jede abgeschlossene Sitzung speichert das Archiv die Anzeigedaten des Verlaufs
+in der Tabelle `history_views`, sobald ihr Messfenster vollständig ist (Ende plus
+`history_context_seconds`): Sitzungsstand, Messfenster, Phasen, die übrigen
+Datensätze der Verlaufsprojektion mit ihrer Anzeige und alle Messwerte mit
+absoluter Feuchte und Gültigkeit in Zeitabschnitten von rund 17,5 Minuten
+(2²⁰ ms). Gerechnet wird nach dem Start von Home Assistant im Hintergrund (nach den
+Kennzahlen, neueste Sitzung zuerst), nach dem Ende einer Sitzung, sobald ihr
+Messfenster voll ist, und sonst beim ersten Abruf. Die Vorbereitung endet vor der
+nächsten Sitzung, wenn das Archiv schließt oder für ein Backup anhält.
+
+Ein Eintrag gilt nur zu seiner Kennung aus Rechenversion, Archivrevision, letzter
+Änderung der Sitzung und letzter Datensatz-ID der Sitzung. Löschen, Zurücksetzen,
+Kennzeichnen als Testbetrieb, die Bereinigung beim Start und ein Neuaufbau ändern
+die Archivrevision; Löschen und Zurücksetzen entfernen die Einträge. Laufende
+Sitzungen und Sitzungen mit offenem Messfenster werden wie bisher seitenweise
+gelesen.
+
+Die Übersicht enthält je Messreihe (Temperatur, relative und absolute Feuchte je
+Position) und Zeitabschnitt den ersten, letzten, kleinsten und größten Wert (M4).
+Die Abschnitte sind Zweierpotenzen in Millisekunden; gespeichert werden 2048
+Abschnitte über das Messfenster und sechs gröbere Stufen. Das Panel fasst seine
+Kurven ebenso in Zweierpotenz-Abschnitten je CSS-Pixel zusammen; liefert der Server
+die gröbste Stufe, die für die Breite der Kurvenfläche noch aus ganzen Abschnitten
+des Panels besteht, zeichnet das Panel dieselben Punkte wie mit allen Werten.
+Spitzen bleiben erhalten; alle Werte sind Originalwerte vorhandener Messungen. Die
+Abschnitte an Anfang und Ende des Messfensters kommen vollständig.
 
 **Details** (Administratoren) hat vier Unteransichten. **Zustand** zeigt in einer
 Statuszeile, ob alle Messwerte gültig sind, die Zahl aktueller Fehler und den
@@ -370,6 +402,7 @@ für die jeweilige Sauna (`entry_id`).
 | Endpunkt | Zugriff und Bedeutung |
 | --- | --- |
 | `GET /api/ha_sauna/{entry_id}/archive` | Leserechte; ohne `session_id` die Sitzungsliste, mit `session_id` Sitzungsstand und Datensätze. |
+| `GET /api/ha_sauna/{entry_id}/archive/measurements?session_id=…` | Leserechte; alle Messwerte einer abgeschlossenen Sitzung aus der gespeicherten [Verlaufsansicht](#verlaufsansicht-abgeschlossener-sitzungen) im Format von `measurement_columns`, mit `from` und `to` (Millisekunden seit 1970, Ende ausgeschlossen) nur die Messungen mit Empfangszeit darin. Ohne `session_id` oder mit anderen Parametern 400; unbekannte Sitzung oder offenes Messfenster 404. |
 | `GET /api/ha_sauna/{entry_id}/export` | Administrator; ZIP-Export als fortlaufende Übertragung. Mit `check=1` nur die Prüfung bis zum festgelegten Stand, Antwort `{"success":true}`. Fehler vor Beginn der Übertragung als JSON `{"error":"…"}`; ein bereits laufender Export oder ein Abbruch durch ein Backup ergibt 409. |
 | `POST /api/ha_sauna/{entry_id}/archive/erase` | Administrator; `{"session_id":"…"}` löscht eine Sitzung, `{"reset":true}` das gesamte Archiv. |
 | `POST /api/ha_sauna/{entry_id}/archive/label` | Administrator; `{"session_id":"…","test":true}` kennzeichnet eine abgeschlossene Sitzung als [Testbetrieb](kennzahlen.md#testbetrieb), `false` hebt das auf. Unbekannte Sitzung 404, laufende 409. |
@@ -395,6 +428,25 @@ In der Verlaufsprojektion stehen Messungen und Anfangsmessungen spaltenweise unt
 
 Originalwert, Messzeit und Sensorkennung liefert die Abfrage ohne Projektion.
 Messungen anderer Form bleiben einzelne Datensätze unter `records`.
+
+Mit `resolution=overview` (nur mit `projection=history`, `after=0` und ohne
+`energy_after`) liefert das Archiv eine abgeschlossene Sitzung mit vollständigem
+Messfenster aus der gespeicherten Verlaufsansicht: alle übrigen Datensätze in einer
+Antwort (`next_after: null`) und unter `measurement_columns` die Übersicht. `columns`
+nennt die Pixel der Kurvenfläche (1 bis 100.000); ohne `columns` gilt die feinste
+gespeicherte Stufe. `measurement_resolution` beschreibt die Antwort:
+
+| Feld | Inhalt |
+| --- | --- |
+| `overview` | `true`, wenn nicht alle Messungen geliefert sind. |
+| `bin_ms` | Abschnittsbreite der gelieferten Stufe. Das Panel lädt nach, sobald seine eigene Breite kleiner ist. |
+| `columns`, `chunk_ms` | Gespeicherte Abschnitte über das Messfenster, Zeitabschnitt der vollen Werte. |
+| `rows`, `total_rows` | Gelieferte und alle Messungen der Sitzung. |
+
+Für andere Sitzungen gilt die Seitenabfrage ohne `measurement_resolution`.
+Antworten aus der gespeicherten Ansicht tragen ein `ETag` aus Sitzungs- und
+Archivrevision, Rechenversion, Berechtigung und Stufe und `Cache-Control: private,
+no-cache`; der Browser fragt jedes Mal nach und erhält bei unveränderter Ansicht 304.
 
 Normale Benutzer erhalten Messwerte, Quellenzustände und Phasen.
 Quellen-IDs, Konfiguration und Diagnosedaten sind Administratoren vorbehalten.

@@ -213,6 +213,18 @@ class ArchiveOutputTests(unittest.IsolatedAsyncioTestCase):
             output.measurement_columns["id"] = ()
         with self.assertRaises(TypeError):
             ArchiveSessionOutput.from_result({**expected, "measurement_columns": [99]})
+        # LZ6: Übersicht einer abgeschlossenen Sitzung mit ihrer Auflösung.
+        result = deepcopy(expected)
+        result["measurement_resolution"] = {
+            "overview": True, "bin_ms": 32768, "columns": 2048, "chunk_ms": 1048576,
+            "rows": 1, "total_rows": 3,
+        }
+        overview = deepcopy(result)
+        output = ArchiveSessionOutput.from_result(result)
+        result["measurement_resolution"]["bin_ms"] = 1
+        self.assertEqual(output.to_wire(), overview)
+        self.assertIsNone(plain_read.measurement_resolution)
+        self.assertNotIn("measurement_resolution", plain_read.to_wire())
 
     async def test_pagination_keeps_the_supplied_cursor_and_complete_record_frame(self):
         result = self.archive.read("s", now=at(3), limit=1)

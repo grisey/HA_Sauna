@@ -7134,6 +7134,140 @@ class SaunaPanel extends HTMLElement {
     }
     return { additions, cursorRecords };
   }
+  // LZ6: Übersicht abgeschlossener Sitzungen (M4) und volle Werte für Ausschnitte.
+  historyOverviewQuery() {
+    const width = this.$("#plots")?.getBoundingClientRect?.().width;
+    return `&resolution=overview${Number.isFinite(width) && width >= 1 ? `&columns=${Math.ceil(width)}` : ""}`;
+  }
+  updateHistoryResolution(cache, resolution) {
+    if (!resolution || typeof resolution !== "object") return;
+    const bin = Number(resolution.bin_ms);
+    if (!resolution.overview || !Number.isSafeInteger(bin) || bin < 1) {
+      // Die Antwort enthält alle Messwerte.
+      if (cache.resolution) cache.resolution.all = true;
+      return;
+    }
+    const current = cache.resolution;
+    cache.resolution = {
+      ...current,
+      // Feinste Stufe, mit der die ganze Sitzung exakt vorliegt.
+      binMs: current ? Math.min(current.binMs, bin) : bin,
+      // Ausrichtung nachgeladener Ausschnitte: gröbste gelieferte Stufe.
+      alignMs: current ? Math.max(current.alignMs, bin) : bin,
+      ranges: current?.ranges || [],
+      all: !!current?.all,
+      failed: null,
+    };
+  }
+  historyResolutionNeed(cache) {
+    const resolution = cache?.resolution;
+    if (!resolution || resolution.all) return null;
+    if (
+      this.view === "diagnostics" ||
+      (this.navigation?.main === "details" &&
+        this.navigation.detail === "detail-history")
+    )
+      // Erkennung mittelt je Bildspalte, Steuerung zeigt Einzelbelege: alle Werte.
+      return { kind: "all", key: "all" };
+    const domain = this.historyDomain(),
+      [start, end] = this.window || domain;
+    if (start <= domain[0] && end >= domain[1]) {
+      const pixels = this.historyCurvePixels;
+      if (!Number.isFinite(pixels)) return null;
+      const width = Math.max(1, 2 ** Math.ceil(Math.log2((end - start) / pixels || 1))),
+        key = `overview:${Math.ceil(pixels)}`;
+      if (width >= resolution.binMs) return null;
+      // Hat die Übersicht für diese Breite keine feinere Stufe: alle Werte.
+      return resolution.overviewKey === key
+        ? { kind: "all", key: "all" }
+        : { kind: "overview", key };
+    }
+    const align = resolution.alignMs,
+      from = (Math.floor(start / align) - 1) * align,
+      to = (Math.floor(end / align) + 2) * align;
+    let covered = from;
+    for (const [left, right] of resolution.ranges)
+      if (left <= covered && right > covered) covered = right;
+    return covered >= to ? null : { kind: "range", from, to, key: `${from}:${to}` };
+  }
+  ensureHistoryResolution() {
+    const id = this.shown?.session?.timeline?.session_id,
+      cache = id ? this.cache.get(id) : null,
+      need = this.historyResolutionNeed(cache);
+    if (!need || this.historyMeasurementLoad || cache.resolution.failed === need.key)
+      return;
+    const entry = this.entry,
+      projection = this.historyProjection(),
+      load = { key: need.key, sessionId: id };
+    this.historyMeasurementLoad = load;
+    load.promise = (async () => {
+      try {
+        let records;
+        if (need.kind === "overview") {
+          const page = await this.api(
+            `/${entry}/archive?session_id=${encodeURIComponent(id)}&projection=history&resolution=overview&columns=${Math.ceil(this.historyCurvePixels)}&after=0`,
+          );
+          records = historyPageRecords(page);
+          if (entry === this.entry && cache.accessProjection === projection) {
+            this.updateHistoryResolution(cache, page.measurement_resolution);
+            if (cache.resolution) cache.resolution.overviewKey = need.key;
+          }
+        } else {
+          const bounds =
+              need.kind === "range" ? `&from=${need.from}&to=${need.to}` : "",
+            page = await this.api(
+              `/${entry}/archive/measurements?session_id=${encodeURIComponent(id)}${bounds}`,
+            );
+          records = historyPageRecords({
+            records: [],
+            measurement_columns: page.measurement_columns,
+          });
+          if (entry === this.entry && cache.accessProjection === projection) {
+            if (need.kind === "all") cache.resolution.all = true;
+            else
+              cache.resolution.ranges = [
+                ...cache.resolution.ranges,
+                [need.from, need.to],
+              ].sort((left, right) => left[0] - right[0]);
+          }
+        }
+        if (entry !== this.entry || cache.accessProjection !== projection) return;
+        this.mergeHistoryCacheRecords(cache, records);
+      } catch (error) {
+        if (cache.resolution) cache.resolution.failed = need.key;
+        if (this.shown?.session?.timeline?.session_id === id)
+          this.message(error, "history");
+      } finally {
+        if (this.historyMeasurementLoad === load) this.historyMeasurementLoad = null;
+      }
+      if (this.shown?.session?.timeline?.session_id === id) this.showHistoryCache();
+      // Auch für eine inzwischen gewählte Sitzung: ihr Bedarf folgt beim Zeichnen.
+      if (this.shown && !this.$("#history")?.hidden) this.drawHistory("archive");
+    })();
+  }
+  mergeHistoryCacheRecords(cache, records) {
+    // Vereinigung nach ID: dieselben Originale aus Übersicht und Ausschnitt einmal.
+    const additions = records
+      .filter((record) => record.id != null && !cache.recordIds.has(record.id))
+      .sort((left, right) => left.id - right.id);
+    if (!additions.length) return;
+    const merged = [];
+    let left = 0,
+      right = 0;
+    while (left < cache.records.length || right < additions.length)
+      merged.push(
+        right >= additions.length ||
+          (left < cache.records.length &&
+            !(cache.records[left].id > additions[right].id))
+          ? cache.records[left++]
+          : additions[right++],
+      );
+    for (const record of additions) cache.recordIds.add(record.id);
+    cache.records = merged;
+    cache.recordsRevision = (cache.recordsRevision || 0) + 1;
+    cache.measurementRevision = (cache.measurementRevision || 0) + 1;
+    this.invalidateHistoryIndex();
+  }
   historyCacheNeedsFetch(cache) {
     return (
       !cache.pageRunLoaded ||
@@ -7354,8 +7488,14 @@ class SaunaPanel extends HTMLElement {
                 transport?.horizon && !transport.bootstrapNeeded
                   ? `&energy_after=${encodeURIComponent(transport.horizon)}`
                   : "",
+              // LZ6: Ein erster Abruf erhält eine abgeschlossene Sitzung als Übersicht
+              // für die Breite der Kurvenfläche; laufende Sitzungen kommen in Seiten.
+              overview =
+                after === 0 && !energyAfter && !cache.records.length
+                  ? this.historyOverviewQuery()
+                  : "",
               page = await this.api(
-                `/${entry}/archive?session_id=${encodeURIComponent(id)}&projection=history&after=${after}${energyAfter}`,
+                `/${entry}/archive?session_id=${encodeURIComponent(id)}&projection=history${overview}&after=${after}${energyAfter}`,
               );
             if (!currentFor(id)) return;
             // Persist each complete page before the next request. A failed
@@ -7376,6 +7516,7 @@ class SaunaPanel extends HTMLElement {
                 continuation ??
                 Math.max(after, ...cursorRecords.map((record) => record.id));
             this.updateHistoryCacheMetadata(cache, page);
+            this.updateHistoryResolution(cache, page.measurement_resolution);
             cache.after = next;
             more = continuation != null;
             cache.pageRunLoaded = !more;
@@ -12945,6 +13086,9 @@ class SaunaPanel extends HTMLElement {
     const timeZone = localTimeZone();
     const { session, records } = this.shown,
       t = session.timeline;
+    // LZ6: volle Werte für Ausschnitt oder Details nachladen; gezeichnet wird bis
+    // dahin mit der Übersicht.
+    this.ensureHistoryResolution();
     if (
       this.chartDataIndex?.records !== records ||
       this.chartDataIndex.indexedCount !== records.length
@@ -12991,6 +13135,8 @@ class SaunaPanel extends HTMLElement {
     const gangs = [...t.completed, ...(t.active ? [t.active] : [])];
     this.updateHistoryTimelineRevision(session);
     this.historyChart.render(reasons, session, gangs);
+    // Erst jetzt ist die Breite der Kurvenfläche bekannt (Stufe der Übersicht).
+    this.ensureHistoryResolution();
     // Gangtabelle (toter Code) und Ereignisliste entfallen: die Ereignisse stehen im
     // Ereignisband und mit ihren Zeiten in der Auswahl (Umzugstabelle Entwurf B).
     if (this.historyGangKey !== identity) {
@@ -15540,6 +15686,11 @@ class SaunaPanel extends HTMLElement {
         lo = Math.min(lo, step.value);
         hi = Math.max(hi, step.value);
       }
+    // LZ6: Pixel der Kurvenfläche, nach denen das Panel Abschnitte bildet.
+    this.historyCurvePixels = Math.max(
+      1,
+      ((geometry.right - geometry.left) * cssWidth) / geometry.width,
+    );
     for (const position of positions)
       for (const quantity of plant ? ["temperature"] : ["temperature", "humidity"]) {
         const entry = this.historyPreparedSeries(
@@ -15548,7 +15699,7 @@ class SaunaPanel extends HTMLElement {
           start,
           end,
           ttl,
-          Math.max(1, ((geometry.right - geometry.left) * cssWidth) / geometry.width),
+          this.historyCurvePixels,
           chart.prepared,
         );
         series.set(`${position}:${quantity}`, entry);

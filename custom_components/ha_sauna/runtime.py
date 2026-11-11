@@ -7,7 +7,7 @@ import logging
 import sqlite3
 from collections import deque
 from collections.abc import Callable, Mapping
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, suppress
 from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime, timedelta
 from math import isfinite
@@ -550,6 +550,10 @@ class SaunaRuntime:
         self._presence_source_selection = PresenceSourceSelection(configuration.presence_source)
         self._lock = asyncio.Lock()
         self._tick_pending = False
+        # LZ6: Vorbereitung der Verlaufsansichten, höchstens eine zur Zeit; erst nach
+        # dem Start von Home Assistant (prepare_after_start).
+        self._history_view_task = None
+        self._history_views_started = False
         self._pending_device_inputs = deque()
         self._climate_stream = SampleStream()
         self._device_input_pending = False
@@ -3006,6 +3010,14 @@ class SaunaRuntime:
                     except ValueError as error:
                         self._record_physical_rejection(error)
                 await self._cycle()
+                archive = self.archive
+                if (
+                    self._history_views_started and archive is not None
+                    and archive.history_views_due(self._clock())
+                ):
+                    # LZ6: Messfenster einer beendeten Sitzung voll oder neue
+                    # Archivrevision: Verlaufsansichten im Hintergrund rechnen.
+                    self._start_history_view_preparation()
         finally:
             self._tick_pending = False
 
@@ -3049,6 +3061,39 @@ class SaunaRuntime:
         except (sqlite3.Error, OSError, RuntimeError, ValueError) as error:
             # Anfragen rechnen dann selbst; der Fehler wird nur protokolliert.
             self.log.error("key_figures", message=f"Kennzahlen nicht vorbereitet: {error}")
+
+    async def prepare_history_views(self, _hass=None) -> None:
+        """LZ6: Verlaufsansichten der abgeschlossenen Sitzungen rechnen und speichern.
+
+        Ein Fehler hier ändert nichts an der Anzeige; ein Abruf rechnet dann selbst.
+        """
+        archive = self.archive
+        if archive is None or self.closed:
+            return
+        try:
+            await asyncio.to_thread(archive.prepare_history_views, now=self._clock())
+        except (sqlite3.Error, OSError, RuntimeError, ValueError) as error:
+            self.log.error(
+                "history_views", message=f"Verlaufsansichten nicht vorbereitet: {error}"
+            )
+
+    def _start_history_view_preparation(self) -> None:
+        task = self._history_view_task
+        if task is not None and not task.done():
+            # Eine laufende Vorbereitung sieht die neue Fälligkeit beim nächsten Takt.
+            self.archive._view_due[None] = None
+            return
+        self._history_view_task = asyncio.create_task(
+            self.prepare_history_views(), name="ha_sauna_history_views"
+        )
+
+    async def prepare_after_start(self, _hass=None) -> None:
+        """Nach dem HA-Start: Kennzahlen (LZ2), dann Verlaufsansichten (LZ6)."""
+        await self.prepare_key_figures()
+        self._history_views_started = True
+        if self.archive is not None and not self.closed:
+            self._start_history_view_preparation()
+            await asyncio.shield(self._history_view_task)
 
     def on_close(self, unsubscribe: Callable[[], None]) -> None:
         self._require_open()
@@ -3180,6 +3225,11 @@ class SaunaRuntime:
                     await self.archive.close()
                 except Exception as error:
                     failures.append(error)
+                task = self._history_view_task
+                if task is not None and not task.done():
+                    # LZ6: Die Vorbereitung endet nach der laufenden Sitzung (Archiv zu).
+                    with suppress(asyncio.CancelledError):
+                        await task
             if failures:
                 raise ExceptionGroup(
                     "Abmeldung der Sauna-Laufzeit fehlgeschlagen", failures

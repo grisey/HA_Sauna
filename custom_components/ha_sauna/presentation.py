@@ -5,7 +5,9 @@ from collections.abc import Mapping
 from math import isfinite
 
 from .bindings import Bindings
+from .core import calibration
 from .core.parameters import BY_KEY, LIVE_TEMPERATURE_KEYS
+from .core.power import watts
 from .history_humidity import attach_display
 
 PHASES = {
@@ -94,6 +96,55 @@ def fault_resolved(key):
         "start_rejected": "Startvoraussetzungen",
     }.get(key, "Gerätediagnose")
     return subject + ": Der vorherige Fehlerhinweis ist nicht mehr aktiv."
+
+
+# Felder eines Sitzungsstands in der Verlaufsprojektion (``projection: session_state``).
+_SESSION_STATE_KEYS = frozenset({
+    "operation_enabled", "operation_off_at", "ended_at", "thermostat", "energy",
+    "ready_at", "active_gang_temperature_c", "next_gang_temperature_c",
+    "next_gang_temperature_blocked_by", "configuration",
+})
+
+
+def archive_record_display(record, *, history):
+    """Anzeige eines Archivdatensatzes für Administratoren, ohne Bezug zur Anfrage.
+
+    Diagnosen erhalten ihre Meldungstexte. In der Verlaufsprojektion (``history``)
+    zusätzlich: gemessene Leistung, Grund einer Kalibrierunterbrechung und
+    Sitzungsstände ohne die wachsende Zeitleiste; die Abfrage ohne Projektion und
+    der Export behalten die Originale. Ändert den Datensatz an Ort und Stelle.
+    """
+    kind = record["kind"]
+    if kind == "diagnostic":
+        record["payload"]["messages"] = [
+            fault_message(key, value)
+            for key, value in record["payload"].get("faults", {}).items()
+        ]
+    elif not history:
+        return
+    elif kind == "source_state":
+        payload = record["payload"]
+        if payload.get("role") == "heater_power":
+            attributes = payload.get("attributes", {})
+            record["display"] = {
+                "power_w": watts(payload.get("state"), attributes.get("unit_of_measurement"))
+                if attributes.get("device_class") == "power" else None
+            }
+    elif kind == "calibration":
+        record["display"] = {
+            "reason_text": calibration.INTERRUPTIONS.get(record["payload"].get("reason"))
+        }
+    elif kind == "session":
+        record["projection"] = "session_state"
+        record["payload"] = {
+            key: value for key, value in record["payload"].items()
+            if key.startswith("temperature_") or key in _SESSION_STATE_KEYS
+        }
+        energy = record["payload"].get("energy")
+        if isinstance(energy, dict):
+            record["payload"]["energy"] = {
+                key: value for key, value in energy.items() if key != "interval_delta"
+            }
 
 
 def fault_message(key, value):

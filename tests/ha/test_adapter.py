@@ -74,8 +74,9 @@ class AdapterTests(unittest.IsolatedAsyncioTestCase):
         self.hass = SimpleNamespace(
             data={},
             # HA führt state immer; Einträge werden beim Hochfahren eingerichtet, also
-            # vor EVENT_HOMEASSISTANT_STARTED. async_at_started (Vorrechnen der
-            # Kennzahlen, LZ2) meldet sich dann mit async_listen_once an.
+            # vor EVENT_HOMEASSISTANT_STARTED. async_at_started (Vorbereitung nach
+            # dem Start: Kennzahlen LZ2, Verlaufsansichten LZ6) meldet sich dann mit
+            # async_listen_once an.
             state=CoreState.not_running,
             http=SimpleNamespace(register_view=MagicMock(), async_register_static_paths=AsyncMock()),
             # HA-Bus: async_listen nimmt auch event_filter und run_immediately an; die
@@ -1049,7 +1050,7 @@ class AdapterTests(unittest.IsolatedAsyncioTestCase):
         with patch("custom_components.ha_sauna.device.HADevice.start", new_callable=AsyncMock), patch("homeassistant.helpers.event.async_track_time_interval", return_value=lambda: None):
             self.assertTrue(await async_setup_entry(self.hass, self.entry))
         self.assertIsNone(self.entry.runtime_data.session)
-        # Das Vorrechnen der Kennzahlen wartet auf den HA-Start und endet mit dem Entladen.
+        # Die Vorbereitung nach dem Start wartet auf den HA-Start und endet mit dem Entladen.
         started = [unsubscribe for event_type, _listener, unsubscribe in self.once_listeners
                    if event_type == EVENT_HOMEASSISTANT_STARTED]
         self.assertEqual(len(started), 1)

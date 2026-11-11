@@ -599,7 +599,13 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
                     pending_routes.add(task)
                     try:
                         if route.request.url.endswith("after=0"):
-                            await route.continue_()
+                            # LZ6: Abgeschlossene Sitzungen kämen als Übersicht in einer
+                            # Antwort. Dieser Fall prüft die Bedienung während eines
+                            # Seitenlaufs (wie bei laufenden Sitzungen): Seiten anfordern.
+                            url = route.request.url
+                            for parameter in ("resolution", "columns"):
+                                url = re.sub(rf"&{parameter}=[^&]*", "", url)
+                            await route.continue_(url=url)
                             return
                         response = await route.fetch()
                         entered.set()

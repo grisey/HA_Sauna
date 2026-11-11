@@ -12,6 +12,7 @@ import sqlite3
 import threading
 import time
 import zipfile
+import zlib
 from collections import OrderedDict, deque
 from collections.abc import Mapping
 from contextlib import closing, suppress
@@ -22,6 +23,7 @@ from hashlib import sha256
 from math import isfinite
 from pathlib import Path
 
+from . import history_view
 from .core import calibration_runs, recognition_archive
 from .core.history import HISTORY_CONTEXT_SECONDS, measurement_window
 from .core.key_figure_display import present_session, present_statistics
@@ -40,6 +42,7 @@ from .core.phases import project_archive, project_session
 from .core.recognition_control import recognition_control
 from .history_humidity import project_absolute_humidity, read_originals
 from .key_figure_parameters import door_sensor_lag
+from .presentation import archive_record_display, history_measurement_columns
 
 _LOGGER = logging.getLogger(__name__)
 _CONFIGURATION_READ_CACHE_ENTRIES = 64
@@ -398,9 +401,18 @@ class Archive:
         self.start_seconds = None
         # K-Z2 (B4c): Temperaturmessungen der laufenden Sitzung, fortgeschrieben.
         self._difference_points = None
+        # LZ6: gespeicherte Verlaufsansichten. Gerechnete Teile warten hier bis zum
+        # Speichern durch den Schreiber; eine Rechnung je Sitzung zur Zeit.
+        self._loop = None
+        self._view_locks = {}
+        self._view_pending = {}
+        self._view_pending_lock = threading.Lock()
+        # Fälligkeit der Vorbereitung: Sitzung -> Ende ihres Messfensters; None = sofort.
+        self._view_due = {}
 
     async def start(self):
         began = time.monotonic()
+        self._loop = asyncio.get_running_loop()
         await asyncio.to_thread(self._initialize)
         # B4c: Startdauer des Archivs für Details · Zustand.
         self.start_seconds = time.monotonic() - began
@@ -448,6 +460,10 @@ class Archive:
                 CREATE TABLE IF NOT EXISTS consumer_receipts (
                     entry_id TEXT NOT NULL, event_id TEXT NOT NULL,
                     PRIMARY KEY(entry_id,event_id));
+                CREATE TABLE IF NOT EXISTS history_views (
+                    entry_id TEXT NOT NULL, session_id TEXT NOT NULL, part INTEGER NOT NULL,
+                    identity TEXT NOT NULL, data BLOB NOT NULL,
+                    PRIMARY KEY(entry_id,session_id,part));
             """)
             # Additive migration: historical inline payloads and IDs stay intact.
             # The version table, both nullable references and schema marker commit
@@ -619,6 +635,20 @@ class Archive:
             try:
                 if kind == "stop":
                     return
+                if kind == "view":
+                    # LZ6: gespeicherte Verlaufsansicht in Schreiberreihenfolge; ein
+                    # Fehler hier ist kein Archivfehler, die Ansicht wird neu gerechnet.
+                    stored = False
+                    if not self.failed_records:
+                        try:
+                            stored = await asyncio.to_thread(
+                                self._store_history_view, *payload[:-1]
+                            )
+                        except (sqlite3.Error, OSError, ValueError) as error:
+                            _LOGGER.warning("Verlaufsansicht nicht gespeichert: %s", error)
+                    if not payload[-1].done():
+                        payload[-1].set_result(stored)
+                    continue
                 future = payload[-1] if kind in {"erase", "label"} else payload
                 if kind in {"fence", "pause", "erase", "label"} and future.cancelled():
                     continue
@@ -724,6 +754,8 @@ class Archive:
             configuration_id = None
             if kind == "session":
                 data = json.loads(payload)
+                if data.get("ended_at"):
+                    self._history_view_due(session_id, data)
                 if "configuration" in data:
                     configuration_id = self._configuration_version(db, data.pop("configuration"))
                     payload = encoded_plain(data)
@@ -788,6 +820,8 @@ class Archive:
                    (self.entry_id, session_id))
         db.execute("DELETE FROM sessions WHERE entry_id=? AND session_id=?",
                    (self.entry_id, session_id))
+        db.execute("DELETE FROM history_views WHERE entry_id=? AND session_id=?",
+                   (self.entry_id, session_id))
         self._energy_enqueued.pop(session_id, None)
 
     def _prune_context(self, db, now, *, incremental=False):
@@ -841,6 +875,9 @@ class Archive:
         revision = self.revision + 1
         db.execute("INSERT OR REPLACE INTO metadata VALUES ('revision', ?)",
                    (str(revision),))
+        # LZ6: Eine neue Archivrevision macht die gespeicherten Verlaufsansichten
+        # ungültig; die Vorbereitung rechnet sie im Hintergrund neu.
+        self._view_due[None] = None
         return revision
 
     def _erase(self, session_id, reset, now=None):
@@ -854,6 +891,7 @@ class Archive:
                 db.execute("DELETE FROM records WHERE entry_id=?", (self.entry_id,))
                 db.execute("DELETE FROM sessions WHERE entry_id=?", (self.entry_id,))
                 db.execute("DELETE FROM consumer_receipts WHERE entry_id=?", (self.entry_id,))
+                db.execute("DELETE FROM history_views WHERE entry_id=?", (self.entry_id,))
                 self._energy_enqueued.clear()
                 self._context_pruned_before = None
             else:
@@ -975,6 +1013,11 @@ class Archive:
         finally:
             self.queue.put_nowait(("stop", None))
             await self.worker
+            # LZ6: nicht mehr gespeicherte Verlaufsansichten freigeben.
+            while not self.queue.empty():
+                kind, payload = self.queue.get_nowait()
+                if kind == "view" and not payload[-1].done():
+                    payload[-1].set_result(False)
 
     def read(
         self, session_id=None, *, after=0, limit=None, kinds=None, now=None,
@@ -1636,6 +1679,367 @@ class Archive:
         """
         self.key_figures(volume_m3=volume_m3, price_eur_per_kwh=price_eur_per_kwh,
                          stop=lambda: self.closed or not self.resume.is_set())
+
+    # LZ6: Verlaufsansicht abgeschlossener Sitzungen (history_view.py).
+
+    def _view_lock(self, session_id):
+        """Sperre je Sitzung: dieselbe Ansicht wird nur einmal zugleich gerechnet."""
+        with self._view_pending_lock:
+            return self._view_locks.setdefault(session_id, threading.Lock())
+
+    def _history_view_due(self, session_id, data):
+        """Vorbereitung fällig, sobald das Messfenster der beendeten Sitzung voll ist."""
+        definition = BY_KEY["history_context_seconds"]
+        configuration = data.get("configuration")
+        parameters = configuration.get("parameters") if isinstance(configuration, Mapping) else None
+        context = parameters.get(definition.key) if isinstance(parameters, Mapping) else None
+        try:
+            seconds = definition.validate(definition.default if context is None else context)
+            due = datetime.fromisoformat(data["ended_at"]) + timedelta(seconds=seconds)
+        except (TypeError, ValueError):
+            due = None
+        self._view_due[session_id] = due
+
+    def history_views_due(self, now):
+        """True, wenn eine Verlaufsansicht zu rechnen ist; die Fälligkeit gilt dann als erledigt."""
+        # Der Schreiber trägt Fälligkeiten in seinem Thread ein: Kopie lesen.
+        due = [key for key, at in list(self._view_due.items()) if at is None or at <= now]
+        for key in due:
+            self._view_due.pop(key, None)
+        return bool(due)
+
+    def _history_view_state(self, db, session_id, now=None):
+        """Kennung der gespeicherten Ansicht und ob das Messfenster vollständig ist.
+
+        Ungültig wird eine Ansicht mit der Rechenversion, der Archivrevision (Löschen,
+        Kennzeichnen, Bereinigen, Neuaufbau) und jeder neuen Sitzungsrevision.
+        """
+        column = self._configuration_column(db)
+        stored = "json_extract(s.payload,'$.configuration.parameters.history_context_seconds')"
+        context = (
+            f"COALESCE(json_extract(c.payload,'$.parameters.history_context_seconds'),{stored})"
+            if column else stored
+        )
+        join = (
+            " LEFT JOIN configuration_versions c ON c.id=s.configuration_id "
+            "AND c.entry_id=s.entry_id" if column else ""
+        )
+        row = db.execute(
+            f"SELECT s.started_at,s.updated_at,s.ended_at,{context},"
+            "(SELECT MAX(id) FROM records r WHERE r.entry_id=s.entry_id "
+            f"AND r.session_id=s.session_id) FROM sessions s{join} "
+            "WHERE s.entry_id=? AND s.session_id=?",
+            (self.entry_id, session_id),
+        ).fetchone()
+        if row is None:
+            return None
+        started, updated, ended, seconds, last = row
+        revision = db.execute("SELECT value FROM metadata WHERE key='revision'").fetchone()
+        state = {
+            "identity": json.dumps(
+                [history_view.VERSION, revision[0] if revision else None, updated, last]
+            ),
+            "final": False,
+            "complete_at": None,
+        }
+        if ended is not None:
+            definition = BY_KEY["history_context_seconds"]
+            try:
+                margin = timedelta(seconds=definition.validate(
+                    definition.default if seconds is None else seconds
+                ))
+                window = measurement_window(
+                    datetime.fromisoformat(started), datetime.fromisoformat(ended),
+                    now or datetime.now(UTC), context_seconds=margin.total_seconds(),
+                )
+                state["final"] = window["complete"]
+                state["complete_at"] = datetime.fromisoformat(ended) + margin
+            except (TypeError, ValueError):
+                pass
+        return state
+
+    @staticmethod
+    def _view_encode(value):
+        return zlib.compress(
+            json.dumps(value, ensure_ascii=False, separators=(",", ":")).encode(), 1
+        )
+
+    @staticmethod
+    def _view_decode(data):
+        return json.loads(zlib.decompress(data))
+
+    def _stored_view_parts(self, db, session_id, identity, parts):
+        """Gespeicherte Teile einer gültigen Ansicht, sonst ``None``."""
+        pending = self._view_pending.get(session_id)
+        if pending is not None and pending[0] == identity:
+            return {part: pending[1][part] for part in parts if part in pending[1]}
+        found = dict(db.execute(
+            "SELECT part,data FROM history_views WHERE entry_id=? AND session_id=? "
+            "AND identity=? AND part IN (" + ",".join("?" for _ in parts) + ")",
+            (self.entry_id, session_id, identity, *parts),
+        ).fetchall())
+        return found if 0 in found else None
+
+    def history_view(self, session_id, *, now=None, columns=None):
+        """Übersicht einer abgeschlossenen Sitzung aus der gespeicherten Ansicht.
+
+        Rechnet und speichert sie beim ersten Abruf. ``None``, solange das
+        Messfenster der Sitzung nicht vollständig ist (dann gilt das Seitenlesen).
+        ``columns``: Pixel der Kurvenfläche; geliefert wird die gröbste gespeicherte
+        Stufe, deren Abschnitte für diese Breite noch ganze Spalten des Panels sind.
+        """
+        loaded = self._history_view_parts(session_id, (0, 1), now)
+        if loaded is None:
+            return None
+        header, overview = loaded[0], loaded[1]
+        width, rows = overview["levels"][0]
+        if columns is not None:
+            window = header["measurement_window"]
+            wanted = history_view.requested_width(
+                history_view.epoch_ms(window["started_at"]),
+                history_view.epoch_ms(window["ended_at"]), columns,
+            )
+            for level, selected in overview["levels"]:
+                if level <= wanted:
+                    width, rows = level, selected
+        shown = overview["columns"] if rows is None else history_view.select_rows(
+            overview["columns"], rows
+        )
+        resolution = dict(header["resolution"])
+        resolution.update(
+            overview=len(shown["id"]) < resolution["total_rows"], bin_ms=width,
+            rows=len(shown["id"]),
+        )
+        return {
+            "session": header["session"],
+            "measurement_window": header["measurement_window"],
+            "phase_projection": header["phase_projection"],
+            "records": overview["records"],
+            "measurement_columns": shown,
+            "measurement_resolution": resolution,
+            "identity": header["identity"],
+        }
+
+    def history_view_measurements(self, session_id, start_ms=None, end_ms=None, *, now=None):
+        """Volle Messwerte der Ansicht mit Zeit in [start_ms, end_ms), ohne Grenzen alle.
+
+        Zeilen ohne lesbare Zeit gehören immer dazu. ``None`` wie ``history_view``.
+        """
+        loaded = self._history_view_parts(session_id, (0,), now)
+        if loaded is None:
+            return None
+        wanted = [
+            part for key, part in loaded[0]["chunks"]
+            if key is None or (
+                (start_ms is None or (key + 1) * history_view.CHUNK_MS > start_ms)
+                and (end_ms is None or key * history_view.CHUNK_MS < end_ms)
+            )
+        ]
+        loaded = self._history_view_parts(session_id, (0, *wanted), now)
+        if loaded is None:
+            return None
+        header = loaded[0]
+        blocks = []
+        for part in wanted:
+            chunk = loaded[part]
+            rows = [
+                row for row, time in enumerate(chunk["t"])
+                if time is None or (
+                    (start_ms is None or time >= start_ms) and (end_ms is None or time < end_ms)
+                )
+            ]
+            blocks.append(history_view.select_rows({**chunk, "roles": header["roles"]}, rows))
+        return {
+            "session": header["session"],
+            "measurement_columns": history_view.merge_columns(blocks, header["roles"]),
+            "identity": header["identity"],
+        }
+
+    def _history_view_parts(self, session_id, parts, now):
+        """Dekodierte Teile der gültigen Ansicht; rechnet sie, wenn nötig."""
+        with closing(sqlite3.connect(self.path)) as db:
+            db.execute("BEGIN")
+            state = self._history_view_state(db, session_id, now)
+            if state is None or not state["final"]:
+                return None
+            found = self._stored_view_parts(db, session_id, state["identity"], parts)
+        if found is None or any(part not in found for part in parts):
+            with self._view_lock(session_id):
+                with closing(sqlite3.connect(self.path)) as db:
+                    db.execute("BEGIN")
+                    found = self._stored_view_parts(db, session_id, state["identity"], parts)
+                if found is None or any(part not in found for part in parts):
+                    built = self._build_history_view(session_id, state["identity"], now)
+                    if built is None:
+                        return None
+                    found = built[0]
+        return {part: self._view_decode(found[part]) for part in parts if part in found}
+
+    def _build_history_view(self, session_id, identity, now):
+        """Alle Seiten der Verlaufsprojektion lesen, Spalten bilden, Übersicht wählen.
+
+        Liefert die kodierten Teile (0 Kopf, 1 Übersicht, ab 2 Zeitabschnitte) und
+        übergibt sie dem Schreiber zum Speichern.
+        """
+        limit = self.parameters.values["archive_history_page_records"]
+        after, first, records = 0, None, []
+        blocks = []
+        while True:
+            page = self.read(
+                session_id, after=after, limit=limit, kinds=history_view.HISTORY_KINDS,
+                now=now, humidity_values=True,
+            )
+            if page is None:
+                return None
+            if first is None:
+                first = page
+                if not page["measurement_window"]["complete"]:
+                    return None
+            remaining, columns = history_measurement_columns(
+                page["records"], configuration=page["session"].get("configuration"),
+                displays=page["humidity_displays"],
+            )
+            for record in remaining:
+                # Anzeige ohne Bezug zur Anfrage wie in ArchiveView (Administratoren).
+                archive_record_display(record, history=True)
+            records.extend(remaining)
+            blocks.append(columns)
+            if page["next_after"] is None:
+                break
+            after = page["next_after"]
+        columns = history_view.join_columns(blocks)
+        window = first["measurement_window"]
+        start_ms = history_view.epoch_ms(window["started_at"])
+        end_ms = history_view.epoch_ms(window["ended_at"])
+        width = history_view.bin_width(start_ms, end_ms)
+        series = history_view.OverviewSeries(columns, records)
+        rows = series.rows(start_ms, end_ms, width)
+        times = series.times
+        complete = len(rows) == len(columns["id"])
+        overview = history_view.select_rows(columns, rows)
+        # Gröbere Stufen als Zeilen der Übersicht; sie sind für jede größere
+        # Abschnittsbreite des Panels ebenso exakt (Abschnitte aus ganzen Spalten).
+        levels = [[width, None]]
+        coarse = series.subset(rows)
+        for step in range(1, history_view.LEVELS + 1):
+            selected = coarse.rows(start_ms, end_ms, width << step)
+            if len(selected) == len(overview["id"]):
+                continue
+            levels.append([width << step, selected])
+        chunks = history_view.chunk_rows(columns, times)
+        header = {
+            "identity": identity,
+            "session": first["session"],
+            "measurement_window": window,
+            "phase_projection": first["phase_projection"],
+            "resolution": {
+                "overview": not complete,
+                "bin_ms": width,
+                "columns": history_view.OVERVIEW_COLUMNS,
+                "chunk_ms": history_view.CHUNK_MS,
+                "rows": len(rows),
+                "total_rows": len(columns["id"]),
+            },
+            "roles": columns["roles"],
+            "chunks": [[key, part] for part, key in enumerate(chunks, start=2)],
+        }
+        parts = {
+            0: self._view_encode(header),
+            1: self._view_encode({"records": records, "columns": overview, "levels": levels}),
+        }
+        for part, (key, chunk) in enumerate(chunks.items(), start=2):
+            selected = history_view.select_rows(columns, chunk)
+            selected.pop("roles")
+            parts[part] = self._view_encode({**selected, "t": [times[row] for row in chunk]})
+        with self._view_pending_lock:
+            self._view_pending[session_id] = (identity, parts)
+        return parts, self._enqueue_history_view(session_id, identity, parts)
+
+    def _enqueue_history_view(self, session_id, identity, parts):
+        future = concurrent.futures.Future()
+        loop = self._loop
+        if loop is None or self.closed or loop.is_closed():
+            future.set_result(False)
+            return future
+        item = ("view", (session_id, identity, parts, future))
+        try:
+            running = asyncio.get_running_loop()
+        except RuntimeError:
+            running = None
+        try:
+            if running is loop:
+                self.queue.put_nowait(item)
+            else:
+                loop.call_soon_threadsafe(self.queue.put_nowait, item)
+        except RuntimeError:
+            future.set_result(False)
+        return future
+
+    def _store_history_view(self, session_id, identity, parts):
+        try:
+            with closing(sqlite3.connect(self.path)) as db, db:
+                db.execute("BEGIN IMMEDIATE")
+                state = self._history_view_state(db, session_id)
+                if state is None or state["identity"] != identity:
+                    return False
+                db.execute("DELETE FROM history_views WHERE entry_id=? AND session_id=?",
+                           (self.entry_id, session_id))
+                db.executemany(
+                    "INSERT INTO history_views(entry_id,session_id,part,identity,data) "
+                    "VALUES(?,?,?,?,?)",
+                    [(self.entry_id, session_id, part, identity, data)
+                     for part, data in parts.items()],
+                )
+            return True
+        finally:
+            with self._view_pending_lock:
+                if self._view_pending.get(session_id, (None,))[0] == identity:
+                    del self._view_pending[session_id]
+
+    def prepare_history_views(self, *, now=None, stop=None):
+        """LZ6: Verlaufsansichten abgeschlossener Sitzungen rechnen, neueste zuerst.
+
+        Läuft im Hintergrund nach dem Start und nach dem Ende einer Sitzung, sobald
+        ihr Messfenster vollständig ist. Endet vor der nächsten Sitzung, wenn das
+        Archiv schließt oder für ein Backup anhält. Gibt die Zahl der gerechneten
+        Ansichten zurück.
+        """
+        stop = stop or (lambda: self.closed or not self.resume.is_set())
+        with closing(sqlite3.connect(self.path)) as db:
+            sessions = [row[0] for row in db.execute(
+                "SELECT session_id FROM sessions WHERE entry_id=? AND ended_at IS NOT NULL "
+                "ORDER BY started_at DESC", (self.entry_id,),
+            )]
+        built = 0
+        for session_id in sessions:
+            if stop():
+                break
+            with closing(sqlite3.connect(self.path)) as db:
+                db.execute("BEGIN")
+                state = self._history_view_state(db, session_id, now)
+                if state is None:
+                    continue
+                if not state["final"]:
+                    if state["complete_at"] is not None:
+                        self._view_due[session_id] = state["complete_at"]
+                    continue
+                if self._stored_view_parts(db, session_id, state["identity"], (0,)):
+                    continue
+            with self._view_lock(session_id):
+                with closing(sqlite3.connect(self.path)) as db:
+                    db.execute("BEGIN")
+                    done = self._stored_view_parts(db, session_id, state["identity"], (0,))
+                result = None if done else self._build_history_view(
+                    session_id, state["identity"], now
+                )
+            if result is None:
+                continue
+            built += 1
+            # Höchstens eine gerechnete, noch nicht gespeicherte Ansicht im Speicher.
+            while not result[1].done() and not self.closed:
+                with suppress(concurrent.futures.TimeoutError):
+                    result[1].result(timeout=0.5)
+        return built
 
     def session_key_figures(self, session_id, *, volume_m3=None, price_eur_per_kwh=None):
         """Key figures of one finished session with display values, else ``None``."""

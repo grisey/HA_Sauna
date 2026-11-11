@@ -146,7 +146,8 @@ async def async_setup_entry(
 
         # LZ2: Kennzahlen der abgeschlossenen Sitzungen nach dem HA-Start vorrechnen,
         # damit Statistik und Verlauf beim ersten Abruf nicht alle Sitzungen rechnen.
-        runtime.on_close(async_at_started(hass, runtime.prepare_key_figures))
+        # LZ6: danach die Verlaufsansichten der abgeschlossenen Sitzungen.
+        runtime.on_close(async_at_started(hass, runtime.prepare_after_start))
         return True
     except BaseException as setup_error:
         cleanup_errors = []
