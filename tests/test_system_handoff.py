@@ -2,6 +2,7 @@
 
 import tempfile
 import unittest
+from copy import deepcopy
 from dataclasses import FrozenInstanceError
 from pathlib import Path
 from unittest.mock import patch
@@ -19,6 +20,7 @@ from custom_components.ha_sauna.core.system_handoff import (
     archive_read_output,
     to_wire,
 )
+from custom_components.ha_sauna.presentation import history_measurement_columns
 from test_cooling import at, controller
 from test_foundation import T0, bindings, parameters
 from tools.local_preview import Preview
@@ -177,6 +179,40 @@ class ArchiveOutputTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(empty.records, ())
         self.assertEqual(empty.to_wire()["records"], [])
         self.assertEqual(ArchiveSessionList.from_result([]).to_wire(), [])
+
+    async def test_history_measurement_columns_roundtrip_and_stay_absent_otherwise(self):
+        plain_read = ArchiveSessionOutput.from_result(self.archive.read("s", now=at(3)))
+        self.assertIsNone(plain_read.measurement_columns)
+        self.assertNotIn("measurement_columns", plain_read.to_wire())
+        stamp = at(1).isoformat()
+        measurement = {
+            "id": 99, "entry_id": "entry", "session_id": "s", "kind": "measurement",
+            "received_at": at(2).isoformat(),
+            "payload": {"position": "upper", "quantity": "temperature", "value": 81.5,
+                        "received_at": stamp, "source": "sensor.upper"},
+            "display": {"absolute_humidity": {
+                "value": 12.25, "received_at": stamp, "valid_until": None,
+            }},
+        }
+        result = self.archive.read("s", now=at(3))
+        result["records"], result["measurement_columns"] = history_measurement_columns(
+            [*result["records"], measurement]
+        )
+        self.assertEqual(result["measurement_columns"]["id"], [99])
+        self.assertEqual(
+            result["measurement_columns"]["record_received_at"], [[99, at(2).isoformat()]]
+        )
+        expected = deepcopy(result)
+        output = ArchiveSessionOutput.from_result(result)
+        self.assertEqual(output.to_wire(), expected)
+        result["measurement_columns"]["value"][0] = 0
+        result["measurement_columns"]["roles"][0]["source"] = "changed"
+        result["measurement_columns"]["record_received_at"][0][1] = None
+        self.assertEqual(output.to_wire(), expected)
+        with self.assertRaises(TypeError):
+            output.measurement_columns["id"] = ()
+        with self.assertRaises(TypeError):
+            ArchiveSessionOutput.from_result({**expected, "measurement_columns": [99]})
 
     async def test_pagination_keeps_the_supplied_cursor_and_complete_record_frame(self):
         result = self.archive.read("s", now=at(3), limit=1)

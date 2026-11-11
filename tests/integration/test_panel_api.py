@@ -1134,6 +1134,7 @@ class PanelAPITests(unittest.IsolatedAsyncioTestCase):
             for client in (admin, public):
                 result = await read(client, suffix_query)
                 self.assertEqual(result["records"], [])
+                self.assertEqual(result["measurement_columns"]["id"], [])
                 self.assertEqual(result["session"]["energy"]["interval_delta"], suffix)
                 self.assertEqual(result["session"]["door_cycles"], published["session"]["door_cycles"])
 
@@ -1142,7 +1143,16 @@ class PanelAPITests(unittest.IsolatedAsyncioTestCase):
         from datetime import timedelta
 
         from harness import retain_session
+        from test_history_columns import expand
         from custom_components.ha_sauna.core.history import HISTORY_CONTEXT_SECONDS
+
+        def page_records(result):
+            # LZ1: Die Verlaufsprojektion liefert Messungen spaltenweise; das Panel
+            # bildet daraus wieder Datensätze (historyPageRecords).
+            return sorted(
+                result["records"] + expand(result["measurement_columns"]),
+                key=lambda record: record["id"],
+            )
 
         runtime = self.entry.runtime_data
         base = runtime._clock()
@@ -1192,11 +1202,13 @@ class PanelAPITests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(window["ended_at"], (
                 base + timedelta(seconds=30 + HISTORY_CONTEXT_SECONDS)
             ).isoformat())
-            cursor = max(record["id"] for record in ended["records"])
+            cursor = max(record["id"] for record in page_records(ended))
 
             await measure(40, 33)
             continued = await read(public, {**query, "after": cursor})
-            measurements = [record for record in continued["records"] if record["kind"] == "measurement"]
+            measurements = [
+                record for record in page_records(continued) if record["kind"] == "measurement"
+            ]
             self.assertEqual([
                 (record["payload"]["received_at"], record["payload"]["value"])
                 for record in measurements
@@ -1204,7 +1216,7 @@ class PanelAPITests(unittest.IsolatedAsyncioTestCase):
             self.assertFalse(continued["measurement_window"]["complete"])
 
             complete = await read(public, query)
-            rows = complete["records"]
+            rows = page_records(complete)
             self.assertEqual(len({row["id"] for row in rows}), len(rows))
             self.assertEqual([
                 (row["payload"]["received_at"], row["payload"]["value"])
@@ -1216,7 +1228,7 @@ class PanelAPITests(unittest.IsolatedAsyncioTestCase):
             self.assertTrue(all("source" not in row["payload"] for row in rows))
             private = await read(admin, query)
             self.assertEqual([
-                row["payload"]["source"] for row in private["records"]
+                row["payload"]["source"] for row in page_records(private)
                 if row["kind"] == "measurement"
             ], [sensor] * len(originals))
 
@@ -1225,11 +1237,11 @@ class PanelAPITests(unittest.IsolatedAsyncioTestCase):
             clock[0] += timedelta(seconds=1)
             final = await read(public, {**query, "after": max(row["id"] for row in rows)})
             self.assertTrue(final["measurement_window"]["complete"])
-            self.assertEqual(final["records"], [])
+            self.assertEqual(page_records(final), [])
             await measure(31 + HISTORY_CONTEXT_SECONDS, 34)
             outside = await read(public, {**query, "after": max(row["id"] for row in rows)})
             self.assertTrue(outside["measurement_window"]["complete"])
-            self.assertEqual(outside["records"], [])
+            self.assertEqual(page_records(outside), [])
 
     async def test_direct_presence_ids_are_private_in_live_and_archived_public_responses(self):
         import json

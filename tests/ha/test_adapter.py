@@ -40,7 +40,7 @@ def flat_fields(schema):
 @unittest.skipUnless(HA_AVAILABLE, "Home Assistant ist lokal nicht installiert")
 class AdapterTests(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self):
-        from homeassistant.core import State
+        from homeassistant.core import CoreState, State
         from custom_components.ha_sauna.config_flow import SaunaConfigFlow
         self.module = __import__("custom_components.ha_sauna.config_flow", fromlist=["*"])
         self.inputs = {
@@ -64,13 +64,25 @@ class AdapterTests(unittest.IsolatedAsyncioTestCase):
             async_on_unload=lambda callback: None,
             add_update_listener=lambda listener: lambda: None,
         )
+        self.once_listeners = []
+
+        def listen_once(event_type, listener):
+            unsubscribe = MagicMock()
+            self.once_listeners.append((event_type, listener, unsubscribe))
+            return unsubscribe
+
         self.hass = SimpleNamespace(
             data={},
+            # HA führt state immer; Einträge werden beim Hochfahren eingerichtet, also
+            # vor EVENT_HOMEASSISTANT_STARTED. async_at_started (Vorrechnen der
+            # Kennzahlen, LZ2) meldet sich dann mit async_listen_once an.
+            state=CoreState.not_running,
             http=SimpleNamespace(register_view=MagicMock(), async_register_static_paths=AsyncMock()),
             # HA-Bus: async_listen nimmt auch event_filter und run_immediately an; die
             # Verfolgung der gebundenen Umgebungsentitäten (B2) meldet sich mit event_filter an.
             bus=SimpleNamespace(
                 async_listen=lambda *args, **kwargs: lambda: None, async_fire=MagicMock(),
+                async_listen_once=listen_once,
             ),
             states=SimpleNamespace(get=self.states.get, async_all=lambda: list(self.states.values())),
             config_entries=SimpleNamespace(
@@ -1033,9 +1045,15 @@ class AdapterTests(unittest.IsolatedAsyncioTestCase):
         from custom_components.ha_sauna import async_setup_entry, async_unload_entry
         self.hass.services = MagicMock()
         self.hass.services.has_service.return_value = False
+        from homeassistant.const import EVENT_HOMEASSISTANT_STARTED
         with patch("custom_components.ha_sauna.device.HADevice.start", new_callable=AsyncMock), patch("homeassistant.helpers.event.async_track_time_interval", return_value=lambda: None):
             self.assertTrue(await async_setup_entry(self.hass, self.entry))
         self.assertIsNone(self.entry.runtime_data.session)
+        # Das Vorrechnen der Kennzahlen wartet auf den HA-Start und endet mit dem Entladen.
+        started = [unsubscribe for event_type, _listener, unsubscribe in self.once_listeners
+                   if event_type == EVENT_HOMEASSISTANT_STARTED]
+        self.assertEqual(len(started), 1)
+        started[0].assert_not_called()
         with (
             patch("custom_components.ha_sauna.device.HADevice.close", new_callable=AsyncMock),
             patch("custom_components.ha_sauna.device.HADevice.apply", new_callable=AsyncMock),
@@ -1048,6 +1066,7 @@ class AdapterTests(unittest.IsolatedAsyncioTestCase):
             handoff.assert_awaited_once()
         self.assertIsNone(self.entry.runtime_data.session)
         self.assertTrue(self.entry.runtime_data.closed)
+        started[0].assert_called_once_with()
         # Setup may register notification services; it must not call actors.
         self.hass.services.async_call.assert_not_called()
 
