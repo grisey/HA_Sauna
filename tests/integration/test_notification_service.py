@@ -1268,7 +1268,13 @@ class NotificationServiceLifecycleTests(unittest.IsolatedAsyncioTestCase):
             self.panel_question(apple["actions"][-1]["uri"])["a"], apple["actions"][:1]
         )
         # Android (and unknown): tap target and URI button on the same link.
-        self.assertEqual(self.panel_actions(calls, TIMER_START), [android["actions"][0]["action"]])
+        android_calls = [
+            call for call in calls
+            if call["data"].get("target") == targets[references[1].reference_id]
+        ]
+        self.assertEqual(
+            self.panel_actions(android_calls, TIMER_START), [android["actions"][0]["action"]]
+        )
         # Message only: the full external address in the text; its answer is assigned.
         text, link = message_of(texts[0]).split(f"\n{rules.PANEL_LABEL}: ")
         self.assertEqual(text, TIMER_START)

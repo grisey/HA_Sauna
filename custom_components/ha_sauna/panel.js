@@ -7613,20 +7613,23 @@ class SaunaPanel extends HTMLElement {
   syncHistorySessions() {
     const select = this.$("#session");
     if (!select || !this.sessions || !this.state) return;
-    // „Letzte Sitzung“ steht für die laufende, sonst für die neueste archivierte
-    // Sitzung (wie historySelectionId bei „live“). Diese Sitzung erscheint nur einmal.
+    // „live“ steht für die laufende, sonst für die neueste archivierte Sitzung (wie
+    // historySelectionId). Jede Sitzung erscheint genau einmal: Ohne laufende Sitzung
+    // vertritt der eigene Eintrag der neuesten archivierten Sitzung die Auswahl „live“.
     const liveId = this.state.session?.timeline.session_id,
       latestId =
         liveId || this.historyPendingFinalId || this.sessions[0]?.session_id,
+      listed =
+        !liveId && this.sessions.some((session) => session.session_id === latestId),
       timeZone = localTimeZone(),
       latest =
         this.state.session ||
         this.sessions.find((session) => session.session_id === latestId),
       liveLabel = latest ? this.sessionLabel(latest, timeZone) : "Letzte Sitzung",
       options =
-        `<option value="live">${liveLabel}</option>` +
+        (listed ? "" : `<option value="live">${liveLabel}</option>`) +
         this.sessions
-          .filter((session) => session.session_id !== latestId)
+          .filter((session) => session.session_id !== liveId)
           .map(
             (session) =>
               `<option value="${esc(session.session_id)}">${esc(this.sessionLabel(session, timeZone))}</option>`,
@@ -7636,7 +7639,13 @@ class SaunaPanel extends HTMLElement {
       select.innerHTML = options;
       this.historyOptionsSignature = options;
     }
-    const shown = this.selected === latestId ? "live" : this.selected;
+    const shown = listed
+      ? this.selected === "live"
+        ? latestId
+        : this.selected
+      : this.selected === latestId
+        ? "live"
+        : this.selected;
     if (select.value !== shown) select.value = shown;
     this.selectMenu?.syncAttributes(select);
   }

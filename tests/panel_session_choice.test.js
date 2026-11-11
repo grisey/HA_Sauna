@@ -1,6 +1,7 @@
 "use strict";
-// Sitzungswahl im Verlauf: „Letzte Sitzung“ steht für die laufende bzw. die neueste
-// archivierte Sitzung; jede Sitzung erscheint genau einmal (Nutzer 11.11.2026).
+// Sitzungswahl im Verlauf: „live“ steht für die laufende bzw. die neueste archivierte
+// Sitzung; jede Sitzung erscheint genau einmal (Nutzer 11.11.2026). Ohne laufende
+// Sitzung vertritt der eigene Eintrag der neuesten archivierten Sitzung „live“.
 const { panelFixture: fixturePanel } = require("./catalog_fixture.cjs");
 const assert = require("node:assert/strict");
 const fs = require("node:fs");
@@ -41,25 +42,30 @@ function choice({ selected, live = null }) {
 test("ohne laufende Sitzung erscheint die neueste archivierte Sitzung nur einmal", () => {
   const { values, value } = choice({ selected: "live" });
   assert.deepEqual(values, [
-    ["live", "c"],
+    ["c", "c"],
     ["b", "b"],
     ["a", "a"],
   ]);
-  assert.equal(value, "live");
+  assert.equal(value, "c");
 });
 
-test("eine ältere Auswahl ändert die Beschriftung von „Letzte Sitzung“ nicht", () => {
+test("eine ältere Auswahl lässt die Liste unverändert", () => {
   const { values, value } = choice({ selected: "a" });
   assert.deepEqual(values, [
-    ["live", "c"],
+    ["c", "c"],
     ["b", "b"],
     ["a", "a"],
   ]);
   assert.equal(value, "a");
 });
 
-test("die neueste Sitzung als eigene Auswahl zeigt „Letzte Sitzung“", () => {
-  assert.equal(choice({ selected: "c" }).value, "live");
+test("die neueste Sitzung als eigene Auswahl zeigt ihren Eintrag", () => {
+  assert.equal(choice({ selected: "c" }).value, "c");
+});
+
+test("die laufende Sitzung als eigene Auswahl zeigt „live“", () => {
+  const live = { timeline: { session_id: "d" } };
+  assert.equal(choice({ selected: "d", live }).value, "live");
 });
 
 test("eine laufende Sitzung steht vorn, alle archivierten folgen", () => {
