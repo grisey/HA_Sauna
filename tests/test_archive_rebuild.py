@@ -119,12 +119,43 @@ class ArchiveRebuildTests(unittest.TestCase):
         ])
         asyncio.run(archive_rebuild.rebuild(self.source, self.target))
         session = self.rebuilt_session()
-        self.assertEqual([(mark["at"], mark["state"]) for mark in session["contactor_history"]],
-                         [(at(0), None), (at(0), True), (at(400), False)])
         # Heizzeit und Energie folgen der aufgezeichneten Rückmeldung statt „unbekannt“.
         self.assertEqual(session["energy"]["unknown_seconds"], 0.0)
         self.assertEqual([(item["started_at"], item["ended_at"]) for item in session["heating"]["intervals"]],
                          [(at(0), at(400))])
+
+    def test_controller_contactor_follows_its_own_command(self):
+        # KZ3 (Nutzer 11.11.): Die Schützrückmeldung der Steuerung folgt ihrem Schaltbefehl, damit die
+        # Ofenkühlung wie im Betrieb endet. Aufgezeichnet ist EIN bis 400 s; der Befehl bleibt bei
+        # 60–72 °C unter dem Soll 80 °C bis Betrieb AUS bei 600 s EIN.
+        asyncio.run(archive_rebuild.rebuild(self.source, self.target))
+        session = self.rebuilt_session()
+        self.assertEqual([(mark["at"], mark["state"]) for mark in session["contactor_history"]],
+                         [(at(0), None), (at(0), True), (at(MINUTES * 60 - 120), False)])
+        # Heizzeit und Energie bleiben bei der Aufzeichnung.
+        self.assertEqual([(item["started_at"], item["ended_at"]) for item in session["heating"]["intervals"]],
+                         [(at(0), at(400))])
+
+    def test_program_mode_changes_are_replayed(self):
+        # KZ3 (Nutzer 11.11.): Wechsel der Programmart gehen wie Solländerungen ein; die Sitzung
+        # beginnt mit der Programmart vor dem ersten Wechsel, auch wenn am Ende eine andere gespeichert ist.
+        def constant_at_end(payload):
+            payload["configuration"]["program_mode"] = "constant"
+        self.rewrite_source(constant_at_end, [
+            ("parameter_change", at(100), {"changes": {"target_temperature_c": {"before": 80, "after": 85},
+                                                       "temperature_gangs": {"before": 3, "after": 2}},
+                                           "mode_before": "progressive", "mode_after": "progressive"}),
+            ("parameter_change", at(200), {"changes": {"target_temperature_c": {"before": 85, "after": 90}},
+                                           "mode_before": "progressive", "mode_after": "constant"}),
+        ])
+        _result, log = asyncio.run(archive_rebuild.rebuild(self.source, self.target))
+        self.assertEqual(log, [])
+        with closing(sqlite3.connect(self.target)) as db:
+            changes = [json.loads(row[0]) for row in db.execute(
+                "SELECT payload FROM records WHERE kind='parameter_change' ORDER BY id")]
+        self.assertEqual([(item["mode_before"], item["mode_after"], item["target_after"]) for item in changes],
+                         [("progressive", "progressive", 85.0), ("progressive", "constant", 90.0)])
+        self.assertEqual(changes[0]["changes"]["temperature_gangs"]["after"], 2)
 
     def test_manual_cooling_end_is_replayed(self):
         # KZ1: „Ofenkühlung beenden“ von Hand geht wie eine Bedienung ein.

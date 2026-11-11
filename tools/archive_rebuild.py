@@ -2,13 +2,14 @@
 
 Je Sitzung läuft die Laufzeit dieses Stands mit ihrem Archivschreiber auf den aufgezeichneten Eingaben,
 wie im Replay-Werkzeug (``recognition_replay.py``): Messwerte oben und unten im Sekundentakt, Präsenz,
-Schützrückmeldung aus der Aufzeichnung (Heizzeit und Energie bleiben physikalisch), Bedienung (Betrieb
-an und aus, manuelle Ofen- und Lichtwahl, Ofenkühlung beenden, Soll) und Nachträge des Nutzers
-(``--nachtraege``). Neu
+aufgezeichneter Heizzustand (Heizzeit, Energie und Erkennung bleiben physikalisch), Bedienung (Betrieb
+an und aus, manuelle Ofen- und Lichtwahl, Ofenkühlung beenden, Soll und Programmart) und Nachträge des
+Nutzers (``--nachtraege``). Die Schützrückmeldung der Steuerung folgt ihrem eigenen Schaltbefehl
+(Nutzer 11.11.2026, KZ3). Neu
 entstehen damit Erkennung, Gänge, Phasen, Entscheidungen, Sitzungsstände sowie Zustandsverlauf und
 verworfene Kandidaten (B2). Unverändert übernommen werden Messwerte, Quellzustände, Heizbeobachtungen,
-Schaltbefehle, Umgebung und die Kennzeichnung Testbetrieb. Widersprüche zwischen aufgezeichneter
-Schützstellung und neu gerechneter Steuerung sind gewollt (Nutzer 10.11.2026).
+Schaltbefehle, Umgebung und die Kennzeichnung Testbetrieb. Dass der aufgezeichnete Heizzustand nicht
+zur neu gerechneten Steuerung passt, ist gewollt (Nutzer 10.11.2026).
 
 Das Original wird nur gelesen; das Ziel darf nicht existieren. Jede Sitzung erhält einen Vermerk
 ``rebuild`` mit Softwarestand und Zeitpunkt.
@@ -28,6 +29,7 @@ import json
 import sqlite3
 import sys
 from contextlib import closing
+from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from types import SimpleNamespace
@@ -41,12 +43,18 @@ import recognition_replay as replay
 from custom_components.ha_sauna.core import (
     controller as controller_module,
 )
+from custom_components.ha_sauna.core.input_handoff import (
+    ContactorFeedbackInput,
+    HeatingFeedbackInput,
+    InputTiming,
+    PowerFeedbackInput,
+)
 from custom_components.ha_sauna.core.models import (
     Measurement,
     Position,
     Quantity,
 )
-from custom_components.ha_sauna.core.parameters import Parameters
+from custom_components.ha_sauna.core.parameters import LIVE_TEMPERATURE_KEYS, Parameters
 from custom_components.ha_sauna.core.presence import binary_presence
 from custom_components.ha_sauna.runtime import Configuration, SaunaRuntime
 from custom_components.ha_sauna.settings import async_set_parameters
@@ -55,7 +63,6 @@ from custom_components.ha_sauna.settings import async_set_parameters
 COPIED = ("measurement", "source_snapshot", "source_state", "heating_observation", "command",
           "light_command", "manual_light", "illuminance", "environment", "notice", "session_label",
           "calibration")
-LIVE_KEYS = ("target_temperature_c", "temperature_increase_c", "final_temperature_c")
 # Unterbrechungen, nach denen erneutes EIN innerhalb der Wiederaufnahmefrist dieselbe Sitzung fortsetzt (KZ2)
 RESTART_REASONS = ("integration_unloaded",)
 CONTEXT_SECONDS = 1
@@ -232,8 +239,61 @@ class SessionSource:
         return sorted(out)
 
 
+def report_feedback(c, command, command_at, recorded, recorded_at, at):
+    """Rückmeldungen eines Takts über die Eingänge von ``HADevice.report_received_feedback`` (KZ3).
+
+    Die Schützrückmeldung folgt dem eigenen Schaltbefehl wie im Automatikbetrieb; damit verlaufen
+    Ofenkühlung und Schützgeschichte wie mit diesem Stand. Der Heizzustand folgt der Aufzeichnung:
+    Heizzeit und Energie bleiben physikalisch, und die Erkennung erhält über ``controller.feedback``
+    denselben Ofenzustand wie zuvor. Ohne aufgezeichneten Zustand geht nur der Befehl ein.
+    """
+    c.consume_contactor_feedback_input(ContactorFeedbackInput(
+        contactor=command, timing=InputTiming(effective_at=command_at, received_at=command_at,
+                                              first_usable_at=None, evaluated_at=at)))
+    if recorded is None:
+        return
+    timing = InputTiming(effective_at=recorded_at, received_at=recorded_at, first_usable_at=None, evaluated_at=at)
+    c.report_fallback_heating(recorded, at)
+    c.consume_power_feedback_input(PowerFeedbackInput(power_w=None, valid_until=None, timing=InputTiming(
+        effective_at=None, received_at=None, first_usable_at=None, evaluated_at=at)))
+    c.consume_heating_feedback_input(HeatingFeedbackInput(heating=recorded, timing=timing))
+
+
+def parameter_changes(source):
+    """Solländerungen und Wechsel der Programmart (KZ3): (Zeit, Werte, Programmart).
+
+    Werte sind die live änderbaren Temperaturgrößen (``LIVE_TEMPERATURE_KEYS``). Ein Eintrag mit
+    ``mode_before``/``mode_after`` stammt aus dem vollständigen Änderungsweg; seine Programmart geht
+    mit ein, auch wenn sie gleich bleibt.
+    """
+    out = []
+    for at, payload in source.of("parameter_change"):
+        values = {key: change.get("after") for key, change in (payload.get("changes") or {}).items()
+                  if key in LIVE_TEMPERATURE_KEYS}
+        mode = payload.get("mode_after") if "mode_before" in payload else None
+        if values or mode is not None:
+            out.append((at, values, mode))
+    return out
+
+
 def configuration_for(source):
-    """Konfiguration der Sitzung; ältere Sitzungen ohne vollständige Konfiguration mit Standards."""
+    """Konfiguration der Sitzung; ältere Sitzungen ohne vollständige Konfiguration mit Standards.
+
+    Gespeichert ist der Stand am Sitzungsende. Wechselte die Programmart in der Sitzung, beginnt
+    die Sitzung mit der Programmart vor dem ersten Wechsel (KZ3).
+    """
+    configuration = stored_configuration_for(source)
+    first = next((payload for _, payload in source.of("parameter_change") if "mode_before" in payload), None)
+    if first is not None and first["mode_before"] != configuration.program_mode:
+        try:
+            configuration = replace(configuration, program_mode=first["mode_before"])
+        except (TypeError, ValueError) as error:
+            print("Programmart beim Beginn:", source.session_id[:8], error, file=sys.stderr)
+    return configuration
+
+
+def stored_configuration_for(source):
+    """Gespeicherte Konfiguration der Sitzung; ohne vollständige Konfiguration mit Standards."""
     try:
         configuration = Configuration.from_options(source.configuration, historical=True)
     except (TypeError, ValueError, KeyError) as error:
@@ -303,11 +363,8 @@ async def rebuild_session(source, target, entry_id, corrections, stamp, log):
         # „Ofenkühlung beenden“ von Hand (KZ1); gilt der zu dieser Zeit laufenden Kühlung.
         if payload.get("purpose") == "after_run":
             inputs.append((at, 2, "finish_cooling", payload))
-    for at, payload in source.of("parameter_change"):
-        changes = {key: change.get("after") for key, change in (payload.get("changes") or {}).items()
-                   if key in LIVE_KEYS}
-        if changes:
-            inputs.append((at, 2, "parameters", changes))
+    for at, values, mode in parameter_changes(source):
+        inputs.append((at, 2, "parameters", (values, mode)))
     for item in (item for session_id in source.session_ids for item in corrections.get(session_id, ())):
         inputs.append((utc(item["at"]), 3, item["name"], item))
     copied = [(at, 0, kind, payload) for kind, at, payload in source.records if kind in COPIED]
@@ -315,6 +372,7 @@ async def rebuild_session(source, target, entry_id, corrections, stamp, log):
     copied.sort(key=lambda item: item[0])
     end = source.end or (inputs[-1][0] if inputs else source.start)
     contactor, contactor_at, upper_t = [None], [None], [None]
+    commanded = [None, None]
     latest, fed_to = {}, [None]
     index = copy_index = 0
     restore = None
@@ -384,7 +442,7 @@ async def rebuild_session(source, target, entry_id, corrections, stamp, log):
                         restore = None
             elif kind == "parameters":
                 try:
-                    await async_set_parameters(hass, entry, value, partial=True)
+                    await async_set_parameters(hass, entry, value[0], partial=True, program_mode=value[1])
                 except (ValueError, TypeError, KeyError) as error:
                     log.append((source.session_id, second.isoformat(), "parameters", str(error)))
             elif kind == "finish_cooling":
@@ -412,8 +470,12 @@ async def rebuild_session(source, target, entry_id, corrections, stamp, log):
             fed_to[0] = runtime.detector
             for m in latest.values():
                 runtime.detector.accept(m)
-        if c.session is not None and contactor[0] is not None:
-            replay.report_feedback(c, contactor[0], contactor_at[0], second)
+        if c.session is not None:
+            # wie ``recognition_replay.py --heater split``: die Rückmeldung folgt dem Befehl des Takts
+            command = bool(c.last_decision and c.last_decision.heat)
+            if command is not commanded[0] or commanded[1] is None:
+                commanded[:] = [command, second]
+            report_feedback(c, commanded[0], commanded[1], contactor[0], contactor_at[0], second)
         second += timedelta(seconds=1)
     # Übernommene Einträge nach dem letzten Sekundenschritt gehören ebenfalls zur Sitzung (KZ2).
     for at, _, kind, payload in copied[copy_index:]:

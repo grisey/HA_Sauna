@@ -3,7 +3,9 @@
 ## Starten und nach einer Pause fortsetzen
 
 Erneutes Einschalten vor Ablauf der Wiederaufnahmefrist setzt dieselbe Sitzung
-fort. Das gilt in Automatik, in Manuell und bei einem Wechsel dazwischen.
+fort. Das gilt in Automatik, in Manuell und bei einem Wechsel dazwischen, nicht
+über einen Neustart von Home Assistant oder der Integration hinweg
+([Neustart](#ausschalten-und-lichtnachlauf-beenden)).
 Beginn, Messungen, Heizverlauf, Energie und erkannte Gänge bleiben erhalten;
 ein automatischer Lichtnachlauf endet beim Einschalten. Ab dem Fristende beginnt
 eine neue Sitzung.
@@ -150,9 +152,11 @@ Wiederaufnahmefrist.
 Wiederaufnahmefrist und die bis dahin zusammengehörige Aufzeichnung bleiben
 erhalten.
 
-Nach einem Home-Assistant-Neustart setzt sich der Ofenbetrieb nicht fort;
-er benötigt ausdrückliches Einschalten. Die unterbrochene Sitzung bleibt im
-[Archiv](speicherung.md#welche-sitzungen-erhalten-bleiben) historisch offen.
+Nach einem Neustart von Home Assistant oder der Integration setzt sich der
+Ofenbetrieb nicht fort; er benötigt ausdrückliches Einschalten. Dieses beginnt
+eine neue Sitzung, auch innerhalb der Wiederaufnahmefrist. Die unterbrochene
+Sitzung bleibt im [Archiv](speicherung.md#welche-sitzungen-erhalten-bleiben)
+historisch offen.
 
 ## Programme und Einstellungen speichern
 

@@ -11,7 +11,8 @@ für Aufzeichnungen im manuellen Modus.
 
 AUS unterbricht zunächst nur den Betrieb. Erneutes EIN vor Ende der
 Wiederaufnahmefrist gehört unabhängig von der Betriebsart zur gleichen
-Aufzeichnung. Auch manuelles Vorheizen vor dem Wechsel auf Automatik bleibt
+Aufzeichnung, solange Home Assistant und die Integration dazwischen nicht neu
+starten. Auch manuelles Vorheizen vor dem Wechsel auf Automatik bleibt
 Teil dieser Sitzung. Erst der Ablauf dieser Frist entscheidet über den
 Abschluss und die Speicherung; die Lichtbedienung verkürzt sie nicht.
 
@@ -21,8 +22,10 @@ bei der Sitzung gespeicherte [Messkontext](parameter.md#daten-und-laufzeit).
 Außerhalb dieser Fenster werden keine sitzungslosen Messreihen dauerhaft
 aufbewahrt. Der Nachlauf kann eine bereits beendete Sitzung noch ergänzen.
 
-Nach einem Neustart bleibt eine unterbrochene Sitzung historisch offen; ein
-Endzeitpunkt wird nicht erfunden. Sie setzt den Ofenbetrieb nicht fort.
+Nach einem Neustart von Home Assistant oder der Integration bleibt eine
+unterbrochene Sitzung historisch offen; ein Endzeitpunkt wird nicht erfunden.
+Sie setzt den Ofenbetrieb nicht fort, und erneutes Einschalten beginnt eine neue
+Sitzung, auch innerhalb der Wiederaufnahmefrist.
 
 Im normalen Betrieb bleiben Originalmessungen, erkannte Ereignisse und ihre
 Bestätigungs- und Zuordnungsbelege sowie Phasen, Kühlung, Schaltentscheidungen,
@@ -127,18 +130,32 @@ die Datei bei angehaltenem Home Assistant Core.
 Das Werkzeug [`tools/archive_rebuild.py`](../tools/archive_rebuild.py) rechnet
 alle Sitzungen einer Archivkopie mit dem aktuellen Stand nach und schreibt ein
 neues Archiv; die Quelle bleibt unverändert. Je Sitzung läuft die Laufzeit auf
-den aufgezeichneten Eingaben: Messwerte oben und unten, Präsenz,
-Schützrückmeldung, Betrieb an und aus, manuelle Ofenwahl, **Ofenkühlung beenden**
-und Solländerungen. Die Schützrückmeldung stammt aus der Schützgeschichte der
-Sitzung; ältere Sitzungen ohne diese Geschichte verwenden die aufgezeichneten
-Zustände des Ofenschalters. Ein beendetes Kühlen von Hand gilt der Kühlung, die
-im nachgerechneten Ablauf zu dieser Zeit läuft.
+den aufgezeichneten Eingaben: Messwerte oben und unten, Präsenz, Heizzustand,
+Betrieb an und aus, manuelle Ofenwahl, **Ofenkühlung beenden**, Solländerungen
+und Wechsel der Programmart.
+
+Die Steuerung erhält als Schützrückmeldung ihren eigenen Schaltbefehl, wie im
+Automatikbetrieb. Ofenkühlung, Schützgeschichte und Phasen verlaufen damit wie
+mit dem aktuellen Stand; die Kühlung endet spätestens nach ihrer berechneten
+Dauer. Der aufgezeichnete Heizzustand bestimmt Heizzeit und Energie und geht wie
+im Betrieb an die Erkennung. Er stammt aus der Schützgeschichte der Sitzung;
+ältere Sitzungen ohne diese Geschichte verwenden die aufgezeichneten Zustände
+des Ofenschalters. Dass der aufgezeichnete Heizzustand nicht zur neu gerechneten
+Steuerung passt, etwa Heizen in einer nachgerechneten Kühlung, ist hinzunehmen.
+Daraus entstehen keine Fehlermeldungen, weil im Nachbau keine Geräte überwacht
+werden.
+
+Solländerungen umfassen Soll-, Endtemperatur und Steigerungsverteilung. Ein
+gespeicherter Wechsel der Programmart (konstant oder steigend) geht mit ein;
+beginnt die Sitzung vor dem ersten Wechsel mit einer anderen Programmart als
+der am Ende gespeicherten, gilt bis dahin die Programmart vor diesem Wechsel.
+Ein beendetes Kühlen von Hand gilt der Kühlung, die im nachgerechneten Ablauf zu
+dieser Zeit läuft.
+
 Neu entstehen Erkennung, Gänge, Phasen, Entscheidungen, Sitzungsstände,
-Zustandsverlauf und verworfene Kandidaten; Heizzeit und Energie folgen der
-aufgezeichneten Schützrückmeldung. Messwerte, Quellzustände,
+Zustandsverlauf und verworfene Kandidaten. Messwerte, Quellzustände,
 Heizbeobachtungen, Schaltbefehle, Umgebung und die Kennzeichnung Testbetrieb
-werden unverändert übernommen. Dass die aufgezeichnete Schützstellung nicht zur
-neu gerechneten Steuerung passt, ist dabei hinzunehmen.
+werden unverändert übernommen.
 
 Nachträge des Nutzers (`--nachtraege`, je Sitzung etwa
 `{"name": "end_gang", "at": "…"}` für einen Gang, der von Hand hätte beendet
@@ -148,7 +165,8 @@ ihn nicht.
 
 Endet eine Sitzung mit einer Unterbrechung durch Entladen oder Neustart der
 Integration und beginnt die nächste Sitzung innerhalb der Wiederaufnahmefrist
-nach Betrieb AUS, führt das Werkzeug beide zusammen. Maßgeblich ist die
+nach Betrieb AUS, führt das Werkzeug beide zusammen. Im Betrieb bleiben solche
+Sitzungen getrennt ([Neustart](#welche-sitzungen-erhalten-bleiben)). Maßgeblich ist die
 gespeicherte Frist der ersten Sitzung, ohne sie die Werkseinstellung. Die
 Eingaben beider Teile laufen als eine Sitzung mit der Kennung der ersten; die
 Lücke gilt wie Betrieb AUS und erneutes EIN innerhalb der Frist. Übernommene
