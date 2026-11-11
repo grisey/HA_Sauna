@@ -129,6 +129,31 @@ Läuft der Gang nicht mehr, ist der Betrieb schon aus oder ist der Gang während
 einer Kalibrierung gesperrt, bleibt die Antwort wirkungslos. **Uhr ist gestellt**
 und **Empfangen** bedienen die Sauna nicht.
 
+### Antworten im Panel
+
+Antippen einer Nachricht der Sauna mit Antwortknöpfen, auch einer Anweisung der
+[Kalibrierung](kalibrierung.md), öffnet das Sauna-Panel mit dieser Frage: unter
+iOS und macOS über `url` (nur das Antippen der Nachricht selbst, Schlüssel `_`;
+ein Antwortknopf der Nachricht öffnet nichts), unter Android über `clickAction`.
+Der Parameter `nachricht` des Links enthält Instanz, Titel, Text und die
+angebotenen Aktionen mit nativer Kennung und Beschriftung wie in `data.actions`
+als base64url-kodiertes JSON; gespeichert wird dafür nichts. Das Panel zeigt
+Titel, Text, die Antwortknöpfe und **Schließen** als Dialog über der aktuellen
+Seite und entfernt den Parameter aus der Adresse; beim Neuladen erscheint der
+Dialog nicht erneut.
+
+Ein Antwortknopf sendet die native Kennung an
+`POST /api/ha_sauna/{entry_id}/notifications/answer`. Angenommen werden nur
+Kennungen der Nachrichten der Sauna und der Kalibrierung. Die Antwort geht mit
+dem angemeldeten Benutzer als Ereigniskontext an denselben Eingang wie eine
+Companion-Antwort ([Sitzung und Antworten](#sitzung-und-antworten)); Zuordnung,
+Steuerberechtigung, Protokoll und Wirkungslosigkeit gelten unverändert, und
+`ha_sauna_notification_reply` erscheint wie bei einer Antwort aus der App. Das
+Ereignis `mobile_app_notification_action` der Companion-App wird dafür nicht auf
+dem Eventbus ausgelöst. Der Dialog zeigt kurz das Ergebnis und schließt sich:
+übernommen, schon erledigt (bereits beantwortet oder Anlass vorbei), ohne
+Steuerberechtigung oder unbekannte Nachricht.
+
 ### Speicherung
 
 Jede Nachricht mit Empfängerwahl und Übergabe sowie jede Antwort mit Ergebnis

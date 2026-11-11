@@ -251,6 +251,26 @@ class Preview:
             permitted=True))
         self.sample()
 
+    def answer(self, action):
+        """Like POST …/notifications/answer: the preview user answers in the panel (BN-b)."""
+        notification = next((item for item in reversed(self.transport.sent) if action in {
+            entry["action"] for entry in item.payload.get("data", {}).get("actions", ())}), None)
+        outcome = None
+        if notification is not None:
+            reply = ReplyEnvelope(
+                None, None, None, None, None,
+                ActorRef(PREVIEW_DEFAULTS["calibration"]["user_id"], "lokale Vorschau"),
+                {"action": action}, observed_at=self.now,
+                reply_key=ReplyKey("home_assistant", action),
+            )
+            association = ReplyAssociation(ReplyDisposition.ACCEPTED, reply, notification, True)
+            outcome = self.run(self.runtime.calibration_reply(association)
+                               if calibration.is_action(action)
+                               else self.runtime.notification_reply(association, permitted=True))
+            self.sample()
+        return {"outcome": outcome,
+                "result": notification_rules.ANSWER_RESULTS.get(outcome, "unknown")}
+
     def calibration_reply(self):
         """Answer the current instruction like a person following it."""
         run = next((item for item in self.runtime.calibration_runs if item.active), None)
@@ -815,6 +835,8 @@ class Preview:
                     raise ValueError("Ungültige Ofenrückmeldung")
             else:
                 raise ValueError("Unbekannter Simulationseingang")
+        elif path.endswith("/notifications/answer"):
+            return self.answer(body["action"])
         elif path.endswith("/notifications/test"):
             result = self.run(self.runtime.send_test_notification(
                 actor=ActorRef(PREVIEW_DEFAULTS["calibration"]["user_id"], "lokale Vorschau")))

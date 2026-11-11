@@ -67,18 +67,22 @@ async def async_setup_entry(
 
         def calibration_reply(association):
             # Only calibration actions reach the run; every reply stays an event.
+            # The task carries the outcome to an answer from the panel (BN-b).
             key = association.reply.reply_key
             if key is not None and is_action(key.value):
-                hass.async_create_task(runtime.calibration_reply(association))
-            elif key is not None and is_notification_action(key.value):
+                return hass.async_create_task(runtime.calibration_reply(association))
+            if key is not None and is_notification_action(key.value):
                 # BN: effects only with the replying user's control permission.
                 async def notification_reply():
                     permitted = await async_can_control(
                         hass, entry.entry_id, association.reply.actor.user_id
                     )
-                    await runtime.notification_reply(association, permitted=permitted)
+                    return await runtime.notification_reply(
+                        association, permitted=permitted
+                    )
 
-                hass.async_create_task(notification_reply())
+                return hass.async_create_task(notification_reply())
+            return None
 
         runtime.notification_entry_id = entry.entry_id
         runtime.notification_resolutions = await async_resolve_recipients(hass)

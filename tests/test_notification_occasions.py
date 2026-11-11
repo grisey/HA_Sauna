@@ -7,6 +7,9 @@ Methoden mit einem synthetischen letzten Transport.
 """
 
 import asyncio
+import base64
+import json
+import re
 import unittest
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
@@ -278,6 +281,36 @@ class ReadyForecastTests(unittest.TestCase):
                                                   95.0))
 
 
+def panel_question(data):
+    """Question of the panel link in native ``data`` (BN-b); both tap targets agree."""
+    link = data["clickAction"]
+    assert data["url"] == {"_": link} and link.startswith(rules.PANEL_LINK)
+    token = link[len(rules.PANEL_LINK):]
+    assert re.fullmatch(r"[A-Za-z0-9_-]+", token), token
+    return json.loads(base64.urlsafe_b64decode(token + "=" * (-len(token) % 4)))
+
+
+class PanelLinkTests(unittest.TestCase):
+    """BN-b: Antippen öffnet das Panel mit Titel, Text und den nativen Aktionen."""
+
+    def test_link_carries_question_and_actions_with_umlauts(self):
+        actions = [{"action": f"{rules.ACTION_PREFIX}abc_3_END_GANG", "title": "Gang beenden"}]
+        payload = {"title": "Sauna", "message": "Gang 1 läuft laut Sauna noch – bist du draußen?"}
+        data = rules.reply_data("entry-ä", payload, actions)
+        self.assertEqual(data["actions"], actions)
+        self.assertEqual(panel_question(data), {"e": "entry-ä", "t": "Sauna",
+                                                "m": payload["message"], "a": actions})
+
+    def test_answer_results(self):
+        results = {outcome: rules.ANSWER_RESULTS.get(outcome, "unknown") for outcome in (
+            "effect", "received", "confirmed", "accepted", "duplicate", "late",
+            "no_permission", "unknown", None)}
+        self.assertEqual(results, {
+            "effect": "applied", "received": "applied", "confirmed": "applied",
+            "accepted": "applied", "duplicate": "done", "late": "done",
+            "no_permission": "denied", "unknown": "unknown", None: "unknown"})
+
+
 class Transport:
     def __init__(self):
         self.sent = []
@@ -374,6 +407,10 @@ class RuntimeTests(unittest.TestCase):
             self.assertEqual(sent[0].payload["message"], "Testnachricht der Sauna")
             self.assertEqual([a["title"] for a in sent[0].payload["data"]["actions"]],
                              ["Empfangen"])
+            # BN-b: a tap opens the panel with the same question and native actions.
+            self.assertEqual(panel_question(sent[0].payload["data"]), {
+                "e": "entry", "t": "Sauna", "m": "Testnachricht der Sauna",
+                "a": sent[0].payload["data"]["actions"]})
             status = runtime.notification_status(USER)["test"]
             self.assertEqual((status["targets"], status["accepted"], status["replied_at"]),
                              (1, 1, None))

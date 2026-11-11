@@ -1,6 +1,7 @@
 """Explicit send uses saved mappings and the existing operation permission."""
 
 import asyncio
+import base64
 import json
 import unittest
 from dataclasses import replace
@@ -9,11 +10,12 @@ from types import MappingProxyType, SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
 from aiohttp import ClientSession
-from homeassistant.auth.const import GROUP_ID_USER
+from homeassistant.auth.const import GROUP_ID_READ_ONLY, GROUP_ID_USER
 from homeassistant.core import Context, callback
 from homeassistant.helpers import entity_registry as er
 
 import test_device_path as device_path
+from custom_components.ha_sauna.core import notification_rules as rules
 from custom_components.ha_sauna.core.notification_exchange import (
     ReplyAssociation,
     ReplyDisposition,
@@ -519,6 +521,43 @@ class NotificationServiceLifecycleTests(unittest.IsolatedAsyncioTestCase):
             self.hass.bus.async_listen("ha_sauna_notification_reply", receive)
         )
         return wire, observed
+
+    set_source = device_path.DevicePathTests.set_source
+
+    async def answer(self, user, action):
+        """POST …/notifications/answer as ``user`` (BN-b), with a deadline."""
+        token = await self.hass.auth.async_create_refresh_token(
+            user, client_id="http://localhost/"
+        )
+        headers = {
+            "Authorization": "Bearer " + self.hass.auth.async_create_access_token(token)
+        }
+        url = (
+            f"http://127.0.0.1:{self.hass.http.server_port}"
+            f"/api/ha_sauna/{self.entry.entry_id}/notifications/answer"
+        )
+        async with (
+            asyncio.timeout(async_timeout("reload")),
+            ClientSession(headers=headers) as client,
+            client.post(url, json={"action": action}) as response,
+        ):
+            if response.status != 200:
+                return response.status, await response.text()
+            return response.status, await response.json()
+
+    @staticmethod
+    def panel_actions(calls, message):
+        """Native actions of each copy; the tap link carries the same question."""
+        actions = []
+        for call in sent(calls, message):
+            data = call["data"]["data"]
+            link = data["clickAction"]
+            token = link[len(rules.PANEL_LINK) :]
+            question = json.loads(base64.urlsafe_b64decode(token + "=" * (-len(token) % 4)))
+            assert data["url"] == {"_": link}, data
+            assert (question["m"], question["a"]) == (message, data["actions"]), question
+            actions.append(data["actions"][0]["action"])
+        return actions
 
     def fire_native_reply(self):
         self.hass.bus.async_fire(
@@ -1074,3 +1113,95 @@ class NotificationServiceLifecycleTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(wire[0]["session_id"], self.runtime.session.session_id)
         self.assertEqual(wire[0]["message_id"], response["handoffs"][0]["message_id"])
         self.assertTrue(wire[0]["handoff_accepted"])
+
+    async def test_panel_answer_takes_the_native_reply_path(self):
+        """BN-b: an answer in the panel works like the native reply of that copy."""
+        from custom_components.ha_sauna.core.timeline import Event, Kind
+
+        calls = []
+
+        async def terminal_sink(call):
+            calls.append({"service": call.service, "data": dict(call.data)})
+
+        users, _references, _targets = await self.prepare_native_session(terminal_sink)
+        owner = users[0]
+        session_id = self.runtime.session.session_id
+        wire, _ = self.observe_replies()
+        # Timer at the start: the HA device action passes url and clickAction on.
+        timer = self.panel_actions(calls, TIMER_START)
+        self.assertEqual(len(timer), 2)
+        self.assertEqual(
+            await self.answer(owner, timer[0]),
+            (200, {"outcome": "confirmed", "result": "applied"}),
+        )
+        self.assertEqual(self.runtime.notifier.timer["confirmed_by"], owner.id)
+        self.assertEqual(
+            (wire[-1]["actor_user_id"], wire[-1]["data"], wire[-1]["session_id"]),
+            (owner.id, {"action": timer[0]}, session_id),
+        )
+        self.assertEqual(
+            await self.answer(owner, timer[1]),
+            (200, {"outcome": "duplicate", "result": "done"}),
+        )
+        # „Gang beenden“: the productive send of a gang-end question to the participants.
+        await self.set_source("upper_temperature", 70)
+        origin = self.now
+        for second, kind in ((0, Kind.DOOR_OPEN), (1, Kind.DOOR_CLOSE), (2, Kind.INFUSION)):
+            self.now = origin + timedelta(seconds=second)
+            await self.runtime.receive(
+                Event(f"answer-gang:{second}", session_id, kind, self.now, self.now)
+            )
+            await self.hass.async_block_till_done()
+        gang = self.runtime.session.timeline.active
+        self.assertIsNotNone(gang)
+        text = "Gang 1 läuft laut Sauna noch – bist du draußen?"
+        message = self.runtime.notifier._emit(
+            "gang_end", self.now, text, actions=(rules.END_GANG,),
+            session_id=session_id, gang_id=gang.gang_id,
+        )
+        self.runtime._send_bn(
+            message, self.runtime.notification_recipients.targets, "Teilnehmer"
+        )
+        await self.await_sink_calls(calls, text, 2)
+        end = self.panel_actions(calls, text)
+        reader = await self.hass.auth.async_create_user(
+            "Synthetic reader", group_ids=[GROUP_ID_READ_ONLY]
+        )
+        self.assertEqual(
+            await self.answer(reader, end[0]),
+            (200, {"outcome": "no_permission", "result": "denied"}),
+        )
+        self.assertEqual(self.runtime.session.timeline.active.gang_id, gang.gang_id)
+        self.now += timedelta(seconds=30)
+        self.assertEqual(
+            await self.answer(owner, end[0]),
+            (200, {"outcome": "effect", "result": "applied"}),
+        )
+        ended = self.runtime.session.timeline.completed[-1]
+        self.assertEqual((ended.gang_id, ended.end_reason), (gang.gang_id, "manual"))
+        self.assertEqual(
+            await self.answer(owner, end[1]),
+            (200, {"outcome": "late", "result": "done"}),
+        )
+        # Only actions of the sauna's own messages; an unknown one stays unknown.
+        status, _ = await self.answer(owner, "SYNTHETIC_REPLY")
+        self.assertEqual(status, 400)
+        self.assertEqual(
+            await self.answer(owner, rules.ACTION_PREFIX + "unknown_1_END_GANG"),
+            (200, {"outcome": None, "result": "unknown"}),
+        )
+        # The protocol of the existing reply path records each answer.
+        await self.runtime.archive.flush()
+        archived = await asyncio.to_thread(
+            self.runtime.archive.read, session_id, limit=10000, kinds=("notification",)
+        )
+        replies = [
+            (record["payload"]["user_id"], record["payload"]["outcome"])
+            for record in archived["records"]
+            if record["payload"].get("event") == "reply"
+            and record["payload"].get("seq") == message.seq
+        ]
+        self.assertEqual(
+            replies,
+            [(reader.id, "no_permission"), (owner.id, "effect"), (owner.id, "late")],
+        )

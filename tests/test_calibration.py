@@ -19,6 +19,7 @@ from datetime import UTC, datetime, timedelta
 from itertools import pairwise
 from types import SimpleNamespace
 
+from test_notification_occasions import panel_question
 from test_presence_regressions import START, _runtime
 from test_program_configuration import _FakeHass
 
@@ -1040,6 +1041,11 @@ class CalibrationRuntimeTests(unittest.TestCase):
             self.assertEqual(sent[1].session_id, runtime.session.session_id)
             self.assertEqual([a["title"] for a in sent[1].payload["data"]["actions"]],
                              ["Kabine ist leer", "Abweichend", "Abbrechen"])
+            # BN-b: a tap opens the panel with this instruction and its native actions.
+            self.assertEqual(panel_question(sent[1].payload["data"]), {
+                "e": "synthetic-entry", "t": "Sauna-Kalibrierung P1",
+                "m": "Kabine leer, Tür zu, nicht an die Kabine.",
+                "a": sent[1].payload["data"]["actions"]})
             with self.assertRaisesRegex(ValueError, "bereits"):
                 await runtime.start_calibration(actor=ActorRef(USER, "ha_context"),
                                                 module="A2")

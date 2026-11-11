@@ -23,6 +23,8 @@ Kalibrierung führt mit eigenen Nachrichten. Sicherheitsmeldungen bleiben.
 
 from __future__ import annotations
 
+import base64
+import json
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timedelta, tzinfo
@@ -127,6 +129,28 @@ OUTCOMES = {
 
 def is_action(value: object) -> bool:
     return isinstance(value, str) and value.startswith(ACTION_PREFIX)
+
+
+# BN-b: Antippen einer Nachricht mit Antworten öffnet das Panel (frontend.py) mit
+# Titel, Text und den Aktionen wie in ``data.actions``, base64url-JSON im Link.
+PANEL_LINK = "/ha-sauna?nachricht="
+# Ergebnis einer Antwort aus dem Panel; jedes andere Ergebnis ist ``unknown``.
+ANSWER_RESULTS = {"effect": "applied", "received": "applied", "confirmed": "applied",
+                  "accepted": "applied", "duplicate": "done", "late": "done",
+                  "no_permission": "denied"}
+
+
+def reply_data(entry_id: str | None, payload: Mapping, actions: list[dict]) -> dict:
+    """Native ``data`` with the actions and the tap targets for the panel (BN-b).
+
+    iOS and macOS open ``url`` only on a plain tap (key ``_``), not after an
+    answer button; Android opens ``clickAction``.
+    """
+    question = {"e": entry_id, "t": payload.get("title", ""), "m": payload["message"],
+                "a": actions}
+    text = json.dumps(question, ensure_ascii=False, separators=(",", ":"))
+    link = PANEL_LINK + base64.urlsafe_b64encode(text.encode()).decode().rstrip("=")
+    return {"actions": actions, "url": {"_": link}, "clickAction": link}
 
 
 def decimal(value: float, places: int = 1) -> str:

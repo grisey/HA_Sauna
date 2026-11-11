@@ -11,7 +11,7 @@ from types import MappingProxyType
 
 from homeassistant.components.notify import NotifyEntityFeature
 from homeassistant.config_entries import ConfigEntryState
-from homeassistant.core import Event, HomeAssistant, callback
+from homeassistant.core import Context, Event, HomeAssistant, callback
 from homeassistant.helpers import device_registry as dr, entity_registry as er
 
 from .core.notification_exchange import (
@@ -144,10 +144,11 @@ class _ReplyIngress:
         )
 
     @callback
-    def receive(self, event: Event) -> None:
+    def receive(self, event: Event):
+        """Associate a native reply; return what the entry's reply callback returns."""
         action = event.data.get("action")
         if not isinstance(action, str):
-            return
+            return None
         association = self.correlator.receive(
             ReplyEnvelope(
                 reply_id=None,
@@ -163,7 +164,7 @@ class _ReplyIngress:
             )
         )
         if association.disposition is ReplyDisposition.UNKNOWN:
-            return
+            return None
         notification = association.notification
         reply = association.reply
         adapter = next(
@@ -175,8 +176,9 @@ class _ReplyIngress:
             None,
         )
         wire_payload = deepcopy(dict(reply.payload))
+        result = None
         if adapter is not None and adapter._reply_callback is not None:
-            adapter._reply_callback(association)
+            result = adapter._reply_callback(association)
         self.hass.bus.async_fire(
             EVENT_REPLY,
             {
@@ -202,6 +204,21 @@ class _ReplyIngress:
             },
             context=event.context,
         )
+        return result
+
+
+async def async_answer(hass: HomeAssistant, action: str, user_id: str) -> str | None:
+    """Answer from the panel as the signed-in user, through the native reply path (BN-b).
+
+    The event goes to the shared ingress only, never onto the bus: there it would
+    look like a Companion reply from a device to every listener (automations,
+    logbook), and its outcome could not be returned to the panel.
+    """
+    ingress = hass.data.get(_REPLY_INGRESS)
+    pending = None if ingress is None else ingress.receive(Event(
+        "mobile_app_notification_action", {"action": action}, context=Context(user_id=user_id)
+    ))
+    return await pending if pending is not None else None
 
 
 @dataclass(frozen=True)

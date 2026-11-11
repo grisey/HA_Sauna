@@ -2548,6 +2548,13 @@ class SaunaPanel extends HTMLElement {
   get panel() {
     return this._panel;
   }
+  set route(value) {
+    this._route = value;
+    if (this.isConnected) this.openAnswerFromLocation();
+  }
+  get route() {
+    return this._route;
+  }
   set hass(value) {
     this._hass = value;
     if (this.isConnected && this._hass && !this.timer && !this.busy) this.start();
@@ -2607,6 +2614,7 @@ class SaunaPanel extends HTMLElement {
     this.syncFullscreenNavigation();
     if (typeof document !== "undefined")
       document.addEventListener("visibilitychange", this.visibilityHandler);
+    this.openAnswerFromLocation();
     if (this._hass) this.start();
   }
   disconnectedCallback() {
@@ -2909,6 +2917,85 @@ class SaunaPanel extends HTMLElement {
   }
   async api(path, method = "GET", body) {
     return this.hass.callApi(method, `ha_sauna${path}`, body);
+  }
+  // BN-b: Antippen einer Sauna-Nachricht öffnet das Panel mit Frage und Antworten.
+  openAnswerFromLocation() {
+    const view = this.ownerDocument?.defaultView,
+      dialog = this.$("#answer-dialog");
+    if (!view?.location || !dialog) return;
+    const url = new URL(view.location.href),
+      token = url.searchParams.get("nachricht");
+    if (token === null) return;
+    url.searchParams.delete("nachricht");
+    const path = url.pathname + url.search + url.hash;
+    view.history?.replaceState(view.history.state, "", path);
+    let question = null;
+    try {
+      const binary = atob(token.replace(/-/g, "+").replace(/_/g, "/")),
+        data = JSON.parse(
+          new TextDecoder().decode(Uint8Array.from(binary, (c) => c.charCodeAt(0))),
+        ),
+        actions = (Array.isArray(data.a) ? data.a : []).filter(
+          (item) => typeof item?.action === "string" && typeof item?.title === "string",
+        );
+      if (typeof data.m === "string" && actions.length)
+        question = { entry: data.e, title: data.t, message: data.m, actions };
+    } catch {
+      // Ein unlesbarer Link öffnet keinen Dialog.
+    }
+    if (!question) return;
+    clearTimeout(this.answerTimer);
+    this.answer = question;
+    dialog.onclose = () => {
+      clearTimeout(this.answerTimer);
+      this.answer = null;
+    };
+    this.drawAnswer();
+    if (!dialog.open) dialog.showModal();
+  }
+  drawAnswer() {
+    const answer = this.answer,
+      dialog = this.$("#answer-dialog");
+    if (!answer || !dialog) return;
+    const status =
+      answer.error ||
+      {
+        applied: `„${answer.chosen}“ übernommen.`,
+        done: "Schon erledigt.",
+        denied: "Ohne Steuerberechtigung, die Antwort bleibt ohne Wirkung.",
+        unknown: "Diese Nachricht ist nicht mehr bekannt.",
+      }[answer.result] ||
+      (answer.busy ? "Wird gesendet …" : "");
+    dialog.innerHTML = `<h2 id="answer-title">${esc(answer.title)}</h2><p>${esc(answer.message)}</p><p role="status">${esc(status)}</p><div class="row">${answer.result ? "" : answer.actions.map((item, index) => `<button type="button" data-action="answer:${index}" ${answer.busy ? "disabled" : ""}>${esc(item.title)}</button>`).join("")}<button type="button" data-action="answer-close">Schließen</button></div>`;
+  }
+  async sendAnswer(index) {
+    const answer = this.answer,
+      item = answer?.actions[index];
+    if (!item || answer.busy || answer.result) return;
+    Object.assign(answer, { busy: true, chosen: item.title, error: null });
+    this.drawAnswer();
+    try {
+      const reply = await this.api(
+        `/${answer.entry || this.entry}/notifications/answer`,
+        "POST",
+        { action: item.action },
+      );
+      answer.result = reply.result;
+      this.answerTimer = setTimeout(
+        () => this.answer === answer && this.closeAnswer(),
+        this.preference("program_saved_feedback_ms"),
+      );
+    } catch (error) {
+      answer.error = errorText(error);
+    } finally {
+      answer.busy = false;
+      if (this.answer === answer) this.drawAnswer();
+    }
+  }
+  closeAnswer() {
+    clearTimeout(this.answerTimer);
+    this.answer = null;
+    this.$("#answer-dialog")?.close();
   }
   appearanceCatalog() {
     return (
@@ -4989,6 +5076,9 @@ class SaunaPanel extends HTMLElement {
       .field-standard-menu { font-size: inherit; align-self: start; margin-top: ${this.preference("layout_space_09_px")}px; }
       #standards-dialog { color: inherit; background: var(--sauna-surface-card, var(--card-background-color)); border: 1px solid var(--sauna-color-border); border-radius: ${this.preference("control_radius_px")}px; padding: var(--sauna-surface-gap); width: min(90vw, 70rem); max-width: 90vw; max-height: 85dvh; overflow: auto; }
       #standards-dialog::backdrop { background: #0008; }
+      #answer-dialog { color: inherit; background: var(--sauna-surface-card, var(--card-background-color)); border: 1px solid var(--sauna-color-border); border-radius: ${this.preference("control_radius_px")}px; padding: var(--sauna-surface-gap); width: min(90vw, ${this.preference("size_36_0_rem")}rem); max-width: 90vw; max-height: 85dvh; overflow: auto; }
+      #answer-dialog::backdrop { background: #0008; }
+      @media (max-width: ${this.preference("breakpoint_540_0_px")}px) { #answer-dialog { box-sizing: border-box; width: 100vw; max-width: 100vw; margin-inline: 0; } }
       .standard-values { overflow-x: auto; margin-block: var(--sauna-surface-gap); }
       .standard-values table { border-collapse: collapse; width: 100%; }
       .standard-values th, .standard-values td { padding: ${this.preference("layout_space_13_px")}px; text-align: left; border-bottom: 1px solid var(--sauna-color-border); }
@@ -6285,6 +6375,7 @@ class SaunaPanel extends HTMLElement {
       <section id="history" hidden><div class="plot-panel history-panel"><div class="history-controls"><div class="history-subviews segmented-mode" role="group" aria-label="Unteransicht"><button type="button" data-action="history-subview:session" aria-pressed="true">Sitzung</button><button type="button" data-action="history-subview:plant" aria-pressed="false">Anlage</button></div><div class="history-session-choice"><label for="session">Sitzung vom</label><select id="session" aria-label="Saunasitzung auswählen"><option value="live">Letzte Sitzung</option></select></div><div class="history-selection-actions"><button data-action="clear-history-selection" hidden disabled>Auswahl aufheben</button></div><span id="history-loading" role="status" hidden></span></div><div id="history-figures" class="history-figures" aria-live="polite"></div><div class="history-plot-frame"><div id="history-chart-head" class="history-chart-head"></div><div id="plots"></div><div id="history-legends">${this.historyLegendMarkup()}</div></div>
         <div class="history-below"><section id="history-gangs" class="history-gangs" aria-label="Gänge im Vergleich"></section><div class="history-inspection" id="history-inspection" aria-label="Auswahl"><p class="history-inspection-key">Auswahl</p><div class="history-inspection-heading"></div><div class="history-inspection-content"><div class="history-readout"><strong class="history-column-heading">Messwerte</strong><div id="tooltip" role="group" aria-label="Werte am markierten Zeitpunkt" hidden></div></div><div class="history-event-column"><strong class="history-column-heading">Ereignisse</strong><div class="history-event-readout"><div id="history-event-inspection" role="group" aria-label="Ereignisinspektion" aria-live="polite" hidden></div></div></div></div><div class="history-session-summary" data-history-session-summary hidden></div><div class="history-context-gangs" data-history-context-gangs></div></div></div></div><div id="control-history" hidden></div><div id="recognition-control" hidden></div><div id="detection-plots" hidden></div><div id="gangs"></div><div id="event-list"></div>
       </section><section id="statistics" aria-label="Statistik" hidden></section><section id="settings" hidden></section>
+      <dialog id="answer-dialog" tabindex="-1" aria-labelledby="answer-title"></dialog>
     </main>`;
     this.shadowRoot.addEventListener("click", (e) => {
       const moment = e.target.closest("[data-control-time]");
@@ -19674,6 +19765,8 @@ class SaunaPanel extends HTMLElement {
     }
   }
   async action(action) {
+    if (action.startsWith("answer:")) return this.sendAnswer(Number(action.slice(7)));
+    if (action === "answer-close") return this.closeAnswer();
     if (action.startsWith("history-subview:")) {
       const subview = action.slice("history-subview:".length);
       if (!["session", "plant"].includes(subview) || subview === this.historySubview)

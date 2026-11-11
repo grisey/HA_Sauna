@@ -2578,7 +2578,9 @@ class SaunaRuntime:
                 message_id = uuid4().hex
                 payload = {"title": instruction.title, "message": instruction.message}
                 if instruction.actions:
-                    payload["data"] = {"actions": run.native_actions(instruction, message_id)}
+                    payload["data"] = notification_rules.reply_data(
+                        self.notification_entry_id, payload,
+                        run.native_actions(instruction, message_id))
                 envelope = NotificationEnvelope(
                     message_id, f"calibration:{run.run_id}:{instruction.seq}",
                     self.notification_entry_id, target, payload, run.session_id,
@@ -2890,11 +2892,12 @@ class SaunaRuntime:
             message_id = uuid4().hex
             payload = {"title": message.title, "message": message.text}
             if message.actions and self._interactive(target):
-                payload["data"] = {"actions": [
-                    {"action": f"{notification_rules.ACTION_PREFIX}{message_id}_{message.seq}_{kind.upper()}",
-                     "title": notification_rules.ACTION_LABELS[kind]}
-                    for kind in message.actions
-                ]}
+                payload["data"] = notification_rules.reply_data(
+                    self.notification_entry_id, payload, [
+                        {"action": f"{notification_rules.ACTION_PREFIX}{message_id}_{message.seq}_{kind.upper()}",
+                         "title": notification_rules.ACTION_LABELS[kind]}
+                        for kind in message.actions
+                    ])
             envelope = NotificationEnvelope(
                 message_id, f"notification:{message.seq}", self.notification_entry_id,
                 target, payload, message.session_id,

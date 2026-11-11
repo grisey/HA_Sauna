@@ -32,7 +32,7 @@ from .core.seasons import PARTS as SEASON_PARTS
 from .core.timeline import active_gang_duration_seconds, project_door_cycles, project_gang_intervals
 from .environment import environment_snapshot
 from .log import LEVELS
-from .notifications import async_resolve_recipients
+from .notifications import async_answer, async_resolve_recipients
 from .runtime import Configuration
 from . import history_view
 from .history_view import HISTORY_KINDS, PUBLIC_HISTORY_KINDS
@@ -1668,6 +1668,28 @@ class NotificationTestView(HomeAssistantView):
         return self.json(result)
 
 
+class NotificationAnswerView(HomeAssistantView):
+    """Antwort aus dem Panel (BN-b): ``{"action": …}`` geht als angemeldeter Benutzer
+    über den Empfang der Companion-Antworten; ``result`` ist applied, done, denied
+    oder unknown."""
+
+    url = "/api/ha_sauna/{entry_id}/notifications/answer"
+    name = "api:ha_sauna:notifications:answer"
+    requires_auth = True
+
+    async def post(self, request, entry_id):
+        require_read(request, entry_id)
+        body = await json_body(request)
+        action = body.get("action") if isinstance(body, dict) and set(body) == {"action"} else None
+        if not (notification_rules.is_action(action) or calibration.is_action(action)):
+            raise web.HTTPBadRequest(text="Die Antwort erwartet eine Aktion einer Sauna-Nachricht.")
+        hass = request.app[KEY_HASS]
+        runtime_for(hass, entry_id)
+        outcome = await async_answer(hass, action, request["hass_user"].id)
+        return self.json({"outcome": outcome,
+                          "result": notification_rules.ANSWER_RESULTS.get(outcome, "unknown")})
+
+
 def register(hass):
     data = hass.data.setdefault(DOMAIN, {})
     if data.get("api_registered"):
@@ -1707,4 +1729,5 @@ def register(hass):
     hass.http.register_view(CalibrationPauseView)
     hass.http.register_view(NotificationsView)
     hass.http.register_view(NotificationTestView)
+    hass.http.register_view(NotificationAnswerView)
     data["api_registered"] = True
