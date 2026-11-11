@@ -316,12 +316,16 @@ class PanelLinkTests(unittest.TestCase):
                                             panel_button(link, "HA_SAUNA_PANEL_t")]})
         self.assertEqual(panel_question(link)["a"], self.actions)
 
-    def test_three_answers_leave_no_room_for_the_panel_button(self):
+    def test_three_answers_drop_the_panel_button_only_on_android(self):
+        # BN-d: Android shows three buttons at most; Apple keeps the panel button.
         three = [{"action": f"{rules.ACTION_PREFIX}abc_3_{n}", "title": n} for n in "ABC"]
         android = rules.reply_data("entry", self.payload, three, apple=False, token="t")
         apple = rules.reply_data("entry", self.payload, three, apple=True, token="t")
-        self.assertEqual((android["actions"], apple), (three, {"actions": three}))
+        self.assertEqual(android, {"actions": three, "clickAction": android["clickAction"]})
         self.assertEqual(panel_question(android["clickAction"])["a"], three)
+        link = apple["actions"][-1]["uri"]
+        self.assertEqual(apple, {"actions": [*three, panel_button(link, "HA_SAUNA_PANEL_t")]})
+        self.assertEqual(panel_question(link)["a"], three)
 
     def test_text_link_carries_the_full_address(self):
         text = rules.text_link("https://ha.example/", "entry", self.payload, self.actions)

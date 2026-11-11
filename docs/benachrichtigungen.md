@@ -143,7 +143,7 @@ Dialog nicht erneut.
 | Ziel | Antippen der Nachricht | Weg in das Panel |
 | --- | --- | --- |
 | Companion-App auf einem Apple-Gerät (iOS, iPadOS, macOS) | Die Nachricht trägt kein `url`. Mit der App-Einstellung **Show actions when tapped** (Einstellungen der App › Benachrichtigungen, ab App-Version 2026.9.3) zeigt das Antippen Titel, Text und die Antworten als Systemdialog; ohne sie öffnet es die App. | Knopf **Im Panel öffnen** (`uri`) |
-| Companion-App auf Android oder mit unbekanntem Betriebssystem | `clickAction` öffnet das Panel mit der Frage. | `clickAction` und Knopf **Im Panel öffnen** (`action: "URI"`) |
+| Companion-App auf Android oder mit unbekanntem Betriebssystem | `clickAction` öffnet das Panel mit der Frage. | `clickAction` und Knopf **Im Panel öffnen** (`action: "URI"`), bei drei Antworten nur `clickAction` |
 | **Nur Nachricht** | – | Der Text endet mit „Im Panel öffnen: “ und der vollen Adresse; nach der Anmeldung an Home Assistant öffnet sich der Dialog. |
 
 Als Apple-Gerät gilt ein Ziel, dessen Registrierung der Companion-App den
@@ -151,7 +151,9 @@ Hersteller „Apple“ nennt; danach richtet sich auch der Apple-Push von Home
 Assistant. Die App-Einstellung greift nur bei Nachrichten ohne `url`; deshalb
 kommen Nachrichten der Sauna für Apple-Geräte ohne `url`. Android zeigt höchstens
 drei Knöpfe; bei drei Antworten, etwa bei einem Schritt der Kalibrierung mit
-Aktion, entfällt **Im Panel öffnen**, die Antworten bleiben vollständig. Ein
+Aktion, entfällt dort **Im Panel öffnen**, die Antworten bleiben vollständig, und
+das Antippen öffnet das Panel über `clickAction`. Apple-Geräte behalten den Knopf
+auch bei drei Antworten. Ein
 Antippen von **Im Panel öffnen** ist keine Antwort und wird nicht zugeordnet.
 Die Adresse im Text ist bevorzugt die externe Adresse von Home Assistant, sonst
 die interne; ist keine bekannt, enthält der Text keinen Link. Anweisungen der

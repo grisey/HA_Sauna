@@ -1049,8 +1049,8 @@ class CalibrationRuntimeTests(unittest.TestCase):
                                "Kabine leer, Tür zu, nicht an die Kabine.")])
             self.assertEqual(sent[1].session_id, runtime.session.session_id)
             self.assertEqual([a["title"] for a in sent[1].payload["data"]["actions"]],
-                             ["Kabine ist leer", "Abweichend", "Abbrechen"])
-            # BN-c: three answers leave no room for the panel button (Android limit).
+                             ["Kabine ist leer", "Abweichend", "Abbrechen", "Im Panel öffnen"])
+            # BN-d: on Apple the panel button follows three answers too (Android limit only).
             self.assertEqual(set(sent[1].payload["data"]), {"actions"})
             with self.assertRaisesRegex(ValueError, "bereits"):
                 await runtime.start_calibration(actor=ActorRef(USER, "ha_context"),

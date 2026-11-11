@@ -135,8 +135,8 @@ def is_action(value: object) -> bool:
 # und den Aktionen wie in ``data.actions``, base64url-JSON im Link.
 PANEL_LINK = "/ha-sauna?nachricht="
 PANEL_LABEL = "Im Panel öffnen"
-# BN-c: Android zeigt höchstens drei Knöpfe (Companion-Doku); bei drei Antworten
-# entfällt der Panelknopf, die Antworten bleiben vollständig.
+# BN-c/BN-d: Android zeigt höchstens drei Knöpfe (Companion-Doku); bei drei Antworten
+# entfällt dort der Panelknopf, die Antworten bleiben vollständig. Apple behält ihn.
 ANDROID_ACTIONS = 3
 # Ergebnis einer Antwort aus dem Panel; jedes andere Ergebnis ist ``unknown``.
 ANSWER_RESULTS = {"effect": "applied", "received": "applied", "confirmed": "applied",
@@ -161,7 +161,7 @@ def reply_data(entry_id: str | None, payload: Mapping, actions: list[dict], *,
     """
     link = panel_link(entry_id, payload, actions)
     panel = [{"action": f"HA_SAUNA_PANEL_{token}" if apple else "URI",
-              "title": PANEL_LABEL, "uri": link}] if len(actions) < ANDROID_ACTIONS else []
+              "title": PANEL_LABEL, "uri": link}] if apple or len(actions) < ANDROID_ACTIONS else []
     return {"actions": [*actions, *panel], **({} if apple else {"clickAction": link})}
 
 
